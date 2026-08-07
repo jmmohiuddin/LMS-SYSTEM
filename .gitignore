@@ -19,8 +19,10 @@ api/v1/auth/otp/verify.js
 api/v1/auth/refresh.js
 api/v1/auth/logout.js
 api/v1/academics/roster.js
+api/v1/academics/sections.js
 api/v1/sms/dispatch.js
 api/v1/rms/solve.js
+api/v1/rms/routine.js
 api/v1/finance/webhooks/bkash.js
 api/v1/finance/webhooks/nagad.js
 api/v1/finance/webhooks/rocket.js

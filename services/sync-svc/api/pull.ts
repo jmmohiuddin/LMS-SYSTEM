@@ -1,14 +1,15 @@
 /**
  * GET /api/v1/sync/pull?scope=sections,enrolments&cursor=0&limit=500
  *
- * Counterpart to POST /api/v1/sync/push. Same auth shape as push (API-key +
- * X-Tenant-ID/X-User-ID/X-Role headers) so the two endpoints of one sync
- * protocol don't drift onto different auth mechanisms; see push.ts's own
- * note about upgrading to EdDSA JWT once every service is on it.
+ * Counterpart to POST /api/v1/sync/push. Same auth shape as push — an
+ * EdDSA JWT from identity-svc, or the legacy SERVICE_API_KEY + X-Tenant-ID/
+ * X-User-ID/X-Role headers — so the two endpoints of one sync protocol
+ * don't drift onto different auth mechanisms.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createDb, assertRlsEnforced } from '../src/db.ts';
 import { SyncPullHandler } from '../src/pull.ts';
+import { verifyAccessToken } from '../../../packages/server-core/src/jwt.ts';
 
 let _handler: SyncPullHandler | null = null;
 
@@ -56,25 +57,36 @@ export default async function route(req: IncomingMessage, res: ServerResponse): 
     return;
   }
 
-  const SERVICE_API_KEY = process.env.SERVICE_API_KEY;
-  if (!SERVICE_API_KEY) {
-    console.error('[sync/pull] SERVICE_API_KEY is not configured');
-    json(res, 503, { error: 'Service not configured' });
-    return;
-  }
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (token !== SERVICE_API_KEY) {
+  if (!token) {
     json(res, 401, { error: 'Unauthorized' });
     return;
   }
 
-  const tenantId = header(req, 'x-tenant-id');
-  const userId = header(req, 'x-user-id');
-  const role = header(req, 'x-role') || 'teacher';
-  if (!tenantId || !userId) {
-    json(res, 400, { error: 'X-Tenant-ID and X-User-ID headers are required' });
-    return;
+  let tenantId: string;
+  let userId: string;
+  let role: string;
+
+  const SERVICE_API_KEY = process.env.SERVICE_API_KEY;
+  if (SERVICE_API_KEY && token === SERVICE_API_KEY) {
+    tenantId = header(req, 'x-tenant-id');
+    userId   = header(req, 'x-user-id');
+    role     = header(req, 'x-role') || 'teacher';
+    if (!tenantId || !userId) {
+      json(res, 400, { error: 'X-Tenant-ID and X-User-ID headers are required' });
+      return;
+    }
+  } else {
+    try {
+      const claims = await verifyAccessToken(token);
+      tenantId = claims.tid;
+      userId = claims.sub;
+      role = claims.role;
+    } catch {
+      json(res, 401, { error: 'Unauthorized' });
+      return;
+    }
   }
 
   const url = new URL(req.url ?? '/', 'http://internal');

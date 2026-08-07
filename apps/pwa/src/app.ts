@@ -1,68 +1,46 @@
 /**
  * PWA entry point.
  *
- * Configuration comes from URL search params so the app works without a
- * backend auth service (which ships in Phase 1). In production the JWT
- * replaces the ?tid=&uid=&key= params.
- *
- *   ?tid=<tenant-uuid>   tenant ID
- *   ?uid=<user-uuid>     teacher user ID
- *   ?sid=<section-uuid>  section ID
- *   ?date=YYYY-MM-DD     attendance date (default: today)
- *   ?key=<api-key>       service API key
+ * Now a small app rather than one hard-coded screen: Auth gates a Shell
+ * (hash router + tab bar) with three routes — attendance, roster, routine.
+ * A JWT (via Auth/login-view) replaces the old ?tid=&uid=&key= params for
+ * identifying who's using the device; ?tid= is kept only as the one-time
+ * way a school's install link tells a fresh device which tenant it belongs
+ * to (see login-view.ts's tenantId resolution).
  */
 import { openDb, IndexedDbOutboxStore } from '../../../packages/offline/src/store.ts';
 import { SyncEngine } from '../../../packages/offline/src/sync-engine.ts';
 import { AttendanceView } from './attendance-view.ts';
 import { FetchTransport } from './transport.ts';
+import { Auth } from './auth.ts';
+import { LoginView } from './login-view.ts';
+import { Shell, type ShellRoute } from './shell.ts';
+import { RosterView } from './roster-view.ts';
+import { RoutineView } from './routine-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
+import type { RosterStudent } from './roster-view.ts';
 
-const params   = new URLSearchParams(location.search);
-const tenantId = params.get('tid')  ?? '';
-const userId   = params.get('uid')  ?? deviceId('u');
-const sectionId = params.get('sid') ?? 'demo-section';
-const takenOn  = params.get('date') ?? todayIso();
-const apiKey   = params.get('key')  ?? '';
-const apiBase  = location.origin;
+const params  = new URLSearchParams(location.search);
+const apiBase = location.origin;
 
-// 60 placeholder students rendered immediately so the screen is usable on
-// first load. The real roster will come from GET /api/v1/academics/sections
-// once the academics service ships.
-const students: Student[] = Array.from({ length: 60 }, (_, i) => ({
+// The tenant ID is baked into the school's install link once and cached
+// from then on, so re-opening the PWA (no query string) still knows who it
+// belongs to. login-view.ts falls back to an inline field if this is empty.
+const tenantIdFromUrl = params.get('tid') ?? '';
+if (tenantIdFromUrl) localStorage.setItem('shikhon_tid', tenantIdFromUrl);
+const tenantId = tenantIdFromUrl || localStorage.getItem('shikhon_tid') || '';
+
+// 60 placeholder students — used only until a real roster has been picked
+// in the roster view (see roster-view.ts's shikhon_last_roster cache).
+const placeholderStudents: Student[] = Array.from({ length: 60 }, (_, i) => ({
   studentId: `demo-${i + 1}`,
   rollNo:    i + 1,
   nameBn:    `শিক্ষার্থী ${i + 1}`,
   nameEn:    `Student ${i + 1}`,
 }));
 
-async function main() {
-  const idb       = await openDb(indexedDB);
-  const store     = new IndexedDbOutboxStore(idb);
-  const transport = new FetchTransport({ apiBase, tenantId, userId, role: 'teacher', apiKey });
-  const engine    = new SyncEngine({
-    deviceId: deviceId('d'),
-    tenantId: tenantId || 'demo',
-    actorId:  userId,
-    store,
-    transport,
-  });
-
-  // If the service worker sent an outbox-flush message, honour it.
-  navigator.serviceWorker?.addEventListener('message', (e) => {
-    if ((e.data as { type?: string })?.type === 'outbox-flush') void engine.flush();
-  });
-
-  const root = document.getElementById('root')!;
-  new AttendanceView({
-    root,
-    doc:       document,
-    students,
-    section:   { id: sectionId, labelBn: '৯-ক', academicYearId: 'yr-2026' },
-    takenOn,
-    subjectBn: 'পদার্থবিজ্ঞান',
-    outbox:    engine,
-    newId:     () => crypto.randomUUID(),
-  });
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function deviceId(key: string): string {
@@ -74,8 +52,122 @@ function deviceId(key: string): string {
   return id;
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+function loadRosterStudents(): { students: Student[]; sectionId: string | null } {
+  try {
+    const raw = localStorage.getItem('shikhon_last_roster');
+    const sectionId = localStorage.getItem('shikhon_last_section');
+    if (!raw || !sectionId) return { students: placeholderStudents, sectionId: null };
+    const roster = JSON.parse(raw) as RosterStudent[];
+    if (!Array.isArray(roster) || roster.length === 0) return { students: placeholderStudents, sectionId: null };
+    return {
+      sectionId,
+      students: roster.map((r) => ({
+        studentId: r.studentId,
+        rollNo: r.rollNo,
+        nameBn: r.fullName.bn ?? r.fullName.en ?? `রোল ${r.rollNo}`,
+        nameEn: r.fullName.en ?? r.fullName.bn ?? `Roll ${r.rollNo}`,
+      })),
+    };
+  } catch {
+    return { students: placeholderStudents, sectionId: null };
+  }
+}
+
+async function main() {
+  const rootEl = document.getElementById('root');
+  if (!rootEl) return;
+  // Rebound as a fresh const: TS doesn't carry the null-check narrowing of
+  // `rootEl` into the nested function declarations below (startShell,
+  // showLogin), since they're hoisted and could in principle be called
+  // before the check. `root` here is guaranteed non-null at every use site.
+  const root: HTMLElement = rootEl;
+
+  const auth = new Auth({ apiBase, deviceId: deviceId('d') });
+
+  const idb       = await openDb(indexedDB);
+  const store     = new IndexedDbOutboxStore(idb);
+
+  function startShell(): Shell {
+    const { students, sectionId } = loadRosterStudents();
+
+    const transport = new FetchTransport({ auth });
+    const engine = new SyncEngine({
+      deviceId: deviceId('d'),
+      tenantId: auth.tenantId || 'demo',
+      actorId: auth.userId,
+      store,
+      transport,
+    });
+    navigator.serviceWorker?.addEventListener('message', (e) => {
+      if ((e.data as { type?: string })?.type === 'outbox-flush') void engine.flush();
+    });
+
+    const routes: ShellRoute[] = [
+      {
+        path: 'attendance',
+        labelBn: 'হাজিরা',
+        glyph: '✓',
+        mount: (container) => {
+          new AttendanceView({
+            root: container,
+            doc: document,
+            students,
+            section: { id: sectionId ?? 'demo-section', labelBn: '৯-ক', academicYearId: 'yr-2026' },
+            takenOn: todayIso(),
+            subjectBn: 'পদার্থবিজ্ঞান',
+            outbox: engine,
+            newId: () => crypto.randomUUID(),
+          });
+        },
+      },
+      {
+        path: 'routine',
+        labelBn: 'রুটিন',
+        glyph: '⏲',
+        mount: (container) => { new RoutineView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'roster',
+        labelBn: 'শিক্ষার্থী',
+        glyph: '☰',
+        mount: (container) => { new RosterView({ root: container, doc: document, auth }); },
+      },
+    ];
+
+    return new Shell({
+      root,
+      doc: document,
+      routes,
+      defaultPath: 'attendance',
+      displayName: auth.displayName,
+      onLogout: () => { void doLogout(); },
+    });
+  }
+
+  let shell: Shell | null = null;
+
+  function showLogin(): void {
+    shell?.destroy();
+    shell = null;
+    new LoginView({
+      root,
+      doc: document,
+      auth,
+      tenantId,
+      onLoggedIn: () => { shell = startShell(); },
+    });
+  }
+
+  async function doLogout(): Promise<void> {
+    await auth.logout();
+    showLogin();
+  }
+
+  if (auth.isLoggedIn()) {
+    shell = startShell();
+  } else {
+    showLogin();
+  }
 }
 
 main().catch((err) => {

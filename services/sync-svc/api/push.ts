@@ -2,17 +2,18 @@
  * POST /api/v1/sync/push — Vercel serverless function.
  *
  * Wraps SyncPushHandler with:
- *   - API-key auth (SERVICE_API_KEY env var; required)
- *   - Tenant context from request headers (X-Tenant-ID, X-User-ID, X-Role)
+ *   - Auth: an EdDSA JWT from identity-svc (the PWA's normal path — see
+ *     apps/pwa/src/auth.ts), OR the raw SERVICE_API_KEY plus X-Tenant-ID/
+ *     X-User-ID/X-Role headers (kept for admin scripts and smoke tests that
+ *     predate login; see docs/06-DEPLOYMENT.md)
  *   - CORS for cross-origin calls from the PWA shell
  *   - Singleton DB pool reused across warm invocations
- *
- * Auth will be upgraded to EdDSA JWT when the identity service ships (Phase 1).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createDb, assertRlsEnforced } from '../src/db.ts';
 import { SyncPushHandler } from '../src/push.ts';
 import type { PushRequest } from '../../../packages/offline/src/types.ts';
+import { verifyAccessToken } from '../../../packages/server-core/src/jwt.ts';
 
 /* ── Singletons ─────────────────────────────────────────────────────────── */
 
@@ -81,27 +82,37 @@ export default async function route(req: IncomingMessage, res: ServerResponse): 
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  const SERVICE_API_KEY = process.env.SERVICE_API_KEY;
-  if (!SERVICE_API_KEY) {
-    console.error('[sync/push] SERVICE_API_KEY is not configured');
-    json(res, 503, { error: 'Service not configured' });
-    return;
-  }
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (token !== SERVICE_API_KEY) {
+  if (!token) {
     json(res, 401, { error: 'Unauthorized' });
     return;
   }
 
-  // ── Tenant context ────────────────────────────────────────────────────────
-  const tenantId = header(req, 'x-tenant-id');
-  const userId   = header(req, 'x-user-id');
-  const role     = header(req, 'x-role') || 'teacher';
+  let tenantId: string;
+  let userId: string;
+  let role: string;
 
-  if (!tenantId || !userId) {
-    json(res, 400, { error: 'X-Tenant-ID and X-User-ID headers are required' });
-    return;
+  const SERVICE_API_KEY = process.env.SERVICE_API_KEY;
+  if (SERVICE_API_KEY && token === SERVICE_API_KEY) {
+    // Legacy path: trusted caller supplies tenant context via headers.
+    tenantId = header(req, 'x-tenant-id');
+    userId   = header(req, 'x-user-id');
+    role     = header(req, 'x-role') || 'teacher';
+    if (!tenantId || !userId) {
+      json(res, 400, { error: 'X-Tenant-ID and X-User-ID headers are required' });
+      return;
+    }
+  } else {
+    try {
+      const claims = await verifyAccessToken(token);
+      tenantId = claims.tid;
+      userId = claims.sub;
+      role = claims.role;
+    } catch {
+      json(res, 401, { error: 'Unauthorized' });
+      return;
+    }
   }
 
   // ── Body ──────────────────────────────────────────────────────────────────

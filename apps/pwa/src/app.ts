@@ -14,7 +14,7 @@ import { AttendanceView } from './attendance-view.ts';
 import { FetchTransport } from './transport.ts';
 import { Auth } from './auth.ts';
 import { DemoAuth } from './demo.ts';
-import { LoginView } from './login-view.ts';
+import { LoginView, LOGIN_DISABLED } from './login-view.ts';
 import { Shell, type ShellRoute } from './shell.ts';
 import { RosterView } from './roster-view.ts';
 import { RoutineView } from './routine-view.ts';
@@ -89,11 +89,16 @@ async function main() {
   // before the check. `root` here is guaranteed non-null at every use site.
   const root: HTMLElement = rootEl;
 
-  // ?demo=1 — preview every screen with sample data while real login is
-  // disabled (LOGIN_DISABLED in login-view.ts). DemoAuth answers all API
-  // calls locally, so no session is needed and no request leaves the device.
-  const demoMode = params.get('demo') === '1';
-  const auth = demoMode ? new DemoAuth() : new Auth({ apiBase, deviceId: deviceId('d') });
+  // Demo mode: DemoAuth answers every API call locally with sample data —
+  // no session needed, no request leaves the device, real tenant data
+  // unreachable. Entered explicitly via ?demo=1, and AUTOMATICALLY for any
+  // visitor without a session while login is disabled (LOGIN_DISABLED),
+  // so the plain URL never dead-ends on the disabled-login notice. The
+  // moment LOGIN_DISABLED flips back to false, the automatic path turns
+  // itself off and session-less visitors see the login form again.
+  const realAuth = new Auth({ apiBase, deviceId: deviceId('d') });
+  const demoMode = params.get('demo') === '1' || (LOGIN_DISABLED && !realAuth.isLoggedIn());
+  const auth = demoMode ? new DemoAuth() : realAuth;
 
   // Demo visits share the same localStorage caches as real sessions (the
   // views neither know nor care where their data came from), so purge any

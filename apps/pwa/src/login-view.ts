@@ -17,7 +17,9 @@ const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 // Mirrors OTP_SENDING_ENABLED in services/identity-svc/api/otp-request.ts —
 // keep both in sync. This one skips showing the phone form entirely instead
 // of making a teacher fill it in just to hit the 503 from that flag.
-const LOGIN_DISABLED = true;
+// Exported: while true, app.ts also drops session-less visitors straight
+// into demo mode so every page stays viewable without a login.
+export const LOGIN_DISABLED = true;
 
 export interface LoginViewOptions {
   root: HTMLElement;

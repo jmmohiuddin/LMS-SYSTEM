@@ -24,6 +24,8 @@ import { MoreView } from './more-view.ts';
 import { SikhokView } from './sikhok-view.ts';
 import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
+import { HomeView } from './home-view.ts';
+import { ScriptsView } from './scripts-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -142,6 +144,31 @@ async function main() {
 
     const routes: ShellRoute[] = [
       {
+        path: 'home',
+        labelBn: 'হোম',
+        glyph: '⌂',
+        mount: (container) => {
+          new HomeView({
+            root: container,
+            doc: document,
+            displayName: auth.displayName,
+            primary: [
+              { path: 'attendance', glyph: '✓', titleBn: 'হাজিরা নিন', subtitleBn: 'আজকের শ্রেণিকক্ষ' },
+              { path: 'routine', glyph: '⏲', titleBn: 'আজকের রুটিন', subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
+            ],
+            secondary: [
+              { path: 'roster', glyph: '☰', titleBn: 'শিক্ষার্থী', subtitleBn: 'সেকশন রোস্টার' },
+              { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'CQ · MCQ · ব্যবহারিক' },
+              { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র', subtitleBn: 'ছবি তুলে আপলোড' },
+              { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা শিক্ষক খুঁজুন' },
+              { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস ও রসিদ' },
+              { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'প্রশ্নপত্র ও পাঠ পরিকল্পনা' },
+              { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য' },
+            ],
+          });
+        },
+      },
+      {
         path: 'attendance',
         labelBn: 'হাজিরা',
         glyph: '✓',
@@ -174,6 +201,7 @@ async function main() {
         path: 'marks',
         labelBn: 'নম্বর',
         glyph: '✎',
+        hidden: true,
         mount: (container) => {
           new MarksView({ root: container, doc: document, auth, outbox: engine });
         },
@@ -187,8 +215,10 @@ async function main() {
             root: container,
             doc: document,
             items: [
+              { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'অফলাইন CQ / MCQ / ব্যবহারিক' },
+              { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র আপলোড', subtitleBn: 'হাতে-লেখা উত্তরপত্রের ছবি' },
               { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
-              { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক খুঁজে নির্ধারণ' },
+              { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
               { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'CQ · MCQ · রুব্রিক · পাঠ পরিকল্পনা' },
               { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
             ],
@@ -223,13 +253,20 @@ async function main() {
         hidden: true,
         mount: (container) => { new ShikhoView({ root: container, doc: document, auth }); },
       },
+      {
+        path: 'scripts',
+        labelBn: 'উত্তরপত্র',
+        glyph: '📷',
+        hidden: true,
+        mount: (container) => { new ScriptsView({ root: container, doc: document, auth }); },
+      },
     ];
 
     return new Shell({
       root,
       doc: document,
       routes,
-      defaultPath: 'attendance',
+      defaultPath: 'home',
       displayName: auth.displayName,
       onLogout: () => { void doLogout(); },
     });

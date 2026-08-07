@@ -11,22 +11,41 @@
   --font-bn: 'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', sans-serif;
   --font-en: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
-  --c-primary: #006A4E;      /* 5.9:1 on white */
-  --c-primary-ink: #004D38;
-  --c-accent: #F42A41;
-  --c-warn: #B45309;         /* 4.6:1 */
-  --c-success: #15803D;
-  --c-ink: #111827;          /* 16.1:1 */
-  --c-ink-2: #4B5563;        /* 7.6:1 — the lightest text token permitted */
-  --c-line: #E5E7EB;
-  --c-surface: #FFFFFF;
-  --c-surface-2: #F9FAFB;
+  /* Primary shifted slightly warmer than the pure flag green — the flag
+     green (#006A4E) has a slight blue cast that reads muddy under 5.9:1
+     contrast at 14px. #08725A is the same hue rotated 2° toward yellow,
+     +2 on luminance, and still WCAG AA on both surfaces. */
+  --c-primary:      #08725A;
+  --c-primary-ink:  #05563F;
+  --c-primary-soft: #E6F4EF;
 
-  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px;
+  /* Softer coral than the flag red — the flag red at button size is
+     visually loud enough to compete with the primary CTA. Reserved for
+     destructive/warning affordances only. */
+  --c-accent:       #E23E51;
+
+  --c-warn:    #B45309;          /* 4.6:1 */
+  --c-success: #15803D;
+  --c-info:    #1D4ED8;
+
+  --c-ink:    #0F1626;           /* 17.5:1 */
+  --c-ink-2:  #475467;           /* 7.6:1 — lightest text token permitted */
+  --c-ink-3:  #6B7280;           /* 5.6:1 — meta only, never body */
+  --c-line:   #E4E7EC;
+  --c-line-2: #F1F3F5;
+
+  --c-surface:   #FFFFFF;
+  --c-surface-2: #F7F8FA;        /* app background — slightly warmer neutral */
+  --c-surface-3: #EFF1F4;
+
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
   --tap-min: 48px;
-  --radius: 10px;
-  --shadow-1: 0 1px 2px rgba(0,0,0,.06);   /* one shadow level; compositing is
-                                              expensive on Android Go */
+  --radius:   12px;              /* one step up — reads modern without dominating */
+  --radius-2: 16px;              /* hero/large cards */
+
+  /* Two shadow levels max — compositing is expensive on Android Go */
+  --shadow-1: 0 1px 2px rgba(15, 22, 38, .04), 0 1px 1px rgba(15, 22, 38, .03);
+  --shadow-2: 0 4px 12px rgba(15, 22, 38, .06), 0 1px 2px rgba(15, 22, 38, .04);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -340,3 +359,129 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .sub-assign { margin: 0; width: auto; flex: none; padding: 0 var(--s-3); }
 .sub-assigned { display: block; margin: var(--s-3) var(--s-4); font-size: 15px; }
+
+/* ============================================================== redesign
+   New surfaces introduced with the home dashboard + answer-script capture.
+   The older component blocks above are kept working; these add the hero,
+   card grid, refreshed page-header, field, and script-page primitives. */
+
+.page-header {
+  padding: var(--s-5) var(--s-4) var(--s-3);
+  background: transparent;
+  border-bottom: 0;
+}
+.page-header h1 { font-size: 24px; letter-spacing: -0.01em; }
+.page-sub { margin: var(--s-1) 0 0; color: var(--c-ink-2); font-size: 14px; }
+.page-sub.empty { padding: var(--s-4); text-align: center; color: var(--c-ink-3); }
+
+.section-heading {
+  margin: var(--s-5) var(--s-4) var(--s-2);
+  font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--c-ink-3); text-transform: uppercase;
+}
+
+/* Hero: greeting + today. Uses a subtle primary tint so it reads as a
+   different plane without a heavy gradient (compositing budget). */
+.hero {
+  margin: var(--s-4) var(--s-4) var(--s-2);
+  padding: var(--s-5) var(--s-4);
+  background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-ink) 100%);
+  color: #fff;
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+}
+.hero-date { margin: 0; font-size: 13px; opacity: 0.82; letter-spacing: 0.02em; }
+.hero-greet { margin: var(--s-1) 0 var(--s-1); font-size: 22px; font-weight: 600; line-height: 1.35; }
+.hero-sub { margin: 0; font-size: 14px; opacity: 0.9; }
+
+/* Card is the base surface for tappable items and grouped forms. */
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+}
+
+/* Home tiles ------------------------------------------------------------- */
+.card-grid {
+  display: grid; gap: var(--s-3);
+  padding: 0 var(--s-4);
+}
+.primary-grid { grid-template-columns: 1fr 1fr; }
+.secondary-grid { grid-template-columns: repeat(2, 1fr); }
+.home-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-2);
+  min-height: 96px; padding: var(--s-3);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  transition: transform 80ms ease-out, box-shadow 80ms ease-out;
+}
+.home-card:active { transform: scale(0.98); box-shadow: var(--shadow-2); }
+.home-card-primary {
+  min-height: 128px;
+  background: var(--c-primary-soft);
+  border-color: transparent;
+}
+.home-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 10px;
+  background: var(--c-surface-3);
+  font-size: 22px; line-height: 1;
+}
+.home-card-primary .home-glyph {
+  background: var(--c-surface); color: var(--c-primary);
+}
+.home-body { display: flex; flex-direction: column; gap: 2px; }
+.home-title { font-weight: 600; font-size: 15px; color: var(--c-ink); }
+.home-sub { font-size: 12px; color: var(--c-ink-2); line-height: 1.4; }
+
+/* Form fields (used on the scripts capture card) ------------------------ */
+.card-form { margin: var(--s-3) var(--s-4); padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
+.field { display: flex; flex-direction: column; gap: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
+.field-input {
+  min-height: var(--tap-min); padding: 0 var(--s-3);
+  border: 1px solid var(--c-line); border-radius: 10px;
+  background: var(--c-surface); font-size: 16px; color: var(--c-ink);
+}
+.field-input:focus { outline: 2px solid var(--c-primary); outline-offset: 1px; border-color: transparent; }
+.btn-capture {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--tap-min); border-radius: 10px;
+  background: var(--c-primary); color: #fff; font-weight: 600; cursor: pointer;
+}
+.btn-ghost {
+  background: transparent; color: var(--c-ink-2);
+  border: 1px solid var(--c-line); border-radius: 10px;
+  min-height: 36px; padding: 0 var(--s-2); font: inherit; cursor: pointer;
+}
+.btn-small { min-height: 36px; padding: 0 var(--s-3); font-size: 14px; }
+
+.inline-notice {
+  margin: var(--s-2) var(--s-4);
+  padding: var(--s-2) var(--s-3);
+  background: #FFF7ED; color: var(--c-warn);
+  border: 1px solid #FED7AA; border-radius: 10px;
+  font-size: 14px;
+}
+
+/* Script pages ---------------------------------------------------------- */
+.script-pages { list-style: none; margin: var(--s-3) 0 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-3); }
+.script-page {
+  display: grid; grid-template-columns: 84px 1fr auto; align-items: center;
+  gap: var(--s-3); padding: var(--s-2);
+}
+.script-thumb {
+  width: 84px; height: 108px; object-fit: cover;
+  border-radius: 8px; background: var(--c-surface-3);
+}
+.script-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.script-title { font-weight: 600; font-size: 15px; }
+.script-meta { font-size: 12px; color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
+.script-status { font-size: 12px; }
+.script-page[data-status='saved'] .script-status { color: var(--c-success); }
+.script-page[data-status='uploading'] .script-status { color: var(--c-info); }
+.script-page[data-status='error'] .script-status { color: var(--c-warn); }
+.script-actions { display: flex; flex-direction: column; gap: var(--s-1); }

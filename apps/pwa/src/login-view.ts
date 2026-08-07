@@ -14,6 +14,11 @@ import type { Auth } from './auth.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 
+// Mirrors OTP_SENDING_ENABLED in services/identity-svc/api/otp-request.ts —
+// keep both in sync. This one skips showing the phone form entirely instead
+// of making a teacher fill it in just to hit the 503 from that flag.
+const LOGIN_DISABLED = true;
+
 export interface LoginViewOptions {
   root: HTMLElement;
   doc: Document;
@@ -49,6 +54,16 @@ export class LoginView {
 
     const h1 = d.createElement('h1');
     h1.textContent = 'শিখন';
+
+    if (LOGIN_DISABLED) {
+      const notice = d.createElement('p');
+      notice.className = 'att-sub';
+      notice.textContent = 'লগইন সাময়িকভাবে বন্ধ আছে। পরে আবার চেষ্টা করুন।';
+      wrap.append(h1, notice);
+      root.append(wrap);
+      return;
+    }
+
     const sub = d.createElement('p');
     sub.className = 'att-sub';
     sub.textContent = this.step === 'phone'

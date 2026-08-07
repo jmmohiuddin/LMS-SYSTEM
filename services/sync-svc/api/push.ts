@@ -10,8 +10,8 @@
  * Auth will be upgraded to EdDSA JWT when the identity service ships (Phase 1).
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createDb, assertRlsEnforced } from '../../../services/sync-svc/src/db.ts';
-import { SyncPushHandler } from '../../../services/sync-svc/src/push.ts';
+import { createDb, assertRlsEnforced } from '../src/db.ts';
+import { SyncPushHandler } from '../src/push.ts';
 import type { PushRequest } from '../../../packages/offline/src/types.ts';
 
 /* ── Singletons ─────────────────────────────────────────────────────────── */

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "framework": null,
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "apps/pwa/public",
+  "installCommand": "npm install",
+  "rewrites": [
+    { "source": "/offline", "destination": "/offline.html" }
+  ]
+}

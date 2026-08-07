@@ -180,6 +180,7 @@ export class LoginView {
   private friendlyError(err: unknown): string {
     const code = (err as { code?: string })?.code;
     switch (code) {
+      case 'otp_disabled': return 'লগইন সাময়িকভাবে বন্ধ আছে। পরে আবার চেষ্টা করুন।';
       case 'too_soon': return 'একটু আগে কোড পাঠানো হয়েছে, একটু অপেক্ষা করুন।';
       case 'invalid_code': return 'কোডটি সঠিক নয়।';
       case 'too_many_attempts': return 'অনেকবার চেষ্টা হয়েছে — নতুন কোড চান।';

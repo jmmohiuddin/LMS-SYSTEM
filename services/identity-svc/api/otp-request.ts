@@ -2,10 +2,12 @@
  * POST /api/v1/auth/otp/request
  * Body: { tenantId, phone, purpose }
  *
- * Real SMS sending is out of scope for this pass (no aggregator credentials
- * yet) — the code is logged server-side (vercel logs) and, only when the
- * caller presents SERVICE_API_KEY via X-Debug-Otp, echoed back in the
- * response so the flow is testable end-to-end without an SMS provider.
+ * Currently disabled — see OTP_SENDING_ENABLED below. Real SMS sending was
+ * never wired to a real aggregator (no credentials yet); the code was only
+ * logged server-side (vercel logs) and, when the caller presented
+ * SERVICE_API_KEY via X-Debug-Otp, echoed back in the response for testing.
+ * That plumbing is left in place below the kill switch for when it's
+ * re-enabled.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
@@ -16,6 +18,12 @@ const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 const PURPOSES = new Set(['login', 'enrol_device', 'reset_password', 'verify_phone']);
 const MIN_RESEND_INTERVAL_SECONDS = 45;
 const OTP_TTL_MINUTES = 5;
+
+// Kill switch: flip to `true` and redeploy to resume issuing OTP codes.
+// While `false`, no challenge row is created and nothing is logged — the
+// rest of the auth system (verify/refresh/logout, existing sessions) is
+// untouched, so already-logged-in teachers keep working.
+const OTP_SENDING_ENABLED = false;
 
 interface OtpRequestBody {
   tenantId?: string;
@@ -32,6 +40,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
   if (req.method !== 'POST') {
     json(res, 405, { error: 'method_not_allowed' }, cors);
+    return;
+  }
+
+  if (!OTP_SENDING_ENABLED) {
+    json(res, 503, { error: 'otp_disabled', message: 'OTP login is temporarily unavailable' }, cors);
     return;
   }
 

@@ -115,14 +115,16 @@ guard. Migrations must apply with **zero output** — a warning fails the build.
 |---|---|
 | [`packages/offline`](packages/offline) | **Built and tested** — outbox + sync engine, 46 assertions, zero runtime deps. The store contract runs against both the in-memory reference and the `IndexedDbOutboxStore` that ships. |
 | [`packages/ui-core`](packages/ui-core) | **Built and tested** — attendance state machine, Bangla/Latin numerals, SMS cost model. 36 assertions, zero runtime deps. |
-| [`apps/pwa`](apps/pwa) | **Built and tested** — login (phone + OTP), navigation shell (hash router + tab bar), attendance grid, roster view, routine day/week view, service-worker policy, `?demo=1` preview mode. 27 assertions in jsdom. |
-| [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push` + `GET /sync/pull`, 23 assertions against a real database, including the full DOM→database vertical slice. |
+| [`apps/pwa`](apps/pwa) | **Built and tested** — login (phone + OTP), navigation shell, attendance grid, roster view, routine day/week view, **offline marks entry (নম্বর tab)**, service-worker policy, `?demo=1` preview mode. 27 assertions in jsdom. |
+| [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push` + `GET /sync/pull` (entities incl. `exam_mark` with optimistic concurrency), 23 assertions against a real database, including the full DOM→database vertical slice. |
 | [`services/identity-svc`](services/identity-svc) | **Built and deployed** — OTP request/verify (EdDSA JWT, rotating refresh with reuse detection), logout. OTP issuance currently behind a kill switch — [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md). |
-| [`services/academics-svc`](services/academics-svc) | **Built and deployed** — sections + roster endpoints. |
-| [`services/rms-svc`](services/rms-svc) | **Built and deployed** — greedy-heuristic routine solver (DB exclusion constraints guarantee clash-freedom regardless), teacher day/week routine endpoint. |
+| [`services/academics-svc`](services/academics-svc) | **Built and deployed** — sections, roster, **exams and marks** read endpoints (mark writes ride the offline outbox). |
+| [`services/rms-svc`](services/rms-svc) | **Built and deployed** — greedy-heuristic routine solver, teacher day/week routine endpoint, **substitution finder** (free-period + subject-expertise ranking; DB exclusion constraints guarantee clash-freedom regardless). |
 | [`services/sms-svc`](services/sms-svc) | **Built and deployed** — outbox enqueue + cron-driven dispatch worker; **send is stubbed** pending an aggregator contract. |
-| [`services/finance-svc`](services/finance-svc) | **Built and deployed** — bKash/Nagad/Rocket webhook skeletons behind one dynamic route. |
-| ai-gateway, guardian/principal surfaces, exams & fees | Not started — specified in [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) §3, gap list in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md) |
+| [`services/finance-svc`](services/finance-svc) | **Built and deployed** — MFS webhooks (bKash/Nagad/Rocket), **invoice + receipt reads, payment initiation** (kill-switched pending merchant credentials). |
+| [`services/ai-svc`](services/ai-svc) | **Built and deployed** — SikhokAI (NCTB-compliant CQ/MCQ/rubric/lesson-plan generation) + ShikhoAI (multilingual Socratic tutor) via the Claude API; PII redaction, session audit, NCTB-scoped retrieval. **Disabled until `ANTHROPIC_API_KEY` is set**; RAG lexical-only until the NCTB corpus is ingested. |
+| [`services/ans-svc`](services/ans-svc) | **Built and deployed** — alumni batch pull (`globalPersonId` unified identifiers, consent-gated contact), HMAC-signed outbound webhook dispatcher, inbound enrichment staging. |
+| Guardian/principal UI surfaces, result publication & report cards, invoice generation | Follow-on work — gap list with phasing in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md) |
 
 ```bash
 for d in packages/offline packages/ui-core apps/pwa; do (cd $d && npm install && npm test); done
@@ -166,14 +168,17 @@ plain `SET` — for tenant context.
 **Complete and deployed:** the system blueprint (7 documents); the database layer
 (15 migrations, 88 tables, 103 RLS policies) deployed and verified on Neon; tenant
 provisioning; three SQL test suites; rollback migrations; the offline sync engine; the PWA
-(login, shell, attendance, roster, routine, demo mode); all six service directories compiled
-into 12 Vercel functions; and CI.
+(login, shell, attendance, roster, routine, offline marks entry, demo mode); all eight
+service directories compiled into 9 Vercel functions (exams/marks, fee engine, AI gateway,
+ANS hooks, substitution finder included); and CI.
 
-**Currently disabled by design:** OTP login (two-sided kill switch — re-enable steps in
-[docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)). Use `?demo=1` to preview the UI meanwhile.
+**Currently disabled by design** (kill switches, [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)):
+OTP login (no SMS aggregator), MFS payment initiation (no merchant credentials), the AI
+engines (no `ANTHROPIC_API_KEY` set). Use `?demo=1` to preview the UI meanwhile.
 
-**Not started:** the AI gateway, exams & fees flows, guardian/principal surfaces — gap list
-with phasing in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md).
+**Follow-on work:** result publication & report cards, invoice generation,
+guardian/principal UI surfaces, NCTB corpus ingestion for grounded RAG — gap list with
+phasing in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md).
 
 **Verified totals:** 23 SQL assertions + **109 TypeScript tests** (`node --test`), all green
 against Neon PostgreSQL 18.4 on a from-scratch rebuild.

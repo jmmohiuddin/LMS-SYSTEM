@@ -3,7 +3,7 @@
 Documents 01–06 are the design blueprint. This document is the reconciliation: what is
 actually deployed today, where the implementation deliberately diverges from the blueprint,
 how to operate it, and what remains. Last updated **2026-08-07**; current production commit
-`5b117f4`.
+`de4ee32`.
 
 ---
 
@@ -12,7 +12,7 @@ how to operate it, and what remains. Last updated **2026-08-07**; current produc
 | | |
 |---|---|
 | Production URL | `https://shikhon-lms.vercel.app` |
-| Hosting | Vercel (Hobby plan) — static PWA + 12 Serverless Functions |
+| Hosting | Vercel (Hobby plan) — static PWA + 9 Serverless Functions (12-function cap, 3 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
 | Tests | **109/109 passing** (`node --test`, zero dependencies beyond `pg`/`jose`/`esbuild`) |
@@ -22,7 +22,10 @@ how to operate it, and what remains. Last updated **2026-08-07**; current produc
 
 What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their
 day/week routine (substitutions included), pick a section and see its roster, take
-attendance fully offline with queued sync, and keep working through network loss.
+attendance fully offline with queued sync, enter exam marks component-wise fully offline
+(the নম্বর tab), and keep working through network loss. Coordinators can additionally run
+the routine solver and the substitution finder over the API; guardians can read their
+wards' invoices and receipts.
 
 ---
 
@@ -49,28 +52,29 @@ Everything in **db/** is the blueprint exactly: the migrations in [`db/migration
 
 ---
 
-## 3. Deployed API surface (the 12 functions)
+## 3. Deployed API surface (9 functions, 3 spare)
 
 Built by [`scripts/build.mjs`](../scripts/build.mjs): each entry is esbuild-bundled (whole
 `services/` + `packages/` graph inlined, only `pg` external) into `api/`, which Vercel's
 file-based routing serves. **The Hobby plan hard-caps a deployment at 12 Serverless
-Functions** — this table is at that cap; adding a 13th endpoint requires merging routes
-(as was done for the MFS webhooks) or upgrading the plan.
+Functions**; each service is therefore **one dynamic-route function** (an `index.ts`
+dispatcher routing to unchanged per-endpoint handler files), leaving 3 slots of headroom.
+Two routing quirks learned in production: a multi-segment `[...path]` catch-all does not
+match on prebuilt functions (auth is a plain `auth.js` + a `vercel.json` rewrite passing
+the subpath as `?path=`), and `build.mjs` clears `api/` before writing so removed entries
+can never linger as extra functions.
 
-| Route | Source | Auth | Notes |
+| Function | Routes | Auth | Notes |
 |---|---|---|---|
-| `POST /api/v1/auth/otp/request` | `services/identity-svc/api/otp-request.ts` | public | **503 `otp_disabled` while the kill switch is on** (§5) |
-| `POST /api/v1/auth/otp/verify` | `services/identity-svc/api/otp-verify.ts` | public | Issues EdDSA access (15 min) + rotating refresh (30 d) |
-| `POST /api/v1/auth/refresh` | `services/identity-svc/api/refresh.ts` | refresh token | Rotation with reuse detection |
-| `POST /api/v1/auth/logout` | `services/identity-svc/api/logout.ts` | refresh token | Best-effort revoke |
-| `POST /api/v1/sync/push` | `services/sync-svc/api/push.ts` | JWT | Outbox op batches; idempotent on `opId`; per-op applied/duplicate/conflict/rejected results (03 §1.1) |
-| `GET /api/v1/sync/pull` | `services/sync-svc/api/pull.ts` | JWT | Cursor-based delta pull (03 §1.2) |
-| `GET /api/v1/academics/sections` | `services/academics-svc/api/sections.ts` | JWT | Section picker feed |
-| `GET /api/v1/academics/roster` | `services/academics-svc/api/roster.ts` | JWT | Roster by `sectionId` |
-| `GET /api/v1/rms/routine` | `services/rms-svc/api/routine.ts` | JWT | Teacher day/week view; wraps `app.teacher_day()`, substitutions merged in |
-| `POST /api/v1/rms/solve` | `services/rms-svc/api/solve.ts` | JWT (coordinator) | Routine generation (§7) |
-| `GET/POST /api/v1/sms/dispatch` | `services/sms-svc/api/dispatch.ts` | `CRON_SECRET` | Outbox drain; **send is a stub** — no aggregator credentials yet. Cron: daily `0 18 * * *` UTC = 00:00 BST (Hobby allows only daily crons) |
-| `POST /api/v1/finance/webhooks/{bkash,nagad,rocket}` | `services/finance-svc/api/webhooks/[provider].ts` | webhook signature | One dynamic-route function for all three providers; unknown provider → 404. Shared logic in `services/finance-svc/src/webhook.ts` per 03 §2.4 |
+| `auth.js` | `POST /api/v1/auth/{otp/request, otp/verify, refresh, logout}` | public / refresh token | OTP request **503 `otp_disabled` while the kill switch is on** (§5); verify issues EdDSA access (15 min) + rotating refresh (30 d) with reuse detection |
+| `sync/[action].js` | `POST /api/v1/sync/push`, `GET /api/v1/sync/pull` | JWT | Outbox op batches, idempotent on `opId`; entities: `attendance_session`, **`exam_mark`** (component marks with optimistic concurrency), `class_delivery_log`; cursor-based delta pull |
+| `academics/[resource].js` | `GET .../sections`, `GET .../roster`, `GET .../exams`, `GET .../marks` | JWT (staff) | `exams` lists exam-subjects + component maxima per section; `marks` returns roster⋈existing marks + `rowVersion` for the entry screen. Mark **writes** go through sync/push, offline-first |
+| `rms/[action].js` | `GET .../routine`, `POST .../solve`, `POST .../substitute` | JWT / coordinator roles | `substitute`: free-period + subject-expertise candidate ranking per 02 §5 (find mode) and `routine_substitutions` insert (assign mode); the `check_substitute_free` DB trigger stays the hard guarantee |
+| `sms/dispatch.js` | `GET/POST /api/v1/sms/dispatch` | `CRON_SECRET` / `SERVICE_API_KEY` | Outbox drain; **send is a stub** — no aggregator credentials. Cron: daily `0 18 * * *` UTC = 00:00 BST |
+| `finance/webhooks/[provider].js` | `POST .../webhooks/{bkash,nagad,rocket}` | webhook signature | Shared processor per 03 §2.4; unknown provider → 404 |
+| `finance/[resource].js` | `GET .../invoices`, `POST .../pay`, `GET .../receipts` | JWT (RLS-scoped: guardians see own wards) | Invoices + lines, money as decimal strings; digital receipts JSON; **`pay` is kill-switched → 503 `mfs_disabled`** pending real merchant credentials (§5) |
+| `ai/[engine].js` | `POST /api/v1/ai/sikhok`, `POST /api/v1/ai/shikho` | JWT (sikhok: staff) | SikhokAI (CQ/MCQ/rubric/lesson-plan, Claude Opus) + ShikhoAI (Socratic tutor, Claude Haiku) via the Anthropic SDK. **503 `ai_disabled` until `ANTHROPIC_API_KEY` is set** (§5). NCTB-scope-bounded prompts, PII redaction before egress, `ai_sessions`/`ai_turns` audit. RAG runs lexical-only until the NCTB corpus is ingested (responses carry `grounded: false`) |
+| `ans/[action].js` | `GET /api/v1/ans/students`, `POST .../dispatch`, `POST .../inbound` | `SERVICE_API_KEY` (+`CRON_SECRET` for dispatch) | Batch pull with `globalPersonId` merge keys and consent-gated contact fields; HMAC-SHA256-signed outbound webhook dispatcher over `alumni_export_logs` (backoff, dead-letter, stable `delivery_id`); inbound staged into `ans_inbound_events`, applied only after review |
 
 Conventions that differ from 03: base URL is `https://shikhon-lms.vercel.app/api/v1` (not
 `api.shikhon.bd/v1`), and errors are plain `{ error, message }` JSON rather than RFC 9457
@@ -93,6 +97,7 @@ implemented as specified.
 | Attendance | `src/attendance-view.ts` | The 30-second grid of 04 §4.1; writes go to the outbox, never await the network |
 | Roster | `src/roster-view.ts` | Section picker + list; localStorage cache with offline banner; feeds the attendance grid its real roster |
 | Routine | `src/routine-view.ts` | Day/week toggle; substitution and attendance-taken chips; localStorage cache |
+| Marks entry | `src/marks-view.ts` | নম্বর tab: exam-subject picker → component-wise entry (CQ/MCQ/practical/CA), absent toggle, offline cache; each changed row becomes one `exam_mark` outbox op with `rowVersion` optimistic concurrency; published/locked exams render read-only |
 | Sync | `packages/offline/` | Outbox engine per 01 §2.3: UUIDv7-keyed ops, monotonic `seq`, exponential backoff with jitter, conflict surfacing |
 | Service worker | `src/sw.ts` + `src/sw-router.ts` | Route policy of 01 §2.4 (network-only for auth/sync, SWR for reference data, cache-first for hashed assets, app-shell fallback for navigations) |
 | Data saver | (policy module, tested) | 2G/`saveData` drops avatars, lengthens sync interval; WASM cropper skipped on ≤2 GB devices — 04 §6 |
@@ -107,11 +112,18 @@ npx tsc --noEmit && npx tsc --noEmit -p apps/pwa/tsconfig.json && npx tsc --noEm
 
 ---
 
-## 5. Login is currently disabled — the kill switch
+## 5. Kill switches (what is deliberately off, and how to turn it on)
 
-Login was intentionally disabled (2026-08-07) while SMS sending is unresolved. It is a
-**two-sided, code-level switch**; the two constants are cross-referenced in comments and
-must be flipped together:
+Three features are dark behind explicit switches, all following the same pattern: fail
+closed with a specific error code, before any side effect.
+
+| Feature | Where | Off because | To enable |
+|---|---|---|---|
+| OTP login | `OTP_SENDING_ENABLED` in `services/identity-svc/api/otp-request.ts` + `LOGIN_DISABLED` in `apps/pwa/src/login-view.ts` (two-sided, flip together) | No SMS aggregator | Flip both constants, rebuild, redeploy |
+| MFS payment initiation | `MFS_PAYMENTS_ENABLED` in `services/finance-svc/api/index.ts` | No live merchant credentials | Wire gateway calls + credentials, flip the constant |
+| AI engines | Presence of `ANTHROPIC_API_KEY` env var (`services/ai-svc/api/index.ts`) | No API key configured | Set the key in Vercel env, redeploy |
+
+The login switch specifically (disabled 2026-08-07):
 
 | Side | File | Constant | Effect while off |
 |---|---|---|---|
@@ -180,7 +192,9 @@ access tokens.
 
 **Env vars (Vercel, Production):** `DATABASE_URL` (must be `shikhon_runtime` on the
 **pooled** endpoint — never the owner role; see 06 §2), `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`,
-`CRON_SECRET`, `SERVICE_API_KEY`.
+`CRON_SECRET`, `SERVICE_API_KEY`. Optional feature enables: `ANTHROPIC_API_KEY` (turns the
+AI gateway on; `AI_MODEL_SIKHOK`/`AI_MODEL_SHIKHO` override the models), `ANS_SIGNING_SECRET`
+(outbound ANS webhook signing until KMS-managed per-endpoint keys exist).
 
 **Cron:** one Hobby-safe daily job in `vercel.json` — `/api/v1/sms/dispatch` at 00:00 BST.
 The three DB maintenance functions of 06 §5 (`app.maintain_partitions()` etc.) still need an
@@ -214,18 +228,20 @@ Carried forward from 06 §6, updated:
 
 ## 10. Gap list → what's next
 
-Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md):
+Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The
+2026-08-07 feature build closed the API-surface gaps for exams/marks, fees, AI, ANS and
+substitution — what remains is mostly credentials, content, and follow-on UI:
 
 | Gap | Blueprint ref | Phase |
 |---|---|---|
-| Real SMS aggregator (send + DLR webhook); then re-enable login | 03 §3 | 1 |
+| Real SMS aggregator credentials (send + DLR webhook); then re-enable login | 03 §3 | 1 |
 | Guardian absence-notification flow end-to-end (enqueue exists; send is stubbed) | 01 §3 events | 1 |
 | Attendance correction flow + absence-SMS grace window | 01 §2.6 | 1 |
-| MFS gateways with real merchant credentials + signature verification per provider | 03 §2 | 2 |
-| Exam marks entry, GPA, report cards | 05 Phase 2 | 2 |
-| Fee invoices, ledger, receipts | 05 Phase 2 | 2 |
-| CP-SAT solver upgrade; coordinator routine-editing UI | 02 §3 | 3 |
-| SikhokAI / ShikhoAI + RAG over NCTB corpus (pgvector is installed and indexed, unused) | 01 §6 | 3 |
-| ANS alumni integration | 03 §4 | 4 |
+| MFS merchant credentials + per-provider initiation calls + signature verification (endpoints + webhooks exist; `pay` kill-switched) | 03 §2 | 2 |
+| Result publication flow: `compute_subject_grade`/`compute_exam_gpa` invocation UI, report cards (marks entry ships now) | 05 Phase 2 | 2 |
+| Invoice *generation* (fee structures → invoices); reads + receipts exist | 05 Phase 2 | 2 |
+| CP-SAT solver upgrade; coordinator routine-editing UI (substitution finder ships now) | 02 §3 | 3 |
+| `ANTHROPIC_API_KEY` + NCTB corpus ingestion + embedding service → upgrades AI from disabled/lexical to grounded hybrid RAG (gateway ships now) | 01 §6 | 3 |
+| ANS: register real endpoints (`ans_endpoints`), KMS for per-endpoint signing secrets (batch pull, dispatcher, inbound staging ship now) | 03 §4 | 4 |
 | Answer-script photo pipeline | 01 §2.7 | 2–3 |
-| Function-count headroom: upgrade plan or merge routes before adding endpoints | — | any |
+| AI per-tenant token budgets (`ai_budget_periods` enforcement) and answer-leak detector (needs embeddings) | 01 §6.3 | 3 |

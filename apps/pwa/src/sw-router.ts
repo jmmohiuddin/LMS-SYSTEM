@@ -87,13 +87,17 @@ export function route(request: { url: string; method: string; mode?: string }): 
  * determines time-to-first-paint on a cold 2G start, and the JS budget is
  * 180 KB gzipped on the critical path.
  */
+// Every entry here MUST exist in apps/pwa/public/ — a 404 during install
+// used to fail cache.addAll and silently leave the app with no service
+// worker at all (the font/sprite files this once listed were never built).
+// Bangla text renders from the device's system Noto Sans Bengali instead.
 export const PRECACHE: readonly string[] = [
   '/',
   '/offline',
   '/app.css',
   '/app.js',
-  '/fonts/noto-bengali-subset.woff2',
-  '/icons/sprite.svg',
+  '/icons/icon.svg',
+  '/manifest.webmanifest',
 ];
 
 /** Caches from older deploys, to be deleted on activate. */

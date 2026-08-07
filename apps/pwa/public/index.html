@@ -6,11 +6,14 @@
   <meta name="theme-color" content="#006A4E">
   <title>শিখন — হাজিরা</title>
 
-  <!-- The Bangla subset decides perceived load time on 2G; preload it. -->
-  <link rel="preload" as="font" type="font/woff2" crossorigin
-        href="/fonts/noto-bengali-subset.woff2">
   <link rel="stylesheet" href="/app.css">
-  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <!-- use-credentials: on SSO-protected Vercel preview URLs the manifest
+       fetch must carry the auth cookie or it 302s into vercel.com/sso-api
+       and dies on CORS. Production (shikhon-lms.vercel.app) is public and
+       unaffected either way. -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
 </head>
 <body>
   <!-- The shell renders before any data arrives, so a cold offline start

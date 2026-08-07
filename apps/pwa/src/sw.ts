@@ -20,7 +20,18 @@ const OFFLINE_URL = '/offline';
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_SHELL)
-      .then((c) => c.addAll([...PRECACHE]))
+      // Per-entry, not addAll: one missing asset must degrade that one
+      // asset, never veto the whole install — an uninstalled SW means no
+      // offline support at all, which is far worse than one cache miss.
+      .then((c) =>
+        Promise.allSettled(
+          [...PRECACHE].map((url) =>
+            c.add(url).catch((err) => {
+              console.warn(`[sw] precache skipped ${url}:`, err);
+            }),
+          ),
+        ),
+      )
       .then(() => self.skipWaiting()),
   );
 });

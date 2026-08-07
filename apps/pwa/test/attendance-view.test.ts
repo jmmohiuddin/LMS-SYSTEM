@@ -287,7 +287,11 @@ describe('service-worker routing policy', () => {
   test('precache stays small — it decides cold first paint on 2G', () => {
     assert.ok(PRECACHE.length <= 8, `precache has ${PRECACHE.length} entries`);
     assert.ok(PRECACHE.includes('/offline'));
-    assert.ok(PRECACHE.some((p) => p.endsWith('.woff2')), 'the Bangla subset must be precached');
+    // Every precache entry must be a file that actually ships — a 404 here
+    // used to abort SW install entirely (the once-listed .woff2 subset was
+    // never built; Bangla renders from the device's system font instead).
+    assert.ok(!PRECACHE.some((p) => p.includes('woff2')), 'no phantom font files in precache');
+    assert.ok(PRECACHE.includes('/icons/icon.svg'), 'the app icon is precached');
   });
 
   test('old deploy caches are pruned, foreign caches are left alone', () => {

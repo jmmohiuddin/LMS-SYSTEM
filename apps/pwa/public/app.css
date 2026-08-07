@@ -2,15 +2,10 @@
    Implements the tokens and Bangla typography rules in
    docs/04-UIUX-ACCESSIBILITY.md §2–3. Reference viewport: 360x640. */
 
-@font-face {
-  font-family: 'Noto Sans Bengali';
-  src: url('/fonts/noto-bengali-subset.woff2') format('woff2');
-  /* ZWNJ/ZWJ (200C/200D) are essential: without them Bangla conjuncts
-     (যুক্তাক্ষর) break apart into the wrong letters. */
-  unicode-range: U+0980-09FF, U+200C-200D, U+0964-0965;
-  font-display: swap;   /* never block first paint on a font */
-  font-weight: 400 600;
-}
+/* No self-hosted font: the subset build of docs/04 §2 hasn't been produced
+   yet, and shipping a 404 @font-face broke the SW precache. The stack below
+   uses the device's Noto Sans Bengali — present on Android system-wide —
+   which is the actual rendering path on the target hardware anyway. */
 
 :root {
   --font-bn: 'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', sans-serif;

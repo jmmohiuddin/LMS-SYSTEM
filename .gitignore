@@ -13,4 +13,15 @@ coverage/
 apps/pwa/public/app.js
 apps/pwa/public/sw.js
 api/v1/sync/push.js
+api/v1/sync/pull.js
+api/v1/auth/otp/request.js
+api/v1/auth/otp/verify.js
+api/v1/auth/refresh.js
+api/v1/auth/logout.js
+api/v1/academics/roster.js
+api/v1/sms/dispatch.js
+api/v1/rms/solve.js
+api/v1/finance/webhooks/bkash.js
+api/v1/finance/webhooks/nagad.js
+api/v1/finance/webhooks/rocket.js
 .vercel

@@ -6,5 +6,8 @@
   "installCommand": "npm install",
   "rewrites": [
     { "source": "/offline", "destination": "/offline.html" }
+  ],
+  "crons": [
+    { "path": "/api/v1/sms/dispatch", "schedule": "*/10 * * * *" }
   ]
 }

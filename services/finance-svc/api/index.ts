@@ -23,7 +23,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
-import { authenticate } from '../../../packages/server-core/src/auth.ts';
+import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -174,10 +174,140 @@ async function receipts(req: IncomingMessage, res: ServerResponse, cors: Record<
   }, cors);
 }
 
+/* ------------------------------------------------------------ generate */
+
+interface GenerateBody { billingPeriod?: string }
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const BILLING_ROLES = ['principal', 'school_owner', 'accountant'];
+
+/**
+ * POST /api/v1/finance/generate — { billingPeriod: 'YYYY-MM' }
+ *
+ * Monthly invoice run: one invoice per actively-enrolled student, lines from
+ * the monthly fee_structures matching the student's class (class-specific
+ * beats class-wide), best applicable fee_waiver applied per line. Idempotent
+ * per (student, billingPeriod): students already invoiced for the period are
+ * skipped, so re-running after a partial failure only fills the gap. One
+ * transaction; invoice_no is INV-<period>-<seq> within the tenant.
+ */
+async function generate(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): Promise<void> {
+  if (req.method !== 'POST') {
+    json(res, 405, { error: 'method_not_allowed' }, cors);
+    return;
+  }
+  const claims = await authenticate(req);
+  requireRole(claims, BILLING_ROLES);
+  const body = await readJson<GenerateBody>(req);
+  const period = body.billingPeriod ?? '';
+  if (!PERIOD_RE.test(period)) {
+    throw new HttpError(400, 'billingPeriod must be YYYY-MM', 'invalid_billing_period');
+  }
+  const periodStart = `${period}-01`;
+
+  const db = await sharedDb();
+  const result = await db.withTenant(
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+    async (client) => {
+      const yearRes = await client.query<{ id: string }>(
+        `SELECT id FROM academic_years
+          WHERE $1::date BETWEEN starts_on AND ends_on
+          ORDER BY starts_on DESC LIMIT 1`,
+        [periodStart],
+      );
+      const yearId = yearRes.rows[0]?.id;
+      if (!yearId) throw new HttpError(422, 'no academic year covers that billing period', 'no_academic_year');
+
+      const lines = await client.query<{ invoice_id: string }>(
+        `WITH eligible AS (
+           SELECT en.student_id, en.section_id, s.class_id
+             FROM enrolments en
+             JOIN sections s ON s.id = en.section_id
+            WHERE en.academic_year_id = $1
+              AND en.status = 'active'
+              AND NOT EXISTS (SELECT 1 FROM invoices i
+                               WHERE i.student_id = en.student_id
+                                 AND i.billing_period = $2)
+         ),
+         fee_lines AS (
+           -- class-specific structure wins over the class-wide (NULL) one
+           SELECT DISTINCT ON (e.student_id, fs.fee_head_id)
+                  e.student_id, e.section_id, fs.fee_head_id, fh.name_bn,
+                  fs.amount, fs.due_day_of_month
+             FROM eligible e
+             JOIN fee_structures fs
+               ON fs.academic_year_id = $1
+              AND (fs.class_id = e.class_id OR fs.class_id IS NULL)
+              AND fs.quota_category IS NULL
+             JOIN fee_heads fh
+               ON fh.id = fs.fee_head_id AND fh.is_active AND fh.frequency = 'monthly'
+            ORDER BY e.student_id, fs.fee_head_id, fs.class_id NULLS LAST
+         ),
+         waived AS (
+           SELECT fl.*, LEAST(fl.amount, COALESCE(w.best, 0)) AS waiver_amount
+             FROM fee_lines fl
+             LEFT JOIN LATERAL (
+               SELECT MAX(LEAST(fl.amount,
+                                COALESCE(fw.flat_off, 0)
+                                + fl.amount * COALESCE(fw.percent_off, 0) / 100)) AS best
+                 FROM fee_waivers fw
+                WHERE fw.student_id = fl.student_id
+                  AND fw.academic_year_id = $1
+                  AND (fw.fee_head_id = fl.fee_head_id OR fw.fee_head_id IS NULL)
+                  AND fw.valid_from <= $3::date
+                  AND (fw.valid_to IS NULL OR fw.valid_to >= $3::date)
+             ) w ON true
+         ),
+         agg AS (
+           SELECT student_id,
+                  MIN(section_id::text)::uuid AS section_id,
+                  SUM(amount) AS subtotal,
+                  SUM(waiver_amount) AS waiver_total,
+                  MIN(COALESCE(due_day_of_month, 10)) AS due_day
+             FROM waived
+            GROUP BY student_id
+         ),
+         numbered AS (
+           SELECT a.*,
+                  row_number() OVER (ORDER BY a.student_id) AS rn,
+                  (SELECT count(*) FROM invoices i WHERE i.billing_period = $2) AS base
+             FROM agg a
+         ),
+         new_inv AS (
+           INSERT INTO invoices
+             (tenant_id, invoice_no, student_id, academic_year_id, section_id,
+              billing_period, issued_on, due_on, subtotal, waiver_total,
+              total_amount, status)
+           SELECT app.current_tenant(),
+                  'INV-' || $2 || '-' || lpad((n.base + n.rn)::text, 5, '0'),
+                  n.student_id, $1, n.section_id, $2,
+                  CURRENT_DATE,
+                  $3::date + (n.due_day - 1),
+                  n.subtotal, n.waiver_total, n.subtotal - n.waiver_total, 'issued'
+             FROM numbered n
+           RETURNING id, student_id
+         )
+         INSERT INTO invoice_lines
+           (tenant_id, invoice_id, fee_head_id, description_bn, amount, waiver_amount)
+         SELECT app.current_tenant(), ni.id, w.fee_head_id, w.name_bn, w.amount, w.waiver_amount
+           FROM waived w
+           JOIN new_inv ni ON ni.student_id = w.student_id
+         RETURNING invoice_id`,
+        [yearId, period, periodStart],
+      );
+
+      const invoiceCount = new Set(lines.rows.map((r) => r.invoice_id)).size;
+      return { invoicesCreated: invoiceCount, linesCreated: lines.rowCount ?? 0 };
+    },
+  );
+
+  json(res, 200, { ok: true, billingPeriod: period, ...result }, cors);
+}
+
 const ROUTES: Record<string, (req: IncomingMessage, res: ServerResponse, cors: Record<string, string>) => Promise<void>> = {
   invoices,
   pay,
   receipts,
+  generate,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -22,4 +22,5 @@ api/v1/finance/webhooks/\[provider\].js
 api/v1/finance/\[resource\].js
 api/v1/ai/\[engine\].js
 api/v1/ans/\[action\].js
+api/v1/ops/maintenance.js
 .vercel

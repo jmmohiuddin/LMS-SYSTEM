@@ -9,10 +9,11 @@ import sections from './sections.ts';
 import roster from './roster.ts';
 import exams from './exams.ts';
 import marks from './marks.ts';
+import publish from './publish.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-const ROUTES: Record<string, Handler> = { sections, roster, exams, marks };
+const ROUTES: Record<string, Handler> = { sections, roster, exams, marks, publish };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://internal').pathname;

@@ -9,6 +9,7 @@
     { "source": "/api/v1/auth/:path*", "destination": "/api/v1/auth?path=:path*" }
   ],
   "crons": [
-    { "path": "/api/v1/sms/dispatch", "schedule": "0 18 * * *" }
+    { "path": "/api/v1/sms/dispatch", "schedule": "0 18 * * *" },
+    { "path": "/api/v1/ops/maintenance", "schedule": "0 19 * * *" }
   ]
 }

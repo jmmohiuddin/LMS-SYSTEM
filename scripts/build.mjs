@@ -63,6 +63,7 @@ const API_ENTRIES = [
   ['services/finance-svc/api/index.ts', 'api/v1/finance/[resource].js'],
   ['services/ai-svc/api/index.ts', 'api/v1/ai/[engine].js'],
   ['services/ans-svc/api/index.ts', 'api/v1/ans/[action].js'],
+  ['services/ops-svc/api/maintenance.ts', 'api/v1/ops/maintenance.js'],
 ];
 
 // The api/ tree is fully generated. Clear it first so entries removed from

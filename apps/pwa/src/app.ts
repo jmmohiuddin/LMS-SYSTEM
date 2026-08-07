@@ -13,6 +13,7 @@ import { SyncEngine } from '../../../packages/offline/src/sync-engine.ts';
 import { AttendanceView } from './attendance-view.ts';
 import { FetchTransport } from './transport.ts';
 import { Auth } from './auth.ts';
+import { DemoAuth } from './demo.ts';
 import { LoginView } from './login-view.ts';
 import { Shell, type ShellRoute } from './shell.ts';
 import { RosterView } from './roster-view.ts';
@@ -82,7 +83,33 @@ async function main() {
   // before the check. `root` here is guaranteed non-null at every use site.
   const root: HTMLElement = rootEl;
 
-  const auth = new Auth({ apiBase, deviceId: deviceId('d') });
+  // ?demo=1 — preview every screen with sample data while real login is
+  // disabled (LOGIN_DISABLED in login-view.ts). DemoAuth answers all API
+  // calls locally, so no session is needed and no request leaves the device.
+  const demoMode = params.get('demo') === '1';
+  const auth = demoMode ? new DemoAuth() : new Auth({ apiBase, deviceId: deviceId('d') });
+
+  // Demo visits share the same localStorage caches as real sessions (the
+  // views neither know nor care where their data came from), so purge any
+  // demo leftovers on a normal boot — a later real login must never see
+  // sample sections or students.
+  if (!demoMode) {
+    try {
+      if (localStorage.getItem('shikhon_last_section')?.startsWith('demo-')) {
+        localStorage.removeItem('shikhon_last_section');
+        localStorage.removeItem('shikhon_last_roster');
+      }
+      const sections = JSON.parse(localStorage.getItem('shikhon_sections_cache') ?? 'null') as { id?: string }[] | null;
+      if (Array.isArray(sections) && sections[0]?.id?.startsWith('demo-')) {
+        localStorage.removeItem('shikhon_sections_cache');
+      }
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('shikhon_roster_cache_demo-')) localStorage.removeItem(k);
+      }
+    } catch {
+      // cache hygiene only — never block boot on it
+    }
+  }
 
   const idb       = await openDb(indexedDB);
   const store     = new IndexedDbOutboxStore(idb);

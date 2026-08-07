@@ -23,7 +23,5 @@ api/v1/academics/sections.js
 api/v1/sms/dispatch.js
 api/v1/rms/solve.js
 api/v1/rms/routine.js
-api/v1/finance/webhooks/bkash.js
-api/v1/finance/webhooks/nagad.js
-api/v1/finance/webhooks/rocket.js
+api/v1/finance/webhooks/\[provider\].js
 .vercel

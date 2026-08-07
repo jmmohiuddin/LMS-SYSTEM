@@ -56,9 +56,11 @@ const API_ENTRIES = [
   ['services/sms-svc/api/dispatch.ts', 'api/v1/sms/dispatch.js'],
   ['services/rms-svc/api/solve.ts', 'api/v1/rms/solve.js'],
   ['services/rms-svc/api/routine.ts', 'api/v1/rms/routine.js'],
-  ['services/finance-svc/api/webhooks/bkash.ts', 'api/v1/finance/webhooks/bkash.js'],
-  ['services/finance-svc/api/webhooks/nagad.ts', 'api/v1/finance/webhooks/nagad.js'],
-  ['services/finance-svc/api/webhooks/rocket.ts', 'api/v1/finance/webhooks/rocket.js'],
+  // bkash/nagad/rocket used to be three separate entries; merged into one
+  // dynamic-route function — the Hobby plan caps a deployment at 12
+  // Serverless Functions and this repo was at 14. See the file banner in
+  // [provider].ts for the full rationale.
+  ['services/finance-svc/api/webhooks/[provider].ts', 'api/v1/finance/webhooks/[provider].js'],
 ];
 
 for (const [entry, outfile] of API_ENTRIES) {

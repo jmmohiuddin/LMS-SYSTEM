@@ -3,7 +3,7 @@
 Documents 01–06 are the design blueprint. This document is the reconciliation: what is
 actually deployed today, where the implementation deliberately diverges from the blueprint,
 how to operate it, and what remains. Last updated **2026-08-07**; current production commit
-`80f352e`.
+`5fbcf23`.
 
 ---
 
@@ -99,6 +99,11 @@ implemented as specified.
 | Roster | `src/roster-view.ts` | Section picker + list; localStorage cache with offline banner; feeds the attendance grid its real roster |
 | Routine | `src/routine-view.ts` | Day/week toggle; substitution and attendance-taken chips; localStorage cache |
 | Marks entry | `src/marks-view.ts` | নম্বর tab: exam-subject picker → component-wise entry (CQ/MCQ/practical/CA), absent toggle, offline cache; each changed row becomes one `exam_mark` outbox op with `rowVersion` optimistic concurrency; published/locked exams render read-only |
+| More menu | `src/more-view.ts` | আরও tab — the five-tab bar stays fixed; additional feature pages are hidden-but-routable (`ShellRoute.hidden`) behind this menu and deep-linkable by hash |
+| Fees | `src/fees-view.ts` | Invoice list (status/balance, Bangla-numeral taka), expandable lines with waivers, lazily-fetched receipts; visibility follows RLS `invoice_scope` |
+| Substitution finder | `src/substitute-view.ts` | Date → own teaching slots → ranked free/subject-matched candidates → one-tap assign; `substitute_conflict` re-runs the search; 403 surfaced plainly for non-coordinators |
+| SikhokAI | `src/sikhok-view.ts` | CQ/MCQ/rubric/lesson-plan form over `/ai/sikhok`; friendly `ai_disabled` state; ungrounded output carries a verify-before-use notice |
+| ShikhoAI | `src/shikho-view.ts` | Socratic tutor chat over `/ai/shikho` (Bangla/English/Banglish), class-level selector, `ai_disabled` banner |
 | Sync | `packages/offline/` | Outbox engine per 01 §2.3: UUIDv7-keyed ops, monotonic `seq`, exponential backoff with jitter, conflict surfacing |
 | Service worker | `src/sw.ts` + `src/sw-router.ts` | Route policy of 01 §2.4 (network-only for auth/sync, SWR for reference data, cache-first for hashed assets, app-shell fallback for navigations) |
 | Data saver | (policy module, tested) | 2G/`saveData` drops avatars, lengthens sync interval; WASM cropper skipped on ≤2 GB devices — 04 §6 |

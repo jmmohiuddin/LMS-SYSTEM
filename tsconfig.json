@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "exclude": [
+    "node_modules",
+    "apps/pwa/public",
+    "apps/pwa/test",
+    "packages/offline/test",
+    "packages/ui-core/test",
+    "services/sync-svc/test"
+  ]
+}

@@ -3,7 +3,7 @@
 Documents 01–06 are the design blueprint. This document is the reconciliation: what is
 actually deployed today, where the implementation deliberately diverges from the blueprint,
 how to operate it, and what remains. Last updated **2026-08-07**; current production commit
-`de4ee32`.
+`80f352e`.
 
 ---
 
@@ -12,7 +12,7 @@ how to operate it, and what remains. Last updated **2026-08-07**; current produc
 | | |
 |---|---|
 | Production URL | `https://shikhon-lms.vercel.app` |
-| Hosting | Vercel (Hobby plan) — static PWA + 9 Serverless Functions (12-function cap, 3 spare) |
+| Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
 | Tests | **109/109 passing** (`node --test`, zero dependencies beyond `pg`/`jose`/`esbuild`) |
@@ -52,7 +52,7 @@ Everything in **db/** is the blueprint exactly: the migrations in [`db/migration
 
 ---
 
-## 3. Deployed API surface (9 functions, 3 spare)
+## 3. Deployed API surface (10 functions, 2 spare)
 
 Built by [`scripts/build.mjs`](../scripts/build.mjs): each entry is esbuild-bundled (whole
 `services/` + `packages/` graph inlined, only `pg` external) into `api/`, which Vercel's
@@ -68,13 +68,14 @@ can never linger as extra functions.
 |---|---|---|---|
 | `auth.js` | `POST /api/v1/auth/{otp/request, otp/verify, refresh, logout}` | public / refresh token | OTP request **503 `otp_disabled` while the kill switch is on** (§5); verify issues EdDSA access (15 min) + rotating refresh (30 d) with reuse detection |
 | `sync/[action].js` | `POST /api/v1/sync/push`, `GET /api/v1/sync/pull` | JWT | Outbox op batches, idempotent on `opId`; entities: `attendance_session`, **`exam_mark`** (component marks with optimistic concurrency), `class_delivery_log`; cursor-based delta pull |
-| `academics/[resource].js` | `GET .../sections`, `GET .../roster`, `GET .../exams`, `GET .../marks` | JWT (staff) | `exams` lists exam-subjects + component maxima per section; `marks` returns roster⋈existing marks + `rowVersion` for the entry screen. Mark **writes** go through sync/push, offline-first |
+| `academics/[resource].js` | `GET .../sections`, `GET .../roster`, `GET .../exams`, `GET .../marks`, `POST .../publish` | JWT (staff; publish: principal-level) | `exams` lists exam-subjects + component maxima per section; `marks` returns roster⋈existing marks + `rowVersion`. Mark **writes** go through sync/push, offline-first. `publish` runs the full result flow in one transaction: `compute_subject_grade` per mark → `compute_exam_gpa` → `exam_results` upsert → section ranks → marking locked + exam published (immutable after) |
 | `rms/[action].js` | `GET .../routine`, `POST .../solve`, `POST .../substitute` | JWT / coordinator roles | `substitute`: free-period + subject-expertise candidate ranking per 02 §5 (find mode) and `routine_substitutions` insert (assign mode); the `check_substitute_free` DB trigger stays the hard guarantee |
 | `sms/dispatch.js` | `GET/POST /api/v1/sms/dispatch` | `CRON_SECRET` / `SERVICE_API_KEY` | Outbox drain; **send is a stub** — no aggregator credentials. Cron: daily `0 18 * * *` UTC = 00:00 BST |
 | `finance/webhooks/[provider].js` | `POST .../webhooks/{bkash,nagad,rocket}` | webhook signature | Shared processor per 03 §2.4; unknown provider → 404 |
-| `finance/[resource].js` | `GET .../invoices`, `POST .../pay`, `GET .../receipts` | JWT (RLS-scoped: guardians see own wards) | Invoices + lines, money as decimal strings; digital receipts JSON; **`pay` is kill-switched → 503 `mfs_disabled`** pending real merchant credentials (§5) |
+| `finance/[resource].js` | `GET .../invoices`, `POST .../pay`, `GET .../receipts`, `POST .../generate` | JWT (RLS-scoped; generate: accountant-level) | Invoices + lines, money as decimal strings; digital receipts JSON; **`pay` is kill-switched → 503 `mfs_disabled`** pending real merchant credentials (§5). `generate` runs the monthly invoice batch from `fee_structures` (class-specific beats class-wide, best `fee_waiver` per line, idempotent per student+period) |
 | `ai/[engine].js` | `POST /api/v1/ai/sikhok`, `POST /api/v1/ai/shikho` | JWT (sikhok: staff) | SikhokAI (CQ/MCQ/rubric/lesson-plan, Claude Opus) + ShikhoAI (Socratic tutor, Claude Haiku) via the Anthropic SDK. **503 `ai_disabled` until `ANTHROPIC_API_KEY` is set** (§5). NCTB-scope-bounded prompts, PII redaction before egress, `ai_sessions`/`ai_turns` audit. RAG runs lexical-only until the NCTB corpus is ingested (responses carry `grounded: false`) |
 | `ans/[action].js` | `GET /api/v1/ans/students`, `POST .../dispatch`, `POST .../inbound` | `SERVICE_API_KEY` (+`CRON_SECRET` for dispatch) | Batch pull with `globalPersonId` merge keys and consent-gated contact fields; HMAC-SHA256-signed outbound webhook dispatcher over `alumni_export_logs` (backoff, dead-letter, stable `delivery_id`); inbound staged into `ans_inbound_events`, applied only after review |
+| `ops/maintenance.js` | `GET/POST /api/v1/ops/maintenance` | `CRON_SECRET` / `SERVICE_API_KEY` | Second daily cron (01:00 BST): `app.maintain_partitions()` / `purge_expired_data()` / `refresh_dashboards()` over `DATABASE_MAINTENANCE_URL` (owner role, direct endpoint — the DDL these need), plus a default-partition-leakage report. **503 `maintenance_unconfigured` until that env var is set** |
 
 Conventions that differ from 03: base URL is `https://shikhon-lms.vercel.app/api/v1` (not
 `api.shikhon.bd/v1`), and errors are plain `{ error, message }` JSON rather than RFC 9457
@@ -194,11 +195,15 @@ access tokens.
 **pooled** endpoint — never the owner role; see 06 §2), `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`,
 `CRON_SECRET`, `SERVICE_API_KEY`. Optional feature enables: `ANTHROPIC_API_KEY` (turns the
 AI gateway on; `AI_MODEL_SIKHOK`/`AI_MODEL_SHIKHO` override the models), `ANS_SIGNING_SECRET`
-(outbound ANS webhook signing until KMS-managed per-endpoint keys exist).
+(outbound ANS webhook signing until KMS-managed per-endpoint keys exist),
+`DATABASE_MAINTENANCE_URL` (owner role on the direct endpoint — turns the nightly DB
+maintenance cron live).
 
-**Cron:** one Hobby-safe daily job in `vercel.json` — `/api/v1/sms/dispatch` at 00:00 BST.
-The three DB maintenance functions of 06 §5 (`app.maintain_partitions()` etc.) still need an
-external scheduler — currently **not wired**; watch `v_default_partition_leakage`.
+**Cron:** two Hobby-safe daily jobs in `vercel.json` — `/api/v1/sms/dispatch` at 00:00 BST
+and `/api/v1/ops/maintenance` at 01:00 BST. The maintenance job stays a 503 no-op until
+`DATABASE_MAINTENANCE_URL` is set (owner role, direct endpoint — the value
+`scripts/migrate.sh` uses); every run reports default-partition leakage so the docs/06
+canary is checked automatically.
 
 **Smoke test:** on some local networks `*.vercel.app` DNS resolution fails; pin the edge IP:
 ```bash
@@ -238,8 +243,8 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 | Guardian absence-notification flow end-to-end (enqueue exists; send is stubbed) | 01 §3 events | 1 |
 | Attendance correction flow + absence-SMS grace window | 01 §2.6 | 1 |
 | MFS merchant credentials + per-provider initiation calls + signature verification (endpoints + webhooks exist; `pay` kill-switched) | 03 §2 | 2 |
-| Result publication flow: `compute_subject_grade`/`compute_exam_gpa` invocation UI, report cards (marks entry ships now) | 05 Phase 2 | 2 |
-| Invoice *generation* (fee structures → invoices); reads + receipts exist | 05 Phase 2 | 2 |
+| Report-card rendering (PDF/print view — the `exam_results` data it reads from now ships via `POST /academics/publish`) | 05 Phase 2 | 2 |
+| Set `DATABASE_MAINTENANCE_URL` in Vercel so the nightly maintenance cron goes live | 06 §5 | now |
 | CP-SAT solver upgrade; coordinator routine-editing UI (substitution finder ships now) | 02 §3 | 3 |
 | `ANTHROPIC_API_KEY` + NCTB corpus ingestion + embedding service → upgrades AI from disabled/lexical to grounded hybrid RAG (gateway ships now) | 01 §6 | 3 |
 | ANS: register real endpoints (`ans_endpoints`), KMS for per-endpoint signing secrets (batch pull, dispatcher, inbound staging ship now) | 03 §4 | 4 |

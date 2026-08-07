@@ -26,6 +26,7 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 | 4 | [docs/04-UIUX-ACCESSIBILITY.md](docs/04-UIUX-ACCESSIBILITY.md) | Mobile-first wireframes, Bangla typography, accessibility, low-bandwidth asset policy |
 | 5 | [docs/05-DELIVERY-ROADMAP.md](docs/05-DELIVERY-ROADMAP.md) | Phasing, team shape, SLOs, cost model, risk register |
 | 6 | [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) | Live Neon deployment: database choice, roles, connection strings, pooler safety, maintenance scheduling |
+| 7 | [docs/07-IMPLEMENTATION-STATUS.md](docs/07-IMPLEMENTATION-STATUS.md) | **Blueprint vs. as-built**: what is deployed on Vercel today, the 12-function API inventory, PWA screens, the login kill switch and demo mode, ops runbook, gap list |
 
 ## Database
 
@@ -114,9 +115,14 @@ guard. Migrations must apply with **zero output** — a warning fails the build.
 |---|---|
 | [`packages/offline`](packages/offline) | **Built and tested** — outbox + sync engine, 46 assertions, zero runtime deps. The store contract runs against both the in-memory reference and the `IndexedDbOutboxStore` that ships. |
 | [`packages/ui-core`](packages/ui-core) | **Built and tested** — attendance state machine, Bangla/Latin numerals, SMS cost model. 36 assertions, zero runtime deps. |
-| [`apps/pwa`](apps/pwa) | **Built and tested** — the 30-second attendance screen, service-worker policy, app shell. 27 assertions in jsdom. |
-| [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push`, 23 assertions against a real database, including the full DOM→database vertical slice. |
-| NestJS services (identity, academics, finance, ai-gateway), Go workers, RMS solver | Not started — specified in [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) §3 |
+| [`apps/pwa`](apps/pwa) | **Built and tested** — login (phone + OTP), navigation shell (hash router + tab bar), attendance grid, roster view, routine day/week view, service-worker policy, `?demo=1` preview mode. 27 assertions in jsdom. |
+| [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push` + `GET /sync/pull`, 23 assertions against a real database, including the full DOM→database vertical slice. |
+| [`services/identity-svc`](services/identity-svc) | **Built and deployed** — OTP request/verify (EdDSA JWT, rotating refresh with reuse detection), logout. OTP issuance currently behind a kill switch — [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md). |
+| [`services/academics-svc`](services/academics-svc) | **Built and deployed** — sections + roster endpoints. |
+| [`services/rms-svc`](services/rms-svc) | **Built and deployed** — greedy-heuristic routine solver (DB exclusion constraints guarantee clash-freedom regardless), teacher day/week routine endpoint. |
+| [`services/sms-svc`](services/sms-svc) | **Built and deployed** — outbox enqueue + cron-driven dispatch worker; **send is stubbed** pending an aggregator contract. |
+| [`services/finance-svc`](services/finance-svc) | **Built and deployed** — bKash/Nagad/Rocket webhook skeletons behind one dynamic route. |
+| ai-gateway, guardian/principal surfaces, exams & fees | Not started — specified in [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) §3, gap list in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md) |
 
 ```bash
 for d in packages/offline packages/ui-core apps/pwa; do (cd $d && npm install && npm test); done
@@ -144,8 +150,11 @@ rather than duplicating.
 
 ## Deployment
 
-Live on Neon. See [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) for connection strings, roles and
-maintenance scheduling.
+Live at **`https://shikhon-lms.vercel.app`** (Vercel: static PWA + 12 serverless functions)
+on Neon Postgres. See [docs/07-IMPLEMENTATION-STATUS.md](docs/07-IMPLEMENTATION-STATUS.md)
+for the ops runbook and [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) for connection
+strings, roles and maintenance scheduling. Preview every screen without logging in at
+`https://shikhon-lms.vercel.app/?demo=1`.
 
 ⚠️ **`neondb_owner` has `BYPASSRLS`.** If the application connects as it, every tenant-isolation
 guarantee is silently void. The app must connect as **`shikhon_runtime`** (created, `BYPASSRLS =
@@ -154,16 +163,20 @@ plain `SET` — for tenant context.
 
 ## Status
 
-**Complete:** the system blueprint (6 documents); the database layer (12 migrations, 86 tables,
-103 RLS policies) deployed and verified on Neon; tenant provisioning; three SQL test suites;
-rollback migrations; the offline sync engine (`packages/offline`); and CI for both.
+**Complete and deployed:** the system blueprint (7 documents); the database layer
+(15 migrations, 88 tables, 103 RLS policies) deployed and verified on Neon; tenant
+provisioning; three SQL test suites; rollback migrations; the offline sync engine; the PWA
+(login, shell, attendance, roster, routine, demo mode); all six service directories compiled
+into 12 Vercel functions; and CI.
 
-**Not started:** the PWA shell and UI, the NestJS/Go services, and the RMS solver. Specified in
-[docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) §3, phased in
-[docs/05-DELIVERY-ROADMAP.md](docs/05-DELIVERY-ROADMAP.md) — Phase 0 onwards.
+**Currently disabled by design:** OTP login (two-sided kill switch — re-enable steps in
+[docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)). Use `?demo=1` to preview the UI meanwhile.
 
-**Verified totals:** 23 SQL assertions + 132 TypeScript assertions, all green against
-Neon PostgreSQL 18.4 on a from-scratch rebuild.
+**Not started:** the AI gateway, exams & fees flows, guardian/principal surfaces — gap list
+with phasing in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md).
+
+**Verified totals:** 23 SQL assertions + **109 TypeScript tests** (`node --test`), all green
+against Neon PostgreSQL 18.4 on a from-scratch rebuild.
 
 **Defects the integration tests caught before they could ship** — each would have been silent in
 production:

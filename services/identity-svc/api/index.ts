@@ -27,8 +27,13 @@ const ROUTES: Record<string, Handler> = {
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const path = new URL(req.url ?? '/', 'http://internal').pathname;
-  const sub = path.replace(/^\/api\/v1\/auth\/?/, '').replace(/\/+$/, '');
+  // Deployed as api/v1/auth.js with a vercel.json rewrite carrying the
+  // subpath as ?path= (multi-segment [...path] catch-alls do not match on
+  // prebuilt functions — verified against the live platform). The URL-path
+  // fallback keeps direct invocation and local testing working.
+  const url = new URL(req.url ?? '/', 'http://internal');
+  const sub = (url.searchParams.get('path')
+    ?? url.pathname.replace(/^\/api\/v1\/auth\/?/, '')).replace(/\/+$/, '');
   const route = ROUTES[sub];
   if (!route) {
     json(res, 404, { error: 'not_found' }, corsHeaders());

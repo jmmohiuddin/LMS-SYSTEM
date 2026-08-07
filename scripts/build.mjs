@@ -53,7 +53,9 @@ await build({
 // URLs are identical; only the function count changed. 9 functions, 3 spare.
 const API_ENTRIES = [
   ['services/sync-svc/api/index.ts', 'api/v1/sync/[action].js'],
-  ['services/identity-svc/api/index.ts', 'api/v1/auth/[...path].js'],
+  // auth is a plain function + vercel.json rewrite (?path=) because a
+  // multi-segment [...path] catch-all does not match on prebuilt functions.
+  ['services/identity-svc/api/index.ts', 'api/v1/auth.js'],
   ['services/academics-svc/api/index.ts', 'api/v1/academics/[resource].js'],
   ['services/sms-svc/api/dispatch.ts', 'api/v1/sms/dispatch.js'],
   ['services/rms-svc/api/index.ts', 'api/v1/rms/[action].js'],

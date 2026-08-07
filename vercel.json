@@ -5,7 +5,8 @@
   "outputDirectory": "apps/pwa/public",
   "installCommand": "npm install",
   "rewrites": [
-    { "source": "/offline", "destination": "/offline.html" }
+    { "source": "/offline", "destination": "/offline.html" },
+    { "source": "/api/v1/auth/:path*", "destination": "/api/v1/auth?path=:path*" }
   ],
   "crons": [
     { "path": "/api/v1/sms/dispatch", "schedule": "0 18 * * *" }

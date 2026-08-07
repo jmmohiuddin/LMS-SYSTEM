@@ -282,12 +282,80 @@ export class MfsWebhookProcessor {
       }
 
       let invoiceStatus: string | null = null;
+      let receiptNo: string | null = null;
+      let ledgerBatchId: string | null = null;
       if (status === 'completed' && !alreadyCompleted) {
         const applied = await client.query<{ status: string }>(
           `SELECT app.apply_payment_to_invoice($1, $2, $3) AS status`,
           [tenantId, invoiceId, amount],
         );
         invoiceStatus = applied.rows[0]?.status ?? null;
+
+        // Digital receipt (PRD §4). Number is RCP-YYYY-MM-<seq within
+        // tenant/month>, generated in SQL so concurrent webhooks don't
+        // collide — the UNIQUE(tenant_id, receipt_no) index is authoritative.
+        const receiptInsert = await client.query<{ receipt_no: string }>(
+          `INSERT INTO payment_receipts
+             (tenant_id, receipt_no, mfs_transaction_id, invoice_id, student_id,
+              amount, method)
+           VALUES (
+             app.current_tenant(),
+             'RCP-' || to_char(now(), 'YYYY-MM') || '-' ||
+               lpad(
+                 (1 + COALESCE((
+                   SELECT max(substring(receipt_no from '\\d+$')::int)
+                     FROM payment_receipts
+                    WHERE receipt_no LIKE 'RCP-' || to_char(now(), 'YYYY-MM') || '-%'
+                 ), 0))::text,
+                 5, '0'
+               ),
+             $1, $2, $3, $4, $5)
+           ON CONFLICT (tenant_id, receipt_no) DO NOTHING
+           RETURNING receipt_no`,
+          [txId, invoiceId, invoice.student_id, amount, provider],
+        );
+        receiptNo = receiptInsert.rows[0]?.receipt_no ?? null;
+
+        // Balanced ledger entries (PRD §4 "ledger reconciliation"). One
+        // batch = two rows: DEBIT the MFS provider's clearing asset,
+        // CREDIT combined fee income. app.assert_ledger_balanced fires at
+        // COMMIT — if either account is missing the whole transaction rolls
+        // back and the webhook 500s cleanly; that's the failure mode we
+        // want, because a receipt without a ledger row is a real book gap.
+        // Rows are only posted if the chart-of-accounts seed (migration
+        // 016) has run for this tenant; otherwise skipped gracefully.
+        const bankCode = provider === 'bkash' ? 'MFS-BKASH'
+          : provider === 'nagad' ? 'MFS-NAGAD'
+          : provider === 'rocket' ? 'MFS-ROCKET'
+          : 'CASH';
+        const accounts = await client.query<{ code: string; id: string }>(
+          `SELECT code, id FROM ledger_accounts
+            WHERE code IN ($1, 'FEE-INCOME')`,
+          [bankCode],
+        );
+        const bankAcct = accounts.rows.find((r) => r.code === bankCode)?.id;
+        const incomeAcct = accounts.rows.find((r) => r.code === 'FEE-INCOME')?.id;
+        if (bankAcct && incomeAcct) {
+          const batch = await client.query<{ id: string }>(
+            `INSERT INTO ledger_entries
+               (tenant_id, batch_id, account_id, entry_date, debit, credit,
+                reference_type, reference_id, memo)
+             VALUES
+               (app.current_tenant(), gen_random_uuid(), $1, CURRENT_DATE,
+                $3, 0, 'mfs_transaction', $2, 'MFS payment received')
+             RETURNING batch_id AS id`,
+            [bankAcct, txId, amount],
+          );
+          ledgerBatchId = batch.rows[0].id;
+          await client.query(
+            `INSERT INTO ledger_entries
+               (tenant_id, batch_id, account_id, entry_date, debit, credit,
+                reference_type, reference_id, memo)
+             VALUES (app.current_tenant(), $1, $2, CURRENT_DATE, 0, $4,
+                     'mfs_transaction', $3, 'Fee income')`,
+            [ledgerBatchId, incomeAcct, txId, amount],
+          );
+        }
       }
 
       await client.query(
@@ -297,7 +365,7 @@ export class MfsWebhookProcessor {
         [webhookRow.id, tenantId, txId],
       );
 
-      return { outcome: 'processed' as const, txId, status, invoiceStatus };
+      return { outcome: 'processed' as const, txId, status, invoiceStatus, receiptNo, ledgerBatchId };
     });
 
     if (result.outcome === 'rejected') {
@@ -305,7 +373,14 @@ export class MfsWebhookProcessor {
     }
     return {
       status: 200,
-      body: { ok: true, transactionId: result.txId, status: result.status, invoiceStatus: result.invoiceStatus },
+      body: {
+        ok: true,
+        transactionId: result.txId,
+        status: result.status,
+        invoiceStatus: result.invoiceStatus,
+        receiptNo: result.receiptNo,
+        ledgerBatchId: result.ledgerBatchId,
+      },
     };
   }
 }

@@ -11,8 +11,7 @@
   },
   "exclude": [
     "node_modules",
-    "apps/pwa/public",
-    "apps/pwa/test",
+    "apps/pwa",
     "packages/offline/test",
     "packages/ui-core/test",
     "services/sync-svc/test"

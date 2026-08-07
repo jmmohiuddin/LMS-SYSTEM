@@ -268,3 +268,24 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .marks-savebar .btn-primary { flex: 1; margin: 0; }
 .marks-chip { font-size: 13px; color: var(--c-ink-2); white-space: nowrap; }
+
+/* ------------------------------------------------------------------- fees */
+.fees-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-4); }
+.fees-row { border-bottom: 1px solid var(--c-line); }
+.fees-head {
+  display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'title amount' 'meta amount';
+  width: 100%; min-height: var(--tap-min); padding: var(--s-2) 0;
+  background: none; border: 0; text-align: left; font: inherit; cursor: pointer;
+}
+.fees-title { grid-area: title; font-weight: 600; }
+.fees-meta { grid-area: meta; font-size: 13px; color: var(--c-ink-2); }
+.fees-amount { grid-area: amount; align-self: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+.fees-row[data-status='paid'] .fees-amount { color: var(--c-success); }
+.fees-row[data-status='overdue'] .fees-meta { color: var(--c-warn); }
+.fees-detail { padding: 0 0 var(--s-3) var(--s-2); }
+.fees-line {
+  display: flex; justify-content: space-between; gap: var(--s-3);
+  padding: 2px 0; font-size: 14px;
+}
+.fees-due { color: var(--c-ink-2); }
+.fees-receipts-h { margin-top: var(--s-1); font-weight: 600; }

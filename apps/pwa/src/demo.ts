@@ -145,6 +145,53 @@ function weekDays(weekStart: string): { date: string; slots: RoutineSlot[] }[] {
   });
 }
 
+const DEMO_INVOICES = [
+  {
+    id: 'demo-inv-1',
+    invoiceNo: 'INV-2026-08-00001',
+    billingPeriod: '2026-08',
+    issuedOn: '2026-08-01',
+    dueOn: '2026-08-10',
+    totalAmount: '1250.00',
+    paidAmount: '0.00',
+    balanceAmount: '1250.00',
+    status: 'issued',
+    lines: [
+      { descriptionBn: 'মাসিক বেতন', amount: '1000.00', waiverAmount: '0.00', netAmount: '1000.00' },
+      { descriptionBn: 'পরিবহন ফি', amount: '250.00', waiverAmount: '0.00', netAmount: '250.00' },
+    ],
+  },
+  {
+    id: 'demo-inv-2',
+    invoiceNo: 'INV-2026-07-00001',
+    billingPeriod: '2026-07',
+    issuedOn: '2026-07-01',
+    dueOn: '2026-07-10',
+    totalAmount: '1250.00',
+    paidAmount: '1250.00',
+    balanceAmount: '0.00',
+    status: 'paid',
+    lines: [
+      { descriptionBn: 'মাসিক বেতন', amount: '1000.00', waiverAmount: '0.00', netAmount: '1000.00' },
+      { descriptionBn: 'পরিবহন ফি', amount: '250.00', waiverAmount: '0.00', netAmount: '250.00' },
+    ],
+  },
+  {
+    id: 'demo-inv-3',
+    invoiceNo: 'INV-2026-06-00001',
+    billingPeriod: '2026-06',
+    issuedOn: '2026-06-01',
+    dueOn: '2026-06-10',
+    totalAmount: '750.00',
+    paidAmount: '750.00',
+    balanceAmount: '0.00',
+    status: 'paid',
+    lines: [
+      { descriptionBn: 'মাসিক বেতন', amount: '1000.00', waiverAmount: '250.00', netAmount: '750.00' },
+    ],
+  },
+];
+
 function ok(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -184,6 +231,16 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/academics/marks':
         return ok(demoMarks());
+
+      case '/api/v1/finance/invoices':
+        return ok({ invoices: DEMO_INVOICES });
+
+      case '/api/v1/finance/receipts':
+        return ok({
+          receipts: url.searchParams.get('invoiceId') === 'demo-inv-2'
+            ? [{ receiptNo: 'RCP-2026-07-00012', amount: '1250.00', method: 'bkash', issuedAt: '2026-07-08T10:12:00Z' }]
+            : [],
+        });
 
       case '/api/v1/rms/routine': {
         if (url.searchParams.get('scope') === 'week') {

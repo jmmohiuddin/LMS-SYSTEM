@@ -1,0 +1,234 @@
+/**
+ * Fees view (বেতন tab): invoices + digital receipts.
+ *
+ * GET /api/v1/finance/invoices feeds the list; tapping an invoice expands
+ * its line items and lazily fetches GET /api/v1/finance/receipts for it.
+ * Same offline-cache-in-localStorage approach as roster-view.ts.
+ *
+ * Who sees what is decided by RLS (invoice_scope in
+ * db/migrations/010_rls_policies.sql): guardians/students see their own,
+ * accountant/principal/owner see everything, and an ordinary subject
+ * teacher legitimately sees none — the empty state says so instead of
+ * pretending it's an error.
+ */
+import type { Auth } from './auth.ts';
+
+interface InvoiceLine {
+  descriptionBn: string;
+  amount: string;
+  waiverAmount: string;
+  netAmount: string;
+}
+
+interface Invoice {
+  id: string;
+  invoiceNo: string;
+  billingPeriod: string | null;
+  issuedOn: string;
+  dueOn: string;
+  totalAmount: string;
+  paidAmount: string;
+  balanceAmount: string;
+  status: string;
+  lines: InvoiceLine[];
+}
+
+interface Receipt {
+  receiptNo: string;
+  amount: string;
+  method: string;
+  issuedAt: string;
+}
+
+const CACHE_KEY = 'shikhon_invoices_cache';
+
+const STATUS_BN: Record<string, string> = {
+  issued: 'বকেয়া',
+  partly_paid: 'আংশিক পরিশোধিত',
+  paid: 'পরিশোধিত',
+  overdue: 'মেয়াদোত্তীর্ণ',
+  waived: 'মওকুফ',
+  cancelled: 'বাতিল',
+};
+
+const BN_DIGITS: Record<string, string> = {
+  '0': '০', '1': '১', '2': '২', '3': '৩', '4': '৪',
+  '5': '৫', '6': '৬', '7': '৭', '8': '৮', '9': '৯',
+};
+
+/** '1250.00' → '৳১,২৫০' (decimals kept only when non-zero). */
+function money(amount: string): string {
+  const n = Number(amount);
+  const s = Number.isInteger(n)
+    ? n.toLocaleString('en-IN')
+    : n.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+  return '৳' + s.replace(/[0-9]/g, (d) => BN_DIGITS[d] ?? d);
+}
+
+export interface FeesViewOptions {
+  root: HTMLElement;
+  doc: Document;
+  auth: Auth;
+}
+
+export class FeesView {
+  private readonly o: FeesViewOptions;
+  private invoices: Invoice[] = [];
+  private receipts = new Map<string, Receipt[]>();
+  private expanded: string | null = null;
+  private offline = false;
+  private loading = true;
+
+  constructor(options: FeesViewOptions) {
+    this.o = options;
+    void this.init();
+  }
+
+  private async init(): Promise<void> {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        this.invoices = JSON.parse(raw) as Invoice[];
+        this.loading = false;
+      }
+    } catch { /* cache is a nicety */ }
+    this.render();
+
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/finance/invoices');
+      if (!res.ok) throw new Error(String(res.status));
+      const body = (await res.json()) as { invoices: Invoice[] };
+      this.invoices = body.invoices;
+      this.offline = false;
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.invoices)); } catch { /* best-effort */ }
+    } catch {
+      this.offline = this.invoices.length > 0;
+    }
+    this.loading = false;
+    this.render();
+  }
+
+  private async toggle(invoiceId: string): Promise<void> {
+    this.expanded = this.expanded === invoiceId ? null : invoiceId;
+    this.render();
+    if (this.expanded === invoiceId && !this.receipts.has(invoiceId)) {
+      try {
+        const res = await this.o.auth.authedFetch(
+          `/api/v1/finance/receipts?invoiceId=${encodeURIComponent(invoiceId)}`,
+        );
+        if (res.ok) {
+          const body = (await res.json()) as { receipts: Receipt[] };
+          this.receipts.set(invoiceId, body.receipts);
+          if (this.expanded === invoiceId) this.render();
+        }
+      } catch { /* offline — lines still show */ }
+    }
+  }
+
+  private render(): void {
+    const d = this.o.doc;
+    const root = this.o.root;
+    root.textContent = '';
+
+    const header = d.createElement('header');
+    header.className = 'att-header';
+    const h1 = d.createElement('h1');
+    h1.textContent = 'বেতন ও ফি';
+    header.append(h1);
+    if (this.offline) {
+      const banner = d.createElement('p');
+      banner.className = 'offline-banner';
+      banner.textContent = 'অফলাইন — সর্বশেষ সংরক্ষিত তথ্য দেখানো হচ্ছে';
+      header.append(banner);
+    }
+    root.append(header);
+
+    if (this.loading) {
+      const p = d.createElement('p');
+      p.className = 'att-sub';
+      p.textContent = 'লোড হচ্ছে…';
+      root.append(p);
+      return;
+    }
+    if (this.invoices.length === 0) {
+      const p = d.createElement('p');
+      p.className = 'att-sub';
+      p.textContent = 'কোনো ইনভয়েস পাওয়া যায়নি। (অভিভাবক নিজের সন্তানের, হিসাবরক্ষক সবার ইনভয়েস দেখতে পান।)';
+      root.append(p);
+      return;
+    }
+
+    const list = d.createElement('ul');
+    list.className = 'fees-list';
+    for (const inv of this.invoices) {
+      const li = d.createElement('li');
+      li.className = 'fees-row';
+      li.dataset.status = inv.status;
+
+      const head = d.createElement('button');
+      head.type = 'button';
+      head.className = 'fees-head';
+      head.setAttribute('aria-expanded', String(this.expanded === inv.id));
+
+      const title = d.createElement('span');
+      title.className = 'fees-title';
+      title.textContent = inv.billingPeriod ? `${inv.invoiceNo} · ${inv.billingPeriod}` : inv.invoiceNo;
+
+      const meta = d.createElement('span');
+      meta.className = 'fees-meta';
+      meta.textContent = `${STATUS_BN[inv.status] ?? inv.status} · বকেয়া ${money(inv.balanceAmount)}`;
+
+      const amount = d.createElement('span');
+      amount.className = 'fees-amount';
+      amount.textContent = money(inv.totalAmount);
+
+      head.append(title, meta, amount);
+      head.addEventListener('click', () => { void this.toggle(inv.id); });
+      li.append(head);
+
+      if (this.expanded === inv.id) {
+        const detail = d.createElement('div');
+        detail.className = 'fees-detail';
+
+        for (const line of inv.lines) {
+          const row = d.createElement('div');
+          row.className = 'fees-line';
+          const label = d.createElement('span');
+          label.textContent = line.descriptionBn;
+          const amt = d.createElement('span');
+          amt.textContent = Number(line.waiverAmount) > 0
+            ? `${money(line.netAmount)} (মওকুফ ${money(line.waiverAmount)})`
+            : money(line.amount);
+          row.append(label, amt);
+          detail.append(row);
+        }
+
+        const due = d.createElement('div');
+        due.className = 'fees-line fees-due';
+        due.textContent = `শেষ তারিখ: ${inv.dueOn}`;
+        detail.append(due);
+
+        const receipts = this.receipts.get(inv.id);
+        if (receipts && receipts.length > 0) {
+          const rh = d.createElement('div');
+          rh.className = 'fees-line fees-receipts-h';
+          rh.textContent = 'রসিদ:';
+          detail.append(rh);
+          for (const r of receipts) {
+            const row = d.createElement('div');
+            row.className = 'fees-line';
+            const label = d.createElement('span');
+            label.textContent = `${r.receiptNo} · ${r.method}`;
+            const amt = d.createElement('span');
+            amt.textContent = money(r.amount);
+            row.append(label, amt);
+            detail.append(row);
+          }
+        }
+        li.append(detail);
+      }
+      list.append(li);
+    }
+    root.append(list);
+  }
+}

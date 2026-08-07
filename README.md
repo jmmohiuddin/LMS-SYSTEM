@@ -1,0 +1,176 @@
+# ShikhonBD — Multi-Tenant, Offline-First LMS for Bangladeshi Institutions
+
+Production blueprint for an AI-native, offline-first Learning Management System targeting
+Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
+
+**Design envelope (non-negotiable constraints driving every decision below):**
+
+| Constraint | Target | Consequence |
+|---|---|---|
+| Device floor | Android Go, 2 GB RAM, Chrome 90+ | JS budget ≤ 180 KB gz on critical path; no client-side PDF/heavy charting |
+| Network floor | 2G/EDGE, 40–200 kbps, 800 ms RTT, 30 %+ packet loss | Offline-first is the *default* path, not a fallback |
+| First contentful paint | ≤ 2.5 s on 3G, ≤ 1.2 s warm (SW cache) | App shell precached, data streamed |
+| Attendance completion | < 30 s for a 60-student section | Single-screen touch grid, zero network in the hot path |
+| Tenant isolation | Hard, DB-enforced | PostgreSQL Row-Level Security on every tenant table |
+| Regulatory | PDPA 2026, Cybersecurity Act 2023 | AES-256-GCM envelope encryption for NID/BRC, in-country data residency |
+
+---
+
+## Document map
+
+| # | Document | Covers |
+|---|---|---|
+| 1 | [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) | PWA offline caching (IndexedDB + Service Worker outbox), microservice topology, sync protocol, AI engine architecture, security & compliance |
+| 2 | [docs/02-RMS-DEEP-DIVE.md](docs/02-RMS-DEEP-DIVE.md) | Routine Management System — generation algorithm, clash detection, substitution engine, teacher dashboard UX |
+| 3 | [docs/03-API-SPECIFICATIONS.md](docs/03-API-SPECIFICATIONS.md) | bKash / Nagad / Rocket webhook contracts, SMS aggregator contracts, bi-directional Alumni Networking System (ANS) API |
+| 4 | [docs/04-UIUX-ACCESSIBILITY.md](docs/04-UIUX-ACCESSIBILITY.md) | Mobile-first wireframes, Bangla typography, accessibility, low-bandwidth asset policy |
+| 5 | [docs/05-DELIVERY-ROADMAP.md](docs/05-DELIVERY-ROADMAP.md) | Phasing, team shape, SLOs, cost model, risk register |
+| 6 | [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) | Live Neon deployment: database choice, roles, connection strings, pooler safety, maintenance scheduling |
+
+## Database
+
+`db/migrations/` contains executable PostgreSQL 16 DDL, applied in order:
+
+```
+001_extensions_and_tenancy.sql   extensions, tenants, RLS helper functions, audit spine
+002_identity_and_rbac.sql        users, roles, permissions, guardianship, encrypted PII
+003_academics.sql                academic years, classes, sections, subjects, enrolment
+004_attendance.sql               partitioned attendance + SMS outbox
+005_assessment_nctb.sql          CQ/MCQ item bank, exams, marks, GPA computation
+006_routines_rms.sql             routines, routine_slots, clash-prevention constraints, substitutions
+007_finance_mfs.sql              fee heads, invoices, MFS transactions, ledger
+008_ai_and_vectors.sql           NCTB vector store, AI session logs, guardrail audit
+009_alumni_hooks.sql             alumni_export_logs, ANS webhooks, unified identifiers
+010_rls_policies.sql             all RLS policies, GRANTs, role definitions
+011_indexes_and_partitions.sql   index strategy, partition automation, materialized views
+012_provisioning_and_reference.sql  NCTB subject catalogue, bell-schedule defaults,
+                                    app.provision_tenant()
+013_tenant_fk_integrity.sql      FKs to tenants on the partitioned tables (PDPA erasure)
+014_sync_log_delete_guard.sql    lets tenant deletion cascade without tripping 013
+015_sync_operations_seq_reset.sql  drops the device_seq UNIQUE that poisoned reinstalls
+```
+
+`db/rollback/` holds one `*.down.sql` per migration, applied in **descending** order.
+The up → down → up cycle is exercised in CI.
+
+Apply with:
+
+```bash
+for f in db/migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"; done
+```
+
+## Provisioning a tenant
+
+A deployed schema is not yet a working institution — without grading bands,
+`app.compute_subject_grade` has no scale to resolve against. One call fixes that:
+
+```sql
+BEGIN;
+SET LOCAL app.tenant_id = '<tenant uuid>';
+SET LOCAL app.role      = 'principal';
+SELECT app.provision_tenant('<tenant uuid>'::uuid, '2026',
+                            '2026-01-01'::date, '2026-12-31'::date, 1::smallint, 10::smallint);
+COMMIT;
+```
+
+Creates the academic year and terms, the Bangladesh board grading scale (7 bands), a bell
+schedule per shift, classes, subjects with NCTB mark distributions, fee heads and a chart of
+accounts. Idempotent.
+
+> ⚠ The NCTB subject codes in `012` are **indicative** and must be verified against the current
+> board circular before production — they are printed on board registration and MPO forms.
+
+## Verification
+
+Three suites, all **idempotent and self-cleaning** — they seed fixtures, assert, then tear down
+and verify no residue. Safe to run against any environment.
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/tests/schema_lint.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/tests/invariants.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/tests/e2e_academic_cycle.sql
+```
+
+| Suite | Asserts |
+|---|---|
+| **schema_lint** (L1–L8) | Every table carries `tenant_id` or is an explicit exemption; RLS **enabled and forced** with ≥1 policy on all of them; `tenant_id` NOT NULL unless declared pre-tenant; every partitioned table has a DEFAULT partition; every tenant table has an FK to `tenants` so deletion cannot orphan rows; advisory check that lookup indexes lead with `tenant_id` |
+| **invariants** (16) | **Tenant isolation** — cross-tenant SELECT/UPDATE/DELETE affect zero rows, cross-tenant INSERT raises, no-context reads fail closed, unattributed payment webhooks reach the ingest worker and nobody else. **Clash prevention** — teacher/room/section double-booking rejected on *overlapping time* (incl. partial overlaps a period-number check would miss), adjacent and different-weekday slots accepted. **NCTB grading** — component-pass rule, absentee handling, band boundaries |
+| **e2e_academic_cycle** (6) | Provision → enrol → examine → grade → GPA on nothing but `provision_tenant()` output: optional-subject bonus capping at 5.00, the 4th-subject rule (4.00 → 4.50), a component failure zeroing the GPA, and the same-day duplicate-attendance guard |
+
+CI ([`.github/workflows/database.yml`](.github/workflows/database.yml)) runs all three plus a
+full **up → down → up** rollback cycle, an idempotency re-run, a residue guard and an RLS-coverage
+guard. Migrations must apply with **zero output** — a warning fails the build.
+
+**Executed against two engines:**
+
+| Engine | Result |
+|---|---|
+| PostgreSQL 16.14 (local) | 11/11 migrations, 15/15 assertions — pgvector shimmed out (unavailable locally) |
+| **Neon PostgreSQL 18.4** (`shikhon_lms`, ap-southeast-1) | **15/15 migrations with zero output · 23/23 SQL assertions · rollback → rollback → up cycle clean · run twice, zero residue · pgvector 0.8.1 real, both HNSW indexes built** |
+
+## Application code
+
+| Component | Status |
+|---|---|
+| [`packages/offline`](packages/offline) | **Built and tested** — outbox + sync engine, 46 assertions, zero runtime deps. The store contract runs against both the in-memory reference and the `IndexedDbOutboxStore` that ships. |
+| [`packages/ui-core`](packages/ui-core) | **Built and tested** — attendance state machine, Bangla/Latin numerals, SMS cost model. 36 assertions, zero runtime deps. |
+| [`apps/pwa`](apps/pwa) | **Built and tested** — the 30-second attendance screen, service-worker policy, app shell. 27 assertions in jsdom. |
+| [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push`, 23 assertions against a real database, including the full DOM→database vertical slice. |
+| NestJS services (identity, academics, finance, ai-gateway), Go workers, RMS solver | Not started — specified in [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) §3 |
+
+```bash
+for d in packages/offline packages/ui-core apps/pwa; do (cd $d && npm install && npm test); done
+cd services/sync-svc && npm install && DATABASE_URL=… npm test
+```
+
+Every layer imports the same protocol types from `packages/offline/src/types.ts`,
+so client and server cannot drift apart.
+
+### The vertical slice
+
+[`services/sync-svc/test/vertical-slice.test.ts`](services/sync-svc/test/vertical-slice.test.ts)
+runs the whole chain with nothing mocked but the HTTP hop and the browser:
+
+```
+DOM tap (jsdom) → AttendanceGrid → SyncEngine outbox → SyncPushHandler
+                → RLS-scoped PostgreSQL on Neon → absence SMS queued
+```
+
+A teacher marks 60 students at 07:12 with the network down (3 absent, 1 late —
+**four taps**), saves, and the register is delivered intact when the link returns:
+60 rows, 3 absent, 1 late, 4 SMS queued, 4 `attendance.marked.v1` events, and the
+absences land on exactly rolls 7, 23 and 44. Re-marking the same day merges
+rather than duplicating.
+
+## Deployment
+
+Live on Neon. See [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) for connection strings, roles and
+maintenance scheduling.
+
+⚠️ **`neondb_owner` has `BYPASSRLS`.** If the application connects as it, every tenant-isolation
+guarantee is silently void. The app must connect as **`shikhon_runtime`** (created, `BYPASSRLS =
+false`, verified over the wire) via the **pooled** endpoint, and must use `SET LOCAL` — never
+plain `SET` — for tenant context.
+
+## Status
+
+**Complete:** the system blueprint (6 documents); the database layer (12 migrations, 86 tables,
+103 RLS policies) deployed and verified on Neon; tenant provisioning; three SQL test suites;
+rollback migrations; the offline sync engine (`packages/offline`); and CI for both.
+
+**Not started:** the PWA shell and UI, the NestJS/Go services, and the RMS solver. Specified in
+[docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) §3, phased in
+[docs/05-DELIVERY-ROADMAP.md](docs/05-DELIVERY-ROADMAP.md) — Phase 0 onwards.
+
+**Verified totals:** 23 SQL assertions + 132 TypeScript assertions, all green against
+Neon PostgreSQL 18.4 on a from-scratch rebuild.
+
+**Defects the integration tests caught before they could ship** — each would have been silent in
+production:
+
+| # | Defect | Consequence |
+|---|---|---|
+| 004 | `UNIQUE (…, period_no, …)` treated NULLs as distinct | Daily attendance could be double-submitted → **every guardian gets a second absence SMS** |
+| 013 | Six tenant tables had no FK to `tenants` | Tenant deletion orphaned 196 attendance records + 613 change-log rows → **PDPA erasure silently incomplete** |
+| 014 | The 013 FKs made the sync-change trigger fire against a deleted tenant | **Tenant erasure failed outright** |
+| 015 | `UNIQUE (tenant_id, device_id, device_seq)` on `sync_operations` | A phone whose local counter reset (reinstall, storage eviction) **stopped syncing forever, silently** |

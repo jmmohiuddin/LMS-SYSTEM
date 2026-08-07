@@ -1,0 +1,45 @@
+name: frontend
+
+on:
+  push:
+    paths: ['packages/ui-core/**', 'apps/pwa/**', '.github/workflows/frontend.yml']
+  pull_request:
+    paths: ['packages/ui-core/**', 'apps/pwa/**', '.github/workflows/frontend.yml']
+
+jobs:
+  test:
+    name: ui-core · pwa
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: ui-core
+        run: cd packages/ui-core && npm install --no-audit --no-fund && npm test
+
+      - name: pwa
+        run: cd apps/pwa && npm install --no-audit --no-fund && npm test
+
+      # Node's type-stripping cannot compile parameter properties, and the
+      # failure is a confusing runtime SyntaxError rather than a type error.
+      - name: Guard against TS parameter properties
+        run: |
+          if grep -rnE 'constructor\([^)]*(private|public|protected|readonly) ' \
+               --include='*.ts' packages apps services | grep -v node_modules; then
+            echo "::error::TypeScript parameter properties are unsupported by node's type-stripping"
+            exit 1
+          fi
+          echo "none found"
+
+      # The critical path is budgeted at 180 KB gzipped (docs/01 §8). These are
+      # the hand-written sources; a real bundler step replaces this gate.
+      - name: Source size budget
+        run: |
+          set -euo pipefail
+          bytes=$(cat packages/ui-core/src/*.ts apps/pwa/src/*.ts | gzip -9 | wc -c)
+          echo "ui-core + pwa sources: ${bytes} bytes gzipped"
+          if [ "$bytes" -gt 30000 ]; then
+            echo "::error::frontend source exceeded 30 KB gzipped (budget is 180 KB for the whole critical path)"
+            exit 1
+          fi

@@ -1,0 +1,19 @@
+{
+  "name": "@shikhon/ui-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-agnostic view logic for the ShikhonBD PWA. Zero runtime dependencies.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test test/attendance-grid.test.ts test/format.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}

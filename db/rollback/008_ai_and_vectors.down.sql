@@ -1,0 +1,13 @@
+BEGIN;
+DROP FUNCTION IF EXISTS app.nctb_retrieve(vector, smallint, varchar, institution_stream, text, smallint, integer);
+DROP TRIGGER  IF EXISTS trg_nctb_tsv ON nctb_chunks;
+DROP FUNCTION IF EXISTS app.nctb_chunk_tsv();
+DROP TABLE IF EXISTS offline_explanation_packs CASCADE;
+DROP TABLE IF EXISTS ai_budget_periods         CASCADE;
+DROP TABLE IF EXISTS ai_safeguarding_flags     CASCADE;
+DROP TABLE IF EXISTS ai_turns                  CASCADE;
+DROP TABLE IF EXISTS ai_sessions               CASCADE;
+DROP TABLE IF EXISTS nctb_chunks               CASCADE;
+DROP TABLE IF EXISTS nctb_documents            CASCADE;
+DROP TYPE  IF EXISTS ai_engine;
+COMMIT;

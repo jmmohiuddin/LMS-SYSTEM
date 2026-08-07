@@ -1,0 +1,23 @@
+name: offline-engine
+
+on:
+  push:
+    paths: ['packages/offline/**', '.github/workflows/offline.yml']
+  pull_request:
+    paths: ['packages/offline/**', '.github/workflows/offline.yml']
+
+jobs:
+  test:
+    name: outbox · sync · conflict policy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/offline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'          # native TS type-stripping + node:test
+      - run: npm ci || npm install --no-audit --no-fund
+      - name: Test
+        run: npm test

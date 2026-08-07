@@ -1,0 +1,18 @@
+BEGIN;
+DROP FUNCTION IF EXISTS app.apply_payment_to_invoice(uuid, uuid, numeric);
+DROP TRIGGER  IF EXISTS trg_ledger_balanced ON ledger_entries;
+DROP FUNCTION IF EXISTS app.assert_ledger_balanced();
+DROP TABLE IF EXISTS ledger_entries      CASCADE;
+DROP TABLE IF EXISTS ledger_accounts     CASCADE;
+DROP TABLE IF EXISTS payment_receipts    CASCADE;
+DROP TABLE IF EXISTS mfs_webhook_events  CASCADE;
+DROP TABLE IF EXISTS mfs_transactions    CASCADE;
+DROP TABLE IF EXISTS invoice_lines       CASCADE;
+DROP TABLE IF EXISTS invoices            CASCADE;
+DROP TABLE IF EXISTS fee_waivers         CASCADE;
+DROP TABLE IF EXISTS fee_structures      CASCADE;
+DROP TABLE IF EXISTS fee_heads           CASCADE;
+DROP TYPE  IF EXISTS invoice_status;
+DROP TYPE  IF EXISTS payment_status;
+DROP TYPE  IF EXISTS mfs_provider;
+COMMIT;

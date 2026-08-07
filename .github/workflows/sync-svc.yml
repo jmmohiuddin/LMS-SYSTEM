@@ -1,0 +1,78 @@
+name: sync-svc
+
+on:
+  push:
+    paths: ['services/sync-svc/**', 'packages/offline/**', 'db/**', '.github/workflows/sync-svc.yml']
+  pull_request:
+    paths: ['services/sync-svc/**', 'packages/offline/**', 'db/**', '.github/workflows/sync-svc.yml']
+
+jobs:
+  integration:
+    name: push handler · client↔server loop
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: shikhon_owner
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: shikhon_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U shikhon_owner"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: shikhon_owner
+      PGPASSWORD: ci
+      PGDATABASE: shikhon_ci
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Apply schema
+        run: |
+          set -euo pipefail
+          for f in db/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -q -f "$f"; done
+
+      # The service must NOT run as a BYPASSRLS role, so CI creates the same
+      # non-privileged runtime role production uses and connects as that.
+      - name: Create runtime role
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -q -c "CREATE ROLE shikhon_runtime LOGIN INHERIT NOBYPASSRLS PASSWORD 'ci';"
+          psql -v ON_ERROR_STOP=1 -q -c "GRANT shikhon_app TO shikhon_runtime;"
+          psql -v ON_ERROR_STOP=1 -q -c "GRANT CONNECT ON DATABASE shikhon_ci TO shikhon_runtime;"
+          psql -v ON_ERROR_STOP=1 -q -c "GRANT USAGE ON SCHEMA public, app, audit TO shikhon_runtime;"
+
+      - name: Install deps
+        run: |
+          (cd packages/offline && npm install --no-audit --no-fund)
+          (cd services/sync-svc && npm install --no-audit --no-fund)
+
+      # Node's TypeScript type-stripping cannot compile parameter properties
+      # (`constructor(private x: T)`), and the failure is a confusing runtime
+      # SyntaxError. Fail fast with a clear message instead.
+      - name: Guard against TS parameter properties
+        run: |
+          if grep -rnE 'constructor\([^)]*(private|public|protected|readonly) ' \
+               --include='*.ts' packages services | grep -v node_modules; then
+            echo "::error::TypeScript parameter properties are unsupported by node's type-stripping"
+            exit 1
+          fi
+          echo "none found"
+
+      - name: Integration tests
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: |
+          cd services/sync-svc
+          node --test test/push.test.ts test/e2e-client-server.test.ts

@@ -1,0 +1,10 @@
+BEGIN;
+DROP TRIGGER  IF EXISTS trg_attendance_absence_event ON attendance_records;
+DROP FUNCTION IF EXISTS app.queue_absence_sms();
+DROP TABLE IF EXISTS sms_outbox             CASCADE;
+DROP TABLE IF EXISTS attendance_corrections CASCADE;
+DROP TABLE IF EXISTS attendance_records     CASCADE;
+DROP TABLE IF EXISTS attendance_sessions    CASCADE;
+DROP TYPE IF EXISTS attendance_mode;
+DROP TYPE IF EXISTS attendance_status;
+COMMIT;

@@ -1,0 +1,16 @@
+{
+  "name": "@shikhon/pwa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first PWA shell: attendance grid, service worker, sync chip.",
+  "scripts": {
+    "test": "node --test test/attendance-view.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}

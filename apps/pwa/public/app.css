@@ -1,0 +1,162 @@
+/* ShikhonBD — app shell styles.
+   Implements the tokens and Bangla typography rules in
+   docs/04-UIUX-ACCESSIBILITY.md §2–3. Reference viewport: 360x640. */
+
+@font-face {
+  font-family: 'Noto Sans Bengali';
+  src: url('/fonts/noto-bengali-subset.woff2') format('woff2');
+  /* ZWNJ/ZWJ (200C/200D) are essential: without them Bangla conjuncts
+     (যুক্তাক্ষর) break apart into the wrong letters. */
+  unicode-range: U+0980-09FF, U+200C-200D, U+0964-0965;
+  font-display: swap;   /* never block first paint on a font */
+  font-weight: 400 600;
+}
+
+:root {
+  --font-bn: 'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', sans-serif;
+  --font-en: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --c-primary: #006A4E;      /* 5.9:1 on white */
+  --c-primary-ink: #004D38;
+  --c-accent: #F42A41;
+  --c-warn: #B45309;         /* 4.6:1 */
+  --c-success: #15803D;
+  --c-ink: #111827;          /* 16.1:1 */
+  --c-ink-2: #4B5563;        /* 7.6:1 — the lightest text token permitted */
+  --c-line: #E5E7EB;
+  --c-surface: #FFFFFF;
+  --c-surface-2: #F9FAFB;
+
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px;
+  --tap-min: 48px;
+  --radius: 10px;
+  --shadow-1: 0 1px 2px rgba(0,0,0,.06);   /* one shadow level; compositing is
+                                              expensive on Android Go */
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--c-surface-2);
+  color: var(--c-ink);
+  font-family: var(--font-en);
+  /* 16px minimum: Bangla conjuncts like ক্ষ্ম are unreadable below ~15px
+     on 1x DPI screens. */
+  font-size: 16px;
+  line-height: 1.75;
+  /* NEVER adjust letter-spacing — positive tracking visually severs
+     conjuncts and negative destroys them. */
+  letter-spacing: normal;
+}
+
+[lang='bn'], [lang='bn'] button, [lang='bn'] input { font-family: var(--font-bn); }
+
+h1, h2 { line-height: 1.55; margin: 0; font-weight: 600; }
+h1 { font-size: 22px; }
+
+/* Bangla has no case; text-transform is a no-op that breaks mixed strings. */
+button, h1, h2, .att-counts { text-transform: none; }
+
+/* ---------------------------------------------------------------- header */
+.att-header {
+  position: sticky; top: 0; z-index: 2;
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: var(--s-1) var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-line);
+}
+.att-header h1 { grid-column: 1; }
+.att-sub { grid-column: 1; margin: 0; color: var(--c-ink-2); font-size: 14px; }
+.sync-chip {
+  grid-column: 2; grid-row: 1 / span 2;
+  padding: var(--s-1) var(--s-2);
+  border-radius: 999px; font-size: 14px; white-space: nowrap;
+}
+.sync-chip[data-state='synced'] { color: var(--c-success); background: #ECFDF5; }
+.sync-chip[data-state='queued'] { color: var(--c-warn);    background: #FFFBEB; }
+.sync-chip[data-state='failed'] { color: var(--c-accent);  background: #FEF2F2; }
+
+/* --------------------------------------------------------------- counters */
+.att-counts {
+  padding: var(--s-2) var(--s-4);
+  font-variant-numeric: tabular-nums;
+  color: var(--c-ink);
+  background: var(--c-surface);
+}
+
+/* ------------------------------------------------------------------ grid */
+.att-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: var(--s-2);
+  padding: var(--s-4);
+  padding-bottom: 96px;                 /* clear the sticky footer */
+}
+
+.tile {
+  min-width: 56px; min-height: 56px;    /* > 48px AAA target size */
+  display: grid; place-items: center; gap: 0;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  padding: var(--s-1);
+}
+.tile-roll  { font-size: 14px; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.tile-glyph { font-size: 18px; line-height: 1; }
+
+/* Status is never signalled by colour alone — each state also has a distinct
+   glyph, for the ~8% of male students with a colour-vision deficiency. */
+.tile[data-status='present'] { border-color: var(--c-success); }
+.tile[data-status='present'] .tile-glyph { color: var(--c-success); }
+.tile[data-status='absent']  { border-color: var(--c-accent); background: #FEF2F2; }
+.tile[data-status='absent']  .tile-glyph { color: var(--c-accent); }
+.tile[data-status='late']    { border-color: var(--c-warn); background: #FFFBEB; }
+.tile[data-status='late']    .tile-glyph { color: var(--c-warn); }
+.tile[data-status='excused'] { border-style: dashed; }
+
+/* Visible focus on every interactive element — never outline:none. */
+.tile:focus-visible, button:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- buttons */
+.btn-primary, .btn-secondary {
+  min-height: var(--tap-min);
+  padding: 0 var(--s-5);
+  border-radius: var(--radius);
+  font-size: 16px; font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.btn-primary   { background: var(--c-primary); color: #fff; width: 100%; }
+.btn-secondary { background: var(--c-surface); color: var(--c-primary-ink);
+                 border-color: var(--c-primary); margin: 0 var(--s-4); }
+
+.att-footer {
+  position: fixed; inset: auto 0 0 0;
+  padding: var(--s-3) var(--s-4);
+  background: var(--c-surface);
+  border-top: 1px solid var(--c-line);
+}
+.snackbar {
+  margin-top: var(--s-2); text-align: center;
+  font-size: 14px; color: var(--c-ink-2);
+}
+
+/* ------------------------------------------------------------- responsive */
+/* Layout must survive 200% zoom and a 320px viewport with no horizontal
+   scroll (WCAG 2.2 reflow). */
+@media (max-width: 320px) {
+  .att-grid { grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,11 @@
+BEGIN;
+DROP TRIGGER IF EXISTS trg_student_graduated ON student_profiles;
+DROP FUNCTION IF EXISTS app.emit_graduation_event();
+DROP VIEW  IF EXISTS v_ans_alumni_export;
+DROP TABLE IF EXISTS alumni_profile_enrichment CASCADE;
+DROP TABLE IF EXISTS ans_inbound_events        CASCADE;
+DROP TABLE IF EXISTS alumni_export_logs        CASCADE;
+DROP TABLE IF EXISTS ans_endpoints             CASCADE;
+DROP TABLE IF EXISTS alumni_records            CASCADE;
+DROP TYPE  IF EXISTS ans_delivery_status;
+COMMIT;

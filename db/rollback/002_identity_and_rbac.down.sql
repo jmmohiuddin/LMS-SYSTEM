@@ -1,0 +1,14 @@
+BEGIN;
+DROP TABLE IF EXISTS otp_challenges    CASCADE;
+DROP TABLE IF EXISTS user_sessions     CASCADE;
+DROP TABLE IF EXISTS guardianships     CASCADE;
+DROP TABLE IF EXISTS student_profiles  CASCADE;
+DROP TABLE IF EXISTS staff_profiles    CASCADE;
+DROP TABLE IF EXISTS user_roles        CASCADE;
+DROP TABLE IF EXISTS users             CASCADE;
+DROP TABLE IF EXISTS role_permissions  CASCADE;
+DROP TABLE IF EXISTS permissions       CASCADE;
+DROP TABLE IF EXISTS roles             CASCADE;
+DROP TYPE IF EXISTS gender_code;
+DROP TYPE IF EXISTS user_status;
+COMMIT;

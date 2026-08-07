@@ -1,0 +1,20 @@
+{
+  "name": "@shikhon/offline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first outbox and sync engine for the ShikhonBD PWA. Zero runtime dependencies.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test test/sync-engine.test.ts test/store.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
+  }
+}

@@ -1,0 +1,116 @@
+name: database
+
+on:
+  push:
+    paths: ['db/**', '.github/workflows/database.yml']
+  pull_request:
+    paths: ['db/**', '.github/workflows/database.yml']
+
+jobs:
+  schema:
+    name: migrate · lint · invariants · rollback
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # pgvector image: the schema uses vector(1024) columns and HNSW indexes,
+        # so a stock postgres image cannot apply migration 008.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: shikhon_owner
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: shikhon_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U shikhon_owner"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: shikhon_owner
+      PGPASSWORD: ci
+      PGDATABASE: shikhon_ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      # ── 1. Forward migrations must be silent: no errors, no warnings ──
+      - name: Apply migrations
+        run: |
+          set -euo pipefail
+          for f in db/migrations/*.sql; do
+            out=$(psql -v ON_ERROR_STOP=1 -q -f "$f" 2>&1 | grep -vE 'NOTICE:|DETAIL:|^drop cascades' || true)
+            if [ -n "$out" ]; then
+              echo "::error file=$f::migration emitted output"; echo "$out"; exit 1
+            fi
+            echo "ok  $(basename "$f")"
+          done
+
+      # ── 2. Structural gate: RLS enabled+forced+policy on every table ──
+      - name: Schema lint
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/schema_lint.sql
+
+      # ── 3. Tenant isolation, clash prevention, NCTB grading ───────────
+      - name: Invariants
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
+
+      # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
+      - name: End-to-end academic cycle
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
+
+      # ── 5. Suites must be idempotent and leave no residue ─────────────
+      - name: Re-run suites (idempotency)
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
+          left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
+                                 + (SELECT count(*) FROM users)
+                                 + (SELECT count(*) FROM mfs_webhook_events);")
+          if [ "$left" != "0" ]; then
+            echo "::error::test suites left $left row(s) behind"; exit 1
+          fi
+
+      # ── 6. Rollback must be clean, and forward must still work after ──
+      - name: Rollback (down, descending)
+        run: |
+          set -euo pipefail
+          for f in $(ls -r db/rollback/*.down.sql); do
+            psql -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null
+            echo "ok  $(basename "$f")"
+          done
+          left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT count(*) FROM pg_class c
+                             JOIN pg_namespace n ON n.oid=c.relnamespace
+                             WHERE n.nspname='public' AND c.relkind IN ('r','p','m','v');")
+          if [ "$left" != "0" ]; then
+            echo "::error::rollback left $left object(s) in public"
+            psql -v ON_ERROR_STOP=1 -q -c "\dt"; exit 1
+          fi
+
+      - name: Re-apply after rollback (up → down → up)
+        run: |
+          set -euo pipefail
+          for f in db/migrations/*.sql; do psql -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null; done
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/schema_lint.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
+
+      # ── 7. Guard: nobody may add a table without RLS in a later PR ────
+      - name: Assert RLS coverage
+        run: |
+          set -euo pipefail
+          bad=$(psql -v ON_ERROR_STOP=1 -q -tAc "
+            SELECT count(*) FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace
+            JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped
+            WHERE n.nspname='public' AND c.relkind IN ('r','p')
+              AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity);")
+          if [ "$bad" != "0" ]; then
+            echo "::error::$bad tenant table(s) without RLS enabled+forced"; exit 1
+          fi
+          echo "RLS coverage OK"

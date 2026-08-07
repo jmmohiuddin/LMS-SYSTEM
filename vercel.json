@@ -8,6 +8,6 @@
     { "source": "/offline", "destination": "/offline.html" }
   ],
   "crons": [
-    { "path": "/api/v1/sms/dispatch", "schedule": "*/10 * * * *" }
+    { "path": "/api/v1/sms/dispatch", "schedule": "0 18 * * *" }
   ]
 }

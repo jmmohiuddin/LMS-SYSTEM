@@ -18,6 +18,11 @@ export interface ShellRoute {
   mount: (container: HTMLElement) => void | Promise<void>;
   /** Called when navigating away, so a view can release listeners/timers. */
   unmount?: () => void;
+  /**
+   * Routable but not on the tab bar — reached from the আরও (More) menu or a
+   * deep link. Keeps the bar at 5 tabs while the app has more pages.
+   */
+  hidden?: boolean;
 }
 
 export interface ShellOptions {
@@ -83,6 +88,7 @@ export class Shell {
     tabbar.className = 'shell-tabbar';
     tabbar.setAttribute('aria-label', 'প্রধান মেনু');
     for (const route of this.o.routes) {
+      if (route.hidden) continue;
       const tab = d.createElement('button');
       tab.type = 'button';
       tab.className = 'shell-tab';

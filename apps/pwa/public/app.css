@@ -289,3 +289,59 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .fees-due { color: var(--c-ink-2); }
 .fees-receipts-h { margin-top: var(--s-1); font-weight: 600; }
+
+/* ------------------------------------------------------------------- more */
+.more-list { list-style: none; margin: 0; padding: 0 var(--s-4); }
+.more-item {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%;
+  min-height: var(--tap-min); padding: var(--s-2) 0;
+  background: none; border: 0; border-bottom: 1px solid var(--c-line);
+  text-align: left; font: inherit; cursor: pointer;
+}
+.more-glyph { width: 1.8em; font-size: 20px; text-align: center; }
+.more-body { display: flex; flex-direction: column; }
+.more-title { font-weight: 600; }
+.more-sub { font-size: 13px; color: var(--c-ink-2); }
+
+/* --------------------------------------------------------------------- ai */
+.ai-form { display: flex; flex-direction: column; gap: var(--s-2); padding: 0 var(--s-4); }
+.ai-field { margin: 0; width: 100%; }
+.ai-notes { min-height: 60px; padding: var(--s-2) var(--s-3); }
+.ai-output {
+  margin: var(--s-3) var(--s-4); padding: var(--s-3);
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
+  white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px;
+}
+
+/* ------------------------------------------------------------------- chat */
+.chat-log { padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
+.chat-bubble {
+  max-width: 85%; padding: var(--s-2) var(--s-3); border-radius: 14px;
+  font-size: 15px; white-space: pre-wrap; word-break: break-word;
+}
+.chat-user { align-self: flex-end; background: var(--c-primary); color: #fff; border-bottom-right-radius: 4px; }
+.chat-ai { align-self: flex-start; background: var(--c-surface); border: 1px solid var(--c-line); border-bottom-left-radius: 4px; }
+.chat-typing { color: var(--c-ink-2); font-style: italic; }
+.chat-form {
+  position: sticky; bottom: 0; display: flex; gap: var(--s-2); align-items: center;
+  padding: var(--s-2) var(--s-4); background: var(--c-bg); border-top: 1px solid var(--c-line);
+}
+.chat-class { min-height: var(--tap-min); border: 1px solid var(--c-line); border-radius: var(--radius); font-size: 15px; padding: 0 var(--s-1); }
+.chat-input {
+  flex: 1; min-height: var(--tap-min); padding: 0 var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--radius); font-size: 16px;
+}
+.chat-send { margin: 0; flex: none; width: auto; padding: 0 var(--s-4); }
+
+/* ------------------------------------------------------------- substitute */
+.sub-slot-btn {
+  flex: 1; min-height: var(--tap-min); background: none; border: 0;
+  text-align: left; font: inherit; font-weight: 600; cursor: pointer;
+}
+.sub-candidates { list-style: none; margin: var(--s-2) 0 0; padding: 0 var(--s-4); }
+.sub-candidate {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+  min-height: var(--tap-min); padding: var(--s-2) 0; border-bottom: 1px solid var(--c-line);
+}
+.sub-assign { margin: 0; width: auto; flex: none; padding: 0 var(--s-3); }
+.sub-assigned { display: block; margin: var(--s-3) var(--s-4); font-size: 15px; }

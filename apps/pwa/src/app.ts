@@ -20,6 +20,10 @@ import { RosterView } from './roster-view.ts';
 import { RoutineView } from './routine-view.ts';
 import { MarksView } from './marks-view.ts';
 import { FeesView } from './fees-view.ts';
+import { MoreView } from './more-view.ts';
+import { SikhokView } from './sikhok-view.ts';
+import { ShikhoView } from './shikho-view.ts';
+import { SubstituteView } from './substitute-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -170,10 +174,49 @@ async function main() {
         },
       },
       {
+        path: 'more',
+        labelBn: 'আরও',
+        glyph: '⋯',
+        mount: (container) => {
+          new MoreView({
+            root: container,
+            doc: document,
+            items: [
+              { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
+              { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক খুঁজে নির্ধারণ' },
+              { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'CQ · MCQ · রুব্রিক · পাঠ পরিকল্পনা' },
+              { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
+            ],
+          });
+        },
+      },
+      {
         path: 'fees',
         labelBn: 'বেতন',
         glyph: '৳',
+        hidden: true,
         mount: (container) => { new FeesView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'substitute',
+        labelBn: 'বদলি',
+        glyph: '⇄',
+        hidden: true,
+        mount: (container) => { new SubstituteView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'sikhok',
+        labelBn: 'শিক্ষক AI',
+        glyph: '✦',
+        hidden: true,
+        mount: (container) => { new SikhokView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'shikho',
+        labelBn: 'শিখো',
+        glyph: '💬',
+        hidden: true,
+        mount: (container) => { new ShikhoView({ root: container, doc: document, auth }); },
       },
     ];
 

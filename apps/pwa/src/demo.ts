@@ -192,6 +192,15 @@ const DEMO_INVOICES = [
   },
 ];
 
+const DEMO_CQ = `উদ্দীপক: রফিক একটি ৫ কেজি ভরের বস্তুকে ১০ নিউটন বল প্রয়োগ করে মেঝেতে ঠেলছে।
+
+ক) বল কাকে বলে? (জ্ঞান — ১ নম্বর)
+খ) নিউটনের দ্বিতীয় সূত্রটি ব্যাখ্যা করো। (অনুধাবন — ২ নম্বর)
+গ) উদ্দীপকের বস্তুটির ত্বরণ নির্ণয় করো। (প্রয়োগ — ৩ নম্বর)
+ঘ) বল দ্বিগুণ ও ভর অর্ধেক করা হলে ত্বরণের কী পরিবর্তন হবে — গাণিতিকভাবে বিশ্লেষণ করো। (উচ্চতর দক্ষতা — ৪ নম্বর)
+
+(ডেমো মোড — আসল SikhokAI চালু হলে NCTB পাঠ্যবই থেকে অধ্যায়-নির্দিষ্ট প্রশ্ন তৈরি হবে।)`;
+
 function ok(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -249,6 +258,43 @@ export class DemoAuth extends Auth {
         }
         const date = url.searchParams.get('date') ?? todayIso();
         return ok({ scope: 'day', date, slots: daySlots(date) });
+      }
+
+      case '/api/v1/rms/substitute': {
+        const req = JSON.parse(String(init.body ?? '{}')) as { assign?: boolean };
+        if (req.assign) return ok({ ok: true, substitutionId: 'demo-substitution-1' });
+        return ok({
+          ok: true,
+          candidates: [
+            { teacherId: 'demo-t1', fullName: { bn: 'রহিম উদ্দিন', en: 'Rahim Uddin' }, rank: 1, matchScore: 92, matchReasons: ['subject_expertise', 'load_today:2', 'subs_last_30d:0'] },
+            { teacherId: 'demo-t2', fullName: { bn: 'সালমা খাতুন', en: 'Salma Khatun' }, rank: 2, matchScore: 71, matchReasons: ['no_subject_match', 'load_today:1', 'subs_last_30d:1'] },
+            { teacherId: 'demo-t3', fullName: { bn: 'কামাল হোসেন', en: 'Kamal Hossain' }, rank: 3, matchScore: 55, matchReasons: ['no_subject_match', 'load_today:3', 'subs_last_30d:2'] },
+          ],
+        });
+      }
+
+      case '/api/v1/ai/sikhok':
+        return ok({
+          ok: true,
+          taskType: 'generate_cq',
+          grounded: false,
+          content: DEMO_CQ,
+          model: 'demo',
+          usage: { inputTokens: 0, outputTokens: 0 },
+        });
+
+      case '/api/v1/ai/shikho': {
+        const req = JSON.parse(String(init.body ?? '{}')) as { message?: string };
+        return ok({
+          ok: true,
+          grounded: false,
+          reply:
+            `ভালো প্রশ্ন! "${(req.message ?? '').slice(0, 40)}" নিয়ে ভাবা যাক। ` +
+            'সরাসরি উত্তর না বলে একটা প্রশ্ন করি: এই সমস্যায় প্রথম ধাপে কোন সূত্রটা কাজে লাগতে পারে বলে মনে হয়? ' +
+            '(ডেমো মোড — আসল টিউটর চালু হলে ধাপে ধাপে শেখাবে।)',
+          model: 'demo',
+          usage: { inputTokens: 0, outputTokens: 0 },
+        });
       }
 
       case '/api/v1/sync/push': {

@@ -47,6 +47,57 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const DEMO_EXAMS = [
+  {
+    id: 'demo-exam-half',
+    nameBn: 'অর্ধ-বার্ষিক পরীক্ষা ২০২৬',
+    nameEn: 'Half-Yearly Exam 2026',
+    examType: 'half_yearly',
+    status: 'marking',
+    academicYearId: 'demo-year',
+    subjects: [
+      {
+        examSubjectId: 'demo-es-phy',
+        subjectId: 'demo-sub-phy',
+        subject: { bn: 'পদার্থবিজ্ঞান', en: 'Physics' },
+        cqMax: 70, mcqMax: 30, practicalMax: 0, caMax: 0,
+        cqPass: 23, mcqPass: 10,
+        markingLocked: false,
+      },
+      {
+        examSubjectId: 'demo-es-math',
+        subjectId: 'demo-sub-math',
+        subject: { bn: 'গণিত', en: 'Mathematics' },
+        cqMax: 70, mcqMax: 30, practicalMax: 0, caMax: 0,
+        cqPass: 23, mcqPass: 10,
+        markingLocked: false,
+      },
+    ],
+  },
+];
+
+function demoMarks() {
+  return {
+    academicYearId: 'demo-year',
+    examStatus: 'marking',
+    markingLocked: false,
+    maxima: { cq: 70, mcq: 30, practical: 0, ca: 0 },
+    marks: NAMES.map(([bn, en], i) => ({
+      rollNo: i + 1,
+      studentId: `demo-s${i + 1}`,
+      fullName: { bn, en },
+      cqMarks: i < 6 ? 40 + i * 4 : null,
+      mcqMarks: i < 6 ? 18 + i : null,
+      practicalMarks: null,
+      caMarks: null,
+      totalMarks: i < 6 ? 58 + i * 5 : null,
+      isAbsent: i === 11,
+      gradeLetter: null,
+      rowVersion: i < 6 ? 1 : null,
+    })),
+  };
+}
+
 function daySlots(date: string): RoutineSlot[] {
   // Friday/Saturday are the school weekend in Bangladesh.
   const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
@@ -127,6 +178,12 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/academics/roster':
         return ok({ roster: rosterFor(url.searchParams.get('sectionId') ?? 'demo') });
+
+      case '/api/v1/academics/exams':
+        return ok({ exams: DEMO_EXAMS });
+
+      case '/api/v1/academics/marks':
+        return ok(demoMarks());
 
       case '/api/v1/rms/routine': {
         if (url.searchParams.get('scope') === 'week') {

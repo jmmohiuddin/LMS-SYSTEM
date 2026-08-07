@@ -14,6 +14,7 @@
  *   sidesteps that limitation entirely.
  */
 import { build } from 'esbuild';
+import { rm } from 'node:fs/promises';
 
 const BROWSER = {
   bundle: true,
@@ -44,24 +45,27 @@ await build({
 // file-based routing derives its route from. One esbuild call per entry —
 // each becomes a self-contained file with the whole services/+packages/
 // dependency graph inlined (see the file banner above for why).
+//
+// Each service is ONE dynamic-route function (an index.ts dispatcher routing
+// to the per-endpoint handler files, which are unchanged) — the Hobby plan
+// caps a deployment at 12 Serverless Functions, and the per-endpoint layout
+// hit the cap with no room for the exams/finance/AI/ANS endpoints. External
+// URLs are identical; only the function count changed. 9 functions, 3 spare.
 const API_ENTRIES = [
-  ['services/sync-svc/api/push.ts', 'api/v1/sync/push.js'],
-  ['services/sync-svc/api/pull.ts', 'api/v1/sync/pull.js'],
-  ['services/identity-svc/api/otp-request.ts', 'api/v1/auth/otp/request.js'],
-  ['services/identity-svc/api/otp-verify.ts', 'api/v1/auth/otp/verify.js'],
-  ['services/identity-svc/api/refresh.ts', 'api/v1/auth/refresh.js'],
-  ['services/identity-svc/api/logout.ts', 'api/v1/auth/logout.js'],
-  ['services/academics-svc/api/roster.ts', 'api/v1/academics/roster.js'],
-  ['services/academics-svc/api/sections.ts', 'api/v1/academics/sections.js'],
+  ['services/sync-svc/api/index.ts', 'api/v1/sync/[action].js'],
+  ['services/identity-svc/api/index.ts', 'api/v1/auth/[...path].js'],
+  ['services/academics-svc/api/index.ts', 'api/v1/academics/[resource].js'],
   ['services/sms-svc/api/dispatch.ts', 'api/v1/sms/dispatch.js'],
-  ['services/rms-svc/api/solve.ts', 'api/v1/rms/solve.js'],
-  ['services/rms-svc/api/routine.ts', 'api/v1/rms/routine.js'],
-  // bkash/nagad/rocket used to be three separate entries; merged into one
-  // dynamic-route function — the Hobby plan caps a deployment at 12
-  // Serverless Functions and this repo was at 14. See the file banner in
-  // [provider].ts for the full rationale.
+  ['services/rms-svc/api/index.ts', 'api/v1/rms/[action].js'],
   ['services/finance-svc/api/webhooks/[provider].ts', 'api/v1/finance/webhooks/[provider].js'],
+  ['services/finance-svc/api/index.ts', 'api/v1/finance/[resource].js'],
+  ['services/ai-svc/api/index.ts', 'api/v1/ai/[engine].js'],
+  ['services/ans-svc/api/index.ts', 'api/v1/ans/[action].js'],
 ];
+
+// The api/ tree is fully generated. Clear it first so entries removed from
+// the list above can never linger on disk and deploy as extra functions.
+await rm('api', { recursive: true, force: true });
 
 for (const [entry, outfile] of API_ENTRIES) {
   await build({

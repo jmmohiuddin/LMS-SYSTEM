@@ -18,6 +18,7 @@ import { LoginView } from './login-view.ts';
 import { Shell, type ShellRoute } from './shell.ts';
 import { RosterView } from './roster-view.ts';
 import { RoutineView } from './routine-view.ts';
+import { MarksView } from './marks-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -158,6 +159,14 @@ async function main() {
         labelBn: 'শিক্ষার্থী',
         glyph: '☰',
         mount: (container) => { new RosterView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'marks',
+        labelBn: 'নম্বর',
+        glyph: '✎',
+        mount: (container) => {
+          new MarksView({ root: container, doc: document, auth, outbox: engine });
+        },
       },
     ];
 

@@ -11,9 +11,10 @@
     "node": ">=22"
   },
   "dependencies": {
-    "pg": "^8.13.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "esbuild": "^0.21.0",
-    "jose": "^5.9.0"
+    "jose": "^5.9.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

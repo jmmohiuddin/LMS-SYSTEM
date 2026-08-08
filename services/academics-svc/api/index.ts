@@ -14,11 +14,13 @@ import scripts from './scripts.ts';
 import chapters from './chapters.ts';
 import lessons from './lessons.ts';
 import results from './results.ts';
+import assignments from './assignments.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   sections, roster, exams, marks, publish, scripts, chapters, lessons, results,
+  assignments,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

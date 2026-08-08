@@ -18,6 +18,7 @@ export type Entity =
   | 'answer_script'
   | 'class_delivery_log'
   | 'lesson_progress'
+  | 'assignment_submission'
   | 'ai_chat_turn';
 
 export type Operation = 'upsert' | 'delete';

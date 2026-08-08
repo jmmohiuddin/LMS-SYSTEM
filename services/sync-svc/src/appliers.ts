@@ -310,6 +310,61 @@ export const applyLessonProgress: Applier = async (c, op) => {
   return applied(op.opId);
 };
 
+/* ------------------------------------------------------ assignment submission */
+
+interface SubmissionPayload {
+  assignmentId: string;
+  bodyBn?: string | null;
+  mediaKey?: string | null;
+}
+
+export const applyAssignmentSubmission: Applier = async (c, op) => {
+  const p = op.payload as SubmissionPayload;
+  if (!p?.assignmentId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
+  if (!p.bodyBn && !p.mediaKey) return rejected(op.opId, 'EMPTY_SUBMISSION');
+
+  const a = await c.query<{ status: string; due_at: string; allows_late: boolean }>(
+    `SELECT status, due_at::text, allows_late FROM assignments WHERE id = $1`,
+    [p.assignmentId],
+  );
+  if (a.rowCount === 0) return rejected(op.opId, 'ASSIGNMENT_NOT_FOUND');
+  if (a.rows[0].status === 'draft') return rejected(op.opId, 'ASSIGNMENT_NOT_OPEN');
+
+  // A graded submission is feedback the student has already seen; letting a
+  // late edit silently invalidate it would be worse than refusing the write.
+  const existing = await c.query<{ graded_at: string | null; body_bn: string | null }>(
+    `SELECT graded_at::text, body_bn FROM assignment_submissions
+      WHERE assignment_id = $1 AND student_id = $2`,
+    [p.assignmentId, op.actorId],
+  );
+  if (existing.rows[0]?.graded_at) {
+    return conflict(op.opId, 'already_graded', existing.rows[0], p);
+  }
+
+  try {
+    const res = await c.query<{ is_late: boolean; row_version: number }>(
+      `INSERT INTO assignment_submissions
+         (id, tenant_id, assignment_id, student_id, body_bn, media_key, submitted_at)
+       VALUES ($1, app.current_tenant(), $2, $3, $4, $5, now())
+       ON CONFLICT (tenant_id, assignment_id, student_id) DO UPDATE
+         SET body_bn = EXCLUDED.body_bn,
+             media_key = COALESCE(EXCLUDED.media_key, assignment_submissions.media_key),
+             submitted_at = now(),
+             row_version = assignment_submissions.row_version + 1
+       RETURNING is_late, row_version`,
+      [op.opId, p.assignmentId, op.actorId, p.bodyBn ?? null, p.mediaKey ?? null],
+    );
+    return applied(op.opId, res.rows[0].row_version);
+  } catch (err) {
+    // The lateness trigger raises check_violation when a closed assignment
+    // is submitted to. That's a rule, not a fault — report it as such.
+    if ((err as { code?: string }).code === '23514') {
+      return rejected(op.opId, 'PAST_DUE', false, 'this assignment no longer accepts submissions');
+    }
+    throw err;
+  }
+};
+
 /* ------------------------------------------------------------------ registry */
 
 export const APPLIERS: Record<string, Applier> = {
@@ -317,4 +372,5 @@ export const APPLIERS: Record<string, Applier> = {
   exam_mark: applyExamMark,
   class_delivery_log: applyClassDeliveryLog,
   lesson_progress: applyLessonProgress,
+  assignment_submission: applyAssignmentSubmission,
 };

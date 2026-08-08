@@ -31,6 +31,7 @@ import { LedgerView } from './ledger-view.ts';
 import { SystemView } from './system-view.ts';
 import { LearnView } from './learn-view.ts';
 import { ResultsView } from './results-view.ts';
+import { AssignmentsView } from './assignments-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -81,6 +82,8 @@ type DashCards = { primary: DashboardItem[]; secondary: DashboardItem[] };
 const CARD = {
   learn:      { path: 'learn',      glyph: '📖', titleBn: 'পড়াশোনা',            subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
   results:    { path: 'results',    glyph: '🏅', titleBn: 'ফলাফল',              subtitleBn: 'পরীক্ষার ফলাফল ও নম্বর' },
+  homework:   { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'জমা দিতে হবে যেসব' },
+  homeworkT:  { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'কাজ দাও ও নম্বর দাও' },
   shikho:     { path: 'shikho',     glyph: '💬', titleBn: 'শিখো টিউটর',         subtitleBn: 'প্রশ্ন করো, উত্তর বুঝে নাও' },
   routineStu: { path: 'routine',    glyph: '⏲', titleBn: 'আজকের রুটিন',        subtitleBn: 'তোমার ক্লাসের সময়সূচি' },
   feesStu:    { path: 'fees',       glyph: '৳', titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
@@ -101,15 +104,15 @@ function dashboardFor(role: string): DashCards {
   switch (role) {
     case 'student':
       return {
-        primary: [CARD.learn, CARD.results],
-        secondary: [CARD.shikho, CARD.routineStu, CARD.feesStu],
+        primary: [CARD.learn, CARD.homework],
+        secondary: [CARD.results, CARD.shikho, CARD.routineStu, CARD.feesStu],
       };
     case 'guardian':
       return {
         // A guardian's first question is almost always fees or results,
         // not content — so the ordering differs from the student's.
         primary: [CARD.results, CARD.feesStu],
-        secondary: [CARD.routineStu, CARD.learn],
+        secondary: [CARD.routineStu, CARD.learn, CARD.homework],
       };
     case 'accountant':
       return {
@@ -130,7 +133,7 @@ function dashboardFor(role: string): DashCards {
       return {
         primary: [CARD.attendance, CARD.routine],
         secondary: [
-          CARD.roster, CARD.marks, CARD.scripts, CARD.substitute, CARD.learn,
+          CARD.homeworkT, CARD.roster, CARD.marks, CARD.scripts, CARD.substitute, CARD.learn,
           CARD.sikhok, CARD.shikho, CARD.fees, CARD.roles, CARD.ledger, CARD.system,
         ],
       };
@@ -290,6 +293,8 @@ async function main() {
             root: container,
             doc: document,
             items: [
+              { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ', subtitleBn: 'কাজ দাও, জমা দেখো ও নম্বর দাও' },
+              { path: 'results', glyph: '🏅', titleBn: 'ফলাফল', subtitleBn: 'প্রকাশিত পরীক্ষার ফলাফল' },
               { path: 'routine', glyph: '⏲', titleBn: 'রুটিন', subtitleBn: 'দৈনিক ও সাপ্তাহিক ক্লাস সময়সূচি' },
               { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'অফলাইন CQ / MCQ / ব্যবহারিক' },
               { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র আপলোড', subtitleBn: 'হাতে-লেখা উত্তরপত্রের ছবি' },
@@ -338,6 +343,15 @@ async function main() {
         glyph: '📷',
         hidden: true,
         mount: (container) => { new ScriptsView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'assignments',
+        labelBn: 'বাড়ির কাজ',
+        glyph: '📝',
+        hidden: true,
+        mount: (container) => {
+          new AssignmentsView({ root: container, doc: document, auth, outbox: engine });
+        },
       },
       {
         path: 'results',

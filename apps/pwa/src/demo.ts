@@ -145,6 +145,62 @@ function weekDays(weekStart: string): { date: string; slots: RoutineSlot[] }[] {
   });
 }
 
+function inDays(n: number): string {
+  return new Date(Date.now() + n * 86400000).toISOString();
+}
+
+const DEMO_ASSIGNMENTS = [
+  {
+    id: 'demo-a-1', titleBn: 'গতির সমীকরণ — অনুশীলনী ৫.২', dueAt: inDays(2),
+    status: 'open', maxMarks: '10.00', subjectBn: 'পদার্থবিজ্ঞান', sectionName: 'ক',
+    submissionCount: 24, ungradedCount: 6, mySubmission: null,
+  },
+  {
+    id: 'demo-a-2', titleBn: 'উৎপাদক বিশ্লেষণ — ১০টি সমস্যা', dueAt: inDays(5),
+    status: 'open', maxMarks: '20.00', subjectBn: 'গণিত', sectionName: 'ক',
+    submissionCount: 11, ungradedCount: 0,
+    mySubmission: { submittedAt: inDays(-1), marksAwarded: null, gradedAt: null },
+  },
+  {
+    id: 'demo-a-3', titleBn: 'রচনা: বিজ্ঞান ও প্রযুক্তি', dueAt: inDays(-3),
+    status: 'open', maxMarks: '15.00', subjectBn: 'বাংলা', sectionName: 'ক',
+    submissionCount: 28, ungradedCount: 0,
+    mySubmission: { submittedAt: inDays(-4), marksAwarded: '13.00', gradedAt: inDays(-2) },
+  },
+];
+
+function demoAssignmentDetail(id: string) {
+  const base = DEMO_ASSIGNMENTS.find((a) => a.id === id) ?? DEMO_ASSIGNMENTS[0];
+  const graded = id === 'demo-a-3';
+  return {
+    assignment: {
+      id: base.id, titleBn: base.titleBn,
+      instructionsBn: 'পাঠ্যবইয়ের অনুশীলনী দেখে প্রতিটি ধাপ দেখিয়ে সমাধান করো। শুধু উত্তর লিখলে পূর্ণ নম্বর পাবে না।',
+      maxMarks: base.maxMarks, dueAt: base.dueAt, allowsLate: true,
+      status: 'open', subjectBn: base.subjectBn, sectionName: base.sectionName,
+    },
+    submissions: graded
+      ? [{
+          id: 'demo-sub-me', studentId: 'demo-user', fullNameBn: 'রাফি', rollNo: 7,
+          bodyBn: 'বিজ্ঞান ও প্রযুক্তি আমাদের জীবনযাত্রাকে সহজ করেছে…',
+          submittedAt: inDays(-4), isLate: false,
+          marksAwarded: '13.00', feedbackBn: 'ভালো লিখেছ — উপসংহারটি আরও শক্ত হতে পারত।',
+          gradedAt: inDays(-2),
+        }]
+      : [
+          { id: 'demo-sub-1', studentId: 'demo-s1', fullNameBn: 'আয়শা সিদ্দিকা', rollNo: 1,
+            bodyBn: 'a = (v − u)/t সূত্র ব্যবহার করে… ক) ৪ m/s²  খ) ২০ মিটার',
+            submittedAt: inDays(-1), isLate: false, marksAwarded: null, feedbackBn: null, gradedAt: null },
+          { id: 'demo-sub-2', studentId: 'demo-s2', fullNameBn: 'তানভীর হাসান', rollNo: 2,
+            bodyBn: 'প্রথমে u = ১০, v = ৩০, t = ৫ ধরে…',
+            submittedAt: inDays(-1), isLate: false, marksAwarded: null, feedbackBn: null, gradedAt: null },
+          { id: 'demo-sub-3', studentId: 'demo-s3', fullNameBn: 'নুসরাত জাহান', rollNo: 3,
+            bodyBn: 'সমাধান সংযুক্ত করা হলো।',
+            submittedAt: inDays(0), isLate: true, marksAwarded: null, feedbackBn: null, gradedAt: null },
+        ],
+  };
+}
+
 const DEMO_RESULTS = [
   {
     examId: 'demo-exam-half', examNameBn: 'অর্ধ-বার্ষিক পরীক্ষা ২০২৬', examType: 'half_yearly',
@@ -299,7 +355,9 @@ export class DemoAuth extends Auth {
 
   override isLoggedIn(): boolean { return true; }
   override get tenantId(): string { return 'demo-tenant'; }
-  override get userId(): string { return 'demo-teacher'; }
+  // Student-role demo must match the submission rows below, so the
+  // "my answer" pre-fill and graded-state branches actually exercise.
+  override get userId(): string { return this.role === 'student' ? 'demo-user' : 'demo-teacher'; }
   /**
    * Demo role, switchable via ?role= or the picker in the top bar. The
    * home dashboard is role-aware (app.ts dashboardFor), so without a way
@@ -348,6 +406,12 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/academics/marks':
         return ok(demoMarks());
+
+      case '/api/v1/academics/assignments': {
+        const aid = url.searchParams.get('assignmentId');
+        if (aid) return ok(demoAssignmentDetail(aid));
+        return ok({ assignments: DEMO_ASSIGNMENTS });
+      }
 
       case '/api/v1/academics/results':
         return ok({ studentId: 'demo-s1', results: DEMO_RESULTS });

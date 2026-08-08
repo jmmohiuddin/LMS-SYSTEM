@@ -715,3 +715,62 @@ button, h1, h2, .att-counts { text-transform: none; }
   background: rgba(255,255,255,.12); color: #fff; font-size: 13px;
 }
 .shell-role option { color: var(--c-ink); background: var(--c-surface); }
+
+/* ========================================================== assignments */
+.assign-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+.assign-card {
+  display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); align-items: center;
+  width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
+  cursor: pointer; background: var(--c-surface);
+  border: 1px solid var(--c-line); border-radius: var(--radius); box-shadow: var(--shadow-1);
+  border-left-width: 3px;
+}
+/* Urgency reads as a left rail so the list scans without reading text. */
+.assign-card[data-state='overdue'] { border-left-color: var(--c-accent); }
+.assign-card[data-state='today']   { border-left-color: var(--c-warn); }
+.assign-card[data-state='soon']    { border-left-color: var(--c-warn); }
+.assign-card[data-state='later']   { border-left-color: var(--c-line); }
+.assign-card[data-state='done']    { border-left-color: var(--c-success); background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
+.assign-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.assign-title { font-weight: 600; font-size: 15px; }
+.assign-meta { font-size: 12px; color: var(--c-ink-2); }
+.assign-chip {
+  padding: 3px var(--s-2); border-radius: 999px; font-size: 11px; font-weight: 700;
+  white-space: nowrap; background: var(--c-surface-3); color: var(--c-ink-2);
+}
+.assign-chip[data-state='overdue'] { background: #FEF2F2; color: var(--c-accent); }
+.assign-chip[data-state='today']   { background: #FFFBEB; color: var(--c-warn); }
+.assign-chip[data-state='soon']    { background: #FFFBEB; color: var(--c-warn); }
+.assign-chip[data-state='done']    { background: #ECFDF5; color: var(--c-success); }
+
+.assign-instructions {
+  margin: var(--s-2) var(--s-4); padding: var(--s-3) var(--s-4);
+  font-size: 15px; line-height: 1.7; white-space: pre-wrap;
+}
+.assign-answer { min-height: 160px; padding: var(--s-3); line-height: 1.7; resize: vertical; }
+.assign-graded {
+  margin: var(--s-2) var(--s-4); padding: var(--s-4);
+  background: var(--c-primary-soft); border-color: transparent; text-align: center;
+}
+.assign-score {
+  font-size: 30px; font-weight: 700; color: var(--c-primary);
+  font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.assign-feedback { margin: var(--s-2) 0 0; font-size: 14px; color: var(--c-ink-2); }
+
+/* Teacher review list */
+.sub-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+.sub-item { padding: var(--s-3); }
+.sub-item[data-graded='true'] { background: color-mix(in srgb, var(--c-primary-soft) 40%, var(--c-surface)); }
+.sub-head { display: flex; justify-content: space-between; gap: var(--s-3); align-items: baseline; }
+.sub-who { font-weight: 600; font-size: 15px; }
+.sub-state { font-size: 12px; color: var(--c-ink-3); white-space: nowrap; }
+.sub-state[data-late='true'] { color: var(--c-warn); }
+.sub-body {
+  margin: var(--s-2) 0 0; font-size: 14px; line-height: 1.6; color: var(--c-ink-2);
+  white-space: pre-wrap;
+}
+.sub-grade-row { display: flex; gap: var(--s-2); margin-top: var(--s-3); align-items: center; }
+.sub-mark { width: 5.5em; flex: none; }
+.sub-feedback { flex: 1; min-width: 0; }
+.sub-grade-row .btn-small { flex: none; width: auto; }

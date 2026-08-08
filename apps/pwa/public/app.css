@@ -677,3 +677,41 @@ button, h1, h2, .att-counts { text-transform: none; }
 .block-figure figcaption { margin-top: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
 
 .lesson-done { margin: var(--s-4) var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }
+
+/* ============================================================== results */
+.result-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+.result-card { overflow: hidden; }
+.result-head {
+  display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); align-items: center;
+  width: 100%; padding: var(--s-3); background: none; border: 0;
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+}
+.result-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.result-exam { font-weight: 600; font-size: 15px; }
+.result-meta { font-size: 12px; color: var(--c-ink-2); }
+.result-score { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.result-gpa {
+  font-size: 24px; font-weight: 700; line-height: 1.1;
+  font-variant-numeric: tabular-nums; color: var(--c-primary);
+}
+.result-letter { font-size: 12px; font-weight: 600; color: var(--c-ink-2); }
+.result-card[data-pass='false'] .result-gpa { color: var(--c-accent); }
+
+.result-detail { padding: 0 var(--s-3) var(--s-3); border-top: 1px solid var(--c-line); }
+.result-subject {
+  display: flex; justify-content: space-between; gap: var(--s-3);
+  padding: var(--s-2) 0; font-size: 14px; border-bottom: 1px solid var(--c-line-2);
+}
+.result-subject:last-child { border-bottom: none; }
+.result-subject-mark { font-variant-numeric: tabular-nums; color: var(--c-ink-2); white-space: nowrap; }
+.result-subject-mark[data-absent='true'] { color: var(--c-accent); }
+.result-total { font-weight: 700; border-top: 1px solid var(--c-line); margin-top: var(--s-1); }
+.result-total span { color: var(--c-ink); }
+
+/* Demo role picker in the top bar */
+.shell-role {
+  min-height: 32px; max-width: 40vw; padding: 0 var(--s-2);
+  border: 1px solid rgba(255,255,255,.5); border-radius: 8px;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 13px;
+}
+.shell-role option { color: var(--c-ink); background: var(--c-surface); }

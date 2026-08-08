@@ -32,6 +32,8 @@ export interface ShellOptions {
   defaultPath: string;
   displayName: string;
   onLogout: () => void;
+  /** Demo mode only — lets a previewer see each role's dashboard. */
+  roleSwitcher?: { current: string; onChange: (role: string) => void };
 }
 
 export class Shell {
@@ -78,7 +80,33 @@ export class Shell {
     logout.className = 'shell-logout';
     logout.textContent = 'লগ আউট';
     logout.addEventListener('click', () => this.o.onLogout());
-    topbar.append(who, logout);
+
+    // Demo-only role picker. The home dashboard differs per role, so
+    // without this the student and guardian surfaces are unreachable in a
+    // preview — and those are the two people a demo most needs to show.
+    if (this.o.roleSwitcher) {
+      const picker = d.createElement('select');
+      picker.className = 'shell-role';
+      picker.setAttribute('aria-label', 'ডেমো ভূমিকা পরিবর্তন করুন');
+      const roles: [string, string][] = [
+        ['class_teacher', 'শ্রেণি শিক্ষক'],
+        ['student', 'শিক্ষার্থী'],
+        ['guardian', 'অভিভাবক'],
+        ['principal', 'অধ্যক্ষ'],
+        ['accountant', 'হিসাবরক্ষক'],
+      ];
+      for (const [value, label] of roles) {
+        const opt = d.createElement('option');
+        opt.value = value;
+        opt.textContent = label;
+        opt.selected = value === this.o.roleSwitcher.current;
+        picker.append(opt);
+      }
+      picker.addEventListener('change', () => this.o.roleSwitcher?.onChange(picker.value));
+      topbar.append(who, picker, logout);
+    } else {
+      topbar.append(who, logout);
+    }
 
     this.viewEl = d.createElement('div');
     this.viewEl.className = 'shell-view';

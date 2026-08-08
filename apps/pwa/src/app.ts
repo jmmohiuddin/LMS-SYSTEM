@@ -24,12 +24,13 @@ import { MoreView } from './more-view.ts';
 import { SikhokView } from './sikhok-view.ts';
 import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
-import { HomeView } from './home-view.ts';
+import { HomeView, type DashboardItem } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
 import { LedgerView } from './ledger-view.ts';
 import { SystemView } from './system-view.ts';
 import { LearnView } from './learn-view.ts';
+import { ResultsView } from './results-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -63,6 +64,77 @@ function deviceId(key: string): string {
   const id = crypto.randomUUID();
   localStorage.setItem(k, id);
   return id;
+}
+
+/**
+ * The home dashboard is role-aware, because the cards are actions and most
+ * actions are not available to most roles. Showing a student "take
+ * attendance" isn't just clutter — it's an invitation to a 403, and it
+ * misrepresents what the product is for that person.
+ *
+ * Only the *visible* surface changes. Every route stays registered and
+ * reachable by URL; RLS and the endpoint role guards are what actually
+ * enforce access, exactly as before. This is orientation, not security.
+ */
+type DashCards = { primary: DashboardItem[]; secondary: DashboardItem[] };
+
+const CARD = {
+  learn:      { path: 'learn',      glyph: '📖', titleBn: 'পড়াশোনা',            subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
+  results:    { path: 'results',    glyph: '🏅', titleBn: 'ফলাফল',              subtitleBn: 'পরীক্ষার ফলাফল ও নম্বর' },
+  shikho:     { path: 'shikho',     glyph: '💬', titleBn: 'শিখো টিউটর',         subtitleBn: 'প্রশ্ন করো, উত্তর বুঝে নাও' },
+  routineStu: { path: 'routine',    glyph: '⏲', titleBn: 'আজকের রুটিন',        subtitleBn: 'তোমার ক্লাসের সময়সূচি' },
+  feesStu:    { path: 'fees',       glyph: '৳', titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
+  attendance: { path: 'attendance', glyph: '✓', titleBn: 'হাজিরা নিন',         subtitleBn: 'আজকের শ্রেণিকক্ষ' },
+  routine:    { path: 'routine',    glyph: '⏲', titleBn: 'আজকের রুটিন',        subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
+  roster:     { path: 'roster',     glyph: '☰', titleBn: 'শিক্ষার্থী',          subtitleBn: 'সেকশন রোস্টার' },
+  marks:      { path: 'marks',      glyph: '✎', titleBn: 'নম্বর এন্ট্রি',        subtitleBn: 'CQ · MCQ · ব্যবহারিক' },
+  scripts:    { path: 'scripts',    glyph: '📷', titleBn: 'উত্তরপত্র',           subtitleBn: 'ছবি তুলে আপলোড' },
+  substitute: { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক',        subtitleBn: 'ফাঁকা শিক্ষক খুঁজুন' },
+  sikhok:     { path: 'sikhok',     glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI',    subtitleBn: 'প্রশ্নপত্র ও পাঠ পরিকল্পনা' },
+  fees:       { path: 'fees',       glyph: '৳', titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
+  roles:      { path: 'roles',      glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস',  subtitleBn: '১০ ভূমিকা · RLS' },
+  ledger:     { path: 'ledger',     glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন',   subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
+  system:     { path: 'system',     glyph: '⚙', titleBn: 'সিস্টেম',            subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
+} satisfies Record<string, DashboardItem>;
+
+function dashboardFor(role: string): DashCards {
+  switch (role) {
+    case 'student':
+      return {
+        primary: [CARD.learn, CARD.results],
+        secondary: [CARD.shikho, CARD.routineStu, CARD.feesStu],
+      };
+    case 'guardian':
+      return {
+        // A guardian's first question is almost always fees or results,
+        // not content — so the ordering differs from the student's.
+        primary: [CARD.results, CARD.feesStu],
+        secondary: [CARD.routineStu, CARD.learn],
+      };
+    case 'accountant':
+      return {
+        primary: [CARD.fees, CARD.ledger],
+        secondary: [CARD.roster, CARD.system],
+      };
+    case 'principal':
+    case 'school_owner':
+      return {
+        primary: [CARD.routine, CARD.ledger],
+        secondary: [
+          CARD.roster, CARD.marks, CARD.substitute, CARD.fees,
+          CARD.roles, CARD.sikhok, CARD.system,
+        ],
+      };
+    default:
+      // Teachers and coordinators — the original, teaching-first surface.
+      return {
+        primary: [CARD.attendance, CARD.routine],
+        secondary: [
+          CARD.roster, CARD.marks, CARD.scripts, CARD.substitute, CARD.learn,
+          CARD.sikhok, CARD.shikho, CARD.fees, CARD.roles, CARD.ledger, CARD.system,
+        ],
+      };
+  }
 }
 
 function loadRosterStudents(): { students: Student[]; sectionId: string | null } {
@@ -152,27 +224,13 @@ async function main() {
         labelBn: 'হোম',
         glyph: '⌂',
         mount: (container) => {
+          const { primary, secondary } = dashboardFor(auth.role);
           new HomeView({
             root: container,
             doc: document,
             displayName: auth.displayName,
-            primary: [
-              { path: 'learn', glyph: '📖', titleBn: 'পড়াশোনা', subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
-              { path: 'attendance', glyph: '✓', titleBn: 'হাজিরা নিন', subtitleBn: 'আজকের শ্রেণিকক্ষ' },
-            ],
-            secondary: [
-              { path: 'routine', glyph: '⏲', titleBn: 'আজকের রুটিন', subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
-              { path: 'roster', glyph: '☰', titleBn: 'শিক্ষার্থী', subtitleBn: 'সেকশন রোস্টার' },
-              { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'CQ · MCQ · ব্যবহারিক' },
-              { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র', subtitleBn: 'ছবি তুলে আপলোড' },
-              { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা শিক্ষক খুঁজুন' },
-              { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস ও রসিদ' },
-              { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'প্রশ্নপত্র ও পাঠ পরিকল্পনা' },
-              { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য' },
-              { path: 'roles', glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS' },
-              { path: 'ledger', glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
-              { path: 'system', glyph: '⚙', titleBn: 'সিস্টেম', subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
-            ],
+            primary,
+            secondary,
           });
         },
       },
@@ -282,6 +340,13 @@ async function main() {
         mount: (container) => { new ScriptsView({ root: container, doc: document, auth }); },
       },
       {
+        path: 'results',
+        labelBn: 'ফলাফল',
+        glyph: '🏅',
+        hidden: true,
+        mount: (container) => { new ResultsView({ root: container, doc: document, auth }); },
+      },
+      {
         path: 'roles',
         labelBn: 'ভূমিকা',
         glyph: '🔐',
@@ -311,6 +376,18 @@ async function main() {
       defaultPath: 'home',
       displayName: auth.displayName,
       onLogout: () => { void doLogout(); },
+      roleSwitcher: demoMode
+        ? {
+            current: auth.role,
+            onChange: (role) => {
+              try { localStorage.setItem('shikhon_demo_role', role); } catch { /* ignore */ }
+              // Full reload: routes and the dashboard are both built from
+              // the role at construction time, so re-deriving them in place
+              // would be a second, divergent code path to keep correct.
+              location.reload();
+            },
+          }
+        : undefined,
     });
   }
 

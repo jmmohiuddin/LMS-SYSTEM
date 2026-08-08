@@ -145,6 +145,35 @@ function weekDays(weekStart: string): { date: string; slots: RoutineSlot[] }[] {
   });
 }
 
+const DEMO_RESULTS = [
+  {
+    examId: 'demo-exam-half', examNameBn: 'অর্ধ-বার্ষিক পরীক্ষা ২০২৬', examType: 'half_yearly',
+    totalMarks: '412.00', totalMax: '500.00', percentage: '82.40',
+    gpa: '4.50', letterGrade: 'A', subjectsFailed: 0, isPass: true,
+    rankInSection: 7, publishedAt: '2026-07-20T10:00:00Z',
+    subjects: [
+      { subjectBn: 'বাংলা', totalMarks: '78.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
+      { subjectBn: 'ইংরেজি', totalMarks: '71.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
+      { subjectBn: 'গণিত', totalMarks: '92.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
+      { subjectBn: 'পদার্থবিজ্ঞান', totalMarks: '88.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
+      { subjectBn: 'রসায়ন', totalMarks: '83.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
+    ],
+  },
+  {
+    examId: 'demo-exam-first', examNameBn: 'প্রথম সাময়িক পরীক্ষা ২০২৬', examType: 'term',
+    totalMarks: '365.00', totalMax: '500.00', percentage: '73.00',
+    gpa: '4.00', letterGrade: 'A', subjectsFailed: 0, isPass: true,
+    rankInSection: 11, publishedAt: '2026-04-15T10:00:00Z',
+    subjects: [
+      { subjectBn: 'বাংলা', totalMarks: '70.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
+      { subjectBn: 'ইংরেজি', totalMarks: '64.00', gradeLetter: 'A-', gradePoint: '3.50', isAbsent: false },
+      { subjectBn: 'গণিত', totalMarks: '81.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
+      { subjectBn: 'পদার্থবিজ্ঞান', totalMarks: '75.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
+      { subjectBn: 'রসায়ন', totalMarks: '75.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
+    ],
+  },
+];
+
 const DEMO_CHAPTERS = [
   {
     id: 'demo-ch-1', chapterNo: 5,
@@ -271,9 +300,33 @@ export class DemoAuth extends Auth {
   override isLoggedIn(): boolean { return true; }
   override get tenantId(): string { return 'demo-tenant'; }
   override get userId(): string { return 'demo-teacher'; }
-  override get role(): string { return 'teacher'; }
-  override get roles(): string[] { return ['teacher']; }
-  override get displayName(): string { return 'ডেমো (নমুনা তথ্য)'; }
+  /**
+   * Demo role, switchable via ?role= or the picker in the top bar. The
+   * home dashboard is role-aware (app.ts dashboardFor), so without a way
+   * to change roles the student and guardian surfaces would be
+   * unreachable in a preview — which is exactly the audience most likely
+   * to be looking at a demo.
+   */
+  override get role(): string {
+    const fromUrl = new URLSearchParams(location.search).get('role');
+    if (fromUrl) {
+      try { localStorage.setItem('shikhon_demo_role', fromUrl); } catch { /* ignore */ }
+      return fromUrl;
+    }
+    try { return localStorage.getItem('shikhon_demo_role') || 'class_teacher'; }
+    catch { return 'class_teacher'; }
+  }
+  override get roles(): string[] { return [this.role]; }
+  override get displayName(): string {
+    const label: Record<string, string> = {
+      student: 'রাফি (শিক্ষার্থী)',
+      guardian: 'অভিভাবক — রাফির',
+      class_teacher: 'ডেমো (শ্রেণি শিক্ষক)',
+      principal: 'ডেমো (অধ্যক্ষ)',
+      accountant: 'ডেমো (হিসাবরক্ষক)',
+    };
+    return label[this.role] ?? 'ডেমো (নমুনা তথ্য)';
+  }
 
   override async logout(): Promise<void> {
     // No session to revoke — app.ts falls back to the login view, which
@@ -295,6 +348,9 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/academics/marks':
         return ok(demoMarks());
+
+      case '/api/v1/academics/results':
+        return ok({ studentId: 'demo-s1', results: DEMO_RESULTS });
 
       case '/api/v1/academics/chapters':
         return ok({ chapters: DEMO_CHAPTERS });

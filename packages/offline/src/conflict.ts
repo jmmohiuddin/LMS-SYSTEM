@@ -83,6 +83,10 @@ const CLIENT_AUTHORABLE: ReadonlySet<string> = new Set<Entity>([
   'exam_mark',
   'answer_script',
   'class_delivery_log',
+  // A student reading a lesson offline must still record progress —
+  // otherwise "what should I study next" is wrong for anyone without
+  // constant connectivity, which is most of the target audience.
+  'lesson_progress',
   'ai_chat_turn',
 ]);
 

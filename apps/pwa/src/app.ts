@@ -29,6 +29,7 @@ import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
 import { LedgerView } from './ledger-view.ts';
 import { SystemView } from './system-view.ts';
+import { LearnView } from './learn-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -156,10 +157,11 @@ async function main() {
             doc: document,
             displayName: auth.displayName,
             primary: [
+              { path: 'learn', glyph: '📖', titleBn: 'পড়াশোনা', subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
               { path: 'attendance', glyph: '✓', titleBn: 'হাজিরা নিন', subtitleBn: 'আজকের শ্রেণিকক্ষ' },
-              { path: 'routine', glyph: '⏲', titleBn: 'আজকের রুটিন', subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
             ],
             secondary: [
+              { path: 'routine', glyph: '⏲', titleBn: 'আজকের রুটিন', subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
               { path: 'roster', glyph: '☰', titleBn: 'শিক্ষার্থী', subtitleBn: 'সেকশন রোস্টার' },
               { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'CQ · MCQ · ব্যবহারিক' },
               { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র', subtitleBn: 'ছবি তুলে আপলোড' },
@@ -172,6 +174,14 @@ async function main() {
               { path: 'system', glyph: '⚙', titleBn: 'সিস্টেম', subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
             ],
           });
+        },
+      },
+      {
+        path: 'learn',
+        labelBn: 'পড়াশোনা',
+        glyph: '📖',
+        mount: (container) => {
+          new LearnView({ root: container, doc: document, auth, outbox: engine });
         },
       },
       {
@@ -195,6 +205,7 @@ async function main() {
         path: 'routine',
         labelBn: 'রুটিন',
         glyph: '⏲',
+        hidden: true,
         mount: (container) => { new RoutineView({ root: container, doc: document, auth }); },
       },
       {
@@ -221,6 +232,7 @@ async function main() {
             root: container,
             doc: document,
             items: [
+              { path: 'routine', glyph: '⏲', titleBn: 'রুটিন', subtitleBn: 'দৈনিক ও সাপ্তাহিক ক্লাস সময়সূচি' },
               { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'অফলাইন CQ / MCQ / ব্যবহারিক' },
               { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র আপলোড', subtitleBn: 'হাতে-লেখা উত্তরপত্রের ছবি' },
               { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },

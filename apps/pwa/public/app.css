@@ -584,3 +584,96 @@ button, h1, h2, .att-counts { text-transform: none; }
 .system-chip[data-state='dark']       { background: #FEF3C7; color: var(--c-warn); }
 .system-chip[data-state='invisible']  { background: var(--c-surface-3); color: var(--c-ink-2); }
 .system-chip[data-state='unknown']    { background: var(--c-surface-3); color: var(--c-ink-3); }
+
+/* =============================================================== learn
+   Syllabus browse + lesson reader — the student-facing learning surface. */
+
+.back-bar { padding: var(--s-3) var(--s-4) 0; }
+.back-btn { min-height: 40px; font-size: 14px; }
+
+/* Chapter list ---------------------------------------------------------- */
+.chapter-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
+.chapter-card {
+  display: grid; grid-template-columns: 52px 1fr; gap: var(--s-3); align-items: center;
+  width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
+  cursor: pointer; background: var(--c-surface);
+  border: 1px solid var(--c-line); border-radius: var(--radius); box-shadow: var(--shadow-1);
+}
+.chapter-card:active { transform: scale(.995); }
+
+/* Progress ring drawn with conic-gradient — no SVG, no JS, cheap to composite. */
+.chapter-ring {
+  width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center; position: relative;
+  background: conic-gradient(var(--c-primary) calc(var(--pct, 0) * 1%), var(--c-surface-3) 0);
+}
+.chapter-ring::after {
+  content: ''; position: absolute; inset: 5px;
+  background: var(--c-surface); border-radius: 50%;
+}
+.chapter-ring-text {
+  position: relative; z-index: 1;
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--c-ink-2);
+}
+.chapter-ring[data-complete='true'] .chapter-ring-text { color: var(--c-primary); font-size: 18px; }
+.chapter-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chapter-title { font-weight: 600; font-size: 15px; }
+.chapter-meta { font-size: 12px; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.chapter-pre { font-size: 12px; color: var(--c-warn); }
+.chapter-draft {
+  align-self: flex-start; margin-top: 2px;
+  font-size: 11px; font-weight: 600; padding: 1px var(--s-2); border-radius: 999px;
+  background: var(--c-surface-3); color: var(--c-ink-3);
+}
+
+/* Lesson list ----------------------------------------------------------- */
+.lesson-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+.lesson-card {
+  display: grid; grid-template-columns: 28px 1fr; gap: var(--s-3); align-items: center;
+  width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
+  cursor: pointer; background: var(--c-surface);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+}
+.lesson-mark { font-size: 18px; line-height: 1; color: var(--c-ink-3); text-align: center; }
+.lesson-card[data-state='completed'] .lesson-mark { color: var(--c-success); }
+.lesson-card[data-state='started'] .lesson-mark { color: var(--c-warn); }
+.lesson-card[data-state='completed'] { background: color-mix(in srgb, var(--c-primary-soft) 55%, var(--c-surface)); }
+.lesson-body { display: flex; flex-direction: column; gap: 1px; }
+.lesson-title { font-weight: 600; font-size: 15px; }
+.lesson-meta { font-size: 12px; color: var(--c-ink-2); }
+
+/* Reader ---------------------------------------------------------------- */
+.lesson-reader {
+  padding: 0 var(--s-4);
+  /* Bangla body copy needs a slightly longer measure than Latin to avoid
+     conjunct-heavy lines breaking awkwardly. */
+  max-width: 68ch;
+  font-size: 17px; line-height: 1.85;
+}
+.block-text { margin: 0 0 var(--s-4); }
+.block-formula {
+  margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 10px;
+  font-family: ui-monospace, "SF Mono", monospace; font-size: 18px; text-align: center;
+  overflow-x: auto;
+}
+.block-key-point {
+  margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
+  background: var(--c-primary-soft); border-radius: 10px;
+  border-left: 3px solid var(--c-primary); font-size: 16px;
+}
+.block-example, .block-practice {
+  margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 10px;
+}
+.block-practice { border-style: dashed; }
+.block-label {
+  display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--c-ink-3); margin-bottom: var(--s-1);
+}
+.block-example p, .block-practice p { margin: 0; }
+.block-figure { margin: var(--s-3) 0 var(--s-4); }
+.block-figure img { width: 100%; height: auto; border-radius: 10px; background: var(--c-surface-3); }
+.block-figure figcaption { margin-top: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
+
+.lesson-done { margin: var(--s-4) var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }

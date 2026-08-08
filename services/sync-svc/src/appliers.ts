@@ -257,10 +257,64 @@ export const applyClassDeliveryLog: Applier = async (c, op) => {
   return applied(op.opId);
 };
 
+/* -------------------------------------------------------------- lesson progress */
+
+interface LessonProgressPayload {
+  lessonId: string;
+  state?: 'started' | 'completed';
+  secondsSpent?: number;
+  lastBlockNo?: number | null;
+}
+
+// A tab left open overnight must not claim 8 hours of study; the DB CHECK
+// enforces the same ceiling, this just fails soft instead of erroring.
+const MAX_SECONDS = 14400;
+
+export const applyLessonProgress: Applier = async (c, op) => {
+  const p = op.payload as LessonProgressPayload;
+  if (!p?.lessonId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
+
+  const lesson = await c.query(`SELECT id FROM lessons WHERE id = $1`, [p.lessonId]);
+  if (lesson.rowCount === 0) return rejected(op.opId, 'LESSON_NOT_FOUND');
+
+  const state = p.state === 'completed' ? 'completed' : 'started';
+  const seconds = Math.min(Math.max(Math.round(p.secondsSpent ?? 0), 0), MAX_SECONDS);
+
+  // Progress is monotonic: reading time accumulates and a completed lesson
+  // never reverts to 'started' just because the student reopened it. The
+  // outbox can legitimately replay an older op after a newer one on a flaky
+  // connection, so this has to be order-independent rather than last-write-wins.
+  await c.query(
+    `INSERT INTO lesson_progress
+       (id, tenant_id, lesson_id, student_id, state, seconds_spent, last_block_no,
+        started_at, completed_at)
+     VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, now(),
+             CASE WHEN $4 = 'completed' THEN now() ELSE NULL END)
+     ON CONFLICT (tenant_id, lesson_id, student_id) DO UPDATE
+       SET state = CASE
+             WHEN lesson_progress.state = 'completed' THEN 'completed'
+             ELSE EXCLUDED.state
+           END,
+           seconds_spent = LEAST(lesson_progress.seconds_spent + EXCLUDED.seconds_spent, $7),
+           last_block_no = GREATEST(
+             COALESCE(lesson_progress.last_block_no, 0),
+             COALESCE(EXCLUDED.last_block_no, 0)
+           ),
+           completed_at = COALESCE(
+             lesson_progress.completed_at,
+             CASE WHEN EXCLUDED.state = 'completed' THEN now() ELSE NULL END
+           )`,
+    [op.opId, p.lessonId, op.actorId, state, seconds, p.lastBlockNo ?? null, MAX_SECONDS],
+  );
+
+  return applied(op.opId);
+};
+
 /* ------------------------------------------------------------------ registry */
 
 export const APPLIERS: Record<string, Applier> = {
   attendance_session: applyAttendanceSession,
   exam_mark: applyExamMark,
   class_delivery_log: applyClassDeliveryLog,
+  lesson_progress: applyLessonProgress,
 };

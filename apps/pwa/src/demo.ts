@@ -145,6 +145,61 @@ function weekDays(weekStart: string): { date: string; slots: RoutineSlot[] }[] {
   });
 }
 
+const DEMO_CHAPTERS = [
+  {
+    id: 'demo-ch-1', chapterNo: 5,
+    name: { bn: 'অধ্যায় ৫: গতি', en: 'Chapter 5: Motion' },
+    summaryBn: 'সরণ, দ্রুতি, বেগ ও ত্বরণের ধারণা এবং নিউটনের সূত্র।',
+    estMinutes: 90, isPublished: true,
+    subject: { id: 'demo-sub-phy', bn: 'পদার্থবিজ্ঞান', en: 'Physics' },
+    prerequisite: null, lessonCount: 4, completedCount: 2,
+  },
+  {
+    id: 'demo-ch-2', chapterNo: 6,
+    name: { bn: 'অধ্যায় ৬: বল ও নিউটনের সূত্র', en: 'Chapter 6: Force' },
+    summaryBn: 'বলের প্রকারভেদ, নিউটনের তিনটি সূত্র ও তাদের প্রয়োগ।',
+    estMinutes: 120, isPublished: true,
+    subject: { id: 'demo-sub-phy', bn: 'পদার্থবিজ্ঞান', en: 'Physics' },
+    prerequisite: { id: 'demo-ch-1', nameBn: 'অধ্যায় ৫: গতি' },
+    lessonCount: 5, completedCount: 0,
+  },
+  {
+    id: 'demo-ch-3', chapterNo: 3,
+    name: { bn: 'অধ্যায় ৩: বীজগণিতিক রাশি', en: 'Chapter 3: Algebraic Expressions' },
+    summaryBn: 'উৎপাদক বিশ্লেষণ ও দ্বিঘাত সমীকরণের সমাধান।',
+    estMinutes: 100, isPublished: true,
+    subject: { id: 'demo-sub-math', bn: 'গণিত', en: 'Mathematics' },
+    prerequisite: null, lessonCount: 4, completedCount: 4,
+  },
+];
+
+const DEMO_LESSONS = [
+  { id: 'demo-l-1', lessonNo: 1, title: { bn: 'সরণ ও দূরত্ব', en: null }, estMinutes: 20, isPublished: true, progress: { state: 'completed', secondsSpent: 1180 } },
+  { id: 'demo-l-2', lessonNo: 2, title: { bn: 'দ্রুতি ও বেগ', en: null }, estMinutes: 25, isPublished: true, progress: { state: 'completed', secondsSpent: 1420 } },
+  { id: 'demo-l-3', lessonNo: 3, title: { bn: 'ত্বরণ', en: null }, estMinutes: 20, isPublished: true, progress: { state: 'started', secondsSpent: 310 } },
+  { id: 'demo-l-4', lessonNo: 4, title: { bn: 'গতির সমীকরণ', en: null }, estMinutes: 25, isPublished: true, progress: null },
+];
+
+function demoLesson(lessonId: string) {
+  return {
+    lesson: {
+      id: lessonId, lessonNo: 3,
+      title: { bn: 'ত্বরণ', en: 'Acceleration' },
+      estMinutes: 20,
+      chapter: { id: 'demo-ch-1', nameBn: 'অধ্যায় ৫: গতি' },
+      progress: { state: 'started', secondsSpent: 310, lastBlockNo: 2 },
+    },
+    blocks: [
+      { id: 'b1', blockNo: 1, kind: 'text', bodyBn: 'কোনো বস্তুর বেগ যদি সময়ের সাথে পরিবর্তিত হয়, তবে সেই পরিবর্তনের হারকে ত্বরণ বলে। ত্বরণ একটি ভেক্টর রাশি — এর মান ও দিক উভয়ই আছে।', mediaKey: null, altTextBn: null, captionBn: null },
+      { id: 'b2', blockNo: 2, kind: 'formula', bodyBn: 'a = (v − u) / t', mediaKey: null, altTextBn: null, captionBn: null },
+      { id: 'b3', blockNo: 3, kind: 'key_point', bodyBn: 'ত্বরণের একক m/s² — বেগের একক (m/s) কে সময় (s) দিয়ে ভাগ করলে এটি পাওয়া যায়।', mediaKey: null, altTextBn: null, captionBn: null },
+      { id: 'b4', blockNo: 4, kind: 'example', bodyBn: 'একটি গাড়ি ৫ সেকেন্ডে ১০ m/s থেকে ৩০ m/s বেগ অর্জন করলে, a = (৩০ − ১০) / ৫ = ৪ m/s²।', mediaKey: null, altTextBn: null, captionBn: null },
+      { id: 'b5', blockNo: 5, kind: 'text', bodyBn: 'যদি বেগ কমতে থাকে, ত্বরণ ঋণাত্মক হয় — একে মন্দন (deceleration) বলা হয়।', mediaKey: null, altTextBn: null, captionBn: null },
+      { id: 'b6', blockNo: 6, kind: 'practice_prompt', bodyBn: 'একটি বাস ৮ সেকেন্ডে ২৪ m/s থেকে থেমে গেলে তার মন্দন কত? (উত্তর নিজে বের করার চেষ্টা করো)', mediaKey: null, altTextBn: null, captionBn: null },
+    ],
+  };
+}
+
 const DEMO_INVOICES = [
   {
     id: 'demo-inv-1',
@@ -240,6 +295,18 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/academics/marks':
         return ok(demoMarks());
+
+      case '/api/v1/academics/chapters':
+        return ok({ chapters: DEMO_CHAPTERS });
+
+      case '/api/v1/academics/lessons': {
+        const lessonId = url.searchParams.get('lessonId');
+        if (lessonId) return ok(demoLesson(lessonId));
+        return ok({
+          chapterId: url.searchParams.get('chapterId') ?? 'demo-ch-1',
+          lessons: DEMO_LESSONS,
+        });
+      }
 
       case '/api/v1/finance/invoices':
         return ok({ invoices: DEMO_INVOICES });

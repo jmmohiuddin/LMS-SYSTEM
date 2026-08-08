@@ -198,13 +198,36 @@ button, h1, h2, .att-counts { text-transform: none; }
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .shell-tab {
+  position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
-  min-height: var(--tap-min); padding: var(--s-1) 0;
-  border: none; background: none; color: var(--c-ink-2); cursor: pointer;
+  min-height: var(--tap-min); padding: var(--s-2) 0 var(--s-1);
+  border: none; background: none; color: var(--c-ink-3); cursor: pointer;
+  transition: color 100ms ease-out;
 }
-.shell-tab-glyph { font-size: 20px; }
-.shell-tab-label { font-size: 12px; }
+.shell-tab-glyph { font-size: 20px; line-height: 1; }
+.shell-tab-label { font-size: 12px; line-height: 1.2; }
+/* Active tab needs an unmistakable signal — a colored dot on top plus the
+   primary tint. The subtle color-only change we had before wasn't enough
+   to tell a first-time user which page they were on. */
 .shell-tab.active { color: var(--c-primary); font-weight: 600; }
+.shell-tab.active::before {
+  content: '';
+  position: absolute; top: 0; left: 50%;
+  width: 24px; height: 3px; transform: translateX(-50%);
+  background: var(--c-primary); border-radius: 0 0 3px 3px;
+}
+.shell-tab:hover { color: var(--c-primary); }
+
+/* Home cards get a corner chevron so their tappability is unmistakable —
+   several users read the first cut as static tiles. */
+.home-card::after {
+  content: '›';
+  position: absolute; top: var(--s-2); right: var(--s-3);
+  font-size: 22px; line-height: 1; color: var(--c-ink-3);
+  font-weight: 400;
+}
+.home-card { position: relative; }
+.home-card-primary::after { color: var(--c-primary); }
 
 /* ---------------------------------------------------------------- login */
 .login-wrap { max-width: 360px; margin: 0 auto; padding: var(--s-5) var(--s-4); }

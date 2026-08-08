@@ -93,6 +93,9 @@ export class Shell {
       tab.type = 'button';
       tab.className = 'shell-tab';
       tab.dataset.path = route.path;
+      // Explicit accessible name — the child spans alone leave some readers
+      // (and headless tools like the browser MCP) with an empty button name.
+      tab.setAttribute('aria-label', route.labelBn);
       const glyph = d.createElement('span');
       glyph.className = 'shell-tab-glyph';
       glyph.setAttribute('aria-hidden', 'true');

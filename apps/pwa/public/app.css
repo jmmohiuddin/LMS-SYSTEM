@@ -774,3 +774,54 @@ button, h1, h2, .att-counts { text-transform: none; }
 .sub-mark { width: 5.5em; flex: none; }
 .sub-feedback { flex: 1; min-width: 0; }
 .sub-grade-row .btn-small { flex: none; width: auto; }
+
+/* ============================================================= practice */
+.prac-wrap { padding-bottom: var(--s-5); }
+.prac-rail {
+  display: flex; gap: 6px; justify-content: center;
+  padding: var(--s-2) var(--s-4) 0;
+}
+.prac-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-surface-3); }
+.prac-dot[data-state='current'] { background: var(--c-primary); transform: scale(1.35); }
+.prac-dot[data-state='solved']  { background: var(--c-success); }
+
+.prac-card { margin: var(--s-2) var(--s-4); padding: var(--s-4); }
+.prac-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; color: var(--c-ink-3); margin-bottom: var(--s-2);
+}
+.prac-difficulty { letter-spacing: 1px; font-size: 10px; }
+.prac-stem { margin: 0 0 var(--s-3); font-size: 16px; line-height: 1.7; font-weight: 500; }
+
+.prac-options { display: flex; flex-direction: column; gap: var(--s-2); }
+.prac-option {
+  min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
+  text-align: left; font: inherit; font-size: 15px; cursor: pointer;
+  background: var(--c-surface); color: var(--c-ink);
+  border: 1px solid var(--c-line); border-radius: 10px;
+  border-left-width: 3px; border-left-color: var(--c-line);
+}
+.prac-option[data-state='selected'] { border-color: var(--c-primary); background: var(--c-primary-soft); }
+/* Correct is marked even when they picked it wrong — showing only the
+   error teaches nothing about what the right answer was. */
+.prac-option[data-state='correct'] { border-left-color: var(--c-success); background: #ECFDF5; }
+.prac-option[data-state='wrong']   { border-left-color: var(--c-accent);  background: #FEF2F2; }
+.prac-option:disabled { cursor: default; opacity: 1; }
+
+.prac-input { width: 100%; }
+
+.prac-verdict {
+  margin-top: var(--s-3); padding: var(--s-2) var(--s-3);
+  border-radius: 8px; font-weight: 600; font-size: 15px; text-align: center;
+}
+.prac-verdict[data-correct='true']  { background: #ECFDF5; color: var(--c-success); }
+.prac-verdict[data-correct='false'] { background: #FFFBEB; color: var(--c-warn); }
+.prac-explanation {
+  margin: var(--s-2) 0 0; padding: var(--s-2) var(--s-3);
+  background: var(--c-surface-2); border-radius: 8px;
+  font-size: 14px; line-height: 1.7; color: var(--c-ink-2);
+}
+.prac-actions { display: flex; gap: var(--s-2); margin-top: var(--s-3); }
+.prac-actions .btn-primary, .prac-actions .btn-secondary { margin: 0; flex: 1; }
+.prac-retry { flex: none !important; width: auto; padding: 0 var(--s-3) !important; }
+.lesson-done-alt { margin: 0 var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }

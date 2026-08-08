@@ -201,6 +201,41 @@ function demoAssignmentDetail(id: string) {
   };
 }
 
+const DEMO_PRACTICE = [
+  {
+    id: 'demo-q-1', questionNo: 1, kind: 'mcq',
+    stemBn: 'একটি বস্তুর বেগ ৫ সেকেন্ডে ১০ m/s থেকে ৩০ m/s হলে ত্বরণ কত?',
+    explanationBn: 'a = (v − u)/t = (৩০ − ১০)/৫ = ৪ m/s²। বেগের পরিবর্তনকে সময় দিয়ে ভাগ করলেই ত্বরণ পাওয়া যায়।',
+    difficulty: 2, numericAnswer: null, numericTolerance: null,
+    options: [
+      { id: 'demo-o-1a', optionNo: 1, textBn: '২ m/s²', isCorrect: false },
+      { id: 'demo-o-1b', optionNo: 2, textBn: '৪ m/s²', isCorrect: true },
+      { id: 'demo-o-1c', optionNo: 3, textBn: '৬ m/s²', isCorrect: false },
+      { id: 'demo-o-1d', optionNo: 4, textBn: '৮ m/s²', isCorrect: false },
+    ],
+    myProgress: { attempts: 0, solved: false, lastResponseMs: null },
+  },
+  {
+    id: 'demo-q-2', questionNo: 2, kind: 'true_false',
+    stemBn: 'ত্বরণ একটি স্কেলার রাশি।',
+    explanationBn: 'ভুল — ত্বরণ ভেক্টর রাশি, কারণ এর মান ও দিক দুটোই আছে।',
+    difficulty: 1, numericAnswer: null, numericTolerance: null,
+    options: [
+      { id: 'demo-o-2a', optionNo: 1, textBn: 'সত্য', isCorrect: false },
+      { id: 'demo-o-2b', optionNo: 2, textBn: 'মিথ্যা', isCorrect: true },
+    ],
+    myProgress: { attempts: 1, solved: true, lastResponseMs: 8400 },
+  },
+  {
+    id: 'demo-q-3', questionNo: 3, kind: 'numeric',
+    stemBn: 'একটি বাস ৮ সেকেন্ডে ২৪ m/s থেকে থেমে গেলে তার মন্দন কত (m/s²)? ঋণাত্মক চিহ্ন ছাড়া লেখো।',
+    explanationBn: 'a = (০ − ২৪)/৮ = −৩ m/s²। মান ৩, দিক বেগের বিপরীতে — তাই একে মন্দন বলে।',
+    difficulty: 3, numericAnswer: '3', numericTolerance: '0.01',
+    options: [],
+    myProgress: { attempts: 0, solved: false, lastResponseMs: null },
+  },
+];
+
 const DEMO_RESULTS = [
   {
     examId: 'demo-exam-half', examNameBn: 'অর্ধ-বার্ষিক পরীক্ষা ২০২৬', examType: 'half_yearly',
@@ -412,6 +447,9 @@ export class DemoAuth extends Auth {
         if (aid) return ok(demoAssignmentDetail(aid));
         return ok({ assignments: DEMO_ASSIGNMENTS });
       }
+
+      case '/api/v1/academics/practice':
+        return ok({ lessonId: url.searchParams.get('lessonId') ?? 'demo-l-3', questions: DEMO_PRACTICE });
 
       case '/api/v1/academics/results':
         return ok({ studentId: 'demo-s1', results: DEMO_RESULTS });

@@ -15,6 +15,7 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { PracticeView, type PracticeQuestion } from './practice-view.ts';
 
 export interface Chapter {
   id: string;
@@ -50,7 +51,7 @@ interface Block {
 
 /** Only what this view needs from the sync engine. */
 export interface LearnOutbox {
-  enqueue(input: { entity: 'lesson_progress'; payload: unknown }): Promise<{ opId: string }>;
+  enqueue(input: { entity: 'lesson_progress' | 'practice_attempt'; payload: unknown }): Promise<{ opId: string }>;
   flush(): Promise<unknown>;
 }
 
@@ -79,6 +80,8 @@ export class LearnView {
   private loading = true;
   private readingSince = 0;
   private lastBlockSeen = 0;
+  private questions: PracticeQuestion[] = [];
+  private practising = false;
 
   constructor(options: LearnViewOptions) {
     this.o = options;
@@ -147,6 +150,8 @@ export class LearnView {
     this.loading = true;
     this.readingSince = Date.now();
     this.lastBlockSeen = 0;
+    this.practising = false;
+    this.questions = [];
 
     const cached = this.cacheGet<{ title: string; blocks: Block[] }>(LESSON_CACHE_PREFIX + lessonId);
     if (cached) { this.lessonTitle = cached.title; this.blocks = cached.blocks; this.loading = false; }
@@ -173,6 +178,27 @@ export class LearnView {
     // Record that reading started, immediately — a student who closes the
     // app mid-lesson should still show as having begun it.
     void this.recordProgress(lessonId, 'started');
+    void this.loadPractice(lessonId);
+  }
+
+  private async loadPractice(lessonId: string): Promise<void> {
+    const cacheKey = `shikhon_practice_${lessonId}`;
+    const cached = this.cacheGet<PracticeQuestion[]>(cacheKey);
+    if (cached) this.questions = cached;
+    try {
+      const res = await this.o.auth.authedFetch(
+        `/api/v1/academics/practice?lessonId=${encodeURIComponent(lessonId)}`,
+      );
+      if (res.ok) {
+        const body = (await res.json()) as { questions: PracticeQuestion[] };
+        this.questions = body.questions;
+        // Cached whole so practice works on a later offline visit.
+        this.cacheSet(cacheKey, this.questions);
+      }
+    } catch {
+      // Offline: whatever was cached is what we have.
+    }
+    if (this.mode.kind === 'reader') this.render();
   }
 
   /* ------------------------------------------------------------ progress */
@@ -386,9 +412,45 @@ export class LearnView {
     }
     root.append(article);
 
+    if (this.practising && this.questions.length > 0) {
+      const practiceWrap = d.createElement('section');
+      practiceWrap.className = 'prac-wrap';
+      const h2 = d.createElement('h2');
+      h2.className = 'section-heading';
+      h2.textContent = 'অনুশীলন';
+      practiceWrap.append(h2);
+      const host = d.createElement('div');
+      practiceWrap.append(host);
+      root.append(practiceWrap);
+      new PracticeView({
+        root: host,
+        doc: d,
+        questions: this.questions,
+        outbox: this.o.outbox,
+        onDone: () => {
+          // Finishing the practice set is a far better completion signal
+          // than a self-declared button, so it marks the lesson done.
+          void this.recordProgress(lessonId, 'completed');
+          this.practising = false;
+          this.render();
+        },
+      });
+      practiceWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    if (this.questions.length > 0) {
+      const start = d.createElement('button');
+      start.type = 'button';
+      start.className = 'btn-primary lesson-done';
+      start.textContent = `অনুশীলন করো (${formatCount(this.questions.length, 'bn')}টি প্রশ্ন)`;
+      start.addEventListener('click', () => { this.practising = true; this.render(); });
+      root.append(start);
+    }
+
     const done = d.createElement('button');
     done.type = 'button';
-    done.className = 'btn-primary lesson-done';
+    done.className = this.questions.length > 0 ? 'btn-secondary lesson-done-alt' : 'btn-primary lesson-done';
     done.textContent = 'পাঠ সম্পন্ন ✓';
     done.addEventListener('click', () => {
       void this.recordProgress(lessonId, 'completed');

@@ -365,6 +365,94 @@ export const applyAssignmentSubmission: Applier = async (c, op) => {
   }
 };
 
+/* ----------------------------------------------------------- practice attempt */
+
+interface PracticeAttemptPayload {
+  questionId: string;
+  attemptNo?: number;
+  selectedOptionId?: string | null;
+  answerText?: string | null;
+  answerNumeric?: number | null;
+  responseMs?: number;
+}
+
+const MAX_RESPONSE_MS = 600_000;   // 10 min — matches the DB CHECK
+
+export const applyPracticeAttempt: Applier = async (c, op) => {
+  const p = op.payload as PracticeAttemptPayload;
+  if (!p?.questionId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
+
+  const q = await c.query<{
+    lesson_id: string; kind: string;
+    numeric_answer: string | null; numeric_tolerance: string;
+    text_answer_bn: string | null;
+  }>(
+    `SELECT lesson_id, kind::text, numeric_answer::text, numeric_tolerance::text, text_answer_bn
+       FROM practice_questions WHERE id = $1`,
+    [p.questionId],
+  );
+  if (q.rowCount === 0) return rejected(op.opId, 'QUESTION_NOT_FOUND');
+  const question = q.rows[0];
+
+  // Correctness is decided HERE, never accepted from the client. The client
+  // is given the answer key so practice can run offline (see the practice
+  // endpoint's header for why that's acceptable for formative work), but a
+  // client-asserted `isCorrect` would make the V3 mastery signal worthless —
+  // it's the one field that must be trustworthy.
+  let isCorrect = false;
+  switch (question.kind) {
+    case 'mcq':
+    case 'true_false': {
+      if (!p.selectedOptionId) return rejected(op.opId, 'NO_OPTION_SELECTED');
+      const opt = await c.query<{ is_correct: boolean }>(
+        `SELECT is_correct FROM practice_options WHERE id = $1 AND question_id = $2`,
+        [p.selectedOptionId, p.questionId],
+      );
+      if (opt.rowCount === 0) return rejected(op.opId, 'OPTION_NOT_FOUND');
+      isCorrect = opt.rows[0].is_correct;
+      break;
+    }
+    case 'numeric': {
+      const given = Number(p.answerNumeric);
+      if (!Number.isFinite(given)) return rejected(op.opId, 'NO_NUMERIC_ANSWER');
+      const expected = Number(question.numeric_answer);
+      const tolerance = Number(question.numeric_tolerance ?? 0);
+      isCorrect = Math.abs(given - expected) <= tolerance;
+      break;
+    }
+    default: {
+      // Short answer: case- and whitespace-insensitive exact match. Anything
+      // cleverer (fuzzy, AI-graded) belongs behind a teacher review step, not
+      // in a silent auto-mark that a student can't appeal.
+      const given = (p.answerText ?? '').trim().toLowerCase();
+      if (!given) return rejected(op.opId, 'NO_ANSWER_TEXT');
+      isCorrect = given === (question.text_answer_bn ?? '').trim().toLowerCase();
+      break;
+    }
+  }
+
+  const responseMs = Math.min(Math.max(Math.round(p.responseMs ?? 0), 0), MAX_RESPONSE_MS);
+  const attemptNo = Math.max(1, Math.round(p.attemptNo ?? 1));
+
+  await c.query(
+    `INSERT INTO practice_attempts
+       (id, tenant_id, question_id, student_id, lesson_id, attempt_no,
+        selected_option_id, answer_text, answer_numeric, is_correct, response_ms)
+     VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (tenant_id, question_id, student_id, attempt_no) DO NOTHING`,
+    [
+      op.opId, p.questionId, op.actorId, question.lesson_id, attemptNo,
+      p.selectedOptionId ?? null, p.answerText ?? null,
+      p.answerNumeric ?? null, isCorrect, responseMs,
+    ],
+  );
+
+  // The client needs the verdict back — it may have been offline when the
+  // student answered, and showing the wrong feedback later would be worse
+  // than showing none.
+  return applied(op.opId, undefined, { correct: isCorrect ? 1 : 0 });
+};
+
 /* ------------------------------------------------------------------ registry */
 
 export const APPLIERS: Record<string, Applier> = {
@@ -373,4 +461,5 @@ export const APPLIERS: Record<string, Applier> = {
   class_delivery_log: applyClassDeliveryLog,
   lesson_progress: applyLessonProgress,
   assignment_submission: applyAssignmentSubmission,
+  practice_attempt: applyPracticeAttempt,
 };

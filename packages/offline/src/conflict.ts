@@ -90,6 +90,9 @@ const CLIENT_AUTHORABLE: ReadonlySet<string> = new Set<Entity>([
   // Homework written on a phone with no signal must survive to the outbox;
   // losing a student's answer text is the worst failure this app can have.
   'assignment_submission',
+  // Practice must work on the bus with no signal — that's most of when a
+  // student actually revises.
+  'practice_attempt',
   'ai_chat_turn',
 ]);
 

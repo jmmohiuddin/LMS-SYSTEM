@@ -26,6 +26,9 @@ import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
 import { HomeView } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
+import { RolesView } from './roles-view.ts';
+import { LedgerView } from './ledger-view.ts';
+import { SystemView } from './system-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import type { RosterStudent } from './roster-view.ts';
 
@@ -164,6 +167,9 @@ async function main() {
               { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস ও রসিদ' },
               { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'প্রশ্নপত্র ও পাঠ পরিকল্পনা' },
               { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য' },
+              { path: 'roles', glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS' },
+              { path: 'ledger', glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
+              { path: 'system', glyph: '⚙', titleBn: 'সিস্টেম', subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
             ],
           });
         },
@@ -221,6 +227,9 @@ async function main() {
               { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
               { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'CQ · MCQ · রুব্রিক · পাঠ পরিকল্পনা' },
               { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
+              { path: 'roles', glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
+              { path: 'ledger', glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
+              { path: 'system', glyph: '⚙', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
           });
         },
@@ -259,6 +268,27 @@ async function main() {
         glyph: '📷',
         hidden: true,
         mount: (container) => { new ScriptsView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'roles',
+        labelBn: 'ভূমিকা',
+        glyph: '🔐',
+        hidden: true,
+        mount: (container) => { new RolesView({ root: container, doc: document }); },
+      },
+      {
+        path: 'ledger',
+        labelBn: 'লেজার',
+        glyph: '📒',
+        hidden: true,
+        mount: (container) => { new LedgerView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'system',
+        labelBn: 'সিস্টেম',
+        glyph: '⚙',
+        hidden: true,
+        mount: (container) => { new SystemView({ root: container, doc: document, auth }); },
       },
     ];
 

@@ -303,11 +303,128 @@ async function generate(req: IncomingMessage, res: ServerResponse, cors: Record<
   json(res, 200, { ok: true, billingPeriod: period, ...result }, cors);
 }
 
+/* ------------------------------------------------------------- ledger */
+
+const LEDGER_ROLES = ['principal', 'school_owner', 'accountant'];
+
+/**
+ * GET /api/v1/finance/ledger — the read side that feeds the Ledger page.
+ *
+ * Returns everything the UI needs to render in one round trip:
+ *   - accounts[] — chart of accounts with running balances (income accounts
+ *     naturally net credit, so we show CR - DR for display)
+ *   - batches[] — the ~50 most recent posting batches, one entry per line
+ *   - reconciliation[] — posted amount per MFS provider vs. what has been
+ *     marked reconciled_at (parked at now() by the webhook on completion,
+ *     so posted == reconciled for straight-through payments)
+ *
+ * Principal / owner / accountant only, matching ledger_scope in
+ * db/migrations/010_rls_policies.sql — RLS is the real gate, requireRole
+ * turns it into a clean 403.
+ */
+async function ledger(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): Promise<void> {
+  if (req.method !== 'GET') {
+    json(res, 405, { error: 'method_not_allowed' }, cors);
+    return;
+  }
+  const claims = await authenticate(req);
+  requireRole(claims, LEDGER_ROLES);
+
+  const db = await sharedDb();
+  const payload = await db.withTenant(
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+    async (client) => {
+      const accountsRes = await client.query<{
+        code: string; name_bn: string; type: string; balance: string;
+      }>(
+        `SELECT a.code, a.name_bn, a.type,
+                CASE WHEN a.type IN ('income','liability','equity')
+                     THEN COALESCE(SUM(e.credit - e.debit), 0)
+                     ELSE COALESCE(SUM(e.debit - e.credit), 0)
+                END::text AS balance
+           FROM ledger_accounts a
+           LEFT JOIN ledger_entries e ON e.account_id = a.id
+          GROUP BY a.id, a.code, a.name_bn, a.type
+          ORDER BY a.type, a.code`,
+      );
+
+      const batchesRes = await client.query<{
+        batch_id: string; entry_date: string; memo: string;
+        account_code: string; debit: string; credit: string;
+      }>(
+        `WITH recent AS (
+           SELECT DISTINCT batch_id, MAX(created_at) AS created_at
+             FROM ledger_entries
+            GROUP BY batch_id
+            ORDER BY MAX(created_at) DESC
+            LIMIT 50
+         )
+         SELECT e.batch_id::text,
+                e.entry_date::text,
+                COALESCE(e.memo, '') AS memo,
+                a.code AS account_code,
+                e.debit::text,
+                e.credit::text
+           FROM ledger_entries e
+           JOIN recent r ON r.batch_id = e.batch_id
+           JOIN ledger_accounts a ON a.id = e.account_id
+          ORDER BY r.created_at DESC, e.created_at`,
+      );
+
+      const reconRes = await client.query<{ provider: string; posted: string; reconciled: string }>(
+        `SELECT provider::text,
+                COALESCE(SUM(amount), 0)::text AS posted,
+                COALESCE(SUM(amount) FILTER (WHERE reconciled_at IS NOT NULL), 0)::text AS reconciled
+           FROM mfs_transactions
+          WHERE status = 'completed'
+          GROUP BY provider
+          ORDER BY provider`,
+      );
+
+      // Group batch rows into {batchId, entryDate, memo, lines[]}.
+      type Line = { accountCode: string; debit: string; credit: string };
+      type Batch = { batchId: string; entryDate: string; memo: string; lines: Line[] };
+      const byBatch = new Map<string, Batch>();
+      for (const row of batchesRes.rows) {
+        let b = byBatch.get(row.batch_id);
+        if (!b) {
+          b = { batchId: row.batch_id, entryDate: row.entry_date, memo: row.memo, lines: [] };
+          byBatch.set(row.batch_id, b);
+        }
+        b.lines.push({ accountCode: row.account_code, debit: row.debit, credit: row.credit });
+      }
+
+      const PROVIDER_LABEL: Record<string, string> = {
+        bkash: 'bKash', nagad: 'Nagad', rocket: 'Rocket', upay: 'Upay',
+        bank_transfer: 'Bank', cash: 'Cash', cheque: 'Cheque',
+      };
+
+      return {
+        accounts: accountsRes.rows.map((a) => ({
+          code: a.code,
+          nameBn: a.name_bn,
+          type: a.type as 'asset' | 'liability' | 'equity' | 'income' | 'expense',
+          balance: a.balance,
+        })),
+        batches: [...byBatch.values()],
+        reconciliation: reconRes.rows.map((r) => ({
+          provider: PROVIDER_LABEL[r.provider] ?? r.provider,
+          posted: r.posted,
+          reconciled: r.reconciled,
+        })),
+      };
+    },
+  );
+
+  json(res, 200, payload, cors);
+}
+
 const ROUTES: Record<string, (req: IncomingMessage, res: ServerResponse, cors: Record<string, string>) => Promise<void>> = {
   invoices,
   pay,
   receipts,
   generate,
+  ledger,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -3,9 +3,14 @@
  *
  * A calm re-orientation surface: greeting card at the top, the two things a
  * teacher is most likely to touch (today's routine, take attendance) as
- * primary cards, then a compact grid of every other feature. No fetches on
- * mount — the shell is on the critical path and every card can be reached
- * with one tap, so the surface has to boot instantly.
+ * primary cards, then a compact grid of every other feature.
+ *
+ * For students there is one addition that changes the screen's job: a
+ * "next" block fetched from /academics/next. The grid answers "what CAN I
+ * do"; the next block answers "what SHOULD I do", which is the question a
+ * student actually arrives with. It renders progressively — the cards
+ * paint immediately and the suggestions slot in when they arrive, so the
+ * shell is never blocked on a request.
  */
 export interface DashboardItem {
   path: string;
@@ -15,13 +20,31 @@ export interface DashboardItem {
   variant?: 'primary' | 'secondary';
 }
 
+export interface Suggestion {
+  kind: string;
+  titleBn: string;
+  whyBn: string;
+  route: string;
+  refId: string;
+  urgency: 'high' | 'medium' | 'low';
+}
+
 export interface HomeViewOptions {
   root: HTMLElement;
   doc: Document;
   displayName?: string;
   primary: DashboardItem[];
   secondary: DashboardItem[];
+  /** Supplied for students/guardians only; omitted = no "next" block. */
+  loadNext?: () => Promise<Suggestion[]>;
 }
+
+const KIND_GLYPH: Record<string, string> = {
+  assignment: '📝',
+  redo_practice: '↻',
+  continue_lesson: '📖',
+  new_chapter: '✦',
+};
 
 function greetingBn(): string {
   const h = new Date().getHours();
@@ -62,6 +85,18 @@ export class HomeView {
     hero.append(heroDate, heroGreet, heroSub);
     o.root.append(hero);
 
+    // "What should I study next" — inserted between hero and cards, so it
+    // reads as the answer to the greeting's question rather than a fourth
+    // navigation option.
+    if (o.loadNext) {
+      const slot = d.createElement('section');
+      slot.className = 'next-slot';
+      o.root.append(slot);
+      void o.loadNext()
+        .then((list) => { this.renderNext(d, slot, list); })
+        .catch(() => { /* silent: the grid below is a complete fallback */ });
+    }
+
     // Primary cards (large, two-up).
     if (o.primary.length > 0) {
       const primaryGrid = d.createElement('div');
@@ -82,6 +117,49 @@ export class HomeView {
       for (const item of o.secondary) grid.append(this.buildCard(d, item, false));
       o.root.append(grid);
     }
+  }
+
+  private renderNext(d: Document, slot: HTMLElement, list: Suggestion[]): void {
+    slot.textContent = '';
+    if (list.length === 0) return;
+
+    const h2 = d.createElement('h2');
+    h2.className = 'section-heading';
+    h2.textContent = 'এখন যা করবে';
+    slot.append(h2);
+
+    const ul = d.createElement('ul');
+    ul.className = 'next-list';
+    for (const s of list) {
+      const li = d.createElement('li');
+      const btn = d.createElement('button');
+      btn.type = 'button';
+      btn.className = 'card next-card';
+      btn.dataset.urgency = s.urgency;
+
+      const glyph = d.createElement('span');
+      glyph.className = 'next-glyph';
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.textContent = KIND_GLYPH[s.kind] ?? '•';
+
+      const body = d.createElement('span');
+      body.className = 'next-body';
+      const title = d.createElement('span');
+      title.className = 'next-title';
+      title.textContent = s.titleBn;
+      // The reason is the point — a suggestion a student can't interrogate
+      // is one they'll learn to ignore.
+      const why = d.createElement('span');
+      why.className = 'next-why';
+      why.textContent = s.whyBn;
+      body.append(title, why);
+
+      btn.append(glyph, body);
+      btn.addEventListener('click', () => { location.hash = `/${s.route}`; });
+      li.append(btn);
+      ul.append(li);
+    }
+    slot.append(ul);
   }
 
   private buildCard(d: Document, item: DashboardItem, primary: boolean): HTMLElement {

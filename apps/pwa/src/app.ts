@@ -24,7 +24,7 @@ import { MoreView } from './more-view.ts';
 import { SikhokView } from './sikhok-view.ts';
 import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
-import { HomeView, type DashboardItem } from './home-view.ts';
+import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
 import { LedgerView } from './ledger-view.ts';
@@ -228,12 +228,23 @@ async function main() {
         glyph: '⌂',
         mount: (container) => {
           const { primary, secondary } = dashboardFor(auth.role);
+          const learner = ['student', 'guardian'].includes(auth.role);
           new HomeView({
             root: container,
             doc: document,
             displayName: auth.displayName,
             primary,
             secondary,
+            // Staff don't get a "what should I study next" block — their
+            // day is set by the routine, not by their own progress.
+            loadNext: learner
+              ? async () => {
+                  const res = await auth.authedFetch('/api/v1/academics/next');
+                  if (!res.ok) return [];
+                  const body = (await res.json()) as { suggestions: Suggestion[] };
+                  return body.suggestions;
+                }
+              : undefined,
           });
         },
       },

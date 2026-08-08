@@ -16,12 +16,13 @@ import lessons from './lessons.ts';
 import results from './results.ts';
 import assignments from './assignments.ts';
 import practice from './practice.ts';
+import next from './next.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   sections, roster, exams, marks, publish, scripts, chapters, lessons, results,
-  assignments, practice,
+  assignments, practice, next,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

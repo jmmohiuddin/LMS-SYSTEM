@@ -825,3 +825,30 @@ button, h1, h2, .att-counts { text-transform: none; }
 .prac-actions .btn-primary, .prac-actions .btn-secondary { margin: 0; flex: 1; }
 .prac-retry { flex: none !important; width: auto; padding: 0 var(--s-3) !important; }
 .lesson-done-alt { margin: 0 var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }
+
+/* ============================================================ next block */
+.next-slot { display: block; }
+.next-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
+.next-card {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--s-3); align-items: center;
+  width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
+  cursor: pointer; background: var(--c-surface);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+  box-shadow: var(--shadow-1); border-left-width: 3px;
+  transition: transform 80ms ease-out;
+}
+.next-card:active { transform: scale(0.99); }
+/* Urgency is a rail, matching the assignment list so the two read as one
+   system rather than two unrelated colour schemes. */
+.next-card[data-urgency='high']   { border-left-color: var(--c-warn); }
+.next-card[data-urgency='medium'] { border-left-color: var(--c-primary); }
+.next-card[data-urgency='low']    { border-left-color: var(--c-line); }
+.next-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--c-surface-3); font-size: 18px; line-height: 1;
+}
+.next-card[data-urgency='high'] .next-glyph { background: #FFFBEB; }
+.next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.next-title { font-weight: 600; font-size: 15px; }
+.next-why { font-size: 12px; color: var(--c-ink-2); line-height: 1.45; }

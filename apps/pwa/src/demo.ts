@@ -201,6 +201,24 @@ function demoAssignmentDetail(id: string) {
   };
 }
 
+const DEMO_NEXT = [
+  {
+    kind: 'assignment', titleBn: 'গতির সমীকরণ — অনুশীলনী ৫.২',
+    whyBn: '২ দিনের মধ্যে জমা দিতে হবে', route: 'assignments',
+    refId: 'demo-a-1', urgency: 'high',
+  },
+  {
+    kind: 'redo_practice', titleBn: 'ত্বরণ',
+    whyBn: '১টি প্রশ্ন এখনো ভুল আছে — আবার চেষ্টা করো', route: 'learn',
+    refId: 'demo-l-3', urgency: 'medium',
+  },
+  {
+    kind: 'continue_lesson', titleBn: 'পড়ন্ত বস্তুর গতি',
+    whyBn: 'অধ্যায় ৫: গতি অধ্যায়টি শেষ করো', route: 'learn',
+    refId: 'demo-l-4', urgency: 'medium',
+  },
+];
+
 const DEMO_PRACTICE = [
   {
     id: 'demo-q-1', questionNo: 1, kind: 'mcq',
@@ -447,6 +465,9 @@ export class DemoAuth extends Auth {
         if (aid) return ok(demoAssignmentDetail(aid));
         return ok({ assignments: DEMO_ASSIGNMENTS });
       }
+
+      case '/api/v1/academics/next':
+        return ok({ suggestions: DEMO_NEXT });
 
       case '/api/v1/academics/practice':
         return ok({ lessonId: url.searchParams.get('lessonId') ?? 'demo-l-3', questions: DEMO_PRACTICE });

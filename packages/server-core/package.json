@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Shared server primitives: tenant-scoped db, http helpers, JWT, crypto, rate limiting.",
   "scripts": {
-    "test": "node --test test/rate-limit.test.ts"
+    "test": "node --test test/rate-limit.test.ts test/pii-crypto.test.ts"
   },
   "engines": {
     "node": ">=22"

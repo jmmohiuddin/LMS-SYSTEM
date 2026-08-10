@@ -2,8 +2,8 @@
 
 Documents 01–06 are the design blueprint. This document is the reconciliation: what is
 actually deployed today, where the implementation deliberately diverges from the blueprint,
-how to operate it, and what remains. Last updated **2026-08-07**; current production commit
-`5fbcf23`.
+how to operate it, and what remains. Last updated **2026-08-11**, after the Phase 0
+security block (§9a).
 
 ---
 
@@ -15,8 +15,8 @@ how to operate it, and what remains. Last updated **2026-08-07**; current produc
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **109/109 passing** (`node --test`, zero dependencies beyond `pg`/`jose`/`esbuild`) |
-| Schema | 15 migrations, 88 tables, 103 RLS policies, verified via 3 SQL assertion suites |
+| Tests | **223 passing** — 172 unit (`node --test`) + 51 integration against a real PostgreSQL, plus 7 SQL assertion suites |
+| Schema | 23 migrations, verified by applying the full chain to an empty database in CI, then 7 SQL assertion suites |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Preview | **`https://shikhon-lms.vercel.app/?demo=1`** — every screen, sample data, no login (§6) |
 
@@ -219,20 +219,81 @@ curl --resolve shikhon-lms.vercel.app:443:216.198.79.3 https://shikhon-lms.verce
 
 ## 9. Security posture — open items
 
-Carried forward from 06 §6, updated:
+Carried forward from 06 §6, updated after Phase 0:
 
 - [ ] **Rotate the exposed `neondb_owner` password** (`npg_…` — was shared in plaintext).
       Until rotated, treat the owner credential as compromised. It must never be the app's
-      `DATABASE_URL` in any case (BYPASSRLS voids all tenant isolation).
-- [ ] **Rotate the exposed MongoDB credential** (from an earlier experiment; unused by this
-      system but still live).
+      `DATABASE_URL` in any case (BYPASSRLS voids all tenant isolation). Ledger row is open
+      in [08-CREDENTIAL-ROTATION.md](08-CREDENTIAL-ROTATION.md) §3.
+- [ ] **Revoke the exposed MongoDB credential** (from an earlier experiment; unused by this
+      system but still live — an unused live credential is pure liability).
 - [x] App connects as `shikhon_runtime` (non-BYPASSRLS) on the pooled endpoint.
 - [x] Runtime password exists only in Vercel's `DATABASE_URL`; no local copies remain.
 - [x] EdDSA JWTs, 15-min access / 30-day rotating refresh with reuse detection, as 01 §7.2.
+- [x] **No credential has ever been committed to this repository** — verified across every
+      commit on every branch, and re-verified by CI on every push
+      (`scripts/check-secrets.mjs --history`).
+- [x] Deploy preflight refuses a missing, placeholder or dangerously wrong secret
+      (`scripts/check-secrets.mjs --env`).
+- [x] **Rate limiting on every endpoint (F-102)** — token buckets in Postgres, per-IP sized
+      for a school behind one NAT gateway and per-identity carrying the real abuse control.
+      This was the hard gate on re-enabling login.
+- [x] **Field-level encryption for NID/BRC (F-101)** — AES-256-GCM with per-tenant HKDF
+      derivation, versioned keys, and database guards that refuse plaintext independently of
+      the application. Ships dark until `PII_MASTER_KEY_V1` is set, which is the correct
+      failure: it is never possible to store an identifier in the clear because a key was
+      missing.
+- [ ] Set `PII_MASTER_KEY_V1` in Vercel — board registration and MPO filing cannot work
+      until it exists. See [08-CREDENTIAL-ROTATION.md](08-CREDENTIAL-ROTATION.md) §5 **before**
+      touching it; rotation is additive and replacing V1 in place destroys data silently.
 - [ ] Wire DB maintenance functions to a scheduler (§8).
-- [ ] KMS + field-level encryption for NID/BRC (01 §7.1) — columns must stay NULL until then.
 - [ ] Production data-residency decision (Singapore → Bangladesh) before real PII lands.
 - [ ] Curriculum-specialist verification of NCTB subject codes (06 §6).
+
+---
+
+## 9a. Phase 0 — closed
+
+Six requirements, one commit each, tests in the same commit.
+
+| ID | What | Where |
+|---|---|---|
+| F-102 | Rate limiting on every endpoint | migration 020, `packages/server-core/src/rate-limit.ts` |
+| F-101 | Field-level encryption for NID / birth registration | migration 021, `packages/server-core/src/pii-crypto.ts` |
+| F-103 | Row-version optimistic lock on assignment grading | `services/academics-svc/api/assignments.ts` |
+| F-104 | Prerequisite cycle prevention (recursive-CTE trigger) | migration 022 |
+| F-105 | Credential rotation confirmed and recorded | `scripts/check-secrets.mjs`, [08](08-CREDENTIAL-ROTATION.md) |
+| F-106 | Backfill tests: assignments, practice, next, results, ledger | `services/academics-svc/test/api.test.ts`, `db/tests/ledger.sql` |
+
+### Two defects the work uncovered
+
+**Every student-facing read was blocked by RLS** (migration 023). Six tables paired a
+`FOR SELECT` read policy with a `FOR ALL` write policy, both RESTRICTIVE. Since RESTRICTIVE
+policies AND together and `FOR ALL` includes SELECT, the read policy was cancelled out — so
+students and guardians could not read a chapter, a lesson, a content block, a practice
+question, a homework assignment or an invoice. Homework submission failed too, on a NOT NULL
+violation from the lateness trigger. Only staff ever exercised these paths, so nothing failed
+loudly; this is very likely why the app only ever looked right in demo mode. Found by the
+F-106 tests, which were the first thing to query these tables as a student.
+
+**The audit trail was never writable** (repaired in migration 021). Migration 010 granted
+`shikhon_app` INSERT on `audit.pii_access` and `audit.activity_log`, but granted sequence
+USAGE only in schema `public` — both tables are `bigserial` in schema `audit`. Every audit
+write would have failed on "permission denied for sequence". Nothing had been written yet,
+so nothing was lost.
+
+### Two status corrections to the PRD
+
+Both were recorded as "Built" and are not:
+
+- **F-502 (manual routine editor)** → should read **Partial**. `routine-view.ts` is 227
+  lines and read-only: no drag-and-drop, no live constraint feedback.
+- **F-1304 (mandatory human review of AI content)** → should read **New**. The `reviewed_by`
+  columns that exist are on `ai_safeguarding_flags` (self-harm/abuse escalation) and
+  `question_items` (item provenance). Neither gates AI-generated content reaching a student,
+  and `sikhok-view.ts` has no review/draft/publish workflow. This is a stated invariant
+  ("nothing AI-generated reaches a student without a named human publishing it") currently
+  carried by the AI gateway shipping dark rather than by any control.
 
 ---
 

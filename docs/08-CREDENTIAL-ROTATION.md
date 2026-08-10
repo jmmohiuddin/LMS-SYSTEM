@@ -43,21 +43,43 @@ are configuration, not credentials.
 
 ## 2. Current state
 
-**As of 2026-08-11**, verified by `scripts/check-secrets.mjs --history`
-against all commits on all branches:
+Two separate questions, and they have different answers.
 
-> **No credential material has ever been committed to this repository.**
-> The connection strings in [06-DEPLOYMENT.md](06-DEPLOYMENT.md) §3 carry
-> `<owner-password>` / `<runtime-password>` placeholders, and `.gitignore`
-> has covered `.env`, `.env.*` and `*.env` since the first commit.
+### Has a credential ever been committed to this repository? No.
 
-That is a genuinely good position and it is worth stating plainly: **there
-is no known leak, so rotation here is hygiene, not incident response.**
-Nothing in this repository forces an emergency rotation.
+Verified **2026-08-11** by `scripts/check-secrets.mjs --history` across every
+commit on every branch. The connection strings in
+[06-DEPLOYMENT.md](06-DEPLOYMENT.md) §3 carry `<owner-password>` /
+`<runtime-password>` placeholders, and `.gitignore` has covered `.env`,
+`.env.*` and `*.env` since the first commit. CI re-checks this on every push.
 
-What this document cannot assert is the state of the live secrets, because
-they exist only in the Vercel and Neon dashboards. Reading or writing them
-is an operator action — see §3.
+### Has a credential been exposed some other way? Yes — two, still unrotated.
+
+[07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md) §9 records both,
+and they are the reason this document exists rather than a routine cadence:
+
+| Credential | How it was exposed | Status |
+|---|---|---|
+| `neondb_owner` password (`npg_…`) | shared in plaintext outside the repository | **compromised — rotate** |
+| MongoDB credential (earlier experiment) | shared in plaintext; unused by this system but still live | **compromised — revoke** |
+
+A git-history scan cannot see either of these, which is exactly why the
+scan alone is not the answer to "are we clean". **Treat the owner
+credential as compromised until §3 records it rotated.**
+
+The `neondb_owner` role carries `BYPASSRLS`. Anyone holding that password
+can read and write every tenant's data with no isolation whatsoever — it is
+the single most damaging credential in the system, and it is the one that
+leaked. It must also never be the application's `DATABASE_URL`;
+`assertRlsEnforced()` in `packages/server-core/src/db.ts` refuses to boot on
+it and `check-secrets.mjs --env` fails on it, but neither helps if someone
+uses it directly.
+
+The MongoDB credential belongs to nothing in this system. Revoke rather than
+rotate — an unused live credential is pure liability.
+
+Nothing else is known to be exposed. The runtime password exists only in
+Vercel's `DATABASE_URL` with no local copies.
 
 ---
 
@@ -68,10 +90,16 @@ with live credentials is the situation F-105 exists to end.
 
 | Date | Credential | Reason | Rotated by | Verified by | Old credential revoked |
 |---|---|---|---|---|---|
-| _(pending)_ | `DATABASE_URL` | initial baseline rotation | | | |
-| _(pending)_ | `SERVICE_API_KEY` | initial baseline rotation | | | |
-| _(pending)_ | `CRON_SECRET` | initial baseline rotation | | | |
-| _(pending)_ | `ANTHROPIC_API_KEY` | initial baseline rotation | | | |
+| **_(URGENT, pending)_** | **`neondb_owner` password** | **known plaintext exposure — BYPASSRLS, every tenant** | | | |
+| **_(URGENT, pending)_** | **MongoDB credential** | **known plaintext exposure; unused — revoke, do not rotate** | | | |
+| _(pending)_ | `DATABASE_URL` (`shikhon_runtime`) | baseline rotation | | | |
+| _(pending)_ | `SERVICE_API_KEY` | baseline rotation | | | |
+| _(pending)_ | `CRON_SECRET` | baseline rotation | | | |
+| _(pending)_ | `ANTHROPIC_API_KEY` | baseline rotation | | | |
+
+The first two rows are not cadence. They are outstanding remediation for a
+credential that is known to have been shared in plaintext, and they should
+be done before anything else in this document.
 
 **Cadence:** every 90 days, and immediately on any of — a laptop lost, a
 contractor offboarded, a credential pasted into a chat or ticket, or a

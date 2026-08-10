@@ -663,10 +663,13 @@ button, h1, h2, .att-counts { text-transform: none; }
   font-family: ui-monospace, "SF Mono", monospace; font-size: 18px; text-align: center;
   overflow-x: auto;
 }
+/* The tinted background already says "this is the key point"; the accent
+   rail was doing the same job twice. Unlike the state rails elsewhere in
+   this file, it encoded nothing — there is only one kind of key point. */
 .block-key-point {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
   background: var(--c-primary-soft); border-radius: 10px;
-  border-left: 3px solid var(--c-primary); font-size: 16px;
+  font-size: 16px;
 }
 .block-example, .block-practice {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);

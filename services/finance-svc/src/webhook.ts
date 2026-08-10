@@ -141,7 +141,16 @@ export interface WebhookOutcome {
 }
 
 export class MfsWebhookProcessor {
-  constructor(private readonly db: Db) {}
+  // Longhand, not a constructor parameter property: `node --test` strips
+  // types rather than compiling them, and parameter properties are the one
+  // TS-only construct it cannot strip — the failure is a runtime
+  // SyntaxError, not a type error. Same reason as HttpError in
+  // packages/server-core/src/http.ts.
+  private readonly db: Db;
+
+  constructor(db: Db) {
+    this.db = db;
+  }
 
   async process(
     provider: MfsProvider,

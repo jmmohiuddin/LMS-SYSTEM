@@ -34,12 +34,24 @@ BEGIN
     p_policy, p_table, v_using, COALESCE(v_check, v_using));
 END $$;
 
-SELECT pg_temp.restore_write_policy('assignments',        'assignment_write_scope');
-SELECT pg_temp.restore_write_policy('chapters',           'chapter_write_scope');
-SELECT pg_temp.restore_write_policy('lessons',            'lesson_write_scope');
-SELECT pg_temp.restore_write_policy('lesson_blocks',      'block_write_scope');
-SELECT pg_temp.restore_write_policy('invoices',           'invoice_write_scope');
-SELECT pg_temp.restore_write_policy('practice_questions', 'pq_write_scope');
-SELECT pg_temp.restore_write_policy('practice_options',   'po_write_scope');
+DO $$
+DECLARE t text; p text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'assignments', 'chapters', 'lessons', 'lesson_blocks',
+    'invoices', 'practice_questions', 'practice_options'
+  ] LOOP
+    p := CASE t
+           WHEN 'assignments'        THEN 'assignment_write_scope'
+           WHEN 'chapters'           THEN 'chapter_write_scope'
+           WHEN 'lessons'            THEN 'lesson_write_scope'
+           WHEN 'lesson_blocks'      THEN 'block_write_scope'
+           WHEN 'invoices'           THEN 'invoice_write_scope'
+           WHEN 'practice_questions' THEN 'pq_write_scope'
+           WHEN 'practice_options'   THEN 'po_write_scope'
+         END;
+    PERFORM pg_temp.restore_write_policy(t, p);
+  END LOOP;
+END $$;
 
 COMMIT;

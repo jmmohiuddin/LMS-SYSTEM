@@ -32,14 +32,27 @@ jobs:
           fi
           echo "none found"
 
-      # The critical path is budgeted at 180 KB gzipped (docs/01 §8). These are
-      # the hand-written sources; a real bundler step replaces this gate.
-      - name: Source size budget
+      # The critical path is budgeted at 180 KB gzipped (docs/01 §8).
+      #
+      # This used to weigh the raw hand-written sources against a 30 KB
+      # proxy limit. That gate stopped being meaningful once the PWA grew
+      # past a handful of views — it had been failing on every push for
+      # weeks, which is worse than having no gate, because a permanently
+      # red check is one nobody reads.
+      #
+      # It now measures the thing the budget is actually about: the bundle
+      # a student on a 2G connection downloads, gzipped, against the real
+      # documented number. Comments and whitespace no longer count against
+      # a budget they never cost the user.
+      - name: Critical-path size budget
         run: |
           set -euo pipefail
-          bytes=$(cat packages/ui-core/src/*.ts apps/pwa/src/*.ts | gzip -9 | wc -c)
-          echo "ui-core + pwa sources: ${bytes} bytes gzipped"
-          if [ "$bytes" -gt 30000 ]; then
-            echo "::error::frontend source exceeded 30 KB gzipped (budget is 180 KB for the whole critical path)"
+          npm install --no-audit --no-fund
+          npm run build
+          bytes=$(gzip -9 -c apps/pwa/public/app.js | wc -c | tr -d ' ')
+          limit=184320   # 180 KB
+          printf 'app.js: %s bytes gzipped (budget %s)\n' "$bytes" "$limit"
+          if [ "$bytes" -gt "$limit" ]; then
+            echo "::error::critical path exceeded 180 KB gzipped"
             exit 1
           fi

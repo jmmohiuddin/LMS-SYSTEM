@@ -56,6 +56,12 @@ jobs:
       - name: Install psql client
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client
 
+      # Once, up front. The node suites below import `pg`; installing only
+      # inside a later step meant the first of them failed on a missing
+      # module, which reads like a test failure and is not one.
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+
       # Applying the chain in order from an empty database is itself the
       # assertion: the migrations are not idempotent and nothing records
       # what has run, so a file that only works against a hand-patched
@@ -111,14 +117,11 @@ jobs:
       - name: F-106 · academics endpoints end to end
         env:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
-        run: |
-          npm install --no-audit --no-fund
-          node --test services/academics-svc/test/api.test.ts
+        run: node --test services/academics-svc/test/api.test.ts
 
       - name: Unit suites
         run: |
           set -euo pipefail
-          npm install --no-audit --no-fund
           node --test packages/server-core/test/pii-crypto.test.ts
           # ui-core and the PWA render into jsdom, which is a devDependency
           # of those packages rather than the root.

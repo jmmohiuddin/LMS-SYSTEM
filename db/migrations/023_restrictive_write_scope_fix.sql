@@ -96,13 +96,29 @@ BEGIN
     p_policy || '_del', p_table, v_using);
 END $$;
 
-SELECT pg_temp.split_write_policy('assignments',        'assignment_write_scope');
-SELECT pg_temp.split_write_policy('chapters',           'chapter_write_scope');
-SELECT pg_temp.split_write_policy('lessons',            'lesson_write_scope');
-SELECT pg_temp.split_write_policy('lesson_blocks',      'block_write_scope');
-SELECT pg_temp.split_write_policy('invoices',           'invoice_write_scope');
-SELECT pg_temp.split_write_policy('practice_questions', 'pq_write_scope');
-SELECT pg_temp.split_write_policy('practice_options',   'po_write_scope');
+-- PERFORM rather than SELECT: a migration that prints a result set fails
+-- the "migrations must be silent" gate in .github/workflows/database.yml,
+-- and that gate is worth keeping — stray output is how a migration that
+-- half-ran gets mistaken for one that succeeded.
+DO $$
+DECLARE t text; p text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'assignments',        'chapters',    'lessons', 'lesson_blocks',
+    'invoices',           'practice_questions',     'practice_options'
+  ] LOOP
+    p := CASE t
+           WHEN 'assignments'        THEN 'assignment_write_scope'
+           WHEN 'chapters'           THEN 'chapter_write_scope'
+           WHEN 'lessons'            THEN 'lesson_write_scope'
+           WHEN 'lesson_blocks'      THEN 'block_write_scope'
+           WHEN 'invoices'           THEN 'invoice_write_scope'
+           WHEN 'practice_questions' THEN 'pq_write_scope'
+           WHEN 'practice_options'   THEN 'po_write_scope'
+         END;
+    PERFORM pg_temp.split_write_policy(t, p);
+  END LOOP;
+END $$;
 
 -- Deliberately NOT split: attendance_sessions_scope, ledger_scope,
 -- safeguarding_scope, alumni_export_scope, ans_endpoint_scope. Those are
@@ -176,7 +192,6 @@ BEGIN
     RAISE EXCEPTION
       'the repair did not take: a student still cannot read a published chapter';
   END IF;
-  RAISE NOTICE 'verified — a student can now read published content';
 END $$;
 
 COMMIT;

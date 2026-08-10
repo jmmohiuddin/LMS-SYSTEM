@@ -51,7 +51,17 @@ export function json(res: ServerResponse, code: number, body: unknown, cors: Rec
 }
 
 export class HttpError extends Error {
-  constructor(public status: number, message: string, public code?: string) {
+  // Longhand rather than constructor parameter properties: node --test
+  // strips types instead of compiling them, and parameter properties are the
+  // one TS-only construct it cannot strip. Since every server module reaches
+  // this file, that single construct made all of server-core un-testable
+  // under the project's `node --test file.ts` convention.
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(status: number, message: string, code?: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }

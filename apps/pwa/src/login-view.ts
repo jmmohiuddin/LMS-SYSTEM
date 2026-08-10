@@ -14,6 +14,24 @@ import type { Auth } from './auth.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 
+/**
+ * Wireframe §5.1: a rate-limit rejection renders as a countdown, not an
+ * error. The difference matters — "সংযোগে সমস্যা" tells a teacher something
+ * is broken and to try a different phone; a visible timer tells them the
+ * system is fine and exactly how long to wait, which is the truth.
+ *
+ * Exported and pure so the wording and the minute/second boundary are
+ * unit-testable without a DOM.
+ */
+export function cooldownMessage(secondsLeft: number): string {
+  const s = Math.max(0, Math.ceil(secondsLeft));
+  if (s >= 60) {
+    const m = Math.ceil(s / 60);
+    return `অনেকবার চেষ্টা হয়েছে। ${m} মিনিট পর আবার চেষ্টা করুন।`;
+  }
+  return `অনেকবার চেষ্টা হয়েছে। ${s} সেকেন্ড পর আবার চেষ্টা করুন।`;
+}
+
 // Mirrors OTP_SENDING_ENABLED in services/identity-svc/api/otp-request.ts —
 // keep both in sync. This one skips showing the phone form entirely instead
 // of making a teacher fill it in just to hit the 503 from that flag.
@@ -37,12 +55,25 @@ export class LoginView {
   private phone = '';
   private tenantId: string;
   private errorEl!: HTMLElement;
+  private cooldownEl!: HTMLElement;
+  private submitEl!: HTMLButtonElement;
   private busy = false;
+  /** epoch ms; 0 = no cooldown. F-102 — see cooldownMessage() above. */
+  private cooldownUntil = 0;
+  private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: LoginViewOptions) {
     this.o = options;
     this.tenantId = options.tenantId;
     this.render();
+  }
+
+  /** Called by the shell when the view is torn down. Stops the tick. */
+  destroy(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
   }
 
   private render(): void {
@@ -76,6 +107,14 @@ export class LoginView {
     this.errorEl.className = 'login-error';
     this.errorEl.setAttribute('role', 'alert');
     this.errorEl.hidden = true;
+
+    // Deliberately role="status", not "alert": a countdown is a wait, not a
+    // failure, and it updates every second — an alert would re-announce on
+    // every tick.
+    this.cooldownEl = d.createElement('p');
+    this.cooldownEl.className = 'login-cooldown';
+    this.cooldownEl.setAttribute('role', 'status');
+    this.cooldownEl.hidden = true;
 
     const form = d.createElement('form');
     form.className = 'login-form';
@@ -137,10 +176,12 @@ export class LoginView {
       ? 'অপেক্ষা করুন…'
       : this.step === 'phone' ? 'কোড পাঠান' : 'যাচাই করুন';
     submit.disabled = this.busy;
+    this.submitEl = submit;
     form.append(submit);
 
-    wrap.append(h1, sub, this.errorEl, form);
+    wrap.append(h1, sub, this.errorEl, this.cooldownEl, form);
     root.append(wrap);
+    this.paintCooldown();
   }
 
   private showError(message: string): void {
@@ -148,8 +189,38 @@ export class LoginView {
     this.errorEl.hidden = false;
   }
 
+  /**
+   * Enter the F-102 cooldown. The submit button stays disabled and the
+   * countdown ticks down to zero, at which point the form re-arms itself —
+   * the teacher never has to guess whether it is safe to retry.
+   */
+  private startCooldown(seconds: number): void {
+    this.cooldownUntil = Date.now() + Math.max(1, Math.ceil(seconds)) * 1000;
+    this.errorEl.hidden = true;
+    if (this.timer === null) {
+      this.timer = setInterval(() => this.paintCooldown(), 1000);
+    }
+    this.paintCooldown();
+  }
+
+  private paintCooldown(): void {
+    if (!this.cooldownEl) return;
+    const left = (this.cooldownUntil - Date.now()) / 1000;
+    if (left <= 0) {
+      this.cooldownUntil = 0;
+      this.cooldownEl.hidden = true;
+      this.destroy();
+      if (this.submitEl && !this.busy) this.submitEl.disabled = false;
+      return;
+    }
+    this.cooldownEl.textContent = cooldownMessage(left);
+    this.cooldownEl.hidden = false;
+    if (this.submitEl) this.submitEl.disabled = true;
+  }
+
   private async onSubmit(): Promise<void> {
     if (this.busy) return;
+    if (this.cooldownUntil > Date.now()) return;
     this.errorEl.hidden = true;
 
     if (!this.tenantId) {
@@ -168,7 +239,7 @@ export class LoginView {
         await this.o.auth.requestOtp(this.tenantId, this.phone);
         this.step = 'code';
       } catch (err) {
-        this.showError(this.friendlyError(err));
+        this.handleFailure(err);
       } finally {
         this.busy = false;
         this.render();
@@ -188,10 +259,23 @@ export class LoginView {
       await this.o.auth.verifyOtp(this.tenantId, this.phone, code);
       this.o.onLoggedIn();
     } catch (err) {
-      this.showError(this.friendlyError(err));
       this.busy = false;
       this.render();
+      this.handleFailure(err);
     }
+  }
+
+  /**
+   * A 429 becomes a countdown; everything else becomes an error line. Split
+   * out so both submit paths agree — they used to differ only by accident.
+   */
+  private handleFailure(err: unknown): void {
+    const e = err as { code?: string; retryAfterSec?: number };
+    if (e?.code === 'rate_limited') {
+      this.startCooldown(e.retryAfterSec && e.retryAfterSec > 0 ? e.retryAfterSec : 60);
+      return;
+    }
+    this.showError(this.friendlyError(err));
   }
 
   private friendlyError(err: unknown): string {

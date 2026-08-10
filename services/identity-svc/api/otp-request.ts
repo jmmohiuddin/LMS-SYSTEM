@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, header, HttpError } from '../../../packages/server-core/src/http.ts';
 import { randomOtpCode, sha256Buf } from '../../../packages/server-core/src/crypto.ts';
+import { enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 const PURPOSES = new Set(['login', 'enrol_device', 'reset_password', 'verify_phone']);
@@ -57,6 +58,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (!tenantId) throw new HttpError(400, 'tenantId is required', 'tenant_required');
     if (!PHONE_RE.test(phone)) throw new HttpError(400, 'phone must be a valid +8801XXXXXXXXX number', 'invalid_phone');
     if (!PURPOSES.has(purpose)) throw new HttpError(400, `purpose must be one of ${[...PURPOSES].join(', ')}`, 'invalid_purpose');
+
+    // F-102, identity dimension. The dispatcher charged this request's IP
+    // bucket; this is the first point the phone number exists to charge.
+    // Placed before any database write or SMS send, so a refused request
+    // costs nothing downstream. Keyed on tenant+phone: the same number at
+    // two schools is two identities.
+    if (!(await enforceIdentityRateLimit(res, cors, 'otp_request', `${tenantId}:${phone}`))) return;
 
     const db = await sharedDb();
     const result = await db.withTenant({ tenantId, userId: '', role: 'system_ingest' }, async (client) => {

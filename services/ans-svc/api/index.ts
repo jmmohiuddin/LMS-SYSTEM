@@ -33,6 +33,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHmac, createHash } from 'node:crypto';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, readBody, json, header, HttpError } from '../../../packages/server-core/src/http.ts';
+import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -302,6 +303,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, 404, { error: 'not_found' }, cors);
     return;
   }
+  // F-102. Machine-to-machine, already gated by SERVICE_API_KEY — this is a
+  // backstop against a retry loop on the ANS side, not an auth control, so
+  // the bucket is charged before requireServiceAuth() runs inside the route.
+  if (!(await enforceRateLimit(req, res, cors, 'service'))) return;
   try {
     await route(req, res, cors);
   } catch (err) {

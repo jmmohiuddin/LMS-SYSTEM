@@ -239,6 +239,12 @@ button, h1, h2, .att-counts { text-transform: none; }
   font-size: 16px; background: var(--c-surface);
 }
 .login-error { color: var(--c-accent); font-size: 14px; margin: 0; }
+/* F-102 cooldown. Warn, not error — the system is working; you are waiting. */
+.login-cooldown {
+  color: var(--c-warn); font-size: 14px; margin: 0;
+  padding: var(--s-2) var(--s-3);
+  background: #FFFBEB; border-radius: var(--radius);
+}
 
 /* -------------------------------------------------------------- offline banner */
 .offline-banner {

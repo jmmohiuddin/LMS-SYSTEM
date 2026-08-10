@@ -1,0 +1,13 @@
+{
+  "name": "@shikhon/server-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared server primitives: tenant-scoped db, http helpers, JWT, crypto, rate limiting.",
+  "scripts": {
+    "test": "node --test test/rate-limit.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

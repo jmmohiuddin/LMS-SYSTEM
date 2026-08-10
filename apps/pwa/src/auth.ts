@@ -28,9 +28,35 @@ interface StoredAuth {
 }
 
 export class AuthError extends Error {
-  constructor(public code: string, message: string) {
+  // Written out longhand rather than as constructor parameter properties:
+  // node --test strips types rather than compiling them, and parameter
+  // properties are the one TS-only construct it cannot strip. Keeping this
+  // plain is what lets the test suite import this module at all.
+  readonly code: string;
+  /**
+   * Set only for a 429 (F-102). It is what lets the login screen show a
+   * countdown instead of a dead-end error — see login-view.ts.
+   */
+  readonly retryAfterSec: number;
+
+  constructor(code: string, message: string, retryAfterSec = 0) {
     super(message);
+    this.code = code;
+    this.retryAfterSec = retryAfterSec;
   }
+}
+
+/**
+ * Seconds to wait, from a rejected response. The body is authoritative (our
+ * own handlers put retryAfterSec there); the Retry-After header is the
+ * fallback for a 429 produced in front of the handler — a platform edge, a
+ * proxy — where there is no body of ours to read.
+ */
+export function retryAfterSeconds(status: number, body: unknown, header: string | null): number {
+  if (status !== 429) return 0;
+  const fromBody = (body as { retryAfterSec?: unknown })?.retryAfterSec;
+  const n = Number(fromBody ?? header ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.ceil(n) : 0;
 }
 
 export interface AuthOptions {
@@ -190,6 +216,7 @@ export class Auth {
       throw new AuthError(
         (body as { error?: string }).error ?? 'request_failed',
         (body as { message?: string }).message ?? res.statusText,
+        retryAfterSeconds(res.status, body, res.headers.get('Retry-After')),
       );
     }
     return body as T;

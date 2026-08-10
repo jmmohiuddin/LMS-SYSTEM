@@ -13,6 +13,7 @@ import { corsHeaders, readJson, json, HttpError } from '../../../packages/server
 import { sha256Buf, randomOpaqueToken, constantTimeEqualHex } from '../../../packages/server-core/src/crypto.ts';
 import { signAccessToken } from '../../../packages/server-core/src/jwt.ts';
 import { loadRoles } from '../src/roles.ts';
+import { enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 const REFRESH_TTL_DAYS = 30;
@@ -52,6 +53,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (!PHONE_RE.test(phone)) throw new HttpError(400, 'phone must be a valid +8801XXXXXXXXX number', 'invalid_phone');
     if (!/^[0-9]{4,8}$/.test(code)) throw new HttpError(400, 'code is required', 'invalid_code_format');
     if (!deviceId) throw new HttpError(400, 'deviceId is required', 'device_required');
+
+    // F-102, identity dimension. identity-svc already caps guesses against a
+    // single challenge; this bounds the outer loop — requesting a fresh
+    // challenge and guessing again — which that per-challenge cap cannot see.
+    if (!(await enforceIdentityRateLimit(res, cors, 'otp_verify', `${tenantId}:${phone}`))) return;
 
     const db = await sharedDb();
     const result = await db.withTenant({ tenantId, userId: '', role: 'system_ingest' }, async (client) => {

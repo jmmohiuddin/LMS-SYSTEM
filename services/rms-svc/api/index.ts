@@ -5,6 +5,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { corsHeaders, json } from '../../../packages/server-core/src/http.ts';
+import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 import routine from './routine.ts';
 import solve from './solve.ts';
 import substitute from './substitute.ts';
@@ -20,6 +21,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   if (!route) {
     json(res, 404, { error: 'not_found' }, corsHeaders());
     return;
+  }
+  // F-102. Charged per source IP before the handler runs. Reads get a
+  // looser bucket than writes; both are sized for a whole school behind one
+  // NAT gateway rather than for one person (see rate-limit.ts).
+  if (req.method !== 'OPTIONS') {
+    const cls = req.method === 'GET' ? 'read' : 'mutation';
+    if (!(await enforceRateLimit(req, res, corsHeaders(), cls))) return;
   }
   return route(req, res);
 }

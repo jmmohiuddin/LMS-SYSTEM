@@ -24,6 +24,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
+import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -440,6 +441,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   if (!route) {
     json(res, 404, { error: 'not_found' }, cors);
     return;
+  }
+  // F-102, IP dimension. Charged before authenticate() so an unauthenticated
+  // flood costs one bucket update rather than a JWT verification plus a
+  // connection. `generate` is a whole-school invoice run, but it is already
+  // role-gated and idempotent per period, so it needs no class of its own.
+  {
+    const cls = req.method === 'GET' ? 'read' : 'mutation';
+    if (!(await enforceRateLimit(req, res, cors, cls))) return;
   }
   try {
     await route(req, res, cors);

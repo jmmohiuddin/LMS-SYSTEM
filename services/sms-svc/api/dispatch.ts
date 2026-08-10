@@ -13,6 +13,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, json, header } from '../../../packages/server-core/src/http.ts';
+import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 import { SmsDispatchWorker, type DispatchResult } from '../src/dispatch.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,6 +29,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, 405, { error: 'method_not_allowed' }, cors);
     return;
   }
+
+  // F-102. Cron/ops only, already key-gated — a backstop against a stuck
+  // scheduler re-firing the worker, which would send SMS twice.
+  if (!(await enforceRateLimit(req, res, cors, 'service'))) return;
 
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';

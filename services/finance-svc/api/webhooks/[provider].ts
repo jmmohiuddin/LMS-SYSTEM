@@ -18,6 +18,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../../packages/server-core/src/db.ts';
 import { readBody, json } from '../../../../packages/server-core/src/http.ts';
+import { enforceRateLimit } from '../../../../packages/server-core/src/rate-limit.ts';
 import { MfsWebhookProcessor, type MfsProvider } from '../../src/webhook.ts';
 
 let _processor: MfsWebhookProcessor | null = null;
@@ -53,6 +54,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, 404, { error: 'unknown_provider' }, CORS);
     return;
   }
+
+  // F-102. Deliberately the loosest class in the table: a refused webhook is
+  // a settlement notification we did not record, and the gateways retry on
+  // non-2xx, so this must only ever catch a runaway loop. Signature
+  // verification inside the processor remains the actual trust boundary.
+  if (!(await enforceRateLimit(req, res, CORS, 'service'))) return;
 
   try {
     const rawBody = await readBody(req);

@@ -24,11 +24,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import pg from 'pg';
 import { corsHeaders, json, header } from '../../../packages/server-core/src/http.ts';
+import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 const STEPS = [
   ['maintain_partitions', 'SELECT app.maintain_partitions()'],
   ['purge_expired_data', 'SELECT app.purge_expired_data()'],
   ['refresh_dashboards', 'SELECT app.refresh_dashboards()'],
+  // F-102. Token buckets refill on read, so an idle bucket is indistinguishable
+  // from a full one after `capacity / refill` seconds — anything untouched for
+  // two days is dead weight. Purely a size control; dropping a row is
+  // equivalent to that client's bucket being full, which it would be anyway.
+  ['prune_rate_limit_buckets', 'SELECT app.prune_rate_limit_buckets()'],
 ] as const;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -42,6 +48,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, 405, { error: 'method_not_allowed' }, cors);
     return;
   }
+
+  // F-102. Cron-only, but this is the one endpoint holding an owner-role
+  // connection, so a loop here is the most expensive one to leave unbounded.
+  if (!(await enforceRateLimit(req, res, cors, 'service'))) return;
 
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';

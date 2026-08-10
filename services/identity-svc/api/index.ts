@@ -12,6 +12,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { corsHeaders, json } from '../../../packages/server-core/src/http.ts';
+import { enforceRateLimit, type RateLimitClass } from '../../../packages/server-core/src/rate-limit.ts';
 import otpRequest from './otp-request.ts';
 import otpVerify from './otp-verify.ts';
 import refresh from './refresh.ts';
@@ -24,6 +25,17 @@ const ROUTES: Record<string, Handler> = {
   'otp/verify': otpVerify,
   'refresh': refresh,
   'logout': logout,
+};
+
+// F-102. The IP dimension is charged here, before the handler runs, because
+// this is the surface an unauthenticated attacker reaches first. The
+// identity dimension is charged inside the OTP handlers, which is the
+// earliest point the phone number is known.
+const LIMIT_CLASS: Record<string, RateLimitClass> = {
+  'otp/request': 'otp_request',
+  'otp/verify': 'otp_verify',
+  'refresh': 'auth',
+  'logout': 'auth',
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -39,5 +51,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, 404, { error: 'not_found' }, corsHeaders());
     return;
   }
+  if (req.method !== 'OPTIONS'
+      && !(await enforceRateLimit(req, res, corsHeaders(), LIMIT_CLASS[sub]))) return;
   return route(req, res);
 }

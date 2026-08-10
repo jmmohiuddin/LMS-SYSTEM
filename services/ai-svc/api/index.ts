@@ -33,6 +33,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireStaff } from '../../../packages/server-core/src/auth.ts';
+import { enforceRateLimit, enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 // Blueprint model split (docs/01 §6.1): Opus for teacher-side generation,
 // Haiku for high-volume tutoring. Env-overridable without a redeploy of code.
@@ -134,6 +135,11 @@ interface SikhokBody {
 async function sikhok(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): Promise<void> {
   const claims = await authenticate(req);
   requireStaff(claims);
+  // F-102, identity dimension. The dispatcher charged this IP; this is the
+  // per-account spend control, and the earliest point the account is known.
+  // Charged before the body is read so a refused caller never reaches the
+  // Anthropic API — this is the only endpoint class with real per-call cost.
+  if (!(await enforceIdentityRateLimit(res, cors, 'ai', `${claims.tid}:${claims.sub}`))) return;
   const body = await readJson<SikhokBody>(req);
 
   const taskType = body.taskType ?? '';
@@ -208,6 +214,8 @@ interface ShikhoBody { message?: string; classLevel?: number; subjectBn?: string
 
 async function shikho(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): Promise<void> {
   const claims = await authenticate(req);
+  // F-102, identity dimension — see sikhok() above.
+  if (!(await enforceIdentityRateLimit(res, cors, 'ai', `${claims.tid}:${claims.sub}`))) return;
   const body = await readJson<ShikhoBody>(req);
   const message = (body.message ?? '').trim().slice(0, 4000);
   if (!message) throw new HttpError(400, 'message is required', 'message_required');
@@ -290,6 +298,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, 404, { error: 'not_found' }, cors);
     return;
   }
+  // F-102, IP dimension. The identity dimension is charged inside each
+  // engine, right after authenticate().
+  if (!(await enforceRateLimit(req, res, cors, 'ai'))) return;
   try {
     await route(req, res, cors);
   } catch (err) {

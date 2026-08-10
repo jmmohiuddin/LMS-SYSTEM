@@ -20,6 +20,33 @@ import { authenticate, requireStaff } from '../../../packages/server-core/src/au
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** What the loser of a grading race is told. See the grade branch below. */
+export interface GradeConflictDetail {
+  submissionId: string;
+  expectedRowVersion: number;
+  currentRowVersion: number;
+  yours: { marksAwarded: number; feedbackBn: string | null };
+  theirs: {
+    marksAwarded: string | null;
+    feedbackBn: string | null;
+    gradedAt: string | null;
+    gradedByName: string | null;
+  };
+}
+
+/**
+ * F-103. Carries the full conflict payload, which a plain HttpError cannot
+ * — and the payload is the point. A 409 with only a message would leave the
+ * teacher no way to see what the other mark was without leaving the screen.
+ */
+export class GradeConflict extends Error {
+  readonly detail: GradeConflictDetail;
+  constructor(detail: GradeConflictDetail) {
+    super('this submission was graded by someone else while you were working');
+    this.detail = detail;
+  }
+}
+
 interface CreateBody {
   sectionId?: string;
   subjectId?: string;
@@ -37,6 +64,12 @@ interface GradeBody {
   submissionId?: string;
   marksAwarded?: number;
   feedbackBn?: string;
+  /**
+   * F-103. The row_version the grader was looking at when they typed the
+   * mark. Required — see the grade branch below for why it cannot be
+   * optional.
+   */
+  rowVersion?: number;
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -63,8 +96,27 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         if (!Number.isFinite(marks) || marks < 0) {
           throw new HttpError(400, 'marksAwarded must be a non-negative number', 'invalid_marks');
         }
+
+        // F-103. The optimistic lock. `rowVersion` is what the grader's
+        // screen was showing; the UPDATE below only applies if the row is
+        // still on that version.
+        //
+        // It is mandatory, not optional-with-a-default. An optional lock is
+        // not a lock: every caller that forgets it — a script, an old build
+        // of the PWA, a retry — silently gets last-write-wins back, which is
+        // the exact behaviour this requirement exists to remove. A missing
+        // rowVersion is a client bug and is rejected as one.
+        const rowVersion = Number(body.rowVersion);
+        if (!Number.isInteger(rowVersion) || rowVersion < 1) {
+          throw new HttpError(
+            400,
+            'rowVersion is required — re-read the submission and send the version you graded',
+            'row_version_required',
+          );
+        }
+
         const graded = await db.withTenant(ctx, async (client) => {
-          const r = await client.query<{ id: string }>(
+          const r = await client.query<{ id: string; row_version: number }>(
             `UPDATE assignment_submissions s
                 SET marks_awarded = $2, feedback_bn = $3,
                     graded_by = $4, graded_at = now(),
@@ -72,16 +124,70 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               FROM assignments a
              WHERE s.id = $1
                AND a.id = s.assignment_id
+               AND s.row_version = $5
                AND ($2::numeric <= COALESCE(a.max_marks, $2::numeric))
-             RETURNING s.id`,
-            [body.submissionId, marks, body.feedbackBn ?? null, claims.sub],
+             RETURNING s.id, s.row_version`,
+            [body.submissionId, marks, body.feedbackBn ?? null, claims.sub, rowVersion],
           );
           if (r.rowCount === 0) {
-            throw new HttpError(422, 'submission not found or marks exceed the maximum', 'grade_rejected');
+            // Three different failures land here and they need three
+            // different answers, so ask the row why. Returning one generic
+            // 422 for all of them — what this endpoint did before — tells a
+            // teacher whose colleague just graded the same script that their
+            // marks were "rejected", and they retype them.
+            const cur = await client.query<{
+              row_version: number; marks_awarded: string | null; feedback_bn: string | null;
+              graded_at: string | null; grader_name: string | null; max_marks: string | null;
+            }>(
+              `SELECT s.row_version, s.marks_awarded::text, s.feedback_bn,
+                      s.graded_at::text, g.full_name_bn AS grader_name,
+                      a.max_marks::text
+                 FROM assignment_submissions s
+                 JOIN assignments a ON a.id = s.assignment_id
+                 LEFT JOIN users g ON g.id = s.graded_by
+                WHERE s.id = $1`,
+              [body.submissionId],
+            );
+            const row = cur.rows[0];
+            if (!row) {
+              throw new HttpError(404, 'submission not found', 'submission_not_found');
+            }
+            if (row.max_marks !== null && marks > Number(row.max_marks)) {
+              throw new HttpError(
+                422,
+                `marksAwarded exceeds the assignment maximum of ${row.max_marks}`,
+                'marks_exceed_max',
+              );
+            }
+            // Nothing else can have caused it: the row exists and the marks
+            // fit, so somebody else wrote to it first.
+            //
+            // The server does NOT merge and does NOT pick a winner. It
+            // returns both sides and stops. Deciding whose mark stands is a
+            // judgement about a child's grade — a person makes it, with the
+            // other person's name in front of them.
+            throw new GradeConflict({
+              submissionId: body.submissionId!,
+              expectedRowVersion: rowVersion,
+              currentRowVersion: row.row_version,
+              yours: { marksAwarded: marks, feedbackBn: body.feedbackBn ?? null },
+              theirs: {
+                marksAwarded: row.marks_awarded,
+                feedbackBn: row.feedback_bn,
+                gradedAt: row.graded_at,
+                gradedByName: row.grader_name,
+              },
+            });
           }
-          return r.rows[0].id;
+          return r.rows[0];
         });
-        json(res, 200, { ok: true, submissionId: graded }, cors);
+        json(res, 200, {
+          ok: true,
+          submissionId: graded.id,
+          // Echoed so a grader can correct a mark twice in a row without
+          // re-reading the list in between.
+          rowVersion: graded.row_version,
+        }, cors);
         return;
       }
 
@@ -153,12 +259,15 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           id: string; student_id: string; full_name_bn: string | null; roll_no: number | null;
           body_bn: string | null; submitted_at: string; is_late: boolean;
           marks_awarded: string | null; feedback_bn: string | null; graded_at: string | null;
+          row_version: number; grader_name: string | null;
         }>(
           `SELECT s.id, s.student_id, u.full_name_bn, e.roll_no,
                   s.body_bn, s.submitted_at::text, s.is_late,
-                  s.marks_awarded::text, s.feedback_bn, s.graded_at::text
+                  s.marks_awarded::text, s.feedback_bn, s.graded_at::text,
+                  s.row_version, g.full_name_bn AS grader_name
              FROM assignment_submissions s
              JOIN users u ON u.id = s.student_id
+             LEFT JOIN users g ON g.id = s.graded_by
              LEFT JOIN enrolments e
                ON e.student_id = s.student_id AND e.status = 'active'
             WHERE s.assignment_id = $1
@@ -190,6 +299,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
             marksAwarded: s.marks_awarded,
             feedbackBn: s.feedback_bn,
             gradedAt: s.graded_at,
+            gradedByName: s.grader_name,
+            // F-103. The grading screen must send this back with the mark;
+            // a client that never received it cannot grade at all, which is
+            // the intended coupling.
+            rowVersion: s.row_version,
           })),
         };
       });
@@ -249,6 +363,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       })),
     }, cors);
   } catch (err) {
+    if (err instanceof GradeConflict) {
+      // 409, not 422: nothing about the request was invalid. The state
+      // moved underneath it, and the resolution belongs to a person.
+      json(res, 409, { error: 'grade_conflict', message: err.message, conflict: err.detail }, cors);
+      return;
+    }
     if (err instanceof HttpError) {
       json(res, err.status, { error: err.code ?? 'error', message: err.message }, cors);
       return;

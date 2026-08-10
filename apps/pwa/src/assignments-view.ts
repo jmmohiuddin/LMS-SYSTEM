@@ -40,6 +40,26 @@ interface Submission {
   marksAwarded: string | null;
   feedbackBn: string | null;
   gradedAt: string | null;
+  gradedByName: string | null;
+  /** F-103. Must be echoed back when grading, or the server refuses. */
+  rowVersion: number;
+}
+
+/**
+ * F-103. What the server returns when someone else graded the same script
+ * first. Held in view state until a teacher resolves it — the client never
+ * picks a winner either.
+ */
+interface GradeConflict {
+  submissionId: string;
+  currentRowVersion: number;
+  yours: { marksAwarded: number; feedbackBn: string | null };
+  theirs: {
+    marksAwarded: string | null;
+    feedbackBn: string | null;
+    gradedAt: string | null;
+    gradedByName: string | null;
+  };
 }
 
 interface Detail {
@@ -91,8 +111,10 @@ export class AssignmentsView {
   private openId: string | null = null;
   private loading = true;
   private offline = false;
-  private notice = '';
+  private notice: string | null = '';
   private draft = '';
+  /** F-103. Non-null while a grading race is waiting on a human. */
+  private conflict: GradeConflict | null = null;
 
   constructor(options: AssignmentsViewOptions) {
     this.o = options;
@@ -163,25 +185,117 @@ export class AssignmentsView {
     this.render();
   }
 
-  private async grade(submissionId: string, marks: number, feedback: string): Promise<void> {
+  private async grade(
+    submissionId: string,
+    marks: number,
+    feedback: string,
+    rowVersion: number,
+  ): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/assignments', {
         method: 'POST',
-        body: JSON.stringify({ submissionId, marksAwarded: marks, feedbackBn: feedback }),
+        // F-103: rowVersion is what the screen was showing. Without it the
+        // server rejects the write rather than silently overwriting.
+        body: JSON.stringify({ submissionId, marksAwarded: marks, feedbackBn: feedback, rowVersion }),
       });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean; error?: string; message?: string; conflict?: GradeConflict;
+      };
       if (res.ok && body.ok) {
+        this.conflict = null;
         this.notice = 'নম্বর সংরক্ষিত ✓';
         if (this.openId) void this.openDetail(this.openId);
         return;
       }
-      this.notice = body.error === 'grade_rejected'
+      if (res.status === 409 && body.conflict) {
+        // Not an error to dismiss — a decision to put in front of a person.
+        this.conflict = body.conflict;
+        this.notice = null;
+        this.render();
+        return;
+      }
+      this.notice = body.error === 'marks_exceed_max'
         ? 'নম্বর সর্বোচ্চ নম্বরের চেয়ে বেশি হতে পারে না।'
-        : 'সংরক্ষণ করা যায়নি।';
+        : body.error === 'row_version_required'
+          ? 'তালিকাটি পুরোনো — আবার লোড করে চেষ্টা করুন।'
+          : 'সংরক্ষণ করা যায়নি।';
     } catch {
       this.notice = 'সংযোগে সমস্যা হয়েছে।';
     }
     this.render();
+  }
+
+  /**
+   * The conflict card. Shows both marks side by side with the other
+   * teacher's name, and offers exactly two choices — keep theirs, or
+   * replace with mine. There is no "merge" and no automatic winner: this is
+   * a child's grade, and a person decides whose mark stands.
+   */
+  private renderConflict(root: HTMLElement): void {
+    const c = this.conflict;
+    if (!c) return;
+    const d = this.o.doc;
+
+    const card = d.createElement('section');
+    card.className = 'card grade-conflict';
+    card.setAttribute('role', 'alertdialog');
+    card.setAttribute('aria-label', 'নম্বরে দ্বন্দ্ব');
+
+    const h = d.createElement('h3');
+    h.textContent = 'এই খাতাটি ইতিমধ্যে অন্য কেউ দেখেছেন';
+    card.append(h);
+
+    const who = d.createElement('p');
+    who.className = 'conflict-who';
+    who.textContent = c.theirs.gradedByName
+      ? `${c.theirs.gradedByName} নম্বর দিয়েছেন।`
+      : 'অন্য একজন শিক্ষক নম্বর দিয়েছেন।';
+    card.append(who);
+
+    const table = d.createElement('dl');
+    table.className = 'conflict-compare';
+    const addRow = (label: string, mark: string, note: string | null) => {
+      const dt = d.createElement('dt');
+      dt.textContent = label;
+      const dd = d.createElement('dd');
+      dd.textContent = note ? `${mark} — ${note}` : mark;
+      table.append(dt, dd);
+    };
+    addRow('তাঁদের নম্বর', bn(c.theirs.marksAwarded ?? '—'), c.theirs.feedbackBn);
+    addRow('আপনার নম্বর', bn(c.yours.marksAwarded), c.yours.feedbackBn);
+    card.append(table);
+
+    const actions = d.createElement('div');
+    actions.className = 'conflict-actions';
+
+    const keep = d.createElement('button');
+    keep.type = 'button';
+    keep.className = 'btn-secondary';
+    keep.textContent = 'তাঁদেরটি রাখুন';
+    keep.addEventListener('click', () => {
+      this.conflict = null;
+      this.notice = 'আগের নম্বরই রাখা হয়েছে।';
+      if (this.openId) void this.openDetail(this.openId);
+    });
+
+    const replace = d.createElement('button');
+    replace.type = 'button';
+    replace.className = 'btn-primary';
+    replace.textContent = 'আমারটি দিয়ে বদলান';
+    replace.addEventListener('click', () => {
+      // Re-submits against the version the server just reported, so this
+      // is a deliberate overwrite of a known value — not a blind retry.
+      void this.grade(
+        c.submissionId,
+        c.yours.marksAwarded,
+        c.yours.feedbackBn ?? '',
+        c.currentRowVersion,
+      );
+    });
+
+    actions.append(keep, replace);
+    card.append(actions);
+    root.append(card);
   }
 
   /* -------------------------------------------------------------- render */
@@ -269,13 +383,16 @@ export class AssignmentsView {
     back.className = 'btn-ghost back-btn';
     back.textContent = '← সব কাজ';
     back.addEventListener('click', () => {
-      this.openId = null; this.detail = null; this.notice = '';
+      this.openId = null; this.detail = null; this.notice = ''; this.conflict = null;
       void this.loadList();
     });
     bar.append(back);
     root.append(bar);
 
     if (this.loading || !this.detail) { root.append(this.msg('লোড হচ্ছে…')); return; }
+    // Above everything else: an unresolved conflict is the only thing on
+    // this screen that is waiting on the teacher.
+    this.renderConflict(root);
     const a = this.detail.assignment;
 
     const header = d.createElement('header');
@@ -404,7 +521,7 @@ export class AssignmentsView {
         save.addEventListener('click', () => {
           const m = Number(mark.value);
           if (!Number.isFinite(m) || m < 0) { this.notice = 'সঠিক নম্বর দিন।'; this.render(); return; }
-          void this.grade(s.id, m, fb.value.trim());
+          void this.grade(s.id, m, fb.value.trim(), s.rowVersion);
         });
         row.append(mark, fb, save);
         li.append(row);

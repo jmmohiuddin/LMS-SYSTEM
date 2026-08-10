@@ -781,6 +781,22 @@ button, h1, h2, .att-counts { text-transform: none; }
 .sub-feedback { flex: 1; min-width: 0; }
 .sub-grade-row .btn-small { flex: none; width: auto; }
 
+/* F-103 grading conflict. Warn-toned, not error-toned: nothing failed, two
+   people did the same work. Sits above the submission list because it is
+   the only thing on the screen waiting on the teacher. */
+.grade-conflict { background: #FFFBEB; margin-bottom: var(--s-4); }
+.grade-conflict h3 { margin: 0 0 var(--s-2); font-size: 16px; }
+.conflict-who { margin: 0 0 var(--s-3); font-size: 14px; color: var(--c-ink-2); }
+.conflict-compare {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: var(--s-1) var(--s-3); margin: 0 0 var(--s-4);
+  font-size: 15px;
+}
+.conflict-compare dt { color: var(--c-ink-2); }
+.conflict-compare dd { margin: 0; font-variant-numeric: tabular-nums; }
+.conflict-actions { display: flex; gap: var(--s-2); }
+.conflict-actions button { flex: 1; }
+
 /* ============================================================= practice */
 .prac-wrap { padding-bottom: var(--s-5); }
 .prac-rail {

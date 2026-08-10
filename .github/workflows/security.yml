@@ -128,10 +128,15 @@ jobs:
           (cd packages/ui-core && npm install --no-audit --no-fund && npm test)
           (cd apps/pwa && npm install --no-audit --no-fund && npm test)
 
+      # --no-install, deliberately. Without it `npx tsc` silently downloads
+      # an unrelated package called `tsc` when TypeScript is not installed,
+      # which is how this step "passed" by never running the compiler.
+      # Now a missing compiler is a hard failure.
       - name: Typecheck and build
         run: |
           set -euo pipefail
-          npx tsc -p tsconfig.json --noEmit
-          npx tsc -p apps/pwa/tsconfig.json --noEmit
-          npx tsc -p apps/pwa/tsconfig.sw.json --noEmit
+          npx --no-install tsc --version
+          npx --no-install tsc -p tsconfig.json --noEmit
+          npx --no-install tsc -p apps/pwa/tsconfig.json --noEmit
+          npx --no-install tsc -p apps/pwa/tsconfig.sw.json --noEmit
           npm run build

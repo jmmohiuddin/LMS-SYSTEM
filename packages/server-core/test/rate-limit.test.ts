@@ -334,6 +334,23 @@ function fakeResponse(): { res: ServerResponse; captured: FakeRes } {
 }
 
 describe('the 429 a refused caller actually receives', { skip }, () => {
+  // This suite goes through enforceIdentityRateLimit, which uses sharedDb()
+  // — and sharedDb() refuses to boot on a BYPASSRLS or superuser role
+  // (assertRlsEnforced). Connected as one, every call would fail open and
+  // these assertions would fail with a confusing "expected false, got
+  // true". Say so plainly instead: point DATABASE_URL at the non-privileged
+  // runtime role, which is what production uses anyway.
+  test('precondition: DATABASE_URL is a non-BYPASSRLS role', async () => {
+    const { rows } = await db.pool.query<{ privileged: boolean }>(
+      `SELECT (rolsuper OR rolbypassrls) AS privileged FROM pg_roles WHERE rolname = current_user`,
+    );
+    assert.equal(
+      rows[0]?.privileged, false,
+      'connect as the runtime role (e.g. shikhon_runtime), not the owner — '
+      + 'sharedDb() refuses a BYPASSRLS role and the limiter would fail open',
+    );
+  });
+
   test('carries Retry-After, retryAfterSec, and CORS — but never the bucket key', async () => {
     const identity = `${RUN}:429-shape`;
     const cors = { 'Access-Control-Allow-Origin': '*' };

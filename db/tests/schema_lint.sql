@@ -27,7 +27,17 @@ INSERT INTO lint_global_exempt VALUES
   ('nctb_documents'), ('nctb_chunks'), ('offline_explanation_packs'),
   ('subject_catalogue'), ('period_template_defaults'),
   ('partition_config'),
-  ('alumni_profile_enrichment');   -- keyed by global_person_id, may outlive the tenant link
+  ('alumni_profile_enrichment'),   -- keyed by global_person_id, may outlive the tenant link
+  -- Rate limiting (F-102, migration 020). Not tenant data: it is keyed by
+  -- IP and by identity, and the buckets that matter most are consumed
+  -- BEFORE any tenant is known — an unauthenticated OTP flood is the
+  -- exact thing being stopped, so it cannot use SET LOCAL app.tenant_id.
+  -- Isolation is not weakened but inverted: RLS is ENABLED with no policy,
+  -- so shikhon_app reads zero rows, and app.rate_limit_consume() is the
+  -- only access path. Listed here rather than given a token tenant_id,
+  -- because a tenant_id nobody could set would be a lie that silences
+  -- this lint without providing anything.
+  ('rate_limit_buckets');
 
 -- ---------------------------------------------------------------------
 -- Tables whose tenant_id is nullable BY DESIGN (written before a tenant

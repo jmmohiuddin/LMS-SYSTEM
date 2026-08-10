@@ -68,11 +68,33 @@ DATABASE_URL="postgresql://shikhon_runtime:<runtime-password>@ep-late-fog-azjd29
 ```
 
 The runtime password is **not stored in this repository**. Put it in your secret manager.
-To rotate:
+Rotation, the ledger, and the blast radius of every credential are in
+[08-CREDENTIAL-ROTATION.md](08-CREDENTIAL-ROTATION.md). The short version:
 
 ```sql
 ALTER ROLE shikhon_runtime PASSWORD '<new-password>';
 ```
+
+Before any deploy, run the preflight — it refuses a missing, placeholder or
+dangerously wrong secret (an owner-role `DATABASE_URL`, a connection string with
+no `sslmode`, a `PII_MASTER_KEY_V2` set without `V1`) and never prints a value:
+
+```bash
+node scripts/check-secrets.mjs --env
+```
+
+### PII_MASTER_KEY_V1
+
+F-101 seals every national ID and birth-registration number with this key.
+Generate it with `openssl rand -base64 32`. Without it the identifier paths
+ship dark (they refuse rather than storing anything in the clear), which is
+safe — but board registration and MPO filing cannot work until it is set.
+
+**Never replace `V1` in place.** Rotation is additive: add `V2`, sweep, and
+retire `V1` only when no row reports `pii_key_version = 1`. Replacing it makes
+every stored identifier permanently undecryptable, silently, until someone
+tries to read one. Full procedure in
+[08-CREDENTIAL-ROTATION.md §5](08-CREDENTIAL-ROTATION.md).
 
 ### Why the pooled endpoint is safe here
 

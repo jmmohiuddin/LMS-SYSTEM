@@ -1,0 +1,121 @@
+name: security
+
+# F-105. The history scan is the half of credential hygiene that can be
+# enforced rather than remembered: it proves, on every push, that no
+# credential has ever been committed. The other half — rotating the live
+# secrets — is an operator action and is recorded in
+# docs/08-CREDENTIAL-ROTATION.md §3.
+on:
+  push:
+  pull_request:
+
+jobs:
+  secrets:
+    name: no credential has ever been committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scan walks `git rev-list --all`, so a shallow clone would
+          # check a handful of recent commits and report a clean result
+          # that means nothing.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Scan every commit on every branch
+        run: node scripts/check-secrets.mjs --history
+
+  database:
+    name: migrations · invariants · security suites
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: shikhon_owner
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: shikhon_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U shikhon_owner"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: shikhon_owner
+      PGPASSWORD: ci
+      PGDATABASE: shikhon_ci
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      # Applying the chain in order from an empty database is itself the
+      # assertion: the migrations are not idempotent and nothing records
+      # what has run, so a file that only works against a hand-patched
+      # database fails here.
+      - name: Apply the full migration chain
+        run: |
+          set -euo pipefail
+          for f in db/migrations/*.sql; do
+            echo "── $(basename "$f")"
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Schema lint and invariants
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f db/tests/schema_lint.sql
+          psql -v ON_ERROR_STOP=1 -f db/tests/invariants.sql
+          psql -v ON_ERROR_STOP=1 -f db/tests/e2e_academic_cycle.sql
+
+      # The Phase 0 security guarantees. Each runs as shikhon_app, so RLS
+      # is live and a suite that only passes as the owner fails here.
+      - name: F-101 · national identifier encryption guards
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/pii_encryption.sql
+
+      - name: F-103 · assignment grading optimistic lock
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/grading_lock.sql
+
+      - name: F-104 · prerequisite acyclicity
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/prerequisite_cycles.sql
+
+      # sharedDb() refuses to boot on a BYPASSRLS role, so the limiter would
+      # fail open under the owner and the 429 assertions would pass
+      # vacuously. Create the same non-privileged role production runs as.
+      - name: Create runtime role
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -q -c "CREATE ROLE shikhon_runtime LOGIN INHERIT NOBYPASSRLS PASSWORD 'ci';"
+          psql -v ON_ERROR_STOP=1 -q -c "GRANT shikhon_app TO shikhon_runtime;"
+          psql -v ON_ERROR_STOP=1 -q -c "GRANT CONNECT ON DATABASE shikhon_ci TO shikhon_runtime;"
+          psql -v ON_ERROR_STOP=1 -q -c "GRANT USAGE ON SCHEMA public, app, audit TO shikhon_runtime;"
+
+      - name: F-102 · rate limiting (application + token bucket)
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test packages/server-core/test/rate-limit.test.ts
+
+      - name: Unit suites
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          node --test packages/server-core/test/pii-crypto.test.ts
+          # ui-core and the PWA render into jsdom, which is a devDependency
+          # of those packages rather than the root.
+          (cd packages/ui-core && npm install --no-audit --no-fund && npm test)
+          (cd apps/pwa && npm install --no-audit --no-fund && npm test)
+
+      - name: Typecheck and build
+        run: |
+          set -euo pipefail
+          npx tsc -p tsconfig.json --noEmit
+          npx tsc -p apps/pwa/tsconfig.json --noEmit
+          npx tsc -p apps/pwa/tsconfig.sw.json --noEmit
+          npm run build

@@ -1540,7 +1540,41 @@ var IntervalBook = class {
 function norm(t) {
   return t.length === 5 ? `${t}:00` : t;
 }
-var NO_ROOM = Symbol("no-room");
+function groupIntoUnits(demand, poolOf) {
+  const byPool = /* @__PURE__ */ new Map();
+  const units = [];
+  for (const d of demand) {
+    const pool = poolOf.get(`${d.sectionId}|${d.subjectId}`);
+    if (pool === void 0) {
+      units.push({
+        key: d.subjectId,
+        pool: null,
+        members: [d],
+        periodsPerWeek: d.periodsPerWeek
+      });
+      continue;
+    }
+    const k = `${d.sectionId}|${pool}`;
+    const list = byPool.get(k);
+    if (list) list.push(d);
+    else byPool.set(k, [d]);
+  }
+  for (const [k, members] of byPool) {
+    const pool = k.slice(k.indexOf("|") + 1);
+    units.push({
+      key: `pool:${pool}`,
+      pool,
+      // Stable order, so a re-run assigns the same rooms.
+      members: [...members].sort((a, b) => a.subjectId.localeCompare(b.subjectId)),
+      // Alternatives should carry equal periods; where a school has
+      // configured them unevenly the block runs for the longest, because
+      // scheduling the Hindu group for fewer hours than the Muslim group
+      // is a decision no timetable should make silently.
+      periodsPerWeek: Math.max(...members.map((m) => m.periodsPerWeek))
+    });
+  }
+  return units;
+}
 var BN_DIGITS2 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
 var bnNum = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS2[Number(d)]);
 var RmsSolver = class {
@@ -1581,6 +1615,8 @@ var RmsSolver = class {
       const roomBySection = new Map(sections.map((s) => [s.id, s.homeRoomId]));
       const wantedCaps = [...new Set(demand.map((d) => d.requiresCapability).filter(Boolean))];
       const roomsByCapability = await this.loadCapableRooms(client, wantedCaps);
+      const spareRooms = await this.loadBookableRooms(client);
+      const poolOf = await this.loadSelectionPools(client, routine.academicYearId, routine.shift);
       const isUnavailable = (teacherId, day2, startsAt, endsAt) => {
         const rows = unavailability.get(teacherId);
         if (!rows) return false;
@@ -1588,11 +1624,13 @@ var RmsSolver = class {
       };
       const placements = [];
       const unplaced = [];
-      const sorted = [...demand].sort((a, b) => b.periodsPerWeek - a.periodsPerWeek);
-      for (const d of sorted) {
-        const ssKey = `${d.sectionId}|${d.subjectId}`;
+      const units = groupIntoUnits(demand, poolOf);
+      const sorted = [...units].sort((a, b) => b.periodsPerWeek - a.periodsPerWeek);
+      for (const unit of sorted) {
+        const d = unit.members[0];
+        const ssKey = `${d.sectionId}|${unit.key}`;
         const already = placedCount.get(ssKey) ?? 0;
-        const remaining = Math.max(0, d.periodsPerWeek - already);
+        const remaining = Math.max(0, unit.periodsPerWeek - already);
         let placedForThis = 0;
         for (let i = 0; i < remaining; i++) {
           const usedDays = sectionSubjectDays.get(ssKey) ?? /* @__PURE__ */ new Set();
@@ -1601,19 +1639,22 @@ var RmsSolver = class {
             for (const day3 of teachingDays) {
               if (preferUnusedDay && usedDays.has(day3)) continue;
               for (const period2 of periods) {
-                if (teacherBusy.overlaps(d.teacherId, day3, period2.startsAt, period2.endsAt)) continue;
                 if (sectionBusy.overlaps(d.sectionId, day3, period2.startsAt, period2.endsAt)) continue;
-                if (isUnavailable(d.teacherId, day3, period2.startsAt, period2.endsAt)) continue;
-                const room = this.pickRoom(
-                  d,
+                if (unit.members.some((m) => teacherBusy.overlaps(m.teacherId, day3, period2.startsAt, period2.endsAt) || isUnavailable(m.teacherId, day3, period2.startsAt, period2.endsAt))) continue;
+                if (new Set(unit.members.map((m) => m.teacherId)).size < unit.members.length) {
+                  break;
+                }
+                const rooms2 = this.pickRoomsForUnit(
+                  unit,
                   roomBySection,
                   roomsByCapability,
+                  spareRooms,
                   roomBusy,
                   day3,
                   period2
                 );
-                if (room === NO_ROOM) continue;
-                found = { day: day3, period: period2, roomId: room };
+                if (rooms2 === null) continue;
+                found = { day: day3, period: period2, rooms: rooms2 };
                 break;
               }
               if (found) break;
@@ -1621,46 +1662,56 @@ var RmsSolver = class {
             if (found) break;
           }
           if (!found) break;
-          const { day: day2, period, roomId } = found;
-          teacherBusy.add(d.teacherId, day2, period.startsAt, period.endsAt);
+          const { day: day2, period, rooms } = found;
           sectionBusy.add(d.sectionId, day2, period.startsAt, period.endsAt);
-          if (roomId) roomBusy.add(roomId, day2, period.startsAt, period.endsAt);
           if (!sectionSubjectDays.has(ssKey)) sectionSubjectDays.set(ssKey, /* @__PURE__ */ new Set());
           sectionSubjectDays.get(ssKey).add(day2);
-          placements.push({
-            sectionId: d.sectionId,
-            subjectId: d.subjectId,
-            teacherId: d.teacherId,
-            dayOfWeek: day2,
-            periodNo: period.periodNo,
-            periodDefinitionId: period.periodDefinitionId,
-            startsAt: period.startsAt,
-            endsAt: period.endsAt,
-            roomId
+          unit.members.forEach((m, idx) => {
+            const roomId = rooms[idx];
+            teacherBusy.add(m.teacherId, day2, period.startsAt, period.endsAt);
+            if (roomId) roomBusy.add(roomId, day2, period.startsAt, period.endsAt);
+            placements.push({
+              sectionId: m.sectionId,
+              subjectId: m.subjectId,
+              teacherId: m.teacherId,
+              dayOfWeek: day2,
+              periodNo: period.periodNo,
+              periodDefinitionId: period.periodDefinitionId,
+              startsAt: period.startsAt,
+              endsAt: period.endsAt,
+              roomId,
+              parallelPool: unit.pool
+            });
           });
           placedForThis++;
         }
         if (placedForThis < remaining) {
-          const capped = d.requiresCapability !== null && (roomsByCapability.get(d.requiresCapability)?.length ?? 0) > 0;
-          unplaced.push({
-            sectionId: d.sectionId,
-            subjectId: d.subjectId,
-            teacherId: d.teacherId,
-            missing: remaining - placedForThis,
-            reason: d.requiresCapability === null ? "no_free_slot" : capped ? "no_free_capable_room" : "no_capable_room",
-            ...d.requiresCapability ? { capability: d.requiresCapability } : {}
-          });
+          for (const m of unit.members) {
+            const capped = m.requiresCapability !== null && (roomsByCapability.get(m.requiresCapability)?.length ?? 0) > 0;
+            unplaced.push({
+              sectionId: m.sectionId,
+              subjectId: m.subjectId,
+              teacherId: m.teacherId,
+              missing: remaining - placedForThis,
+              reason: m.requiresCapability === null ? "no_free_slot" : capped ? "no_free_capable_room" : "no_capable_room",
+              ...m.requiresCapability ? { capability: m.requiresCapability } : {},
+              ...unit.pool ? { parallelPool: unit.pool } : {}
+            });
+          }
         }
       }
       let inserted = 0;
       const written = [];
       for (const p of placements) {
+        await client.query("SAVEPOINT slot_insert");
         try {
           await client.query(
             `INSERT INTO routine_slots
                (tenant_id, routine_id, day_of_week, period_no, period_definition_id,
-                starts_at, ends_at, slot_kind, primary_section_id, subject_id, teacher_id, room_id)
-             VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, 'teaching', $7, $8, $9, $10)`,
+                starts_at, ends_at, slot_kind, primary_section_id, subject_id, teacher_id,
+                room_id, parallel_pool)
+             VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, 'teaching',
+                     $7, $8, $9, $10, $11)`,
             [
               routineId,
               p.dayOfWeek,
@@ -1671,12 +1722,15 @@ var RmsSolver = class {
               p.sectionId,
               p.subjectId,
               p.teacherId,
-              p.roomId
+              p.roomId,
+              p.parallelPool
             ]
           );
+          await client.query("RELEASE SAVEPOINT slot_insert");
           inserted++;
           written.push(p);
         } catch (err) {
+          await client.query("ROLLBACK TO SAVEPOINT slot_insert");
           const code = err.code;
           if (code === "23P01" || code === "23505") {
             unplaced.push({
@@ -1873,25 +1927,77 @@ var RmsSolver = class {
     }));
   }
   /**
-   * Which room this demand can use at this hour, or NO_ROOM.
+   * A room for every member of a block at this hour, or null if the block
+   * cannot run here.
    *
-   * Two different questions wearing one name. A subject with a required
-   * capability needs a room that HAS it and is free; an ordinary subject
-   * uses the section's home room, and a section with no home room is
-   * placed roomless rather than refused — small schools genuinely run
-   * that way, and a null room_id is honest about it.
+   * Distinct by construction: four religion groups from one section need
+   * four rooms, and only one of them can be the section's own classroom.
+   * The rest come from whatever else is free, which is exactly what a
+   * school does — three groups walk somewhere else.
    */
-  pickRoom(d, roomBySection, roomsByCapability, roomBusy, day2, period) {
-    if (d.requiresCapability === null) {
-      const home = roomBySection.get(d.sectionId) ?? null;
-      if (home === null) return null;
-      return roomBusy.overlaps(home, day2, period.startsAt, period.endsAt) ? NO_ROOM : home;
+  pickRoomsForUnit(unit, roomBySection, roomsByCapability, spareRooms, roomBusy, day2, period) {
+    const taken = /* @__PURE__ */ new Set();
+    const out = [];
+    const free = (id) => !taken.has(id) && !roomBusy.overlaps(id, day2, period.startsAt, period.endsAt);
+    const order = [...unit.members.keys()].sort((a, b) => (unit.members[b].requiresCapability ? 1 : 0) - (unit.members[a].requiresCapability ? 1 : 0));
+    for (const idx of order) {
+      const m = unit.members[idx];
+      let picked;
+      if (m.requiresCapability !== null) {
+        picked = (roomsByCapability.get(m.requiresCapability) ?? []).find(free);
+        if (picked === void 0) return null;
+      } else {
+        const home = roomBySection.get(m.sectionId) ?? null;
+        if (home !== null && free(home)) {
+          picked = home;
+        } else if (unit.members.length > 1) {
+          picked = spareRooms.find(free);
+          if (picked === void 0) return null;
+        } else if (home !== null) {
+          return null;
+        } else {
+          picked = null;
+        }
+      }
+      if (picked !== null) taken.add(picked);
+      out[idx] = picked;
     }
-    const candidates = roomsByCapability.get(d.requiresCapability) ?? [];
-    for (const roomId of candidates) {
-      if (!roomBusy.overlaps(roomId, day2, period.startsAt, period.endsAt)) return roomId;
-    }
-    return NO_ROOM;
+    return out;
+  }
+  /** Every bookable room, ordered by code so a re-run picks the same one. */
+  async loadBookableRooms(client) {
+    const { rows } = await client.query(
+      `SELECT id FROM rooms WHERE is_bookable ORDER BY code`
+    );
+    return rows.map((r) => r.id);
+  }
+  /**
+   * "sectionId|subjectId" → selection_pool, for subjects the template
+   * marks as alternatives.
+   *
+   * Read from the subject template rather than from a flag on the subject,
+   * because whether two subjects are alternatives is a property of the
+   * CURRICULUM, not of the subject: Higher Maths and Agriculture are
+   * alternatives in Class 9 Science and unrelated elsewhere.
+   */
+  async loadSelectionPools(client, academicYearId, shift) {
+    const { rows } = await client.query(
+      `SELECT s.id AS section_id, sti.subject_id, sti.selection_pool
+         FROM sections s
+         JOIN classes c ON c.id = s.class_id
+         JOIN subject_templates st ON st.class_id = c.id
+          AND st.group_code IS NOT DISTINCT FROM
+              (CASE WHEN c."group" = 'none' THEN NULL ELSE c."group" END)
+         JOIN curriculum_schemes cs ON cs.id = st.curriculum_scheme_id
+          AND cs.academic_year_id = $1
+         JOIN subject_template_items sti ON sti.template_id = st.id
+        WHERE s.academic_year_id = $1 AND s.shift = $2
+          AND sti.selection_pool IS NOT NULL`,
+      [academicYearId, shift]
+    );
+    const map = /* @__PURE__ */ new Map();
+    for (const r of rows) map.set(`${r.section_id}|${r.subject_id}`, r.selection_pool);
+    return map;
   }
   /**
    * capability → room ids that have it, in a stable order.

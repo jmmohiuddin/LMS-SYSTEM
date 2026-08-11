@@ -76,6 +76,8 @@ interface Placement {
   startsAt: string;
   endsAt: string;
   roomId: string | null;
+  /** F-504. The selection pool this slot was placed as part of, if any. */
+  parallelPool: string | null;
 }
 
 export interface UnplacedDemand {
@@ -93,6 +95,8 @@ export interface UnplacedDemand {
    */
   reason: string;
   capability?: string;
+  /** Set when this demand belongs to a parallel block (F-504). */
+  parallelPool?: string;
 }
 
 export interface SolveResult {
@@ -167,8 +171,67 @@ function norm(t: string): string {
   return t.length === 5 ? `${t}:00` : t;
 }
 
-/** Returned by pickRoom when no room can host this period. */
-const NO_ROOM = Symbol('no-room');
+/**
+ * A placement unit: one demand, or several that must share a slot.
+ *
+ * F-504's "religion and optional-subject splits scheduled as coherent
+ * parallel blocks". A Class 9 section splitting four ways for religion
+ * occupies ONE period with four teachers in four rooms — not four periods
+ * with three quarters of the room idle in each.
+ */
+interface PlacementUnit {
+  /** Stable key for the placed-count bookkeeping. */
+  key: string;
+  /** The selection_pool this block came from, or null for a lone subject. */
+  pool: string | null;
+  members: Demand[];
+  periodsPerWeek: number;
+}
+
+/**
+ * Fold demands that share a section AND a selection pool into one unit.
+ *
+ * The pool is the subject template's own mechanism (migration 025), which
+ * is why religion variants and optional subjects need no separate handling
+ * here — the template already said they are alternatives.
+ */
+export function groupIntoUnits(
+  demand: Demand[],
+  poolOf: Map<string, string>,
+): PlacementUnit[] {
+  const byPool = new Map<string, Demand[]>();
+  const units: PlacementUnit[] = [];
+
+  for (const d of demand) {
+    const pool = poolOf.get(`${d.sectionId}|${d.subjectId}`);
+    if (pool === undefined) {
+      units.push({
+        key: d.subjectId, pool: null, members: [d], periodsPerWeek: d.periodsPerWeek,
+      });
+      continue;
+    }
+    const k = `${d.sectionId}|${pool}`;
+    const list = byPool.get(k);
+    if (list) list.push(d);
+    else byPool.set(k, [d]);
+  }
+
+  for (const [k, members] of byPool) {
+    const pool = k.slice(k.indexOf('|') + 1);
+    units.push({
+      key: `pool:${pool}`,
+      pool,
+      // Stable order, so a re-run assigns the same rooms.
+      members: [...members].sort((a, b) => a.subjectId.localeCompare(b.subjectId)),
+      // Alternatives should carry equal periods; where a school has
+      // configured them unevenly the block runs for the longest, because
+      // scheduling the Hindu group for fewer hours than the Muslim group
+      // is a decision no timetable should make silently.
+      periodsPerWeek: Math.max(...members.map((m) => m.periodsPerWeek)),
+    });
+  }
+  return units;
+}
 
 const BN_DIGITS = '০১২৩৪৫৬৭৮৯';
 const bnNum = (n: number): string => String(n).replace(/\d/g, (d) => BN_DIGITS[Number(d)]);
@@ -229,6 +292,16 @@ export class RmsSolver {
       // not change during a solve.
       const wantedCaps = [...new Set(demand.map((d) => d.requiresCapability).filter(Boolean))] as string[];
       const roomsByCapability = await this.loadCapableRooms(client, wantedCaps);
+      // Overflow rooms for a parallel block: four religion groups from one
+      // section need four rooms, and only one of them can be the section's
+      // own classroom.
+      const spareRooms = await this.loadBookableRooms(client);
+
+      // F-504. Which subjects a section must take AT THE SAME TIME.
+      // Religion variants and optional subjects are the same mechanism —
+      // a selection_pool on the subject template — which is what makes
+      // this one rule rather than two special cases.
+      const poolOf = await this.loadSelectionPools(client, routine.academicYearId, routine.shift);
 
       const isUnavailable = (teacherId: string, day: number, startsAt: string, endsAt: string): boolean => {
         const rows = unavailability.get(teacherId);
@@ -239,19 +312,27 @@ export class RmsSolver {
       const placements: Placement[] = [];
       const unplaced: UnplacedDemand[] = [];
 
-      // Most-frequent subjects first — they're the hardest to fit once the
-      // week fills up, so give them first pick of open slots.
-      const sorted = [...demand].sort((a, b) => b.periodsPerWeek - a.periodsPerWeek);
+      // F-504. Group the demands that must share a slot before anything is
+      // placed. A section splitting four ways for religion occupies ONE
+      // period, not four — schedule them separately and the section spends
+      // four hours with three quarters of the room idle.
+      const units = groupIntoUnits(demand, poolOf);
 
-      for (const d of sorted) {
-        const ssKey = `${d.sectionId}|${d.subjectId}`;
+      // Most-frequent first — hardest to fit once the week fills up, so
+      // they get first pick. A block counts once: its members share a slot.
+      const sorted = [...units].sort((a, b) => b.periodsPerWeek - a.periodsPerWeek);
+
+      for (const unit of sorted) {
+        const d = unit.members[0];
+        const ssKey = `${d.sectionId}|${unit.key}`;
         const already = placedCount.get(ssKey) ?? 0;
-        const remaining = Math.max(0, d.periodsPerWeek - already);
+        const remaining = Math.max(0, unit.periodsPerWeek - already);
         let placedForThis = 0;
 
         for (let i = 0; i < remaining; i++) {
           const usedDays = sectionSubjectDays.get(ssKey) ?? new Set<number>();
-          let found: { day: number; period: TeachingPeriod; roomId: string | null } | null = null;
+          let found: { day: number; period: TeachingPeriod;
+                       rooms: Array<string | null> } | null = null;
 
           // Pass 1: prefer a day this (section, subject) hasn't used yet, to
           // spread occurrences across the week. Pass 2: allow any day if
@@ -261,9 +342,16 @@ export class RmsSolver {
             for (const day of teachingDays) {
               if (preferUnusedDay && usedDays.has(day)) continue;
               for (const period of periods) {
-                if (teacherBusy.overlaps(d.teacherId, day, period.startsAt, period.endsAt)) continue;
+                // The section is busy once for the whole block.
                 if (sectionBusy.overlaps(d.sectionId, day, period.startsAt, period.endsAt)) continue;
-                if (isUnavailable(d.teacherId, day, period.startsAt, period.endsAt)) continue;
+                // Every member needs its own free teacher…
+                if (unit.members.some((m) =>
+                      teacherBusy.overlaps(m.teacherId, day, period.startsAt, period.endsAt)
+                      || isUnavailable(m.teacherId, day, period.startsAt, period.endsAt))) continue;
+                // …and two members of one block may not be the same person.
+                if (new Set(unit.members.map((m) => m.teacherId)).size < unit.members.length) {
+                  break;
+                }
 
                 // F-504. A subject that names a capability goes in a room
                 // that HAS it — a chemistry practical belongs in a
@@ -273,11 +361,13 @@ export class RmsSolver {
                 // The room constraint spans shifts (F-506), and a
                 // two-shift school shares its rooms, so freedom is checked
                 // against the whole year rather than this routine.
-                const room = this.pickRoom(
-                  d, roomBySection, roomsByCapability, roomBusy, day, period);
-                if (room === NO_ROOM) continue;
+                // One room per member, all distinct: four religion groups
+                // cannot share the section's classroom.
+                const rooms = this.pickRoomsForUnit(
+                  unit, roomBySection, roomsByCapability, spareRooms, roomBusy, day, period);
+                if (rooms === null) continue;
 
-                found = { day, period, roomId: room };
+                found = { day, period, rooms };
                 break;
               }
               if (found) break;
@@ -287,43 +377,55 @@ export class RmsSolver {
 
           if (!found) break;
 
-          const { day, period, roomId } = found;
-          teacherBusy.add(d.teacherId, day, period.startsAt, period.endsAt);
+          const { day, period, rooms } = found;
+          // The section is consumed once; every member's teacher and room
+          // individually.
           sectionBusy.add(d.sectionId, day, period.startsAt, period.endsAt);
-          if (roomId) roomBusy.add(roomId, day, period.startsAt, period.endsAt);
           if (!sectionSubjectDays.has(ssKey)) sectionSubjectDays.set(ssKey, new Set());
           sectionSubjectDays.get(ssKey)!.add(day);
 
-          placements.push({
-            sectionId: d.sectionId,
-            subjectId: d.subjectId,
-            teacherId: d.teacherId,
-            dayOfWeek: day,
-            periodNo: period.periodNo,
-            periodDefinitionId: period.periodDefinitionId,
-            startsAt: period.startsAt,
-            endsAt: period.endsAt,
-            roomId,
+          unit.members.forEach((m, idx) => {
+            const roomId = rooms[idx];
+            teacherBusy.add(m.teacherId, day, period.startsAt, period.endsAt);
+            if (roomId) roomBusy.add(roomId, day, period.startsAt, period.endsAt);
+            placements.push({
+              sectionId: m.sectionId,
+              subjectId: m.subjectId,
+              teacherId: m.teacherId,
+              dayOfWeek: day,
+              periodNo: period.periodNo,
+              periodDefinitionId: period.periodDefinitionId,
+              startsAt: period.startsAt,
+              endsAt: period.endsAt,
+              roomId,
+              parallelPool: unit.pool,
+            });
           });
           placedForThis++;
         }
 
         if (placedForThis < remaining) {
-          // Which shortage stopped it matters: "no hour is free" sends a
-          // coordinator to the timetable, "no lab is free" sends them to
-          // the room register or to the builders. Reporting both as
-          // no_free_slot would send them to the wrong place.
-          const capped = d.requiresCapability !== null
-            && (roomsByCapability.get(d.requiresCapability)?.length ?? 0) > 0;
-          unplaced.push({
-            sectionId: d.sectionId,
-            subjectId: d.subjectId,
-            teacherId: d.teacherId,
-            missing: remaining - placedForThis,
-            reason: d.requiresCapability === null ? 'no_free_slot'
-                  : capped ? 'no_free_capable_room' : 'no_capable_room',
-            ...(d.requiresCapability ? { capability: d.requiresCapability } : {}),
-          });
+          // Reported per MEMBER even though placement is per block: a
+          // coordinator looks up "why is Hindu Studies missing", not "why
+          // is pool religion_9 missing".
+          for (const m of unit.members) {
+            // Which shortage stopped it matters: "no hour is free" sends a
+            // coordinator to the timetable, "no lab is free" sends them to
+            // the room register or to the builders. Reporting both as
+            // no_free_slot would send them to the wrong place.
+            const capped = m.requiresCapability !== null
+              && (roomsByCapability.get(m.requiresCapability)?.length ?? 0) > 0;
+            unplaced.push({
+              sectionId: m.sectionId,
+              subjectId: m.subjectId,
+              teacherId: m.teacherId,
+              missing: remaining - placedForThis,
+              reason: m.requiresCapability === null ? 'no_free_slot'
+                    : capped ? 'no_free_capable_room' : 'no_capable_room',
+              ...(m.requiresCapability ? { capability: m.requiresCapability } : {}),
+              ...(unit.pool ? { parallelPool: unit.pool } : {}),
+            });
+          }
         }
       }
 
@@ -334,12 +436,19 @@ export class RmsSolver {
       // timetable that does not exist.
       const written: Placement[] = [];
       for (const p of placements) {
+        // A SAVEPOINT per insert. Catching a constraint violation without
+        // one leaves the TRANSACTION aborted, so every later statement
+        // fails with 25P02 — the conflict is handled and the run dies
+        // anyway, several rows later, with an error naming nothing.
+        await client.query('SAVEPOINT slot_insert');
         try {
           await client.query(
             `INSERT INTO routine_slots
                (tenant_id, routine_id, day_of_week, period_no, period_definition_id,
-                starts_at, ends_at, slot_kind, primary_section_id, subject_id, teacher_id, room_id)
-             VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, 'teaching', $7, $8, $9, $10)`,
+                starts_at, ends_at, slot_kind, primary_section_id, subject_id, teacher_id,
+                room_id, parallel_pool)
+             VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, 'teaching',
+                     $7, $8, $9, $10, $11)`,
             [
               routineId,
               p.dayOfWeek,
@@ -351,11 +460,14 @@ export class RmsSolver {
               p.subjectId,
               p.teacherId,
               p.roomId,
+              p.parallelPool,
             ],
           );
+          await client.query('RELEASE SAVEPOINT slot_insert');
           inserted++;
           written.push(p);
         } catch (err) {
+          await client.query('ROLLBACK TO SAVEPOINT slot_insert');
           const code = (err as { code?: string }).code;
           if (code === '23P01' || code === '23505') {
             unplaced.push({
@@ -572,36 +684,108 @@ export class RmsSolver {
   }
 
   /**
-   * Which room this demand can use at this hour, or NO_ROOM.
+   * A room for every member of a block at this hour, or null if the block
+   * cannot run here.
    *
-   * Two different questions wearing one name. A subject with a required
-   * capability needs a room that HAS it and is free; an ordinary subject
-   * uses the section's home room, and a section with no home room is
-   * placed roomless rather than refused — small schools genuinely run
-   * that way, and a null room_id is honest about it.
+   * Distinct by construction: four religion groups from one section need
+   * four rooms, and only one of them can be the section's own classroom.
+   * The rest come from whatever else is free, which is exactly what a
+   * school does — three groups walk somewhere else.
    */
-  private pickRoom(
-    d: Demand,
+  private pickRoomsForUnit(
+    unit: PlacementUnit,
     roomBySection: Map<string, string | null>,
     roomsByCapability: Map<string, string[]>,
+    spareRooms: string[],
     roomBusy: IntervalBook,
     day: number,
     period: TeachingPeriod,
-  ): string | null | typeof NO_ROOM {
-    if (d.requiresCapability === null) {
-      const home = roomBySection.get(d.sectionId) ?? null;
-      if (home === null) return null;   // no home room recorded; place it roomless
-      return roomBusy.overlaps(home, day, period.startsAt, period.endsAt) ? NO_ROOM : home;
-    }
+  ): Array<string | null> | null {
+    const taken = new Set<string>();
+    const out: Array<string | null> = [];
+    const free = (id: string): boolean =>
+      !taken.has(id) && !roomBusy.overlaps(id, day, period.startsAt, period.endsAt);
 
-    const candidates = roomsByCapability.get(d.requiresCapability) ?? [];
-    for (const roomId of candidates) {
-      if (!roomBusy.overlaps(roomId, day, period.startsAt, period.endsAt)) return roomId;
+    // Capability members first: their choices are the most constrained, so
+    // letting an ordinary subject take a lab would be a wasted room.
+    const order = [...unit.members.keys()]
+      .sort((a, b) => (unit.members[b].requiresCapability ? 1 : 0)
+                    - (unit.members[a].requiresCapability ? 1 : 0));
+
+    for (const idx of order) {
+      const m = unit.members[idx];
+      let picked: string | null | undefined;
+
+      if (m.requiresCapability !== null) {
+        picked = (roomsByCapability.get(m.requiresCapability) ?? []).find(free);
+        // A capability subject is never given an ordinary room instead.
+        if (picked === undefined) return null;
+      } else {
+        const home = roomBySection.get(m.sectionId) ?? null;
+        if (home !== null && free(home)) {
+          picked = home;
+        } else if (unit.members.length > 1) {
+          // Only a BLOCK borrows another room. A lone class whose own room
+          // is occupied is moved to another HOUR instead, which keeps it
+          // where the section sits and avoids inventing room changes the
+          // soft-constraint report would then complain about.
+          picked = spareRooms.find(free);
+          if (picked === undefined) return null;
+        } else if (home !== null) {
+          return null;   // home room busy: try a different period
+        } else {
+          // A section with no home room at all is placed roomless rather
+          // than refused — small schools genuinely run that way.
+          picked = null;
+        }
+      }
+
+      if (picked !== null) taken.add(picked);
+      out[idx] = picked;
     }
-    // A capability subject is never dropped into an ordinary classroom as
-    // a fallback. A chemistry practical in a room with no gas or water is
-    // not a lesson that happened.
-    return NO_ROOM;
+    return out;
+  }
+
+  /** Every bookable room, ordered by code so a re-run picks the same one. */
+  private async loadBookableRooms(client: pg.PoolClient): Promise<string[]> {
+    const { rows } = await client.query<{ id: string }>(
+      `SELECT id FROM rooms WHERE is_bookable ORDER BY code`);
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * "sectionId|subjectId" → selection_pool, for subjects the template
+   * marks as alternatives.
+   *
+   * Read from the subject template rather than from a flag on the subject,
+   * because whether two subjects are alternatives is a property of the
+   * CURRICULUM, not of the subject: Higher Maths and Agriculture are
+   * alternatives in Class 9 Science and unrelated elsewhere.
+   */
+  private async loadSelectionPools(
+    client: pg.PoolClient,
+    academicYearId: string,
+    shift: string,
+  ): Promise<Map<string, string>> {
+    const { rows } = await client.query<{
+      section_id: string; subject_id: string; selection_pool: string;
+    }>(
+      `SELECT s.id AS section_id, sti.subject_id, sti.selection_pool
+         FROM sections s
+         JOIN classes c ON c.id = s.class_id
+         JOIN subject_templates st ON st.class_id = c.id
+          AND st.group_code IS NOT DISTINCT FROM
+              (CASE WHEN c."group" = 'none' THEN NULL ELSE c."group" END)
+         JOIN curriculum_schemes cs ON cs.id = st.curriculum_scheme_id
+          AND cs.academic_year_id = $1
+         JOIN subject_template_items sti ON sti.template_id = st.id
+        WHERE s.academic_year_id = $1 AND s.shift = $2
+          AND sti.selection_pool IS NOT NULL`,
+      [academicYearId, shift],
+    );
+    const map = new Map<string, string>();
+    for (const r of rows) map.set(`${r.section_id}|${r.subject_id}`, r.selection_pool);
+    return map;
   }
 
   /**

@@ -73,6 +73,7 @@ const SENTINELS = [
   ['031_bulk_import',                 'table',      'public.import_batches'],
   ['032_cross_shift_availability',    'function',   'app.cross_shift_conflicts'],
   ['033_year_rollover',               'function',   'app.commit_rollover'],
+  ['034_parallel_blocks',             'function',   'app.assert_parallel_block_coherent'],
 ];
 
 /**
@@ -113,6 +114,7 @@ const MEANING = {
   '031_bulk_import':                 'F-1601 — bulk import; a child is reachable through their guardian',
   '032_cross_shift_availability':    'F-506 — a teacher cannot be booked in both shifts at once',
   '033_year_rollover':               'F-1605 — moving every child up a class, previewed before it lands',
+  '034_parallel_blocks':             'F-504 — a religion split is four classes at one hour, not a clash',
 };
 
 const QUERIES = {

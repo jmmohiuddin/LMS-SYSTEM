@@ -15,6 +15,19 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import {
+  planCompression, checkMedia, formatDuration, MEDIA_PROBLEM_BN, MAX_VOICE_MS,
+  type MediaDraft,
+} from '../../../packages/ui-core/src/media.ts';
+
+/**
+ * F-902 kill switch. Mirrors SUBMISSION_MEDIA_ENABLED in the sync applier
+ * and SCRIPT_STORAGE_ENABLED in scripts.ts: this deployment has no object
+ * storage, so captured bytes would have nowhere to go. Flip both when an
+ * R2/S3 credential lands.
+ */
+export const SUBMISSION_MEDIA_ENABLED = false;
+
 
 interface Assignment {
   id: string;
@@ -121,6 +134,11 @@ export class AssignmentsView {
   private notice: string | null = '';
   private draft = '';
   private draftStatusEl: HTMLElement | null = null;
+  /** F-902. Set when a photo or voice answer has been captured for this assignment. */
+  private mediaDraft: MediaDraft & { objectKey: string } | null = null;
+  private mediaNotice = '';
+  private recorder: MediaRecorder | null = null;
+  private recStartedAt = 0;
   /** F-103. Non-null while a grading race is waiting on a human. */
   private conflict: GradeConflict | null = null;
 
@@ -191,11 +209,21 @@ export class AssignmentsView {
   }
 
   private async submit(): Promise<void> {
-    if (!this.detail || !this.draft.trim()) return;
+    // F-902. A photo or a spoken answer is a complete submission on its own —
+    // a student who photographs a page of working has not failed to answer.
+    if (!this.detail || (!this.draft.trim() && !this.mediaDraft)) return;
     try {
+      const m = this.mediaDraft;
       await this.o.outbox.enqueue({
         entity: 'assignment_submission',
-        payload: { assignmentId: this.detail.assignment.id, bodyBn: this.draft.trim() },
+        payload: {
+          assignmentId: this.detail.assignment.id,
+          bodyBn: this.draft.trim() || null,
+          ...(m ? {
+            mediaKey: m.objectKey, mediaKind: m.kind, mediaBytes: m.bytes,
+            mediaDurationMs: m.durationMs ?? null, mediaSha256: m.sha256 ?? null,
+          } : {}),
+        },
       });
       void Promise.resolve(this.o.outbox.flush()).catch(() => {});
       // Submitted: the autosaved draft has served its purpose. Clear it so a
@@ -206,6 +234,113 @@ export class AssignmentsView {
     } catch {
       this.notice = 'জমা দেওয়া যায়নি — আবার চেষ্টা করুন।';
     }
+    this.render();
+  }
+
+  /**
+   * Photograph a page of handwritten work.
+   *
+   * The compression ladder in ui-core/media decides the trade; this method
+   * only supplies the encoder and reports the outcome. A camera JPEG is
+   * routinely 4 MB and will not complete an upload on 3G, so nothing is
+   * accepted until it is under 250 KB — and if it never gets there, the
+   * student is told to retake it rather than handed a queued upload that
+   * will fail hours later.
+   */
+  private async capturePhoto(assignmentId: string): Promise<void> {
+    this.mediaNotice = '';
+    const d = this.o.doc;
+    const input = d.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    // Prefers the rear camera on a phone; on a desktop it is an ordinary
+    // file picker, which is what a teacher testing the flow will get.
+    input.setAttribute('capture', 'environment');
+    const file: File | null = await new Promise((resolve) => {
+      input.addEventListener('change', () => resolve(input.files?.[0] ?? null), { once: true });
+      input.click();
+    });
+    if (!file) return;
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      let lastBlob: Blob | null = null;
+      const plan = await planCompression(async (longestEdge, quality) => {
+        const scale = Math.min(1, longestEdge / Math.max(bitmap.width, bitmap.height));
+        const canvas = d.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return 0;
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        lastBlob = await new Promise<Blob | null>((r) =>
+          canvas.toBlob((b) => r(b), 'image/jpeg', quality));
+        return lastBlob?.size ?? 0;
+      });
+      if (!plan || !lastBlob) {
+        this.mediaNotice = MEDIA_PROBLEM_BN.too_large;
+        this.render();
+        return;
+      }
+      await this.holdMedia(assignmentId, lastBlob, { kind: 'photo', bytes: plan.bytes });
+    } catch {
+      this.mediaNotice = MEDIA_PROBLEM_BN.empty;
+      this.render();
+    }
+  }
+
+  /**
+   * A spoken answer. Capped at 90 seconds by a timer as well as by
+   * validation, because a phone that goes into a pocket mid-recording
+   * would otherwise produce a file no 3G connection will ever send.
+   */
+  private async toggleVoice(assignmentId: string): Promise<void> {
+    this.mediaNotice = '';
+    if (this.recorder) { this.recorder.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      this.recStartedAt = Date.now();
+      rec.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+      rec.addEventListener('stop', () => {
+        // Release the microphone. A PWA holding the mic open after
+        // recording shows a permanent recording indicator, which reads as
+        // the app listening to a child's home.
+        for (const t of stream.getTracks()) t.stop();
+        const durationMs = Date.now() - this.recStartedAt;
+        this.recorder = null;
+        void this.holdMedia(assignmentId, new Blob(chunks, { type: rec.mimeType }),
+                            { kind: 'voice', bytes: chunks.reduce((n, c) => n + c.size, 0), durationMs });
+      });
+      rec.start();
+      this.recorder = rec;
+      globalThis.setTimeout(() => { if (this.recorder === rec) rec.stop(); }, MAX_VOICE_MS);
+      this.render();
+    } catch {
+      this.mediaNotice = 'মাইক্রোফোন ব্যবহারের অনুমতি পাওয়া যায়নি।';
+      this.render();
+    }
+  }
+
+  /**
+   * Validate, hash, and hold a capture until the student presses submit.
+   *
+   * The object key is built from ids only — never a filename. A camera
+   * supplies names, and a name lands in every bucket listing and access log
+   * that touches the object; a photo of a child's homework should not
+   * announce whose it is.
+   */
+  private async holdMedia(assignmentId: string, blob: Blob, draft: MediaDraft): Promise<void> {
+    const sha256 = await sha256Hex(await blob.arrayBuffer());
+    const problem = checkMedia({ ...draft, sha256 });
+    if (problem) {
+      this.mediaNotice = MEDIA_PROBLEM_BN[problem];
+      this.render();
+      return;
+    }
+    const ext = draft.kind === 'photo' ? 'jpg' : 'webm';
+    this.mediaDraft = { ...draft, sha256, objectKey: `submissions/${assignmentId}/${sha256}.${ext}` };
     this.render();
   }
 
@@ -518,8 +653,66 @@ export class AssignmentsView {
     send.textContent = mine ? 'উত্তর হালনাগাদ করো' : 'জমা দাও';
     send.addEventListener('click', () => { void this.submit(); });
 
-    form.append(label, status, send);
+    form.append(label, status);
+    const media = this.renderCapture(a.id);
+    if (media) form.append(media);
+    form.append(send);
     root.append(form);
+  }
+
+  /**
+   * F-902. Photo of handwritten work, or a spoken answer.
+   *
+   * Returns null when the deployment has no object storage, which is the
+   * current state: the bytes would name a blob that can never be fetched.
+   * Rendering a disabled camera button instead would be worse than
+   * rendering nothing — it advertises a capability the school does not
+   * have and invites a student to lose work discovering that.
+   *
+   * The sync applier refuses media independently (SUBMISSION_MEDIA_ENABLED
+   * there), so this is presentation, not enforcement.
+   */
+  private renderCapture(assignmentId: string): HTMLElement | null {
+    if (!SUBMISSION_MEDIA_ENABLED) return null;
+    const d = this.o.doc;
+    const row = d.createElement('div');
+    row.className = 'assign-capture';
+
+    const photo = d.createElement('button');
+    photo.type = 'button';
+    photo.className = 'btn-secondary';
+    photo.textContent = 'ছবি তোলো';
+    photo.addEventListener('click', () => { void this.capturePhoto(assignmentId); });
+
+    const voice = d.createElement('button');
+    voice.type = 'button';
+    voice.className = 'btn-secondary';
+    voice.textContent = this.recorder ? 'রেকর্ডিং থামাও' : 'বলে উত্তর দাও';
+    voice.addEventListener('click', () => { void this.toggleVoice(assignmentId); });
+
+    row.append(photo, voice);
+
+    if (this.mediaDraft) {
+      const held = d.createElement('p');
+      held.className = 'assign-capture-held';
+      held.textContent = this.mediaDraft.kind === 'photo'
+        ? `ছবি যুক্ত হয়েছে (${Math.round(this.mediaDraft.bytes / 1024)} কিলোবাইট)`
+        : `রেকর্ডিং যুক্ত হয়েছে (${formatDuration(this.mediaDraft.durationMs ?? 0)})`;
+      const drop = d.createElement('button');
+      drop.type = 'button';
+      drop.className = 'btn-ghost';
+      drop.textContent = 'সরাও';
+      drop.addEventListener('click', () => { this.mediaDraft = null; this.render(); });
+      row.append(held, drop);
+    }
+    if (this.mediaNotice) {
+      const n = d.createElement('p');
+      n.className = 'inline-notice is-danger';
+      n.setAttribute('role', 'alert');
+      n.textContent = this.mediaNotice;
+      row.append(n);
+    }
+    return row;
   }
 
   private renderSubmissionList(root: HTMLElement): void {
@@ -676,4 +869,10 @@ export class AssignmentsView {
     p.textContent = text;
     return p;
   }
+}
+
+/** Content hash, so a retry after a dropped connection is the same object. */
+async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }

@@ -1,11 +1,14 @@
 {
-  "name": "@shikhon/server-core",
+  "name": "@shikhon/identity-svc",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Shared server primitives: tenant-scoped db, http helpers, JWT, crypto, rate limiting.",
+  "description": "OTP, refresh, logout and activation-code authentication.",
   "scripts": {
     "test": "node --test 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
   },
   "engines": {
     "node": ">=22"

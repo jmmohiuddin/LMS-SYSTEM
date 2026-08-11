@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "vercel-build": "node scripts/build.mjs"
+    "vercel-build": "node scripts/build.mjs",
+    "test": "node scripts/test-all.mjs"
   },
   "engines": {
     "node": ">=22"

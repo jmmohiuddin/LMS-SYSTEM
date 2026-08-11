@@ -463,10 +463,46 @@ var applyTopicProgress = async (c, op) => {
   );
   return applied(op.opId);
 };
+var SUBMISSION_MEDIA_ENABLED = false;
+var MEDIA_KINDS = /* @__PURE__ */ new Set(["photo", "voice"]);
+var MAX_MEDIA_BYTES = 262144;
+var MAX_VOICE_MS = 9e4;
+var HEX64 = /^[0-9a-f]{64}$/i;
 var applyAssignmentSubmission = async (c, op) => {
   const p = op.payload;
   if (!p?.assignmentId) return rejected(op.opId, "MALFORMED_PAYLOAD");
   if (!p.bodyBn && !p.mediaKey) return rejected(op.opId, "EMPTY_SUBMISSION");
+  if (p.mediaKey || p.mediaKind) {
+    if (!SUBMISSION_MEDIA_ENABLED) {
+      return rejected(
+        op.opId,
+        "MEDIA_STORAGE_UNCONFIGURED",
+        false,
+        "photo and voice submission is not enabled for this school yet"
+      );
+    }
+    if (!p.mediaKey || !p.mediaKind) return rejected(op.opId, "MEDIA_INCOMPLETE");
+    if (!MEDIA_KINDS.has(p.mediaKind)) return rejected(op.opId, "MEDIA_KIND_UNKNOWN");
+    const bytes = Number(p.mediaBytes);
+    if (!Number.isInteger(bytes) || bytes <= 0 || bytes > MAX_MEDIA_BYTES) {
+      return rejected(
+        op.opId,
+        "MEDIA_TOO_LARGE",
+        false,
+        "compress before uploading \u2014 the ceiling is 250 KB"
+      );
+    }
+    if (p.mediaSha256 && !HEX64.test(p.mediaSha256)) return rejected(op.opId, "MEDIA_HASH_INVALID");
+    if (p.mediaKind === "photo" && p.mediaDurationMs != null) {
+      return rejected(op.opId, "MEDIA_KIND_MISMATCH");
+    }
+    if (p.mediaKind === "voice") {
+      const ms = Number(p.mediaDurationMs);
+      if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_VOICE_MS) {
+        return rejected(op.opId, "MEDIA_TOO_LONG", false, "a spoken answer may run up to 90 seconds");
+      }
+    }
+  }
   const a = await c.query(
     `SELECT status, due_at::text, allows_late FROM assignments WHERE id = $1`,
     [p.assignmentId]
@@ -484,15 +520,34 @@ var applyAssignmentSubmission = async (c, op) => {
   try {
     const res = await c.query(
       `INSERT INTO assignment_submissions
-         (id, tenant_id, assignment_id, student_id, body_bn, media_key, submitted_at)
-       VALUES ($1, app.current_tenant(), $2, $3, $4, $5, now())
+         (id, tenant_id, assignment_id, student_id, body_bn,
+          media_key, media_kind, media_bytes, media_duration_ms, media_sha256, submitted_at)
+       VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, $7, $8, decode($9, 'hex'), now())
        ON CONFLICT (tenant_id, assignment_id, student_id) DO UPDATE
          SET body_bn = EXCLUDED.body_bn,
-             media_key = COALESCE(EXCLUDED.media_key, assignment_submissions.media_key),
+             -- Media is kept when a resubmission carries none: a student
+             -- fixing a typo in their written answer has not withdrawn the
+             -- photo they attached. All five media columns move together,
+             -- or the row would claim a kind for a key it no longer has.
+             media_key         = COALESCE(EXCLUDED.media_key, assignment_submissions.media_key),
+             media_kind        = COALESCE(EXCLUDED.media_kind, assignment_submissions.media_kind),
+             media_bytes       = COALESCE(EXCLUDED.media_bytes, assignment_submissions.media_bytes),
+             media_duration_ms = COALESCE(EXCLUDED.media_duration_ms, assignment_submissions.media_duration_ms),
+             media_sha256      = COALESCE(EXCLUDED.media_sha256, assignment_submissions.media_sha256),
              submitted_at = now(),
              row_version = assignment_submissions.row_version + 1
        RETURNING is_late, row_version`,
-      [op.opId, p.assignmentId, op.actorId, p.bodyBn ?? null, p.mediaKey ?? null]
+      [
+        op.opId,
+        p.assignmentId,
+        op.actorId,
+        p.bodyBn ?? null,
+        p.mediaKey ?? null,
+        p.mediaKind ?? null,
+        p.mediaBytes ?? null,
+        p.mediaDurationMs ?? null,
+        p.mediaSha256 ?? null
+      ]
     );
     return applied(op.opId, res.rows[0].row_version);
   } catch (err) {

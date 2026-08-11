@@ -1,9 +1,9 @@
 {
-  "name": "@shikhon/sync-svc",
+  "name": "@shikhon/academics-svc",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Server side of the offline sync protocol: idempotent batch push against RLS-scoped PostgreSQL.",
+  "description": "Roster, exams, marks, results, content and subject-choice endpoints.",
   "scripts": {
     "test": "node --test 'test/*.test.ts'"
   },
@@ -12,8 +12,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "devDependencies": {
-    "jsdom": "^30.0.1"
   }
 }

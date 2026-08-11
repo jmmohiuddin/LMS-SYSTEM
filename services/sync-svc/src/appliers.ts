@@ -325,12 +325,64 @@ interface SubmissionPayload {
   assignmentId: string;
   bodyBn?: string | null;
   mediaKey?: string | null;
+  /** F-902. 'photo' | 'voice' — what the object is, so a grader need not fetch to find out. */
+  mediaKind?: string | null;
+  mediaBytes?: number | null;
+  mediaDurationMs?: number | null;
+  mediaSha256?: string | null;
 }
+
+/**
+ * F-902 kill switch, matching SCRIPT_STORAGE_ENABLED in scripts.ts. There is
+ * no object storage attached to this deployment, so a media_key would name a
+ * blob that does not exist and can never be fetched. The client hides its
+ * capture controls when this is off; this is the boundary that makes that
+ * true, because a client flag is a suggestion and the server is the
+ * authority. Flip both when an R2/S3 credential lands.
+ */
+const SUBMISSION_MEDIA_ENABLED = false;
+
+const MEDIA_KINDS = new Set(['photo', 'voice']);
+const MAX_MEDIA_BYTES = 262144;   // 250 KB — what compression must reach for 3G
+const MAX_VOICE_MS = 90000;       // 90s — a spoken answer, not a pocket recording
+const HEX64 = /^[0-9a-f]{64}$/i;
 
 export const applyAssignmentSubmission: Applier = async (c, op) => {
   const p = op.payload as SubmissionPayload;
   if (!p?.assignmentId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
   if (!p.bodyBn && !p.mediaKey) return rejected(op.opId, 'EMPTY_SUBMISSION');
+
+  // F-902. The database has these same constraints; checking here too is not
+  // redundant. A constraint violation arrives as a 23514 that this function
+  // already maps to PAST_DUE, so an oversized photo would be reported to a
+  // student as "this assignment no longer accepts submissions" — a wrong
+  // answer to the wrong question. Rejecting early names the actual problem.
+  if (p.mediaKey || p.mediaKind) {
+    if (!SUBMISSION_MEDIA_ENABLED) {
+      // Not a fault in the submission — a capability this deployment does
+      // not have. Said plainly so a student is not told their homework was
+      // malformed when the truth is the school has no file storage yet.
+      return rejected(op.opId, 'MEDIA_STORAGE_UNCONFIGURED', false,
+        'photo and voice submission is not enabled for this school yet');
+    }
+    if (!p.mediaKey || !p.mediaKind) return rejected(op.opId, 'MEDIA_INCOMPLETE');
+    if (!MEDIA_KINDS.has(p.mediaKind)) return rejected(op.opId, 'MEDIA_KIND_UNKNOWN');
+    const bytes = Number(p.mediaBytes);
+    if (!Number.isInteger(bytes) || bytes <= 0 || bytes > MAX_MEDIA_BYTES) {
+      return rejected(op.opId, 'MEDIA_TOO_LARGE', false,
+        'compress before uploading — the ceiling is 250 KB');
+    }
+    if (p.mediaSha256 && !HEX64.test(p.mediaSha256)) return rejected(op.opId, 'MEDIA_HASH_INVALID');
+    if (p.mediaKind === 'photo' && p.mediaDurationMs != null) {
+      return rejected(op.opId, 'MEDIA_KIND_MISMATCH');
+    }
+    if (p.mediaKind === 'voice') {
+      const ms = Number(p.mediaDurationMs);
+      if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_VOICE_MS) {
+        return rejected(op.opId, 'MEDIA_TOO_LONG', false, 'a spoken answer may run up to 90 seconds');
+      }
+    }
+  }
 
   const a = await c.query<{ status: string; due_at: string; allows_late: boolean }>(
     `SELECT status, due_at::text, allows_late FROM assignments WHERE id = $1`,
@@ -353,15 +405,26 @@ export const applyAssignmentSubmission: Applier = async (c, op) => {
   try {
     const res = await c.query<{ is_late: boolean; row_version: number }>(
       `INSERT INTO assignment_submissions
-         (id, tenant_id, assignment_id, student_id, body_bn, media_key, submitted_at)
-       VALUES ($1, app.current_tenant(), $2, $3, $4, $5, now())
+         (id, tenant_id, assignment_id, student_id, body_bn,
+          media_key, media_kind, media_bytes, media_duration_ms, media_sha256, submitted_at)
+       VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, $7, $8, decode($9, 'hex'), now())
        ON CONFLICT (tenant_id, assignment_id, student_id) DO UPDATE
          SET body_bn = EXCLUDED.body_bn,
-             media_key = COALESCE(EXCLUDED.media_key, assignment_submissions.media_key),
+             -- Media is kept when a resubmission carries none: a student
+             -- fixing a typo in their written answer has not withdrawn the
+             -- photo they attached. All five media columns move together,
+             -- or the row would claim a kind for a key it no longer has.
+             media_key         = COALESCE(EXCLUDED.media_key, assignment_submissions.media_key),
+             media_kind        = COALESCE(EXCLUDED.media_kind, assignment_submissions.media_kind),
+             media_bytes       = COALESCE(EXCLUDED.media_bytes, assignment_submissions.media_bytes),
+             media_duration_ms = COALESCE(EXCLUDED.media_duration_ms, assignment_submissions.media_duration_ms),
+             media_sha256      = COALESCE(EXCLUDED.media_sha256, assignment_submissions.media_sha256),
              submitted_at = now(),
              row_version = assignment_submissions.row_version + 1
        RETURNING is_late, row_version`,
-      [op.opId, p.assignmentId, op.actorId, p.bodyBn ?? null, p.mediaKey ?? null],
+      [op.opId, p.assignmentId, op.actorId, p.bodyBn ?? null,
+       p.mediaKey ?? null, p.mediaKind ?? null, p.mediaBytes ?? null,
+       p.mediaDurationMs ?? null, p.mediaSha256 ?? null],
     );
     return applied(op.opId, res.rows[0].row_version);
   } catch (err) {

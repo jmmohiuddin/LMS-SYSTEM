@@ -3747,6 +3747,166 @@ function isoDate(v) {
   return String(v).slice(0, 10);
 }
 
+// services/academics-svc/api/subjectchoice.ts
+var UUID_RE15 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var CHOICE_ROLES = ["principal", "school_owner", "academic_coordinator"];
+async function handler17(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, CHOICE_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const studentId = new URL(req.url ?? "/", "http://internal").searchParams.get("studentId") ?? "";
+      if (!UUID_RE15.test(studentId)) {
+        throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
+      }
+      json(res, 200, await db.withTenant(ctx, (c) => load(c, studentId)), cors);
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      json(res, 200, await db.withTenant(ctx, (c) => apply(c, body)), cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function context(c, studentId) {
+  const r = await c.query(
+    `SELECT e.id AS enrolment_id, u.full_name_bn AS student_name, e.roll_no,
+            cl.name_bn AS class_bn, cl."group"::text AS group_code, sec.name AS section_name,
+            st.id AS template_id, e.optional_subject_id
+       FROM enrolments e
+       JOIN users u        ON u.id = e.student_id AND u.deleted_at IS NULL
+       JOIN sections sec   ON sec.id = e.section_id
+       JOIN classes cl     ON cl.id = sec.class_id
+       JOIN academic_years y ON y.id = e.academic_year_id AND y.is_current
+       LEFT JOIN curriculum_schemes cs ON cs.academic_year_id = y.id
+       LEFT JOIN subject_templates st  ON st.curriculum_scheme_id = cs.id
+                                      AND st.class_id = cl.id
+      WHERE e.student_id = $1 AND e.status = 'active'
+      LIMIT 1`,
+    [studentId]
+  );
+  const row = r.rows[0];
+  if (!row) throw new HttpError(404, "student not enrolled this year", "not_enrolled");
+  return row;
+}
+async function load(c, studentId) {
+  const ctxRow = await context(c, studentId);
+  const pools = ctxRow.template_id ? (await c.query(
+    `SELECT i.subject_id, s.name_bn, i.requirement_type, i.religion_variant, i.selection_pool
+           FROM subject_template_items i
+           JOIN subjects s ON s.id = i.subject_id
+          WHERE i.template_id = $1 AND i.selection_pool IS NOT NULL
+          ORDER BY i.selection_pool, i.display_order, s.name_bn`,
+    [ctxRow.template_id]
+  )).rows : [];
+  const held = await c.query(
+    `SELECT ss.subject_id, s.name_bn, ss.requirement_type, ss.source
+       FROM student_subjects ss
+       JOIN subjects s ON s.id = ss.subject_id
+      WHERE ss.enrolment_id = $1
+      ORDER BY ss.requirement_type, s.name_bn`,
+    [ctxRow.enrolment_id]
+  );
+  const currentReligion = held.rows.find((h) => h.requirement_type === "religion_variant");
+  const religionVariant = currentReligion ? pools.find((p) => p.subject_id === currentReligion.subject_id)?.religion_variant ?? null : null;
+  return {
+    student: {
+      id: studentId,
+      nameBn: ctxRow.student_name,
+      rollNo: ctxRow.roll_no,
+      classBn: ctxRow.class_bn,
+      sectionName: ctxRow.section_name,
+      groupCode: ctxRow.group_code
+    },
+    hasTemplate: Boolean(ctxRow.template_id),
+    // Read-only: what the template gives every student on it (§10.3).
+    derived: held.rows.filter((h) => h.requirement_type === "compulsory" || h.requirement_type === "group_compulsory").map((h) => ({ subjectId: h.subject_id, nameBn: h.name_bn, requirementType: h.requirement_type })),
+    religionOptions: pools.filter((p) => p.requirement_type === "religion_variant").map((p) => ({ subjectId: p.subject_id, nameBn: p.name_bn, variant: p.religion_variant })),
+    optionalOptions: pools.filter((p) => p.requirement_type === "optional").map((p) => ({ subjectId: p.subject_id, nameBn: p.name_bn })),
+    current: {
+      religionVariant,
+      religionSubjectId: currentReligion?.subject_id ?? null,
+      optionalSubjectId: ctxRow.optional_subject_id
+    }
+  };
+}
+async function apply(c, body) {
+  const studentId = body.studentId ?? "";
+  if (!UUID_RE15.test(studentId)) throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
+  const ctxRow = await context(c, studentId);
+  if (!ctxRow.template_id) {
+    throw new HttpError(
+      409,
+      "\u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u09AC\u09BF\u09B7\u09AF\u09BC-\u099F\u09C7\u09AE\u09AA\u09CD\u09B2\u09C7\u099F \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u099F\u09C7\u09AE\u09AA\u09CD\u09B2\u09C7\u099F \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "no_template"
+    );
+  }
+  const optionalId = body.optionalSubjectId ?? null;
+  const religion = body.religionVariant ?? null;
+  if (optionalId !== null) {
+    if (!UUID_RE15.test(optionalId)) {
+      throw new HttpError(400, "optionalSubjectId must be a valid uuid", "invalid_optional");
+    }
+    const ok = await c.query(
+      `SELECT 1 AS one FROM subject_template_items
+        WHERE template_id = $1 AND subject_id = $2 AND requirement_type = 'optional'`,
+      [ctxRow.template_id, optionalId]
+    );
+    if (ok.rows.length === 0) {
+      throw new HttpError(
+        400,
+        "\u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u0993\u0987 \u099A\u09A4\u09C1\u09B0\u09CD\u09A5 \u09AC\u09BF\u09B7\u09AF\u09BC \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE\u0964",
+        "optional_not_offered"
+      );
+    }
+  }
+  if (religion !== null) {
+    const ok = await c.query(
+      `SELECT 1 AS one FROM subject_template_items
+        WHERE template_id = $1 AND religion_variant = $2 AND requirement_type = 'religion_variant'`,
+      [ctxRow.template_id, religion]
+    );
+    if (ok.rows.length === 0) {
+      throw new HttpError(400, "\u098F\u0987 \u09A7\u09B0\u09CD\u09AE \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0 \u09AC\u09BF\u0995\u09B2\u09CD\u09AA \u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u09A8\u09C7\u0987\u0964", "religion_not_offered");
+    }
+  }
+  await c.query(
+    `UPDATE enrolments
+        SET optional_subject_id = $2, row_version = row_version + 1, updated_at = now()
+      WHERE id = $1`,
+    [ctxRow.enrolment_id, optionalId]
+  );
+  const derived = await c.query(
+    `SELECT app.derive_student_subjects($1, $2, $3)`,
+    [ctxRow.enrolment_id, optionalId, religion]
+  );
+  return {
+    ok: true,
+    subjectCount: Number(derived.rows[0]?.derive_student_subjects ?? 0),
+    // §10.3: downstream assignments are "explicitly invalidated, never
+    // silently left stale". The routine and content that referenced the old
+    // subject set are now out of date; the screen says so in words rather
+    // than leaving the coordinator to discover it.
+    invalidated: ["routine", "content"]
+  };
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -3764,9 +3924,10 @@ var ROUTES = {
   subjects: handler13,
   attendance: handler14,
   import: handler15,
-  ward: handler16
+  ward: handler16,
+  subjectchoice: handler17
 };
-async function handler17(req, res) {
+async function handler18(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -3781,5 +3942,5 @@ async function handler17(req, res) {
   return route(req, res);
 }
 export {
-  handler17 as default
+  handler18 as default
 };

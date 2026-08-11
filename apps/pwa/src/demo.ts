@@ -654,6 +654,51 @@ export class DemoAuth extends Auth {
         return ok({ scope: 'day', date, slots: daySlots(date) });
       }
 
+      case '/api/v1/academics/subjectchoice': {
+        // §10.3. The demo student holds the science-group compulsories and
+        // has already chosen Islam + higher maths, so the screen opens on a
+        // real state rather than a blank one, and changing either choice
+        // exercises the mandatory regeneration warning.
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { optionalSubjectId?: string | null };
+          return ok({ ok: true, subjectCount: req.optionalSubjectId ? 9 : 8, invalidated: ['routine', 'content'] });
+        }
+        return ok({
+          student: {
+            // Roll 1, matching the demo roster's first student: the picker and
+            // the header have to describe the same child or the demo teaches a
+            // contradiction on its very first screen.
+            id: 'demo-s1', nameBn: 'আরিফুল ইসলাম', rollNo: 1,
+            classBn: 'নবম শ্রেণি', sectionName: 'ক', groupCode: 'science',
+          },
+          hasTemplate: true,
+          derived: [
+            { subjectId: 'sub-bn', nameBn: 'বাংলা', requirementType: 'compulsory' },
+            { subjectId: 'sub-en', nameBn: 'ইংরেজি', requirementType: 'compulsory' },
+            { subjectId: 'sub-ma', nameBn: 'গণিত', requirementType: 'compulsory' },
+            { subjectId: 'sub-ph', nameBn: 'পদার্থবিজ্ঞান', requirementType: 'group_compulsory' },
+            { subjectId: 'sub-ch', nameBn: 'রসায়ন', requirementType: 'group_compulsory' },
+            { subjectId: 'sub-bi', nameBn: 'জীববিজ্ঞান', requirementType: 'group_compulsory' },
+          ],
+          religionOptions: [
+            { subjectId: 'sub-isl', nameBn: 'ইসলাম ও নৈতিক শিক্ষা', variant: 'islam' },
+            { subjectId: 'sub-hin', nameBn: 'হিন্দুধর্ম ও নৈতিক শিক্ষা', variant: 'hindu' },
+            { subjectId: 'sub-bud', nameBn: 'বৌদ্ধধর্ম ও নৈতিক শিক্ষা', variant: 'buddhist' },
+            { subjectId: 'sub-chr', nameBn: 'খ্রিস্টধর্ম ও নৈতিক শিক্ষা', variant: 'christian' },
+          ],
+          optionalOptions: [
+            { subjectId: 'sub-hma', nameBn: 'উচ্চতর গণিত' },
+            { subjectId: 'sub-agr', nameBn: 'কৃষিশিক্ষা' },
+            { subjectId: 'sub-hom', nameBn: 'গার্হস্থ্য বিজ্ঞান' },
+          ],
+          current: {
+            religionVariant: 'islam',
+            religionSubjectId: 'sub-isl',
+            optionalSubjectId: 'sub-hma',
+          },
+        });
+      }
+
       case '/api/v1/rms/editor': {
         // §8.1's grid. The demo carries a deliberate mix: an unfilled cell, a
         // parallel religion block, a double practical, and a pinned slot —

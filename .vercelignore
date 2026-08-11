@@ -1,0 +1,16 @@
+# Deploy envelope. Everything below is either authoring state or CI-only
+# support; letting it into the Vercel upload has done real harm — a Vercel
+# Marketplace scanner tripped on .agents/skills/prototype and every
+# production deploy for five hours errored on it, silently keeping the
+# site stale through eight commits.
+.agents/
+.claude/
+MEMORY.md
+memory/
+db/
+services/*/test/
+packages/*/test/
+apps/pwa/test/
+docs/
+.github/
+scripts/check-secrets.mjs

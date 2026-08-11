@@ -33,3 +33,11 @@ apps/pwa/public/sw.js
 # generated artifacts in git and no reliance on Vercel's file detection.
 
 .vercel
+
+# Authoring-time tooling — skills, memory, chats. Not application code
+# and not something Vercel should upload or read. See .vercelignore for
+# the same fence at deploy time.
+.agents/
+.claude/
+MEMORY.md
+memory/

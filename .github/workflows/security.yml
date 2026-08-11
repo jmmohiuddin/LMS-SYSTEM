@@ -157,11 +157,20 @@ jobs:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
         run: node --test services/rms-svc/test/examroutine.test.ts
 
+      # F-1601. The sibling case needs a real database: it is a unique index
+      # and a deferred constraint trigger that make or break it.
+      - name: F-1601 · bulk import
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+          PII_MASTER_KEY_V1: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+        run: node --test services/academics-svc/test/import.test.ts
+
       - name: Unit suites
         run: |
           set -euo pipefail
           node --test packages/server-core/test/pii-crypto.test.ts
           node --test packages/server-core/test/csv.test.ts
+          node --test services/academics-svc/test/student-import.test.ts
           # ui-core and the PWA render into jsdom, which is a devDependency
           # of those packages rather than the root.
           (cd packages/ui-core && npm install --no-audit --no-fund && npm test)

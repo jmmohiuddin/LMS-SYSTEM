@@ -70,6 +70,7 @@ const SENTINELS = [
   ['029_exam_clash_section_scope',    'function_body', 'app.exam_student_clashes',
                                       'e.section_id = p.section_id'],
   ['030_exam_seat_plan_and_invigilation', 'table',  'public.exam_halls'],
+  ['031_bulk_import',                 'table',      'public.import_batches'],
 ];
 
 /**
@@ -107,6 +108,7 @@ const MEANING = {
   '028_exam_routine_clash_gate':     'F-510 — no student can be scheduled into two papers at once',
   '029_exam_clash_section_scope':    'unbreaks publication of EVERY multi-section exam routine',
   '030_exam_seat_plan_and_invigilation':'F-511/F-512 — seat plan and invigilation duty roster',
+  '031_bulk_import':                 'F-1601 — bulk import; a child is reachable through their guardian',
 };
 
 const QUERIES = {

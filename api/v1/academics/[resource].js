@@ -2870,6 +2870,709 @@ async function handler14(req, res) {
   }
 }
 
+// services/academics-svc/api/import.ts
+import { createHash } from "node:crypto";
+
+// packages/server-core/src/csv.ts
+var DELIMITERS = [",", ";", "	", "|"];
+function sniffDelimiter(firstLine) {
+  let best = ",";
+  let bestCount = 0;
+  for (const d of DELIMITERS) {
+    let count = 0;
+    let inQuotes = false;
+    for (let i = 0; i < firstLine.length; i++) {
+      const ch = firstLine[i];
+      if (ch === '"') {
+        if (inQuotes && firstLine[i + 1] === '"') {
+          i++;
+          continue;
+        }
+        inQuotes = !inQuotes;
+      } else if (ch === d && !inQuotes) {
+        count++;
+      }
+    }
+    if (count > bestCount) {
+      best = d;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+function parseRecords(text, delimiter) {
+  const records = [];
+  let fields = [];
+  let field = "";
+  let inQuotes = false;
+  let lineNo = 1;
+  let recordStart = 1;
+  let sawAny = false;
+  const endField = () => {
+    fields.push(field);
+    field = "";
+    sawAny = true;
+  };
+  const endRecord = () => {
+    endField();
+    records.push({ lineNo: recordStart, fields });
+    fields = [];
+    sawAny = false;
+    recordStart = lineNo;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+          continue;
+        }
+        inQuotes = false;
+        continue;
+      }
+      if (ch === "\n") lineNo++;
+      field += ch;
+      continue;
+    }
+    if (ch === '"' && field === "") {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === delimiter) {
+      endField();
+      continue;
+    }
+    if (ch === "\r" || ch === "\n") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      lineNo++;
+      if (fields.length === 0 && field === "" && !sawAny) {
+        recordStart = lineNo;
+        continue;
+      }
+      endRecord();
+      continue;
+    }
+    field += ch;
+  }
+  if (field !== "" || fields.length > 0 || sawAny) endRecord();
+  return records;
+}
+function parseCsv(text, opts = {}) {
+  const clean = text.charCodeAt(0) === 65279 ? text.slice(1) : text;
+  const firstBreak = clean.search(/\r\n|\n|\r/);
+  const firstLine = firstBreak === -1 ? clean : clean.slice(0, firstBreak);
+  const delimiter = opts.delimiter ?? sniffDelimiter(firstLine);
+  const records = parseRecords(clean, delimiter);
+  if (records.length === 0) {
+    return { headers: [], rows: [], delimiter, ragged: [] };
+  }
+  const headers = records[0].fields.map((h) => h.trim());
+  const rows = [];
+  const ragged = [];
+  for (const rec of records.slice(1)) {
+    if (rec.fields.every((f) => f.trim() === "")) continue;
+    if (rec.fields.length !== headers.length) {
+      ragged.push({ lineNo: rec.lineNo, expected: headers.length, got: rec.fields.length });
+    }
+    const cells = {};
+    headers.forEach((h, i) => {
+      cells[h] = (rec.fields[i] ?? "").trim();
+    });
+    rows.push({ lineNo: rec.lineNo, cells, raw: rec.fields });
+  }
+  return { headers, rows, delimiter, ragged };
+}
+function toCsv(headers, rows) {
+  const quote = (v) => /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const lines = [headers.map(quote).join(",")];
+  for (const r of rows) lines.push(headers.map((h) => quote(r[h] ?? "")).join(","));
+  return `\uFEFF${lines.join("\r\n")}\r
+`;
+}
+
+// packages/server-core/src/pii-crypto.ts
+import { createCipheriv, createDecipheriv, createHmac as createHmac2, hkdfSync, randomBytes, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+var PiiKeyUnavailable = class extends Error {
+  code = "pii_key_unavailable";
+  constructor(message2) {
+    super(message2);
+  }
+};
+var PiiDecryptionFailed = class extends Error {
+  code = "pii_decryption_failed";
+  constructor(message2) {
+    super(message2);
+  }
+};
+var ALGORITHM = "aes-256-gcm";
+var IV_BYTES = 12;
+var TAG_BYTES = 16;
+var KEY_BYTES = 32;
+var MAX_KEY_VERSION = 16;
+var FORMAT_VERSION = 1;
+function masterKey(version) {
+  const raw = process.env[`PII_MASTER_KEY_V${version}`];
+  if (!raw) {
+    throw new PiiKeyUnavailable(
+      `PII master key version ${version} is not configured (PII_MASTER_KEY_V${version})`
+    );
+  }
+  const key = Buffer.from(raw, "base64");
+  if (key.length !== KEY_BYTES) {
+    throw new PiiKeyUnavailable(
+      `PII_MASTER_KEY_V${version} must decode to ${KEY_BYTES} bytes, got ${key.length}`
+    );
+  }
+  return key;
+}
+function currentKeyVersion() {
+  for (let v = MAX_KEY_VERSION; v >= 1; v--) {
+    if (process.env[`PII_MASTER_KEY_V${v}`]) return v;
+  }
+  throw new PiiKeyUnavailable("no PII master key is configured (PII_MASTER_KEY_V1)");
+}
+function piiCryptoAvailable() {
+  try {
+    currentKeyVersion();
+    return true;
+  } catch {
+    return false;
+  }
+}
+function derive(version, tenantId, info) {
+  return Buffer.from(
+    hkdfSync("sha256", masterKey(version), Buffer.from(tenantId, "utf8"), Buffer.from(info, "utf8"), KEY_BYTES)
+  );
+}
+function normalizeIdentifier(raw) {
+  const BENGALI_ZERO = 2534;
+  let out = "";
+  for (const ch of raw) {
+    const code = ch.codePointAt(0);
+    if (ch >= "0" && ch <= "9") out += ch;
+    else if (code >= BENGALI_ZERO && code <= BENGALI_ZERO + 9) out += String(code - BENGALI_ZERO);
+  }
+  return out;
+}
+function aad(tenantId, subjectId, field) {
+  return Buffer.from(`${tenantId}|${subjectId}|${field}`, "utf8");
+}
+function sealIdentifier(field, plaintext, tenantId, subjectId) {
+  const normalized = normalizeIdentifier(plaintext);
+  if (!normalized) {
+    throw new PiiDecryptionFailed(`${field} contained no digits`);
+  }
+  const version = currentKeyVersion();
+  const dataKey = derive(version, tenantId, `pii:${field}:data`);
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv(ALGORITHM, dataKey, iv, { authTagLength: TAG_BYTES });
+  cipher.setAAD(aad(tenantId, subjectId, field));
+  const body = Buffer.concat([cipher.update(normalized, "utf8"), cipher.final(), cipher.getAuthTag()]);
+  const header2 = Buffer.from([FORMAT_VERSION, version]);
+  return {
+    ciphertext: Buffer.concat([header2, iv, body]),
+    blindIndex: blindIndexFor(field, normalized, tenantId, version),
+    keyVersion: version
+  };
+}
+function blindIndexFor(field, normalized, tenantId, version) {
+  const pepper = derive(version, tenantId, `pii:${field}:index`);
+  return createHmac2("sha256", pepper).update(normalized, "utf8").digest();
+}
+
+// packages/ui-core/src/format.ts
+var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+function toLatinDigits(s) {
+  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
+}
+
+// services/academics-svc/src/student-import.ts
+var COLUMNS = {
+  rollNo: ["roll_no", "roll", "\u09B0\u09CB\u09B2"],
+  nameBn: ["name_bn", "name", "\u09A8\u09BE\u09AE"],
+  nameEn: ["name_en", "english_name"],
+  classLevel: ["class", "class_level", "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF"],
+  sectionName: ["section", "\u09B6\u09BE\u0996\u09BE"],
+  gender: ["gender", "\u09B2\u09BF\u0999\u09CD\u0997"],
+  dateOfBirth: ["dob", "date_of_birth", "\u099C\u09A8\u09CD\u09AE_\u09A4\u09BE\u09B0\u09BF\u0996"],
+  birthRegNo: ["brn", "birth_reg_no", "\u099C\u09A8\u09CD\u09AE_\u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8"],
+  religion: ["religion", "\u09A7\u09B0\u09CD\u09AE"],
+  optionalSubject: ["optional_subject", "fourth_subject", "\u099A\u09A4\u09C1\u09B0\u09CD\u09A5_\u09AC\u09BF\u09B7\u09AF\u09BC"],
+  guardianNameBn: ["guardian_name", "guardian", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995"],
+  guardianPhone: ["guardian_phone", "phone", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2"],
+  guardianRelation: ["relation", "\u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995"]
+};
+var RELATIONS = /* @__PURE__ */ new Set([
+  "father",
+  "mother",
+  "brother",
+  "sister",
+  "uncle",
+  "aunt",
+  "grandparent",
+  "legal_guardian",
+  "other"
+]);
+var GENDERS = /* @__PURE__ */ new Set(["male", "female", "other", "undisclosed"]);
+var RELIGIONS = /* @__PURE__ */ new Set(["islam", "hindu", "buddhist", "christian"]);
+var GENDER_BN = {
+  "\u09AA\u09C1\u09B0\u09C1\u09B7": "male",
+  "\u099B\u09C7\u09B2\u09C7": "male",
+  "\u09AC\u09BE\u09B2\u0995": "male",
+  "\u09AE\u09B9\u09BF\u09B2\u09BE": "female",
+  "\u09AE\u09C7\u09AF\u09BC\u09C7": "female",
+  "\u09AC\u09BE\u09B2\u09BF\u0995\u09BE": "female"
+};
+var RELIGION_BN = {
+  "\u0987\u09B8\u09B2\u09BE\u09AE": "islam",
+  "\u09AE\u09C1\u09B8\u09B2\u09BF\u09AE": "islam",
+  "\u09B9\u09BF\u09A8\u09CD\u09A6\u09C1": "hindu",
+  "\u09B8\u09A8\u09BE\u09A4\u09A8": "hindu",
+  "\u09AC\u09CC\u09A6\u09CD\u09A7": "buddhist",
+  "\u0996\u09CD\u09B0\u09BF\u09B8\u09CD\u099F\u09BE\u09A8": "christian",
+  "\u0996\u09CD\u09B0\u09BF\u09B7\u09CD\u099F\u09BE\u09A8": "christian"
+};
+var RELATION_BN = {
+  "\u09AA\u09BF\u09A4\u09BE": "father",
+  "\u09AC\u09BE\u09AC\u09BE": "father",
+  "\u09AE\u09BE\u09A4\u09BE": "mother",
+  "\u09AE\u09BE": "mother",
+  "\u09AD\u09BE\u0987": "brother",
+  "\u09AC\u09CB\u09A8": "sister",
+  "\u099A\u09BE\u099A\u09BE": "uncle",
+  "\u09AE\u09BE\u09AE\u09BE": "uncle",
+  "\u0996\u09BE\u09B2\u09BE": "aunt",
+  "\u09AB\u09C1\u09AB\u09C1": "aunt",
+  "\u09A6\u09BE\u09A6\u09BE": "grandparent",
+  "\u09A8\u09BE\u09A8\u09BE": "grandparent",
+  "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995": "legal_guardian",
+  "\u0985\u09A8\u09CD\u09AF\u09BE\u09A8\u09CD\u09AF": "other"
+};
+function mapHeaders(headers) {
+  const norm = (h) => h.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const byNorm = new Map(headers.map((h) => [norm(h), h]));
+  const found = {};
+  for (const [field, aliases] of Object.entries(COLUMNS)) {
+    for (const a of aliases) {
+      const hit = byNorm.get(norm(a));
+      if (hit !== void 0) {
+        found[field] = hit;
+        break;
+      }
+    }
+  }
+  return found;
+}
+function normalizePhone(raw) {
+  const digits = toLatinDigits(raw).replace(/[^\d+]/g, "");
+  let d = digits.replace(/^\+/, "");
+  if (d.startsWith("88")) d = d.slice(2);
+  if (d.length === 10 && d.startsWith("1")) d = `0${d}`;
+  if (!/^01[3-9]\d{8}$/.test(d)) return null;
+  return `+88${d}`;
+}
+function normalizeDate(raw) {
+  const s = toLatinDigits(raw).trim();
+  if (!s) return null;
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (!m) {
+    const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
+    if (dmy) m = [dmy[0], dmy[3], dmy[2], dmy[1]];
+  }
+  if (!m) return null;
+  const [y, mo, da] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (mo < 1 || mo > 12 || da < 1 || da > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, da));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== da) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
+}
+function validateStudents(table, snap) {
+  const h = mapHeaders(table.headers);
+  const valid = [];
+  const errors = [];
+  const ragged = new Map(table.ragged.map((r) => [r.lineNo, r]));
+  const claimed = /* @__PURE__ */ new Set();
+  const missing = ["rollNo", "nameBn", "classLevel", "sectionName", "guardianPhone"].filter((f) => h[f] === void 0);
+  if (missing.length > 0) {
+    return {
+      headers: table.headers,
+      rowsRead: table.rows.length,
+      valid: [],
+      errors: [{
+        lineNo: 1,
+        rollNo: "",
+        field: missing.join(", "),
+        messageBn: `\u09AB\u09BE\u0987\u09B2\u09C7 \u0986\u09AC\u09B6\u09CD\u09AF\u0995 \u0995\u09B2\u09BE\u09AE \u09A8\u09C7\u0987: ${missing.map((f) => COLUMNS[f][0]).join(", ")}`
+      }]
+    };
+  }
+  const get = (row, f) => h[f] !== void 0 ? row[h[f]] ?? "" : "";
+  for (const row of table.rows) {
+    const c = row.cells;
+    const rollRaw = get(c, "rollNo");
+    const fail = (field, messageBn) => {
+      errors.push({ lineNo: row.lineNo, rollNo: rollRaw, field, messageBn });
+    };
+    if (ragged.has(row.lineNo)) {
+      const r = ragged.get(row.lineNo);
+      fail("row", `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${r.got}\u099F\u09BF \u0998\u09B0, \u09A5\u09BE\u0995\u09BE\u09B0 \u0995\u09A5\u09BE ${r.expected}\u099F\u09BF \u2014 \u09B8\u09AE\u09CD\u09AD\u09AC\u09A4 \u0989\u09A6\u09CD\u09A7\u09C3\u09A4\u09BF \u099A\u09BF\u09B9\u09CD\u09A8 \u09AD\u09C1\u09B2`);
+      continue;
+    }
+    const nameBn = get(c, "nameBn");
+    if (!nameBn) {
+      fail("name_bn", "\u09A8\u09BE\u09AE \u0996\u09BE\u09B2\u09BF");
+      continue;
+    }
+    const classLevel = Number(toLatinDigits(get(c, "classLevel")));
+    if (!Number.isInteger(classLevel) || classLevel < 1 || classLevel > 12) {
+      fail("class", "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09E7\u2013\u09E7\u09E8 \u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7");
+      continue;
+    }
+    if (!snap.templatedClasses.has(classLevel)) {
+      fail("class", `${classLevel} \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09AC\u09BF\u09B7\u09AF\u09BC \u09A4\u09BE\u09B2\u09BF\u0995\u09BE (\u099F\u09C7\u09AE\u09AA\u09CD\u09B2\u09C7\u099F) \u09A4\u09C8\u09B0\u09BF \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u0986\u0997\u09C7 \u09B8\u09C7\u099F\u09BF \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8`);
+      continue;
+    }
+    const sectionName = get(c, "sectionName");
+    const inClass = snap.sections.get(classLevel);
+    if (!inClass || inClass.size === 0) {
+      fail("section", `${classLevel} \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE \u09A4\u09C8\u09B0\u09BF \u09B9\u09AF\u09BC\u09A8\u09BF`);
+      continue;
+    }
+    const sectionId = inClass.get(sectionName);
+    if (!sectionId) {
+      fail(
+        "section",
+        `\u09B6\u09BE\u0996\u09BE "${sectionName}" \u09A8\u09C7\u0987 \u2014 ${classLevel} \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 ${[...inClass.keys()].join(",")}`
+      );
+      continue;
+    }
+    const rollNo = Number(toLatinDigits(rollRaw));
+    if (!Number.isInteger(rollNo) || rollNo <= 0 || rollNo > 32767) {
+      fail("roll_no", "\u09B0\u09CB\u09B2 \u09A8\u09AE\u09CD\u09AC\u09B0 \u098F\u0995\u099F\u09BF \u09A7\u09A8\u09BE\u09A4\u09CD\u09AE\u0995 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7");
+      continue;
+    }
+    const rollKey = `${classLevel}|${sectionName}|${rollNo}`;
+    if (snap.takenRolls.has(rollKey)) {
+      fail("roll_no", `\u09B0\u09CB\u09B2 ${rollNo} \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 ${classLevel}-${sectionName} \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u0986\u099B\u09C7`);
+      continue;
+    }
+    if (claimed.has(rollKey)) {
+      fail("roll_no", `\u09B0\u09CB\u09B2 ${rollNo} \u098F\u0987 \u09AB\u09BE\u0987\u09B2\u09C7\u0987 \u09A6\u09C1\u0987\u09AC\u09BE\u09B0 \u0986\u099B\u09C7`);
+      continue;
+    }
+    const guardianPhone = normalizePhone(get(c, "guardianPhone"));
+    if (!guardianPhone) {
+      fail("guardian_phone", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AD\u09C1\u09B2 \u2014 \u09E6\u09E7XXXXXXXXX \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7");
+      continue;
+    }
+    const dobRaw = get(c, "dateOfBirth");
+    const dateOfBirth = dobRaw ? normalizeDate(dobRaw) : null;
+    if (dobRaw && !dateOfBirth) {
+      fail("dob", "\u099C\u09A8\u09CD\u09AE \u09A4\u09BE\u09B0\u09BF\u0996 \u09AD\u09C1\u09B2 \u2014 YYYY-MM-DD \u09AC\u09BE DD/MM/YYYY");
+      continue;
+    }
+    const brnRaw = toLatinDigits(get(c, "birthRegNo")).replace(/\D/g, "");
+    if (brnRaw && brnRaw.length !== 17) {
+      fail("birth_reg_no", "\u099C\u09A8\u09CD\u09AE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AD\u09C1\u09B2 \u2014 \u09E7\u09ED \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7");
+      continue;
+    }
+    const genderRaw = get(c, "gender").toLowerCase();
+    const gender = genderRaw ? GENDER_BN[get(c, "gender")] ?? genderRaw : null;
+    if (gender && !GENDERS.has(gender)) {
+      fail("gender", "\u09B2\u09BF\u0999\u09CD\u0997 \u2014 \u099B\u09C7\u09B2\u09C7 / \u09AE\u09C7\u09AF\u09BC\u09C7 \u09B2\u09BF\u0996\u09C1\u09A8");
+      continue;
+    }
+    const religionRaw = get(c, "religion");
+    const religion = religionRaw ? RELIGION_BN[religionRaw] ?? religionRaw.toLowerCase() : null;
+    if (religion && !RELIGIONS.has(religion)) {
+      fail("religion", "\u09A7\u09B0\u09CD\u09AE \u2014 \u0987\u09B8\u09B2\u09BE\u09AE / \u09B9\u09BF\u09A8\u09CD\u09A6\u09C1 / \u09AC\u09CC\u09A6\u09CD\u09A7 / \u0996\u09CD\u09B0\u09BF\u09B8\u09CD\u099F\u09BE\u09A8 \u09B2\u09BF\u0996\u09C1\u09A8");
+      continue;
+    }
+    const optRaw = get(c, "optionalSubject");
+    let optionalSubjectId = null;
+    if (optRaw) {
+      optionalSubjectId = snap.subjects.get(optRaw.trim().toLowerCase()) ?? null;
+      if (!optionalSubjectId) {
+        fail("optional_subject", `"${optRaw}" \u09A8\u09BE\u09AE\u09C7 \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC \u09A8\u09C7\u0987`);
+        continue;
+      }
+    } else if (classLevel >= snap.optionalSubjectFrom) {
+      fail("optional_subject", `\u099A\u09A4\u09C1\u09B0\u09CD\u09A5 \u09AC\u09BF\u09B7\u09AF\u09BC \u0996\u09BE\u09B2\u09BF (${classLevel} \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u0986\u09AC\u09B6\u09CD\u09AF\u0995)`);
+      continue;
+    }
+    const relRaw = get(c, "guardianRelation");
+    const guardianRelation = relRaw ? RELATION_BN[relRaw] ?? relRaw.toLowerCase() : "legal_guardian";
+    if (!RELATIONS.has(guardianRelation)) {
+      fail("relation", "\u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995 \u2014 \u09AA\u09BF\u09A4\u09BE / \u09AE\u09BE\u09A4\u09BE / \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995 \u09B2\u09BF\u0996\u09C1\u09A8");
+      continue;
+    }
+    claimed.add(rollKey);
+    valid.push({
+      lineNo: row.lineNo,
+      rollNo,
+      nameBn,
+      // The board wants an English name. Falling back to the Bangla one is
+      // better than refusing the row: a school can correct a name later,
+      // and cannot correct a student who was never imported.
+      nameEn: get(c, "nameEn") || nameBn,
+      classLevel,
+      sectionId,
+      gender,
+      dateOfBirth,
+      birthRegNo: brnRaw || null,
+      religion,
+      optionalSubjectId,
+      guardianNameBn: get(c, "guardianNameBn") || `${nameBn} \u098F\u09B0 \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995`,
+      guardianPhone,
+      guardianRelation
+    });
+  }
+  return { headers: table.headers, rowsRead: table.rows.length, valid, errors };
+}
+
+// services/academics-svc/api/import.ts
+var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var IMPORT_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var MAX_CSV_BYTES = 1e6;
+var OPTIONAL_SUBJECT_FROM = 9;
+function digestOf(rows) {
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+}
+async function handler15(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "POST") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, IMPORT_ROLES);
+    const body = await readJson(req);
+    if (body.kind !== "student") {
+      throw new HttpError(400, "kind must be 'student'", "unsupported_kind");
+    }
+    const academicYearId = body.academicYearId ?? "";
+    if (!UUID_RE13.test(academicYearId)) {
+      throw new HttpError(400, "academicYearId must be a valid uuid", "invalid_year");
+    }
+    const csv = body.csv ?? "";
+    if (!csv.trim()) throw new HttpError(400, "csv is empty", "empty_file");
+    if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
+      throw new HttpError(413, "file is larger than 1 MB", "file_too_large");
+    }
+    const table = parseCsv(csv);
+    const digest = digestOf(table.rows.map((r) => r.raw));
+    if (body.commit && body.digest !== digest) {
+      throw new HttpError(
+        409,
+        "this file is not the one that was validated \u2014 run the check again",
+        "digest_mismatch"
+      );
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const result = await db.withTenant(ctx, async (client) => {
+      const sectionRows = await client.query(
+        `SELECT c.level_no, s.name, s.id
+           FROM sections s JOIN classes c ON c.id = s.class_id
+          WHERE s.academic_year_id = $1`,
+        [academicYearId]
+      );
+      const sections = /* @__PURE__ */ new Map();
+      for (const r of sectionRows.rows) {
+        if (!sections.has(r.level_no)) sections.set(r.level_no, /* @__PURE__ */ new Map());
+        sections.get(r.level_no).set(r.name, r.id);
+      }
+      const subjectRows = await client.query(
+        `SELECT id, name_bn, nctb_code FROM subjects`
+      );
+      const subjects = /* @__PURE__ */ new Map();
+      for (const s of subjectRows.rows) {
+        subjects.set(s.name_bn.trim().toLowerCase(), s.id);
+        if (s.nctb_code) subjects.set(s.nctb_code.trim().toLowerCase(), s.id);
+      }
+      const rollRows = await client.query(
+        `SELECT c.level_no, s.name, e.roll_no
+           FROM enrolments e
+           JOIN sections s ON s.id = e.section_id
+           JOIN classes  c ON c.id = s.class_id
+          WHERE e.academic_year_id = $1 AND e.status = 'active'`,
+        [academicYearId]
+      );
+      const takenRolls = new Set(
+        rollRows.rows.map((r) => `${r.level_no}|${r.name}|${r.roll_no}`)
+      );
+      const templateRows = await client.query(
+        `SELECT DISTINCT c.level_no
+           FROM subject_templates st
+           JOIN classes c ON c.id = st.class_id
+           JOIN curriculum_schemes cs ON cs.id = st.curriculum_scheme_id
+          WHERE cs.academic_year_id = $1`,
+        [academicYearId]
+      );
+      const snap = {
+        sections,
+        subjects,
+        takenRolls,
+        templatedClasses: new Set(templateRows.rows.map((r) => r.level_no)),
+        optionalSubjectFrom: OPTIONAL_SUBJECT_FROM
+      };
+      const checked = validateStudents(table, snap);
+      let valid = checked.valid;
+      const errors = [...checked.errors];
+      if (!piiCryptoAvailable()) {
+        const withBrn = valid.filter((r) => r.birthRegNo !== null);
+        if (withBrn.length > 0) {
+          for (const r of withBrn) {
+            errors.push({
+              lineNo: r.lineNo,
+              rollNo: String(r.rollNo),
+              field: "birth_reg_no",
+              messageBn: "\u099C\u09A8\u09CD\u09AE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u09A8\u09AE\u09CD\u09AC\u09B0 \u098F\u0996\u09A8 \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE \u2014 \u0995\u09B2\u09BE\u09AE\u099F\u09BF \u09AC\u09BE\u09A6 \u09A6\u09BF\u09AF\u09BC\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8"
+            });
+          }
+          valid = valid.filter((r) => r.birthRegNo === null);
+        }
+      }
+      errors.sort((a, b) => a.lineNo - b.lineNo);
+      const counts = {
+        rowsRead: checked.rowsRead,
+        rowsValid: valid.length,
+        rowsRejected: errors.length
+      };
+      if (!body.commit) {
+        return {
+          ...counts,
+          digest,
+          rowsImported: 0,
+          batchId: null,
+          errors,
+          // §10.2: "the error list is downloadable so it can be fixed in
+          // the source spreadsheet". Built here rather than in the browser
+          // so the file the operator opens is byte-identical to the one
+          // the server judged.
+          errorCsv: errors.length > 0 ? toCsv(
+            ["line", "roll", "field", "reason"],
+            errors.map((e) => ({
+              line: String(e.lineNo),
+              roll: e.rollNo,
+              field: e.field,
+              reason: e.messageBn
+            }))
+          ) : null
+        };
+      }
+      const imported = await importStudents(client, valid, academicYearId, claims.tid);
+      const batch = await client.query(
+        `INSERT INTO import_batches
+           (tenant_id, kind, academic_year_id, file_name, file_digest,
+            rows_read, rows_valid, rows_rejected, rows_imported,
+            status, started_by, completed_at)
+         VALUES (app.current_tenant(), 'student', $1, $2, $3, $4, $5, $6, $7,
+                 'imported', $8, now())
+         RETURNING id`,
+        [
+          academicYearId,
+          body.fileName ?? null,
+          digest,
+          counts.rowsRead,
+          counts.rowsValid,
+          counts.rowsRejected,
+          imported,
+          claims.sub
+        ]
+      );
+      return { ...counts, digest, rowsImported: imported, batchId: batch.rows[0].id, errors, errorCsv: null };
+    });
+    json(res, 200, result, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "import_failed" }, cors);
+  }
+}
+async function importStudents(client, rows, academicYearId, tenantId) {
+  const guardianByPhone = /* @__PURE__ */ new Map();
+  let imported = 0;
+  for (const r of rows) {
+    let guardianId = guardianByPhone.get(r.guardianPhone);
+    if (!guardianId) {
+      const existing = await client.query(
+        `SELECT id FROM users WHERE phone_e164 = $1 AND deleted_at IS NULL`,
+        [r.guardianPhone]
+      );
+      if (existing.rows[0]) {
+        guardianId = existing.rows[0].id;
+      } else {
+        const g = await client.query(
+          `INSERT INTO users (tenant_id, full_name_bn, full_name_en, phone_e164, status)
+           VALUES (app.current_tenant(), $1, $1, $2, 'invited') RETURNING id`,
+          [r.guardianNameBn, r.guardianPhone]
+        );
+        guardianId = g.rows[0].id;
+        await client.query(
+          // scope_type is CHECK IN (tenant, department, class, section) and
+          // NULL-permissive. A guardian's role is scoped to their own
+          // children, which is none of those, so it stays unset rather
+          // than being mislabelled as tenant-wide.
+          `INSERT INTO user_roles (tenant_id, user_id, role_code)
+           VALUES (app.current_tenant(), $1, 'guardian')
+           ON CONFLICT DO NOTHING`,
+          [guardianId]
+        );
+      }
+      guardianByPhone.set(r.guardianPhone, guardianId);
+    }
+    const student = await client.query(
+      `INSERT INTO users (tenant_id, full_name_bn, full_name_en, gender, date_of_birth, status)
+       VALUES (app.current_tenant(), $1, $2, $3, $4, 'invited') RETURNING id`,
+      [r.nameBn, r.nameEn, r.gender, r.dateOfBirth]
+    );
+    const studentId = student.rows[0].id;
+    if (r.birthRegNo) {
+      const sealed = sealIdentifier("brc", r.birthRegNo, tenantId, studentId);
+      await client.query(
+        `UPDATE users SET brc_ciphertext = $2, brc_blind_index = $3, pii_key_version = $4
+          WHERE id = $1`,
+        [studentId, sealed.ciphertext, sealed.blindIndex, sealed.keyVersion]
+      );
+    }
+    await client.query(
+      `INSERT INTO user_roles (tenant_id, user_id, role_code)
+       VALUES (app.current_tenant(), $1, 'student') ON CONFLICT DO NOTHING`,
+      [studentId]
+    );
+    await client.query(
+      `INSERT INTO guardianships
+         (tenant_id, student_id, guardian_id, relation, is_primary, receives_sms)
+       VALUES (app.current_tenant(), $1, $2, $3, true, true)`,
+      [studentId, guardianId, r.guardianRelation]
+    );
+    const enrolment = await client.query(
+      `INSERT INTO enrolments
+         (tenant_id, student_id, section_id, academic_year_id, roll_no,
+          optional_subject_id, status)
+       VALUES (app.current_tenant(), $1, $2, $3, $4, $5, 'active') RETURNING id`,
+      [studentId, r.sectionId, academicYearId, r.rollNo, r.optionalSubjectId]
+    );
+    await client.query(
+      `SELECT app.derive_student_subjects($1, $2, $3)`,
+      [enrolment.rows[0].id, r.optionalSubjectId, r.religion]
+    );
+    imported++;
+  }
+  return imported;
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -2885,9 +3588,10 @@ var ROUTES = {
   practice: handler11,
   next: handler12,
   subjects: handler13,
-  attendance: handler14
+  attendance: handler14,
+  import: handler15
 };
-async function handler15(req, res) {
+async function handler16(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -2902,5 +3606,5 @@ async function handler15(req, res) {
   return route(req, res);
 }
 export {
-  handler15 as default
+  handler16 as default
 };

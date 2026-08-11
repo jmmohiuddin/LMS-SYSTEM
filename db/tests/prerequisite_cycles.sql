@@ -52,12 +52,15 @@ VALUES ('9c000000-0000-4000-8000-00000000000a', '9c000000-0000-4000-8000-0000000
 DO $$
 DECLARE d integer;
 BEGIN
-  UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000a'
-   WHERE id = '9c000000-0000-4000-8000-00000000000b';                       -- 2 needs 1
-  UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000b'
-   WHERE id = '9c000000-0000-4000-8000-00000000000e';                       -- 3 needs 2
-  UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000e'
-   WHERE id = '9c000000-0000-4000-8000-00000000000f';                       -- 4 needs 3
+  INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000b', '9c000000-0000-4000-8000-00000000000a')
+     ON CONFLICT DO NOTHING;                       -- 2 needs 1
+  INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000e', '9c000000-0000-4000-8000-00000000000b')
+     ON CONFLICT DO NOTHING;                       -- 3 needs 2
+  INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000f', '9c000000-0000-4000-8000-00000000000e')
+     ON CONFLICT DO NOTHING;                       -- 4 needs 3
 
   SELECT count(*) INTO d FROM app.chapter_prerequisite_path('9c000000-0000-4000-8000-00000000000f');
   IF d <> 3 THEN RAISE EXCEPTION 'FAIL 1: expected a 3-deep chain, got %', d; END IF;
@@ -70,8 +73,9 @@ END $$;
 DO $$
 BEGIN
   BEGIN
-    UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000a'
-     WHERE id = '9c000000-0000-4000-8000-00000000000a';
+    INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000a', '9c000000-0000-4000-8000-00000000000a')
+     ON CONFLICT DO NOTHING;
     RAISE EXCEPTION 'FAIL 2: a chapter was allowed to be its own prerequisite';
   EXCEPTION WHEN check_violation THEN
     RAISE NOTICE 'PASS 2 — a chapter cannot be its own prerequisite';
@@ -84,8 +88,9 @@ END $$;
 DO $$
 BEGIN
   BEGIN
-    UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000b'
-     WHERE id = '9c000000-0000-4000-8000-00000000000a';
+    INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000a', '9c000000-0000-4000-8000-00000000000b')
+     ON CONFLICT DO NOTHING;
     RAISE EXCEPTION 'FAIL 3: a two-chapter cycle was allowed';
   EXCEPTION WHEN check_violation THEN
     RAISE NOTICE 'PASS 3 — a two-chapter cycle is refused';
@@ -100,8 +105,9 @@ END $$;
 DO $$
 BEGIN
   BEGIN
-    UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000f'
-     WHERE id = '9c000000-0000-4000-8000-00000000000a';
+    INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000a', '9c000000-0000-4000-8000-00000000000f')
+     ON CONFLICT DO NOTHING;
     RAISE EXCEPTION 'FAIL 4: a four-chapter cycle was allowed';
   EXCEPTION WHEN check_violation THEN
     RAISE NOTICE 'PASS 4 — a four-deep cycle is refused';
@@ -116,8 +122,9 @@ DO $$
 DECLARE msg text;
 BEGIN
   BEGIN
-    UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000f'
-     WHERE id = '9c000000-0000-4000-8000-00000000000a';
+    INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000a', '9c000000-0000-4000-8000-00000000000f')
+     ON CONFLICT DO NOTHING;
     RAISE EXCEPTION 'FAIL 5: the cycle was allowed';
   EXCEPTION WHEN check_violation THEN
     GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
@@ -134,10 +141,10 @@ END $$;
 -- ---------------------------------------------------------------------
 DO $$
 BEGIN
-  UPDATE chapters SET prerequisite_chapter_id = NULL
-   WHERE id = '9c000000-0000-4000-8000-00000000000b';          -- 2 no longer needs 1
-  UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000f'
-   WHERE id = '9c000000-0000-4000-8000-00000000000a';          -- now legal: 1 needs 4
+  DELETE FROM chapter_prerequisites WHERE chapter_id = '9c000000-0000-4000-8000-00000000000b';          -- 2 no longer needs 1
+  INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000a', '9c000000-0000-4000-8000-00000000000f')
+     ON CONFLICT DO NOTHING;          -- now legal: 1 needs 4
   RAISE NOTICE 'PASS 6 — once the loop is broken the same edge is accepted';
 END $$;
 
@@ -162,9 +169,10 @@ END $$;
 DO $$
 BEGIN
   BEGIN
-    UPDATE chapters
-       SET prerequisite_chapter_id = '9c000000-0000-4000-8000-0000000000aa'
-     WHERE id = '9c000000-0000-4000-8000-00000000000e';
+    INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+    VALUES ('9c000000-0000-4000-8000-00000000000c',
+            '9c000000-0000-4000-8000-00000000000e',
+            '9c000000-0000-4000-8000-0000000000aa');
     RAISE EXCEPTION 'FAIL 8: a prerequisite pointing at a nonexistent chapter was accepted';
   EXCEPTION WHEN foreign_key_violation THEN
     RAISE NOTICE 'PASS 8 — a prerequisite must reference a chapter that exists';
@@ -178,7 +186,7 @@ END $$;
 DO $$
 BEGIN
   BEGIN
-    ALTER TABLE chapters DISABLE TRIGGER trg_chapters_no_prerequisite_cycle;
+    ALTER TABLE chapter_prerequisites DISABLE TRIGGER trg_chapter_prereq_acyclic;
     RAISE EXCEPTION 'FAIL 9: shikhon_app disabled the cycle guard';
   EXCEPTION WHEN insufficient_privilege OR wrong_object_type THEN
     RAISE NOTICE 'PASS 9 — the application role cannot disable the cycle guard';
@@ -195,12 +203,14 @@ END $$;
 --     spin here until the statement timeout.
 -- ---------------------------------------------------------------------
 RESET ROLE;
-ALTER TABLE chapters DISABLE TRIGGER trg_chapters_no_prerequisite_cycle;
-UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000e'
- WHERE id = '9c000000-0000-4000-8000-00000000000f';      -- 4 → 3
-UPDATE chapters SET prerequisite_chapter_id = '9c000000-0000-4000-8000-00000000000f'
- WHERE id = '9c000000-0000-4000-8000-00000000000e';      -- 3 → 4, loop closed
-ALTER TABLE chapters ENABLE TRIGGER trg_chapters_no_prerequisite_cycle;
+ALTER TABLE chapter_prerequisites DISABLE TRIGGER trg_chapter_prereq_acyclic;
+INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000f', '9c000000-0000-4000-8000-00000000000e')
+     ON CONFLICT DO NOTHING;      -- 4 → 3
+INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+     VALUES ('9c000000-0000-4000-8000-00000000000c', '9c000000-0000-4000-8000-00000000000e', '9c000000-0000-4000-8000-00000000000f')
+     ON CONFLICT DO NOTHING;      -- 3 → 4, loop closed
+ALTER TABLE chapter_prerequisites ENABLE TRIGGER trg_chapter_prereq_acyclic;
 
 DO $$
 DECLARE n integer;
@@ -219,11 +229,11 @@ END $$;
 DO $$
 DECLARE n integer;
 BEGIN
-  SELECT count(*) INTO n
+  SELECT count(DISTINCT c.id) INTO n
     FROM chapters c
-   WHERE c.prerequisite_chapter_id IS NOT NULL
-     AND EXISTS (
-       SELECT 1 FROM app.chapter_prerequisite_path(c.prerequisite_chapter_id) p
+    JOIN chapter_prerequisites cp ON cp.chapter_id = c.id
+   WHERE EXISTS (
+       SELECT 1 FROM app.chapter_prerequisite_path(c.id) p
         WHERE p.chapter_id = c.id
      );
   IF n < 2 THEN

@@ -1842,8 +1842,15 @@ async function handler7(req, res) {
           `SELECT ch.id, ch.chapter_no, ch.name_bn, ch.name_en, ch.summary_bn,
                   ch.est_minutes, ch.is_published,
                   ch.subject_id, s.name_bn AS subject_bn, s.name_en AS subject_en,
-                  ch.prerequisite_chapter_id,
-                  pre.name_bn AS prerequisite_name_bn,
+                  -- A chapter routinely needs more than one predecessor
+                  -- (F-1404), so this is an array now, not a pointer.
+                  COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('id', p.id, 'nameBn', p.name_bn)
+                                     ORDER BY cp.display_order, p.chapter_no)
+                      FROM chapter_prerequisites cp
+                      JOIN chapters p ON p.id = cp.prerequisite_id
+                     WHERE cp.chapter_id = ch.id
+                  ), '[]'::jsonb) AS prerequisites,
                   (SELECT count(*)::int FROM topics l
                     WHERE l.chapter_id = ch.id AND l.is_published) AS topic_count,
                   (SELECT count(*)::int FROM topics l
@@ -1854,7 +1861,6 @@ async function handler7(req, res) {
                     WHERE l.chapter_id = ch.id AND l.is_published) AS completed_count
              FROM chapters ch
              JOIN subjects s ON s.id = ch.subject_id
-             LEFT JOIN chapters pre ON pre.id = ch.prerequisite_chapter_id
             WHERE ch.class_id = $1
               AND ($2::uuid IS NULL OR ch.subject_id = $2)
             ORDER BY s.name_bn, ch.display_order, ch.chapter_no`,
@@ -1872,7 +1878,11 @@ async function handler7(req, res) {
         estMinutes: c.est_minutes,
         isPublished: c.is_published,
         subject: { id: c.subject_id, bn: c.subject_bn, en: c.subject_en },
-        prerequisite: c.prerequisite_chapter_id ? { id: c.prerequisite_chapter_id, nameBn: c.prerequisite_name_bn } : null,
+        prerequisites: c.prerequisites,
+        // Kept so the chapter reader keeps rendering "আগে পড়ো:" without a
+        // client change in the same breath as the schema change. The list
+        // above is the real answer.
+        prerequisite: Array.isArray(c.prerequisites) && c.prerequisites.length > 0 ? c.prerequisites[0] : null,
         topicCount: c.topic_count,
         completedCount: c.completed_count
       }))
@@ -2535,12 +2545,18 @@ async function handler12(req, res) {
                       SELECT 1 FROM topic_progress p
                        JOIN topics l ON l.id = p.topic_id
                       WHERE l.chapter_id = c.id AND p.student_id = $1)
-                -- prerequisite satisfied (or none)
-                AND (c.prerequisite_chapter_id IS NULL OR EXISTS (
-                      SELECT 1 FROM topic_progress p2
-                       JOIN topics l2 ON l2.id = p2.topic_id
-                      WHERE l2.chapter_id = c.prerequisite_chapter_id
-                        AND p2.student_id = $1 AND p2.state = 'completed'))
+                -- EVERY prerequisite satisfied, not just one. With a
+                -- junction (F-1404) a chapter can need several, and
+                -- offering it when only one is done would send a student
+                -- into a chapter they cannot follow.
+                AND NOT EXISTS (
+                  SELECT 1 FROM chapter_prerequisites cp
+                   WHERE cp.chapter_id = c.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM topic_progress p2
+                        JOIN topics l2 ON l2.id = p2.topic_id
+                       WHERE l2.chapter_id = cp.prerequisite_id
+                         AND p2.student_id = $1 AND p2.state = 'completed'))
               ORDER BY c.chapter_no
               LIMIT 1`,
             [claims.sub]

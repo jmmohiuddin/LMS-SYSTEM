@@ -167,12 +167,18 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                       SELECT 1 FROM topic_progress p
                        JOIN topics l ON l.id = p.topic_id
                       WHERE l.chapter_id = c.id AND p.student_id = $1)
-                -- prerequisite satisfied (or none)
-                AND (c.prerequisite_chapter_id IS NULL OR EXISTS (
-                      SELECT 1 FROM topic_progress p2
-                       JOIN topics l2 ON l2.id = p2.topic_id
-                      WHERE l2.chapter_id = c.prerequisite_chapter_id
-                        AND p2.student_id = $1 AND p2.state = 'completed'))
+                -- EVERY prerequisite satisfied, not just one. With a
+                -- junction (F-1404) a chapter can need several, and
+                -- offering it when only one is done would send a student
+                -- into a chapter they cannot follow.
+                AND NOT EXISTS (
+                  SELECT 1 FROM chapter_prerequisites cp
+                   WHERE cp.chapter_id = c.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM topic_progress p2
+                        JOIN topics l2 ON l2.id = p2.topic_id
+                       WHERE l2.chapter_id = cp.prerequisite_id
+                         AND p2.student_id = $1 AND p2.state = 'completed'))
               ORDER BY c.chapter_no
               LIMIT 1`,
             [claims.sub],

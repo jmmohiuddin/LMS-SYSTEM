@@ -50,14 +50,21 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           id: string; chapter_no: number; name_bn: string; name_en: string | null;
           summary_bn: string | null; est_minutes: number; is_published: boolean;
           subject_id: string; subject_bn: string; subject_en: string;
-          prerequisite_chapter_id: string | null; prerequisite_name_bn: string | null;
+          prerequisites: unknown;
           topic_count: number; completed_count: number;
         }>(
           `SELECT ch.id, ch.chapter_no, ch.name_bn, ch.name_en, ch.summary_bn,
                   ch.est_minutes, ch.is_published,
                   ch.subject_id, s.name_bn AS subject_bn, s.name_en AS subject_en,
-                  ch.prerequisite_chapter_id,
-                  pre.name_bn AS prerequisite_name_bn,
+                  -- A chapter routinely needs more than one predecessor
+                  -- (F-1404), so this is an array now, not a pointer.
+                  COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('id', p.id, 'nameBn', p.name_bn)
+                                     ORDER BY cp.display_order, p.chapter_no)
+                      FROM chapter_prerequisites cp
+                      JOIN chapters p ON p.id = cp.prerequisite_id
+                     WHERE cp.chapter_id = ch.id
+                  ), '[]'::jsonb) AS prerequisites,
                   (SELECT count(*)::int FROM topics l
                     WHERE l.chapter_id = ch.id AND l.is_published) AS topic_count,
                   (SELECT count(*)::int FROM topics l
@@ -68,7 +75,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                     WHERE l.chapter_id = ch.id AND l.is_published) AS completed_count
              FROM chapters ch
              JOIN subjects s ON s.id = ch.subject_id
-             LEFT JOIN chapters pre ON pre.id = ch.prerequisite_chapter_id
             WHERE ch.class_id = $1
               AND ($2::uuid IS NULL OR ch.subject_id = $2)
             ORDER BY s.name_bn, ch.display_order, ch.chapter_no`,
@@ -87,8 +93,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         estMinutes: c.est_minutes,
         isPublished: c.is_published,
         subject: { id: c.subject_id, bn: c.subject_bn, en: c.subject_en },
-        prerequisite: c.prerequisite_chapter_id
-          ? { id: c.prerequisite_chapter_id, nameBn: c.prerequisite_name_bn }
+        prerequisites: c.prerequisites,
+        // Kept so the chapter reader keeps rendering "আগে পড়ো:" without a
+        // client change in the same breath as the schema change. The list
+        // above is the real answer.
+        prerequisite: Array.isArray(c.prerequisites) && c.prerequisites.length > 0
+          ? (c.prerequisites as { id: string; nameBn: string }[])[0]
           : null,
         topicCount: c.topic_count,
         completedCount: c.completed_count,

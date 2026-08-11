@@ -117,7 +117,9 @@ async function seed(): Promise<void> {
        VALUES ($1,$3,$4,$5,1,'অধ্যায় ১: গতি',true),
               ($2,$3,$4,$5,2,'অধ্যায় ২: বল',true)`,
       [CH1, CH2, T, SUBJECT, CLASS]);
-    await c.query(`UPDATE chapters SET prerequisite_chapter_id = $1 WHERE id = $2`, [CH1, CH2]);
+    await c.query(
+      `INSERT INTO chapter_prerequisites (tenant_id, chapter_id, prerequisite_id)
+       VALUES ($1, $2, $3)`, [T, CH2, CH1]);
 
     await c.query(
       `INSERT INTO topics (id, tenant_id, chapter_id, topic_no, title_bn, is_published)

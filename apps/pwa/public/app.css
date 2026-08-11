@@ -1113,9 +1113,13 @@ button, h1, h2, .att-counts { text-transform: none; }
 .data-table .is-absent { text-align: left; color: var(--c-ink-3); font-style: normal; }
 .data-table sup { font-size: 10px; color: var(--c-link); margin-left: 2px; }
 
+/* Separated by a rule, not a rail. The design system marks a break with
+   .hr — a 2px divider — and uses no left borders anywhere. The accent rail
+   here also encoded nothing: there is one kind of footnote, and the text
+   already opens with the ৪ that ties it to the table row. */
 .result-footnote {
-  margin: var(--s-3) var(--s-4) 0; padding: var(--s-2) var(--s-3);
-  background: var(--c-surface); border-left: 3px solid var(--c-link);
+  margin: var(--s-4) var(--s-4) 0; padding: var(--s-3) 0 0;
+  border-top: 2px solid var(--c-line);
   font-size: 13px; line-height: 1.6; color: var(--c-ink-2);
 }
 

@@ -60,6 +60,7 @@ const SENTINELS = [
   ['022_prerequisite_acyclicity',     'index',      'ix_chapters_prerequisite'],
   ['023_restrictive_write_scope_fix', 'policy',     'po_read_scope'],
   ['024_ai_content_human_review',     'index',      'ix_items_awaiting_review'],
+  ['025_subject_based_academic_model','function',   'app.derive_student_subjects'],
 ];
 
 /** What each migration unlocks, for the report. Blank where it is plumbing. */
@@ -73,6 +74,7 @@ const MEANING = {
   '022_prerequisite_acyclicity':     'F-104 — a prerequisite cannot close a loop',
   '023_restrictive_write_scope_fix': 'unbreaks EVERY student-facing read (chapters, practice, homework, fees)',
   '024_ai_content_human_review':     'F-1304 — AI content cannot reach a student unreviewed',
+  '025_subject_based_academic_model':'PRD §5 — subject templates, curriculum schemes, derived subject sets',
 };
 
 const QUERIES = {

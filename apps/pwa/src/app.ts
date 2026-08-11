@@ -397,6 +397,25 @@ async function main() {
         mount: (container) => { new ImportView({ root: container, doc: document, auth }); },
       },
       {
+        // §9.1's guardian home. The mount was missing in the commit that
+        // introduced the view — the more-menu carried a nav item pointing
+        // to a route nobody had registered, and esbuild correctly
+        // tree-shook GuardianView out of the bundle as unused. Prod
+        // testing found it; my automated suites did not, because the
+        // route table is not what they walk.
+        path: 'guardian',
+        labelBn: 'আমার সন্তান',
+        glyph: '👪',
+        hidden: true,
+        mount: (container) => {
+          new GuardianView({
+            root: container, doc: document, auth,
+            onOpenFees: () => { location.hash = '#/fees'; },
+            onOpenResults: () => { location.hash = '#/results'; },
+          });
+        },
+      },
+      {
         // Coordinator surface, so hidden from the bar — §2 caps it at five
         // and those five belong to the people who open the app every day.
         path: 'examroutine',

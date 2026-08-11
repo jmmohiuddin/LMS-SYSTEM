@@ -1296,8 +1296,11 @@ button, h1, h2, .att-counts { text-transform: none; }
   border: 1px solid var(--c-line); background: var(--c-surface);
   color: var(--c-ink-1); font: inherit; font-size: 15px;
 }
-.gen-explain { margin-top: var(--s-3); padding: var(--s-3);
-               border-left: 3px solid var(--c-primary); background: var(--c-surface-2); }
+/* Background only, matching .gen-unchecked above. The left rails elsewhere
+   in this file (.assign-card, .next-card) earn their colour by encoding
+   state — urgency, overdue, done. This panel has no state to encode, so a
+   rail here would be ornament wearing the clothes of a signal. */
+.gen-explain { margin-top: var(--s-3); padding: var(--s-3); background: var(--c-surface-2); }
 .gen-explain-head { margin: 0 0 var(--s-2); font-size: 13px; font-weight: 700;
                     color: var(--c-ink-2); }
 .gen-explain-line { margin: 0 0 var(--s-1); font-size: 14px; color: var(--c-ink-1);

@@ -65,6 +65,24 @@ const SENTINELS = [
   ['027_chapter_prerequisites_junction','table',     'public.chapter_prerequisites'],
 ];
 
+/**
+ * A migration whose objects a LATER migration legitimately removes.
+ *
+ * 022 put the F-104 acyclicity guard on `chapters.prerequisite_chapter_id`;
+ * 027 moved that guard to the `chapter_prerequisites` junction and dropped
+ * the column, its index and its trigger. So 022 leaves no trace on a
+ * fully-migrated database, and probing for its sentinel reports MISSING
+ * forever — which would be a permanently red check, and a permanently red
+ * check is one nobody reads.
+ *
+ * A superseded migration counts as applied when its successor is applied.
+ * If NEITHER is applied, both are reported missing, which is correct: the
+ * guarantee is absent either way.
+ */
+const SUPERSEDED_BY = {
+  '022_prerequisite_acyclicity': '027_chapter_prerequisites_junction',
+};
+
 /** What each migration unlocks, for the report. Blank where it is plumbing. */
 const MEANING = {
   '016_finance_ledger_seed':         'chart of accounts — the fee engine has nothing to post to without it',
@@ -126,6 +144,16 @@ for (const [name, kind, object] of SENTINELS) {
   results.push({ name, applied: rowCount > 0, kind, object });
 }
 await client.end();
+
+// Resolve supersession before anything reads the results, so the report,
+// the exit code and the --plan all agree.
+for (const r of results) {
+  const successor = SUPERSEDED_BY[r.name];
+  if (!r.applied && successor && results.find((x) => x.name === successor)?.applied) {
+    r.applied = true;
+    r.supersededBy = successor;
+  }
+}
 
 const applied = results.filter((r) => r.applied);
 const pending = results.filter((r) => !r.applied);

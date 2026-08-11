@@ -732,14 +732,12 @@ button, h1, h2, .att-counts { text-transform: none; }
   width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
   cursor: pointer; background: var(--c-surface);
   border: 1px solid var(--c-line); border-radius: var(--radius); box-shadow: var(--shadow-1);
-  border-left-width: 3px;
 }
-/* Urgency reads as a left rail so the list scans without reading text. */
-.assign-card[data-state='overdue'] { border-left-color: var(--c-accent); }
-.assign-card[data-state='today']   { border-left-color: var(--c-warn); }
-.assign-card[data-state='soon']    { border-left-color: var(--c-warn); }
-.assign-card[data-state='later']   { border-left-color: var(--c-line); }
-.assign-card[data-state='done']    { border-left-color: var(--c-success); background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
+/* Urgency lives in .assign-chip, which states it in words AND colour, and
+   in .assign-meta, which gives the date. This card used to carry a third
+   copy as a coloured left rail — same information, no text, so it helped
+   nobody who could not already read the chip. */
+.assign-card[data-state='done'] { background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
 .assign-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .assign-title { font-weight: 600; font-size: 15px; }
 .assign-meta { font-size: 12px; color: var(--c-ink-2); }
@@ -820,17 +818,28 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 .prac-options { display: flex; flex-direction: column; gap: var(--s-2); }
 .prac-option {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--s-3); align-items: center;
   min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
   text-align: left; font: inherit; font-size: 15px; cursor: pointer;
   background: var(--c-surface); color: var(--c-ink);
   border: 1px solid var(--c-line); border-radius: 10px;
-  border-left-width: 3px; border-left-color: var(--c-line);
+}
+/* The mark, not the colour, is what says right or wrong. Green and red
+   backgrounds alone are unreadable to a red-green colour-blind student —
+   about one boy in twelve — so the glyph carries it and the colour only
+   reinforces. */
+.prac-mark {
+  width: 1.25em; font-size: 15px; line-height: 1; text-align: center;
+  color: var(--c-ink-2);
 }
 .prac-option[data-state='selected'] { border-color: var(--c-primary); background: var(--c-primary-soft); }
+.prac-option[data-state='selected'] .prac-mark { color: var(--c-primary); }
 /* Correct is marked even when they picked it wrong — showing only the
    error teaches nothing about what the right answer was. */
-.prac-option[data-state='correct'] { border-left-color: var(--c-success); background: #ECFDF5; }
-.prac-option[data-state='wrong']   { border-left-color: var(--c-accent);  background: #FEF2F2; }
+.prac-option[data-state='correct'] { border-color: var(--c-success); background: #ECFDF5; }
+.prac-option[data-state='correct'] .prac-mark { color: var(--c-success); font-weight: 700; }
+.prac-option[data-state='wrong']   { border-color: var(--c-accent);  background: #FEF2F2; }
+.prac-option[data-state='wrong'] .prac-mark { color: var(--c-accent); font-weight: 700; }
 .prac-option:disabled { cursor: default; opacity: 1; }
 
 .prac-input { width: 100%; }
@@ -859,21 +868,20 @@ button, h1, h2, .att-counts { text-transform: none; }
   width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
   cursor: pointer; background: var(--c-surface);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  box-shadow: var(--shadow-1); border-left-width: 3px;
+  box-shadow: var(--shadow-1);
   transition: transform 80ms ease-out;
 }
 .next-card:active { transform: scale(0.99); }
-/* Urgency is a rail, matching the assignment list so the two read as one
-   system rather than two unrelated colour schemes. */
-.next-card[data-urgency='high']   { border-left-color: var(--c-warn); }
-.next-card[data-urgency='medium'] { border-left-color: var(--c-primary); }
-.next-card[data-urgency='low']    { border-left-color: var(--c-line); }
+/* Urgency rides on the glyph tile below, and .next-why states the reason in
+   words on every card — the endpoint guarantees a non-empty reason. The
+   left rail this replaced was a third channel saying the same thing. */
 .next-glyph {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: 10px;
   background: var(--c-surface-3); font-size: 18px; line-height: 1;
 }
-.next-card[data-urgency='high'] .next-glyph { background: #FFFBEB; }
+.next-card[data-urgency='high']   .next-glyph { background: #FFFBEB; color: var(--c-warn); }
+.next-card[data-urgency='medium'] .next-glyph { background: var(--c-primary-soft); }
 .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .next-title { font-weight: 600; font-size: 15px; }
 .next-why { font-size: 12px; color: var(--c-ink-2); line-height: 1.45; }

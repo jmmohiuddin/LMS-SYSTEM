@@ -186,17 +186,40 @@ export class PracticeView {
         btn.className = 'prac-option';
         btn.setAttribute('role', 'radio');
         btn.setAttribute('aria-checked', String(this.selectedId === opt.id));
-        btn.textContent = opt.textBn;
         btn.disabled = this.revealed;
+
+        // A mark, not just a colour. Right and wrong used to be carried by a
+        // green or red background alone, which a red-green colour-blind
+        // student cannot read — and that is roughly one boy in twelve.
+        const mark = d.createElement('span');
+        mark.className = 'prac-mark';
+        mark.setAttribute('aria-hidden', 'true');
+        const label = d.createElement('span');
+        label.className = 'prac-option-text';
+        label.textContent = opt.textBn;
 
         if (this.revealed) {
           // After answering, show BOTH what they chose and what was right —
           // marking only the wrong answer teaches nothing.
-          if (opt.isCorrect) btn.dataset.state = 'correct';
-          else if (opt.id === this.selectedId) btn.dataset.state = 'wrong';
+          if (opt.isCorrect) {
+            btn.dataset.state = 'correct';
+            mark.textContent = '✓';
+            // Spoken as well as shown, so the state does not depend on sight.
+            btn.setAttribute('aria-label', `${opt.textBn} — সঠিক উত্তর`);
+          } else if (opt.id === this.selectedId) {
+            btn.dataset.state = 'wrong';
+            mark.textContent = '✗';
+            btn.setAttribute('aria-label', `${opt.textBn} — তোমার উত্তর, ভুল`);
+          } else {
+            mark.textContent = '';
+          }
         } else if (this.selectedId === opt.id) {
+          mark.textContent = '●';
           btn.dataset.state = 'selected';
+        } else {
+          mark.textContent = '○';
         }
+        btn.append(mark, label);
 
         btn.addEventListener('click', () => {
           if (this.revealed) return;

@@ -3573,6 +3573,171 @@ async function importStudents(client, rows, academicYearId, tenantId) {
   return imported;
 }
 
+// services/academics-svc/api/ward.ts
+var UUID_RE14 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var WARD_ROLES = ["guardian", "principal", "school_owner", "academic_coordinator", "class_teacher"];
+async function handler16(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, WARD_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const studentId = new URL(req.url ?? "/", "http://internal").searchParams.get("studentId") ?? "";
+    if (studentId && !UUID_RE14.test(studentId)) {
+      throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
+    }
+    const payload = await db.withTenant(ctx, async (client) => {
+      const wards = await loadWards(client);
+      if (!studentId) return { wards, student: null };
+      const ward = wards.find((w) => w.studentId === studentId);
+      if (!ward) throw new HttpError(404, "student not found", "student_not_found");
+      return { wards, student: await loadHome(client, ward) };
+    });
+    json(res, 200, payload, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+var RELATION_BN2 = {
+  father: "\u09AA\u09BF\u09A4\u09BE",
+  mother: "\u09AE\u09BE\u09A4\u09BE",
+  brother: "\u09AD\u09BE\u0987",
+  sister: "\u09AC\u09CB\u09A8",
+  uncle: "\u099A\u09BE\u099A\u09BE",
+  aunt: "\u0996\u09BE\u09B2\u09BE",
+  grandparent: "\u09A6\u09BE\u09A6\u09BE/\u09A8\u09BE\u09A8\u09BE",
+  legal_guardian: "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995",
+  other: "\u0985\u09A8\u09CD\u09AF\u09BE\u09A8\u09CD\u09AF"
+};
+async function loadWards(client) {
+  const { rows } = await client.query(
+    `SELECT u.id AS student_id, e.id AS enrolment_id, u.full_name_bn AS name_bn,
+            c.name_bn || '\u2013' || sec.name AS section_label, e.roll_no, g.relation
+       FROM guardianships g
+       JOIN users u      ON u.id = g.student_id AND u.deleted_at IS NULL
+       JOIN enrolments e ON e.student_id = u.id AND e.status = 'active'
+       JOIN sections sec ON sec.id = e.section_id
+       JOIN classes  c   ON c.id = sec.class_id
+       JOIN academic_years y ON y.id = e.academic_year_id AND y.is_current
+      WHERE g.guardian_id = app.current_user_id()
+      ORDER BY c.level_no DESC, e.roll_no`
+  );
+  return rows.map((r) => ({
+    studentId: r.student_id,
+    enrolmentId: r.enrolment_id,
+    nameBn: r.name_bn,
+    sectionLabel: r.section_label,
+    rollNo: r.roll_no,
+    relationBn: RELATION_BN2[r.relation] ?? r.relation
+  }));
+}
+async function loadHome(client, ward) {
+  const attendance = await loadAttendance(client, ward.studentId);
+  const fees = await loadFees(client, ward.studentId);
+  const result = await loadLatestResult(client, ward.studentId);
+  return { ...ward, attendance, fees, result };
+}
+async function loadAttendance(client, studentId) {
+  const { rows } = await client.query(
+    `WITH month AS (
+       SELECT a.status, a.taken_on AS d
+         FROM attendance_records a
+        WHERE a.student_id = $1
+          AND a.taken_on >= date_trunc('month', CURRENT_DATE)::date
+     )
+     SELECT (SELECT status FROM month WHERE d = CURRENT_DATE LIMIT 1) AS today_status,
+            count(*) FILTER (WHERE status = 'present')  AS present,
+            count(*) FILTER (WHERE status = 'late')     AS late,
+            count(*) FILTER (WHERE status = 'absent')   AS absent,
+            count(*) FILTER (WHERE status = 'half_day') AS half_day,
+            count(*) FILTER (WHERE status = 'excused')  AS excused
+       FROM month`,
+    [studentId]
+  );
+  const r = rows[0];
+  const n = (v) => Number(v ?? 0);
+  const counted = n(r.present) + n(r.late) + n(r.absent) + n(r.half_day);
+  return {
+    todayStatus: r.today_status,
+    monthPercent: counted > 0 ? Math.round((n(r.present) + n(r.late) + n(r.half_day) * 0.5) / counted * 100) : null,
+    present: n(r.present),
+    absent: n(r.absent),
+    late: n(r.late),
+    halfDay: n(r.half_day),
+    excused: n(r.excused)
+  };
+}
+async function loadFees(client, studentId) {
+  const { rows } = await client.query(
+    `SELECT COALESCE(sum(i.balance_amount), 0) AS outstanding,
+            min(i.due_on) FILTER (WHERE i.balance_amount > 0) AS earliest_due,
+            count(*) FILTER (WHERE i.balance_amount > 0
+                               AND i.due_on < CURRENT_DATE) AS overdue
+       FROM invoices i
+      WHERE i.student_id = $1 AND i.status <> 'cancelled'`,
+    [studentId]
+  );
+  const r = rows[0];
+  return {
+    outstanding: Number(r.outstanding),
+    // The date a guardian is looking for is the NEXT one, not the oldest
+    // invoice's — that is what tells them whether to act today.
+    earliestDue: isoDate(r.earliest_due),
+    overdueCount: Number(r.overdue)
+  };
+}
+async function loadLatestResult(client, studentId) {
+  const { rows } = await client.query(
+    // Published only. An unpublished result is a working figure, and a
+    // guardian who sees one before the school has agreed it will treat it
+    // as final.
+    //
+    // The real lock is one layer down: results_scope (migration 010) lets
+    // a guardian read a row only when exam_results.published_at is set, so
+    // the filter here is the second lock rather than the guarantee.
+    // "মেধাক্রম ৭/৫২" needs the cohort size, which lives on the section
+    // as a trigger-maintained count rather than on the result row.
+    `SELECT x.name_bn AS exam_name_bn, r.gpa, r.rank_in_section,
+            sec.student_count AS section_size
+       FROM exam_results r
+       JOIN exams x    ON x.id = r.exam_id
+       JOIN sections sec ON sec.id = r.section_id
+      WHERE r.student_id = $1 AND x.status = 'published'
+      ORDER BY r.published_at DESC NULLS LAST, x.starts_on DESC
+      LIMIT 1`,
+    [studentId]
+  );
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return {
+    examNameBn: r.exam_name_bn,
+    gpa: r.gpa === null ? null : Number(r.gpa),
+    rankInSection: r.rank_in_section,
+    sectionSize: r.section_size
+  };
+}
+function isoDate(v) {
+  if (v === null || v === void 0) return null;
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -3589,9 +3754,10 @@ var ROUTES = {
   next: handler12,
   subjects: handler13,
   attendance: handler14,
-  import: handler15
+  import: handler15,
+  ward: handler16
 };
-async function handler16(req, res) {
+async function handler17(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -3606,5 +3772,5 @@ async function handler16(req, res) {
   return route(req, res);
 }
 export {
-  handler16 as default
+  handler17 as default
 };

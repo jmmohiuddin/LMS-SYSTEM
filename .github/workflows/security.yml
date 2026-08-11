@@ -170,6 +170,11 @@ jobs:
 
       # F-506's other half: a solver that ignored the other shift would
       # generate routines the database then refuses to publish.
+      - name: F-1001/F-1002/F-203 · guardian home and ward switcher
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test services/academics-svc/test/ward.test.ts
+
       - name: F-503/F-505 · generation result and slot explanation
         env:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci

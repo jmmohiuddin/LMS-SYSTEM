@@ -53,3 +53,15 @@ memory/
 # be ~10 duplicated bundles of the same handlers already committed under
 # api/, drifting independently.
 netlify/functions/
+
+# Local Netlify folder
+.netlify
+
+# Local agent tooling, not project source.
+#
+# These were committed as symlinks into ../../.agents/skills/, which is
+# itself untracked — so every one of them dangled on a fresh clone, and the
+# Netlify CLI refused to deploy because its file walker could not stat them.
+# Untracked rather than deleted: they still resolve on this machine.
+.claude/skills/
+.netlify/

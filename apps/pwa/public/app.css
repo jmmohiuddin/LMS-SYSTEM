@@ -1704,3 +1704,55 @@ button.subj-card::after {
                      letter-spacing: 0.12em; font-variant-numeric: tabular-nums;
                      color: var(--c-ink-1); user-select: all; }
 .issued-code-note { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-3); line-height: 1.6; }
+
+/* ── §7.5 class performance (F-1501) ─────────────────────────────────────
+   Bars, not a chart library. Four rows at 360px need to be readable at a
+   glance and survive a 2GB phone; a canvas chart would cost a dependency
+   and read worse. */
+.perf-card { margin-top: var(--space-4); }
+.perf-bars { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.perf-bar { display: grid; grid-template-columns: 1fr; gap: var(--space-1); }
+.perf-bar-label { font-size: var(--text-sm); font-weight: 600; color: var(--c-ink-1); }
+.perf-bar-track { display: block; height: 10px; background: var(--color-neutral-200);
+                  border: 1px solid var(--color-neutral-300); }
+.perf-bar-fill { display: block; height: 100%; background: var(--color-neutral-700); }
+/* The only tone in the panel. Below half a component's own maximum is an
+   NCTB component-failure risk, not a design flourish. */
+.perf-bar-fill[data-tone='low'] { background: var(--color-accent-600); }
+.perf-bar-value { font-size: var(--text-xs); color: var(--c-ink-2);
+                  font-variant-numeric: tabular-nums; }
+
+.perf-qlist { list-style: none; margin: var(--space-3) 0 0; padding: 0;
+              border-top: 1px solid var(--color-neutral-300); }
+.perf-q { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-neutral-300); }
+.perf-q-stem { margin: 0; font-size: var(--text-sm); line-height: var(--lh-normal);
+               color: var(--c-ink-1); }
+.perf-q-meta { margin: var(--space-1) 0 0; font-size: var(--text-xs); color: var(--c-ink-2);
+               font-variant-numeric: tabular-nums; }
+.perf-reteach { margin: var(--space-3) 0 0; padding: var(--space-3);
+                background: var(--color-neutral-100);
+                border-inline-start: 3px solid var(--color-neutral-700);
+                font-size: var(--text-sm); line-height: var(--lh-normal); color: var(--c-ink-1); }
+
+/* ── §7.5 attention list (F-1502) ────────────────────────────────────────
+   Deliberately undecorated. No severity colour, no badge, no ordering cue.
+   A visual hierarchy across children IS the ranking F-1502 forbids, so the
+   rows are identical to each other by construction and the only thing that
+   varies is the text of the observations. */
+.perf-wide-note { margin: var(--space-3) 0 0; padding: var(--space-3);
+                  background: var(--color-neutral-100); font-size: var(--text-sm);
+                  line-height: var(--lh-normal); color: var(--c-ink-1); }
+.perf-attention { list-style: none; margin: var(--space-3) 0 0; padding: 0;
+                  border-top: 1px solid var(--color-neutral-300); }
+.perf-att-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-neutral-300); }
+.perf-att-name { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--c-ink-1); }
+.perf-att-signals { list-style: none; margin: var(--space-1) 0 0; padding: 0;
+                    display: grid; gap: 2px; }
+.perf-att-signals li { font-size: var(--text-xs); color: var(--c-ink-2);
+                       line-height: var(--lh-normal); }
+
+/* .card carries no padding in this system — each child insets itself, the
+   way .section-heading does with its own margin. These children were
+   written as if the card padded them and ran flush to the viewport edge. */
+.perf-card > * { margin-inline: var(--space-4); }
+.perf-coverage { margin: var(--space-2) var(--space-4) 0; }

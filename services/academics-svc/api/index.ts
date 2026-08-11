@@ -23,6 +23,7 @@ import attendance from './attendance.ts';
 import importStudents from './import.ts';
 import ward from './ward.ts';
 import subjectchoice from './subjectchoice.ts';
+import classperf from './classperf.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -30,7 +31,7 @@ const ROUTES: Record<string, Handler> = {
   sections, roster, exams, marks, publish, scripts, chapters, topics, results,
   assignments, practice, next, subjects, attendance,
   import: importStudents,
-  ward, subjectchoice,
+  ward, subjectchoice, classperf,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

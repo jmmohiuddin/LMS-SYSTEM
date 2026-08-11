@@ -3907,6 +3907,302 @@ async function apply(c, body) {
   };
 }
 
+// services/academics-svc/api/classperf.ts
+var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var PERF_ROLES = ["class_teacher", "subject_teacher", "academic_coordinator", "principal", "school_owner"];
+var ATTENDANCE_FLOOR_PERCENT = 80;
+var STREAK_DAYS = 3;
+var MARK_DROP_POINTS = 15;
+var WINDOW_DAYS = 30;
+var MIN_ATTEMPTS = 5;
+var WRONG_FLOOR_PERCENT = 40;
+async function handler18(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, PERF_ROLES);
+    const examSubjectId = new URL(req.url ?? "/", "http://internal").searchParams.get("examSubjectId") ?? "";
+    if (examSubjectId && !UUID_RE16.test(examSubjectId)) {
+      throw new HttpError(400, "examSubjectId must be a valid uuid", "invalid_exam_subject_id");
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const payload = await db.withTenant(ctx, async (client) => {
+      const choices = await loadChoices(client);
+      if (!examSubjectId) return { choices, analysis: null };
+      const head = await loadHeader(client, examSubjectId);
+      if (!head) throw new HttpError(404, "exam subject not found", "exam_subject_not_found");
+      return { choices, analysis: await analyse(client, head) };
+    });
+    json(res, 200, payload, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message }, cors);
+      return;
+    }
+    console.error("classperf failed", err);
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function loadChoices(client) {
+  const { rows } = await client.query(
+    `SELECT es.id,
+            cl.name_bn || '-' || s.name_bn || ' \xB7 ' || sub.name_bn || ' \xB7 ' || e.name_bn AS label
+       FROM exam_subjects es
+       JOIN exams    e   ON e.id   = es.exam_id
+       JOIN sections s   ON s.id   = es.section_id
+       JOIN classes  cl  ON cl.id  = s.class_id
+       JOIN subjects sub ON sub.id = es.subject_id
+      -- Analysing an exam nobody has marked yet shows a screen of zeroes
+      -- and teaches the teacher to distrust the screen.
+      WHERE EXISTS (SELECT 1 FROM exam_marks m WHERE m.exam_subject_id = es.id)
+      ORDER BY e.starts_on DESC NULLS LAST, cl.level_no, s.name_bn
+      LIMIT 60`
+  );
+  return rows.map((r) => ({ examSubjectId: r.id, label: r.label }));
+}
+async function loadHeader(client, id) {
+  const { rows } = await client.query(
+    `SELECT es.id            AS "examSubjectId",
+            es.section_id    AS "sectionId",
+            es.subject_id    AS "subjectId",
+            cl.name_bn || '-' || s.name_bn || ' \xB7 ' || sub.name_bn || ' \xB7 ' || e.name_bn AS label,
+            es.cq_max        AS "cqMax",
+            es.mcq_max       AS "mcqMax",
+            es.practical_max AS "practicalMax",
+            es.ca_max        AS "caMax",
+            e.starts_on      AS "examStartsOn",
+            e.academic_year_id AS "academicYearId"
+       FROM exam_subjects es
+       JOIN exams    e   ON e.id   = es.exam_id
+       JOIN sections s   ON s.id   = es.section_id
+       JOIN classes  cl  ON cl.id  = s.class_id
+       JOIN subjects sub ON sub.id = es.subject_id
+      WHERE es.id = $1`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+async function analyse(client, head) {
+  const components = await loadComponents(client, head);
+  const questions = await loadQuestions(client, head);
+  return {
+    header: { examSubjectId: head.examSubjectId, label: head.label },
+    coverage: await loadCoverage(client, head),
+    components,
+    practice: {
+      questions,
+      reteach: reteachHint(questions),
+      // Carried in the payload so the client cannot forget which cohort
+      // these numbers describe.
+      source: "practice"
+    },
+    attention: await loadAttention(client, head),
+    thresholds: {
+      attendanceFloorPercent: ATTENDANCE_FLOOR_PERCENT,
+      streakDays: STREAK_DAYS,
+      markDropPoints: MARK_DROP_POINTS,
+      windowDays: WINDOW_DAYS
+    }
+  };
+}
+async function loadCoverage(client, head) {
+  const { rows } = await client.query(
+    `SELECT COUNT(m.student_id) FILTER (WHERE NOT m.is_absent) AS marked,
+            COUNT(*)                                          AS enrolled,
+            COUNT(m.student_id) FILTER (WHERE m.is_absent)     AS absent
+       FROM enrolments en
+       LEFT JOIN exam_marks m
+         ON m.exam_subject_id = $1 AND m.student_id = en.student_id
+      WHERE en.section_id = $2 AND en.status = 'active'`,
+    [head.examSubjectId, head.sectionId]
+  );
+  const r = rows[0];
+  return { marked: Number(r?.marked ?? 0), enrolled: Number(r?.enrolled ?? 0), absent: Number(r?.absent ?? 0) };
+}
+var COMPONENT_LABELS = {
+  mcq: "\u09AC\u09B9\u09C1\u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09A8\u09BF",
+  cq: "\u09B8\u09C3\u099C\u09A8\u09B6\u09C0\u09B2",
+  practical: "\u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995",
+  ca: "\u09A7\u09BE\u09B0\u09BE\u09AC\u09BE\u09B9\u09BF\u0995 \u09AE\u09C2\u09B2\u09CD\u09AF\u09BE\u09AF\u09BC\u09A8"
+};
+async function loadComponents(client, head) {
+  const { rows } = await client.query(
+    `SELECT AVG(cq_marks) AS cq, AVG(mcq_marks) AS mcq,
+            AVG(practical_marks) AS practical, AVG(ca_marks) AS ca
+       FROM exam_marks
+      WHERE exam_subject_id = $1 AND NOT is_absent`,
+    [head.examSubjectId]
+  );
+  const avg = rows[0] ?? { cq: null, mcq: null, practical: null, ca: null };
+  const maxima = {
+    mcq: Number(head.mcqMax),
+    cq: Number(head.cqMax),
+    practical: Number(head.practicalMax),
+    ca: Number(head.caMax)
+  };
+  return ["mcq", "cq", "practical", "ca"].filter((k) => maxima[k] > 0).map((k) => {
+    const raw = avg[k];
+    return {
+      key: k,
+      labelBn: COMPONENT_LABELS[k],
+      max: maxima[k],
+      average: raw === null ? null : Number(Number(raw).toFixed(2)),
+      percent: raw === null ? null : Math.round(Number(raw) / maxima[k] * 100)
+    };
+  });
+}
+async function loadQuestions(client, head) {
+  const { rows } = await client.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (pa.question_id, pa.student_id)
+              pa.question_id, pa.is_correct
+         FROM practice_attempts pa
+         JOIN enrolments en
+           ON en.student_id = pa.student_id
+          AND en.section_id = $1
+          AND en.status = 'active'
+        ORDER BY pa.question_id, pa.student_id, pa.attempt_no DESC
+     )
+     SELECT q.question_no                              AS "questionNo",
+            q.kind::text                               AS kind,
+            q.stem_bn                                  AS "stemBn",
+            ch.name_bn                                 AS "chapterBn",
+            COUNT(*)                                   AS attempts,
+            COUNT(*) FILTER (WHERE NOT l.is_correct)   AS wrong
+       FROM latest l
+       JOIN practice_questions q ON q.id = l.question_id
+       JOIN topics   t  ON t.id  = q.topic_id
+       JOIN chapters ch ON ch.id = t.chapter_id
+      WHERE ch.subject_id = $2
+      GROUP BY q.id, q.question_no, q.kind, q.stem_bn, ch.name_bn
+     HAVING COUNT(*) >= $3
+        AND COUNT(*) FILTER (WHERE NOT l.is_correct) * 100 / COUNT(*) >= $4
+      ORDER BY COUNT(*) FILTER (WHERE NOT l.is_correct)::numeric / COUNT(*) DESC
+      LIMIT 8`,
+    [head.sectionId, head.subjectId, MIN_ATTEMPTS, WRONG_FLOOR_PERCENT]
+  );
+  return rows.map((r) => ({
+    questionNo: r.questionNo,
+    kind: r.kind,
+    stemBn: r.stemBn,
+    chapterBn: r.chapterBn,
+    attempts: Number(r.attempts),
+    wrongPercent: Math.round(Number(r.wrong) / Number(r.attempts) * 100)
+  }));
+}
+function reteachHint(questions) {
+  const byChapter = /* @__PURE__ */ new Map();
+  for (const q of questions) byChapter.set(q.chapterBn, (byChapter.get(q.chapterBn) ?? 0) + 1);
+  let best = null;
+  for (const [chapterBn, questionCount] of byChapter) {
+    if (questionCount >= 2 && (!best || questionCount > best.questionCount)) best = { chapterBn, questionCount };
+  }
+  return best;
+}
+async function loadAttention(client, head) {
+  const { rows: att } = await client.query(
+    `WITH days AS (
+       SELECT ar.student_id, ar.taken_on,
+              (ar.status = 'absent') AS absent,
+              (ar.status IN ('present','late')) AS here
+         FROM attendance_records ar
+        WHERE ar.section_id = $1
+          AND ar.taken_on >= CURRENT_DATE - ($2::int || ' days')::interval
+     ),
+     -- Length of the CURRENT absence run: count back from the most recent
+     -- record until a day the student was here. A streak that ended last
+     -- month is history, not a signal.
+     streaks AS (
+       SELECT d.student_id,
+              COUNT(*) FILTER (WHERE d.absent AND d.taken_on > COALESCE(
+                (SELECT MAX(d2.taken_on) FROM days d2
+                  WHERE d2.student_id = d.student_id AND d2.here), '-infinity'::date)) AS streak
+         FROM days d GROUP BY d.student_id
+     )
+     SELECT en.student_id                        AS "studentId",
+            u.full_name_bn                       AS "nameBn",
+            en.roll_no                           AS "rollNo",
+            COUNT(*) FILTER (WHERE d.here)       AS present,
+            COUNT(d.taken_on)                    AS total,
+            COALESCE(MAX(st.streak), 0)          AS streak
+       FROM enrolments en
+       JOIN users u  ON u.id = en.student_id
+       LEFT JOIN days d    ON d.student_id  = en.student_id
+       LEFT JOIN streaks st ON st.student_id = en.student_id
+      WHERE en.section_id = $1 AND en.status = 'active'
+      GROUP BY en.student_id, u.full_name_bn, en.roll_no
+      ORDER BY en.roll_no`,
+    [head.sectionId, WINDOW_DAYS]
+  );
+  const drops = await loadMarkDrops(client, head);
+  const out = [];
+  for (const r of att) {
+    const total = Number(r.total);
+    const percent = total > 0 ? Math.round(Number(r.present) / total * 100) : null;
+    const streak = Number(r.streak);
+    const signals = [];
+    if (percent !== null && total >= 5 && percent < ATTENDANCE_FLOOR_PERCENT) {
+      signals.push(`\u0997\u09A4 ${bn(WINDOW_DAYS)} \u09A6\u09BF\u09A8\u09C7 \u09B9\u09BE\u099C\u09BF\u09B0\u09BE ${bn(percent)}%`);
+    }
+    if (streak >= STREAK_DAYS) signals.push(`\u099F\u09BE\u09A8\u09BE ${bn(streak)} \u09A6\u09BF\u09A8 \u0985\u09A8\u09C1\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4`);
+    const drop = drops.get(r.studentId);
+    if (drop !== void 0) signals.push(`\u0997\u09A4 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u099A\u09C7\u09AF\u09BC\u09C7 \u09A8\u09AE\u09CD\u09AC\u09B0 ${bn(drop)}% \u0995\u09AE`);
+    if (signals.length > 0) {
+      out.push({ studentId: r.studentId, nameBn: r.nameBn, rollNo: Number(r.rollNo), signals });
+    }
+  }
+  return out;
+}
+async function loadMarkDrops(client, head) {
+  const { rows } = await client.query(
+    `WITH this_exam AS (
+       SELECT m.student_id,
+              m.total_marks * 100.0 /
+                NULLIF(es.cq_max + es.mcq_max + es.practical_max + es.ca_max, 0) AS pct
+         FROM exam_marks m
+         JOIN exam_subjects es ON es.id = m.exam_subject_id
+        WHERE m.exam_subject_id = $1 AND NOT m.is_absent
+     ),
+     prev_subject AS (
+       SELECT es.id
+         FROM exam_subjects es
+         JOIN exams e ON e.id = es.exam_id
+        WHERE es.section_id = $2 AND es.subject_id = $3 AND es.id <> $1
+          AND e.starts_on < $4::date
+        ORDER BY e.starts_on DESC
+        LIMIT 1
+     ),
+     prev AS (
+       SELECT m.student_id,
+              m.total_marks * 100.0 /
+                NULLIF(es.cq_max + es.mcq_max + es.practical_max + es.ca_max, 0) AS pct
+         FROM exam_marks m
+         JOIN exam_subjects es ON es.id = m.exam_subject_id
+         JOIN prev_subject ps  ON ps.id = es.id
+        WHERE NOT m.is_absent
+     )
+     SELECT t.student_id AS "studentId",
+            ROUND(p.pct - t.pct) AS "dropPoints"
+       FROM this_exam t JOIN prev p ON p.student_id = t.student_id
+      WHERE p.pct - t.pct >= $5`,
+    [head.examSubjectId, head.sectionId, head.subjectId, head.examStartsOn ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), MARK_DROP_POINTS]
+  );
+  return new Map(rows.map((r) => [r.studentId, Number(r.dropPoints)]));
+}
+function bn(n) {
+  return String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -3925,9 +4221,10 @@ var ROUTES = {
   attendance: handler14,
   import: handler15,
   ward: handler16,
-  subjectchoice: handler17
+  subjectchoice: handler17,
+  classperf: handler18
 };
-async function handler18(req, res) {
+async function handler19(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -3942,5 +4239,5 @@ async function handler18(req, res) {
   return route(req, res);
 }
 export {
-  handler18 as default
+  handler19 as default
 };

@@ -149,6 +149,11 @@ function inDays(n: number): string {
   return new Date(Date.now() + n * 86400000).toISOString();
 }
 
+const DEMO_PERF_CHOICES = [
+  { examSubjectId: 'es-1', label: 'নবম-ক · পদার্থবিজ্ঞান · ১ম সাময়িক' },
+  { examSubjectId: 'es-2', label: 'নবম-ক · গণিত · ১ম সাময়িক' },
+];
+
 const DEMO_ASSIGNMENTS = [
   {
     id: 'demo-a-1', titleBn: 'গতির সমীকরণ — অনুশীলনী ৫.২', dueAt: inDays(2),
@@ -652,6 +657,48 @@ export class DemoAuth extends Auth {
         }
         const date = url.searchParams.get('date') ?? todayIso();
         return ok({ scope: 'day', date, slots: daySlots(date) });
+      }
+
+      case '/api/v1/academics/classperf': {
+        // §7.5. Shaped to exercise every branch the screen has: a component
+        // under 50 so the low tone renders, two weak questions in one chapter
+        // so the re-teach hint fires, and an attention list where one student
+        // carries a single signal and another carries two — the case where a
+        // severity ranking would be most tempting and is most wrong.
+        if (!url.searchParams.get('examSubjectId')) {
+          return ok({ choices: DEMO_PERF_CHOICES, analysis: null });
+        }
+        return ok({
+          choices: DEMO_PERF_CHOICES,
+          analysis: {
+            header: { examSubjectId: 'es-1', label: 'নবম-ক · পদার্থবিজ্ঞান · ১ম সাময়িক' },
+            coverage: { marked: 32, enrolled: 35, absent: 2 },
+            components: [
+              { key: 'mcq', labelBn: 'বহুনির্বাচনি', max: 25, average: 11.2, percent: 45 },
+              { key: 'cq', labelBn: 'সৃজনশীল', max: 50, average: 33.5, percent: 67 },
+              { key: 'practical', labelBn: 'ব্যবহারিক', max: 25, average: 19.0, percent: 76 },
+            ],
+            practice: {
+              source: 'practice',
+              questions: [
+                { questionNo: 7, kind: 'mcq', stemBn: 'শব্দের বেগ কোন মাধ্যমে সবচেয়ে বেশি?',
+                  chapterBn: 'অধ্যায় ৯: তরঙ্গ ও শব্দ', attempts: 28, wrongPercent: 72 },
+                { questionNo: 12, kind: 'mcq', stemBn: 'তরঙ্গদৈর্ঘ্য ও কম্পাঙ্কের সম্পর্ক কী?',
+                  chapterBn: 'অধ্যায় ৯: তরঙ্গ ও শব্দ', attempts: 26, wrongPercent: 58 },
+                { questionNo: 4, kind: 'numeric', stemBn: '১২ মি/সে বেগে চলা বস্তুর গতিশক্তি নির্ণয় করো।',
+                  chapterBn: 'অধ্যায় ৫: কাজ ও শক্তি', attempts: 24, wrongPercent: 51 },
+              ],
+              reteach: { chapterBn: 'অধ্যায় ৯: তরঙ্গ ও শব্দ', questionCount: 2 },
+            },
+            attention: [
+              { studentId: 'demo-s4', nameBn: 'আনিকা রহমান', rollNo: 4,
+                signals: ['গত ৩০ দিনে হাজিরা ৭২%', 'গত পরীক্ষার চেয়ে নম্বর ১৮% কম'] },
+              { studentId: 'demo-s9', nameBn: 'তানভীর হোসেন', rollNo: 9,
+                signals: ['টানা ৪ দিন অনুপস্থিত'] },
+            ],
+            thresholds: { attendanceFloorPercent: 80, streakDays: 3, markDropPoints: 15, windowDays: 30 },
+          },
+        });
       }
 
       case '/api/v1/academics/subjectchoice': {

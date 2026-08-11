@@ -27,6 +27,7 @@ import { SubstituteView } from './substitute-view.ts';
 import { ExamRoutineView } from './exam-routine-view.ts';
 import { RoutineEditorView } from './routine-editor-view.ts';
 import { SubjectChoiceView } from './subject-choice-view.ts';
+import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
 import { GenerationView } from './generation-view.ts';
 import { GuardianView } from './guardian-view.ts';
@@ -370,6 +371,7 @@ async function main() {
               { path: 'substitute', glyph: 'repeat', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
               { path: 'routineeditor', glyph: 'clock', titleBn: 'রুটিন সম্পাদনা', subtitleBn: 'ক্লাস সরান — সংঘর্ষ হলে কারণ জানায়' },
               { path: 'subjectchoice', glyph: 'layers', titleBn: 'বিভাগ ও বিষয় নির্বাচন', subtitleBn: 'ধর্ম শিক্ষা ও চতুর্থ বিষয় নির্ধারণ' },
+              { path: 'classperf', glyph: 'trending-up', titleBn: 'শ্রেণির ফলাফল বিশ্লেষণ', subtitleBn: 'কোন অংশে দুর্বলতা · কাদের সহায়তা লাগতে পারে' },
               { path: 'examroutine', glyph: 'alert-triangle', titleBn: 'পরীক্ষার রুটিন', subtitleBn: 'শিক্ষার্থীভিত্তিক সময় সংঘর্ষ যাচাই' },
               { path: 'import', glyph: 'upload', titleBn: 'শিক্ষার্থী আমদানি', subtitleBn: 'CSV থেকে — যাচাই করে, ভুল সারি বাদ দিয়ে' },
               { path: 'guardian', glyph: 'users', titleBn: 'আমার সন্তান', subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
@@ -463,6 +465,15 @@ async function main() {
         glyph: 'layers',
         hidden: true,
         mount: (container) => { new SubjectChoiceView({ root: container, doc: document, auth }); },
+      },
+      {
+        // §7.5. F-1501 + F-1502. The attention list here is a soft signal
+        // and is never persisted — see class-perf-view.ts.
+        path: 'classperf',
+        labelBn: 'ফলাফল বিশ্লেষণ',
+        glyph: 'trending-up',
+        hidden: true,
+        mount: (container) => { new ClassPerfView({ root: container, doc: document, auth }); },
       },
       {
         path: 'sikhok',

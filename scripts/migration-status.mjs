@@ -71,6 +71,7 @@ const SENTINELS = [
                                       'e.section_id = p.section_id'],
   ['030_exam_seat_plan_and_invigilation', 'table',  'public.exam_halls'],
   ['031_bulk_import',                 'table',      'public.import_batches'],
+  ['032_cross_shift_availability',    'function',   'app.cross_shift_conflicts'],
 ];
 
 /**
@@ -109,6 +110,7 @@ const MEANING = {
   '029_exam_clash_section_scope':    'unbreaks publication of EVERY multi-section exam routine',
   '030_exam_seat_plan_and_invigilation':'F-511/F-512 — seat plan and invigilation duty roster',
   '031_bulk_import':                 'F-1601 — bulk import; a child is reachable through their guardian',
+  '032_cross_shift_availability':    'F-506 — a teacher cannot be booked in both shifts at once',
 };
 
 const QUERIES = {

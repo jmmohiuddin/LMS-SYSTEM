@@ -1379,6 +1379,25 @@ async function handler(req, res) {
 
 // services/rms-svc/src/solve.ts
 import { randomUUID } from "node:crypto";
+var IntervalBook = class {
+  byKey = /* @__PURE__ */ new Map();
+  add(resourceId, day2, startsAt, endsAt) {
+    const k = `${resourceId}|${day2}`;
+    const list = this.byKey.get(k);
+    if (list) list.push([startsAt, endsAt]);
+    else this.byKey.set(k, [[startsAt, endsAt]]);
+  }
+  overlaps(resourceId, day2, startsAt, endsAt) {
+    const list = this.byKey.get(`${resourceId}|${day2}`);
+    if (!list) return false;
+    const s = norm(startsAt);
+    const e = norm(endsAt);
+    return list.some(([bs, be]) => s < norm(be) && norm(bs) < e);
+  }
+};
+function norm(t) {
+  return t.length === 5 ? `${t}:00` : t;
+}
 var RmsSolver = class {
   db;
   now;
@@ -1397,15 +1416,18 @@ var RmsSolver = class {
       }
       const sections = await this.loadSections(client, routine.academicYearId, routine.shift);
       const demand = await this.loadDemand(client, routine.academicYearId, routine.shift);
-      const existing = await this.loadExistingSlots(client, routineId);
+      const existing = await this.loadExistingSlots(client, routineId, routine.academicYearId);
       const unavailability = await this.loadUnavailability(client, [...new Set(demand.map((d) => d.teacherId))]);
-      const teacherBusy = /* @__PURE__ */ new Set();
-      const sectionBusy = /* @__PURE__ */ new Set();
+      const teacherBusy = new IntervalBook();
+      const roomBusy = new IntervalBook();
+      const sectionBusy = new IntervalBook();
       const sectionSubjectDays = /* @__PURE__ */ new Map();
       const placedCount = /* @__PURE__ */ new Map();
       for (const row of existing) {
-        teacherBusy.add(`${row.teacher_id}|${row.day_of_week}|${row.period_no}`);
-        sectionBusy.add(`${row.primary_section_id}|${row.day_of_week}|${row.period_no}`);
+        if (row.teacher_id) teacherBusy.add(row.teacher_id, row.day_of_week, row.starts_at, row.ends_at);
+        if (row.room_id) roomBusy.add(row.room_id, row.day_of_week, row.starts_at, row.ends_at);
+        if (!row.is_mine) continue;
+        sectionBusy.add(row.primary_section_id, row.day_of_week, row.starts_at, row.ends_at);
         const ssKey = `${row.primary_section_id}|${row.subject_id}`;
         if (!sectionSubjectDays.has(ssKey)) sectionSubjectDays.set(ssKey, /* @__PURE__ */ new Set());
         sectionSubjectDays.get(ssKey).add(row.day_of_week);
@@ -1432,9 +1454,10 @@ var RmsSolver = class {
             for (const day3 of teachingDays) {
               if (preferUnusedDay && usedDays.has(day3)) continue;
               for (const period2 of periods) {
-                const tKey = `${d.teacherId}|${day3}|${period2.periodNo}`;
-                const sKey = `${d.sectionId}|${day3}|${period2.periodNo}`;
-                if (teacherBusy.has(tKey) || sectionBusy.has(sKey)) continue;
+                const room = roomBySection.get(d.sectionId) ?? null;
+                if (teacherBusy.overlaps(d.teacherId, day3, period2.startsAt, period2.endsAt)) continue;
+                if (sectionBusy.overlaps(d.sectionId, day3, period2.startsAt, period2.endsAt)) continue;
+                if (room && roomBusy.overlaps(room, day3, period2.startsAt, period2.endsAt)) continue;
                 if (isUnavailable(d.teacherId, day3, period2.startsAt, period2.endsAt)) continue;
                 found = { day: day3, period: period2 };
                 break;
@@ -1445,8 +1468,10 @@ var RmsSolver = class {
           }
           if (!found) break;
           const { day: day2, period } = found;
-          teacherBusy.add(`${d.teacherId}|${day2}|${period.periodNo}`);
-          sectionBusy.add(`${d.sectionId}|${day2}|${period.periodNo}`);
+          const roomId = roomBySection.get(d.sectionId) ?? null;
+          teacherBusy.add(d.teacherId, day2, period.startsAt, period.endsAt);
+          sectionBusy.add(d.sectionId, day2, period.startsAt, period.endsAt);
+          if (roomId) roomBusy.add(roomId, day2, period.startsAt, period.endsAt);
           if (!sectionSubjectDays.has(ssKey)) sectionSubjectDays.set(ssKey, /* @__PURE__ */ new Set());
           sectionSubjectDays.get(ssKey).add(day2);
           placements.push({
@@ -1458,7 +1483,7 @@ var RmsSolver = class {
             periodDefinitionId: period.periodDefinitionId,
             startsAt: period.startsAt,
             endsAt: period.endsAt,
-            roomId: roomBySection.get(d.sectionId) ?? null
+            roomId
           });
           placedForThis++;
         }
@@ -1510,7 +1535,7 @@ var RmsSolver = class {
         }
       }
       const totalDemand = demand.reduce((sum, d) => sum + d.periodsPerWeek, 0);
-      const totalPlaced = existing.length + inserted;
+      const totalPlaced = existing.filter((r) => r.is_mine).length + inserted;
       const objectiveScore = totalDemand > 0 ? Math.round(totalPlaced / totalDemand * 1e4) / 100 : 100;
       const solverRunId = randomUUID();
       const solverSeconds = Math.round((this.now() - startedAt) / 1e3 * 100) / 100;
@@ -1583,12 +1608,21 @@ var RmsSolver = class {
       periodsPerWeek: r.periods_per_week
     }));
   }
-  async loadExistingSlots(client, routineId) {
+  async loadExistingSlots(client, routineId, academicYearId) {
     const { rows } = await client.query(
-      `SELECT primary_section_id, subject_id, teacher_id, day_of_week, period_no
-         FROM routine_slots
-        WHERE routine_id = $1 AND status = 'active' AND slot_kind = 'teaching'`,
-      [routineId]
+      // F-506. This routine's own slots, PLUS every slot in any other
+      // ACTIVE routine for the same year — which is the other shift. A
+      // teacher booked in the morning is not free in the afternoon just
+      // because a different routine_id owns that hour.
+      `SELECT rs.primary_section_id, rs.subject_id, rs.teacher_id, rs.day_of_week,
+              rs.period_no, rs.starts_at, rs.ends_at, rs.room_id,
+              (rs.routine_id = $1) AS is_mine
+         FROM routine_slots rs
+        WHERE rs.academic_year_id = $2
+          AND rs.status = 'active'
+          AND rs.slot_kind = 'teaching'
+          AND (rs.routine_id = $1 OR rs.routine_status = 'active')`,
+      [routineId, academicYearId]
     );
     return rows;
   }

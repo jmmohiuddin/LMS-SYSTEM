@@ -126,6 +126,9 @@ jobs:
       - name: F-511/F-512 · exam seat plan and invigilation duty
         run: psql -v ON_ERROR_STOP=1 -f db/tests/seat_plan.sql
 
+      - name: F-506 · cross-shift teacher and room availability
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/cross_shift.sql
+
       # sharedDb() refuses to boot on a BYPASSRLS role, so the limiter would
       # fail open under the owner and the 429 assertions would pass
       # vacuously. Create the same non-privileged role production runs as.
@@ -164,6 +167,13 @@ jobs:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
           PII_MASTER_KEY_V1: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
         run: node --test services/academics-svc/test/import.test.ts
+
+      # F-506's other half: a solver that ignored the other shift would
+      # generate routines the database then refuses to publish.
+      - name: F-506 · routine solver across shifts
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test services/rms-svc/test/solve-cross-shift.test.ts
 
       - name: Unit suites
         run: |

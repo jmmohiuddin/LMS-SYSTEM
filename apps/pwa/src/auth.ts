@@ -130,6 +130,33 @@ export class Auth {
     this.persist();
   }
 
+  /**
+   * F-202: the fallback door. Exchanges a teacher-issued activation code
+   * for the SAME session shape verifyOtp establishes — one session model,
+   * whichever door was used. Available while OTP login is dark, which is
+   * the entire point of its existence.
+   */
+  async redeemActivationCode(tenantId: string, code: string): Promise<void> {
+    const body = await this.postPublic<{
+      accessToken: string;
+      refreshToken: string;
+      expiresIn: number;
+      user: AuthUser;
+    }>('/api/v1/auth/activate', {
+      action: 'redeem', tenantId, code, deviceId: this.o.deviceId,
+    });
+
+    const now = (this.o.now ?? Date.now)();
+    this.state = {
+      tenantId,
+      accessToken: body.accessToken,
+      refreshToken: body.refreshToken,
+      expiresAt: now + body.expiresIn * 1000,
+      user: body.user,
+    };
+    this.persist();
+  }
+
   async logout(): Promise<void> {
     const s = this.state;
     this.state = null;

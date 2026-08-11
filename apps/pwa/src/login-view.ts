@@ -47,7 +47,7 @@ export interface LoginViewOptions {
   onLoggedIn: () => void;
 }
 
-type Step = 'phone' | 'code';
+type Step = 'phone' | 'code' | 'activate';
 
 export class LoginView {
   private readonly o: LoginViewOptions;
@@ -88,20 +88,33 @@ export class LoginView {
     const h1 = d.createElement('h1');
     h1.textContent = 'শিখন';
 
-    if (LOGIN_DISABLED) {
+    if (LOGIN_DISABLED && this.step !== 'activate') {
+      // F-202. The OTP kill switch used to be a dead end; now it is a
+      // detour. The aggregator negotiation blocks SMS, not the school —
+      // and the school can hand out activation codes on paper.
       const notice = d.createElement('p');
       notice.className = 'att-sub';
-      notice.textContent = 'লগইন সাময়িকভাবে বন্ধ আছে। পরে আবার চেষ্টা করুন।';
-      wrap.append(h1, notice);
+      notice.textContent = 'মোবাইল কোডে লগইন সাময়িকভাবে বন্ধ আছে।';
+      const enter = d.createElement('button');
+      enter.type = 'button';
+      enter.className = 'btn-primary login-activate-entry';
+      enter.textContent = 'সক্রিয়ন কোড দিয়ে প্রবেশ করুন';
+      enter.addEventListener('click', () => { this.step = 'activate'; this.render(); });
+      const hint = d.createElement('p');
+      hint.className = 'att-sub login-activate-hint';
+      hint.textContent = 'কোড পাবেন আপনার শ্রেণিশিক্ষক বা অফিস থেকে।';
+      wrap.append(h1, notice, enter, hint);
       root.append(wrap);
       return;
     }
 
     const sub = d.createElement('p');
     sub.className = 'att-sub';
-    sub.textContent = this.step === 'phone'
-      ? 'আপনার মোবাইল নম্বর দিন'
-      : `${this.phone} নম্বরে পাঠানো কোডটি দিন`;
+    sub.textContent = this.step === 'activate'
+      ? 'শিক্ষকের দেওয়া ৮ অক্ষরের কোডটি দিন'
+      : this.step === 'phone'
+        ? 'আপনার মোবাইল নম্বর দিন'
+        : `${this.phone} নম্বরে পাঠানো কোডটি দিন`;
 
     this.errorEl = d.createElement('p');
     this.errorEl.className = 'login-error';
@@ -134,7 +147,33 @@ export class LoginView {
       form.append(tLabel);
     }
 
-    if (this.step === 'phone') {
+    if (this.step === 'activate') {
+      const label = d.createElement('label');
+      label.className = 'login-label';
+      label.textContent = 'সক্রিয়ন কোড';
+      const input = d.createElement('input');
+      input.type = 'text';
+      input.name = 'activationCode';
+      input.className = 'login-input login-code-input';
+      // Uppercase letters and digits; autocapitalize helps the ten-year-old
+      // typing it. NOT one-time-code — that hint summons the SMS reader,
+      // and this code never arrives by SMS.
+      input.autocomplete = 'off';
+      input.setAttribute('autocapitalize', 'characters');
+      input.maxLength = 12;
+      label.append(input);
+      form.append(label);
+
+      if (!LOGIN_DISABLED) {
+        // Only offer the way back when there IS a way back.
+        const back = d.createElement('button');
+        back.type = 'button';
+        back.className = 'btn-secondary';
+        back.textContent = 'মোবাইল নম্বরে ফিরে যান';
+        back.addEventListener('click', () => { this.step = 'phone'; this.render(); });
+        form.append(back);
+      }
+    } else if (this.step === 'phone') {
       const label = d.createElement('label');
       label.className = 'login-label';
       label.textContent = 'মোবাইল নম্বর';
@@ -174,7 +213,8 @@ export class LoginView {
     submit.className = 'btn-primary';
     submit.textContent = this.busy
       ? 'অপেক্ষা করুন…'
-      : this.step === 'phone' ? 'কোড পাঠান' : 'যাচাই করুন';
+      : this.step === 'activate' ? 'প্রবেশ করুন'
+        : this.step === 'phone' ? 'কোড পাঠান' : 'যাচাই করুন';
     submit.disabled = this.busy;
     this.submitEl = submit;
     form.append(submit);
@@ -225,6 +265,26 @@ export class LoginView {
 
     if (!this.tenantId) {
       this.showError('স্কুল আইডি প্রয়োজন।');
+      return;
+    }
+
+    if (this.step === 'activate') {
+      const input = this.o.root.querySelector<HTMLInputElement>('input[name="activationCode"]');
+      const code = input?.value.trim() ?? '';
+      if (code.replace(/[^A-Za-z0-9]/g, '').length < 8) {
+        this.showError('৮ অক্ষরের কোডটি সম্পূর্ণ দিন।');
+        return;
+      }
+      this.busy = true;
+      this.render();
+      try {
+        await this.o.auth.redeemActivationCode(this.tenantId, code);
+        this.o.onLoggedIn();
+      } catch (err) {
+        this.busy = false;
+        this.render();
+        this.handleFailure(err);
+      }
       return;
     }
 
@@ -283,7 +343,10 @@ export class LoginView {
     switch (code) {
       case 'otp_disabled': return 'লগইন সাময়িকভাবে বন্ধ আছে। পরে আবার চেষ্টা করুন।';
       case 'too_soon': return 'একটু আগে কোড পাঠানো হয়েছে, একটু অপেক্ষা করুন।';
-      case 'invalid_code': return 'কোডটি সঠিক নয়।';
+      case 'invalid_code': return this.step === 'activate'
+        ? 'কোডটি সঠিক নয় বা মেয়াদ শেষ — শিক্ষকের কাছে নতুন কোড চান।'
+        : 'কোডটি সঠিক নয়।';
+      case 'activation_unconfigured': return 'এই সুবিধাটি এখনো চালু হয়নি।';
       case 'too_many_attempts': return 'অনেকবার চেষ্টা হয়েছে — নতুন কোড চান।';
       case 'challenge_not_found': return 'কোডের মেয়াদ শেষ — আবার চেষ্টা করুন।';
       case 'user_not_found': return 'এই নম্বরে কোনো অ্যাকাউন্ট পাওয়া যায়নি।';

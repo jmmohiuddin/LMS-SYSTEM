@@ -1349,3 +1349,15 @@ button, h1, h2, .att-counts { text-transform: none; }
    somebody screenshots for a budget meeting, so it stays plain. */
 .gen-shortage { background: var(--c-warn-soft); }
 .gen-shortage-list li { border-bottom-color: color-mix(in srgb, var(--c-warn) 25%, transparent); }
+
+/* ── F-202: issuing an activation code from the roster ─────────────────
+   The one and only place the code is visible, sized to be read across a
+   desk and copied onto a slip of paper by hand. */
+.roster-issue { margin-left: auto; }
+.issued-code-card { margin: 0 var(--s-4) var(--s-3); padding: var(--s-4);
+                    display: grid; gap: var(--s-2); text-align: center; }
+.issued-code-who { margin: 0; font-size: 14px; color: var(--c-ink-2); }
+.issued-code-value { margin: 0; font-size: 32px; font-weight: 700;
+                     letter-spacing: 0.12em; font-variant-numeric: tabular-nums;
+                     color: var(--c-ink-1); user-select: all; }
+.issued-code-note { margin: 0; font-size: 13px; color: var(--c-ink-3); line-height: 1.6; }

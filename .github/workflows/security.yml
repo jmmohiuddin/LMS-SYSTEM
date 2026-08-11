@@ -74,6 +74,25 @@ jobs:
             psql -v ON_ERROR_STOP=1 -q -f "$f"
           done
 
+      # Guards the probe map itself. A migration added without a sentinel
+      # reports as neither applied nor pending, which is the worst possible
+      # answer from a tool whose entire job is answering that question.
+      - name: Migration status probe covers every migration
+        env:
+          DATABASE_URL: postgresql://shikhon_owner:ci@localhost:5432/shikhon_ci
+        run: |
+          set -euo pipefail
+          out=$(node scripts/migration-status.mjs)
+          echo "$out"
+          if echo "$out" | grep -q 'have no sentinel'; then
+            echo "::error::a migration has no sentinel in scripts/migration-status.mjs"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q 'Fully migrated'; then
+            echo "::error::the probe does not see a freshly-migrated database as complete"
+            exit 1
+          fi
+
       - name: Schema lint and invariants
         run: |
           set -euo pipefail

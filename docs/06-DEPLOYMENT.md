@@ -122,6 +122,24 @@ keep returning rows after the transaction ended. That is the leak this design fo
 
 ## 4. Applying migrations
 
+**First, find out what is actually applied.** These migrations are not
+idempotent and nothing records what has run, so "is production on 023?" is a
+question that has to be answered by looking:
+
+```bash
+DATABASE_URL='postgresql://…' node scripts/migration-status.mjs --plan
+```
+
+Read-only, and the pooled runtime URL is enough — it needs no owner
+credential. It probes each migration for a distinctive object created at the
+*end* of that file, so a migration that died half-way reports MISSING rather
+than applied. `--plan` prints the exact commands for whatever is pending.
+
+It also refuses to give simple advice when the chain is out of order (a later
+migration applied while an earlier one is not): the files are not idempotent,
+so "just run the missing ones" can fail against a schema that has already
+moved past them.
+
 ```bash
 for f in db/migrations/*.sql; do
   psql "$DATABASE_MIGRATION_URL" -v ON_ERROR_STOP=1 -f "$f"

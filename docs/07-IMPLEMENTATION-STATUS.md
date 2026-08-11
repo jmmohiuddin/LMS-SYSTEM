@@ -282,6 +282,28 @@ USAGE only in schema `public` — both tables are `bigserial` in schema `audit`.
 write would have failed on "permission denied for sequence". Nothing had been written yet,
 so nothing was lost.
 
+### Knowing what production actually runs
+
+The open question through all of Phase 0 was whether migrations 016–019
+were ever applied — and there was no way to answer it, because the
+migrations are not idempotent and nothing records what has run.
+
+`scripts/migration-status.mjs` answers it by probing, not by trusting a
+ledger that does not exist. Read-only, no owner credential:
+
+```bash
+DATABASE_URL='postgresql://…' node scripts/migration-status.mjs --plan
+```
+
+Each migration is probed for an object created at the *end* of its file, so
+a migration that died half-way reads MISSING rather than applied. It refuses
+to hand out a simple apply plan when the chain is out of order, and CI fails
+if a migration is ever added without a matching probe.
+
+**Until this is run against production, treat every Phase 0 guarantee in
+§9 as code-complete but not in force.** Migration 023 in particular is what
+unbreaks the student-facing product.
+
 ### Two status corrections to the PRD
 
 Both were recorded as "Built" and are not:

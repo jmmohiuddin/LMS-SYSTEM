@@ -82,10 +82,36 @@ export class LearnView {
   private lastBlockSeen = 0;
   private questions: PracticeQuestion[] = [];
   private practising = false;
+  private textSize = LearnView.loadTextSize();
 
   constructor(options: LearnViewOptions) {
     this.o = options;
     void this.loadChapters();
+  }
+
+  /* ---------------------------------------------------------- reader text size
+     §6.3: "Text-size control is persistent and remembered." A student reads
+     this screen for the better part of an hour; the size that suits their
+     eyes and their phone must survive being closed, not reset every open.
+     Every level clears the 16px Bangla-legibility floor. */
+  private static readonly TEXT_SIZES = [16, 18, 21, 25];
+  private static readonly TEXT_SIZE_KEY = 'shikhon_reader_textsize';
+
+  private static loadTextSize(): number {
+    try {
+      // Null-check before Number(): Number(null) is 0, a valid index, which
+      // would silently make "never chosen" mean "smallest" instead of default.
+      const raw = localStorage.getItem(LearnView.TEXT_SIZE_KEY);
+      if (raw !== null) {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0 && n < LearnView.TEXT_SIZES.length) return n;
+      }
+    } catch { /* private mode */ }
+    return 1; // 18px default — a hair above the old fixed 17
+  }
+
+  private saveTextSize(): void {
+    try { localStorage.setItem(LearnView.TEXT_SIZE_KEY, String(this.textSize)); } catch { /* ignore */ }
   }
 
   /* ------------------------------------------------------------- caching */
@@ -190,8 +216,8 @@ export class LearnView {
         `/api/v1/academics/practice?topicId=${encodeURIComponent(topicId)}`,
       );
       if (res.ok) {
-        const body = (await res.json()) as { questions: PracticeQuestion[] };
-        this.questions = body.questions;
+        const body = (await res.json()) as { questions?: PracticeQuestion[] };
+        this.questions = body.questions ?? [];
         // Cached whole so practice works on a later offline visit.
         this.cacheSet(cacheKey, this.questions);
       }
@@ -402,9 +428,41 @@ export class LearnView {
     if (this.offline) root.append(this.offlineBanner());
     if (this.loading && this.blocks.length === 0) { root.append(this.msg('লোড হচ্ছে…')); return; }
 
+    // Was 'topic-reader', but the stylesheet only ever styled '.lesson-reader'
+    // — so the reading measure (68ch, 1.85 leading, the reader type size) had
+    // never applied and the article fell back to full-width body defaults.
     const article = d.createElement('article');
-    article.className = 'topic-reader';
+    article.className = 'lesson-reader';
     article.setAttribute('lang', 'bn');
+    article.style.fontSize = `${LearnView.TEXT_SIZES[this.textSize]}px`;
+
+    // Text-size control (§6.3), above the reading so it is found before it is
+    // needed. Restyles the article in place — no re-render, no lost scroll.
+    const tools = d.createElement('div');
+    tools.className = 'reader-tools';
+    const tlabel = d.createElement('span');
+    tlabel.className = 'reader-tools-label';
+    tlabel.textContent = 'লেখার আকার';
+    const smaller = d.createElement('button');
+    smaller.type = 'button'; smaller.className = 'reader-size';
+    smaller.textContent = 'অ'; smaller.setAttribute('aria-label', 'লেখা ছোট করো');
+    const bigger = d.createElement('button');
+    bigger.type = 'button'; bigger.className = 'reader-size reader-size-lg';
+    bigger.textContent = 'অ'; bigger.setAttribute('aria-label', 'লেখা বড় করো');
+    const applySize = () => {
+      article.style.fontSize = `${LearnView.TEXT_SIZES[this.textSize]}px`;
+      smaller.disabled = this.textSize === 0;
+      bigger.disabled = this.textSize === LearnView.TEXT_SIZES.length - 1;
+    };
+    smaller.addEventListener('click', () => {
+      if (this.textSize > 0) { this.textSize--; this.saveTextSize(); applySize(); }
+    });
+    bigger.addEventListener('click', () => {
+      if (this.textSize < LearnView.TEXT_SIZES.length - 1) { this.textSize++; this.saveTextSize(); applySize(); }
+    });
+    tools.append(tlabel, smaller, bigger);
+    applySize();
+    root.append(tools);
 
     for (const b of this.blocks) {
       this.lastBlockSeen = Math.max(this.lastBlockSeen, b.blockNo);

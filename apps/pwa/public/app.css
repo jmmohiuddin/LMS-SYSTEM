@@ -955,6 +955,23 @@ h2.section-heading { letter-spacing: normal; }
   max-width: 68ch;
   font-size: var(--text-read); line-height: 1.85;
 }
+
+/* Reader text-size control (§6.3). Right-aligned above the reading, two
+   thumb-sized steps showing the change they make — a small অ and a large অ. */
+.reader-tools {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 0 var(--s-4) var(--s-2); margin-top: var(--s-1);
+}
+.reader-tools-label { margin-right: auto; font-size: var(--text-2xs); color: var(--c-ink-3); }
+.reader-size {
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+  background: var(--c-surface); color: var(--c-ink); cursor: pointer;
+  font-family: var(--font-bn); line-height: 1;
+}
+.reader-size { font-size: var(--text-xs); }        /* the "smaller" step */
+.reader-size-lg { font-size: var(--text-lg); }     /* the "bigger" step */
+.reader-size:disabled { opacity: .4; cursor: default; }
 .block-text { margin: 0 0 var(--s-4); }
 .block-formula {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);

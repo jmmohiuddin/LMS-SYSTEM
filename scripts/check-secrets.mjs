@@ -209,6 +209,15 @@ function checkEnv() {
  * switched off within a week.
  */
 const HISTORY_PATTERNS = [
+  // The HEADER alone is not evidence: any library that parses PEM contains
+  // the literal string, and `jose` — bundled into api/v1/auth.js — does
+  // exactly that. Require actual key material after it, which parser code
+  // never has. Getting this wrong is how a scanner gets switched off.
+  // Header only. `git grep -E` is POSIX ERE and LINE-based, and a real PEM
+  // puts its header and its body on different lines, so no single pattern
+  // can confirm a key here. This finds candidates; CONFIRM_MULTILINE below
+  // decides. Without that second stage this matched every library that
+  // parses PEM — `jose`, bundled into api/v1/auth.js, does exactly that.
   ['private key block', 'BEGIN [A-Z ]*PRIVATE KEY'],
   ['Anthropic API key', 'sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{20,}'],
   ['Neon password', 'npg_[A-Za-z0-9]{16,}'],
@@ -217,6 +226,29 @@ const HISTORY_PATTERNS = [
   ['Slack token', 'xox[baprs]-[0-9A-Za-z-]{10,}'],
   ['generic bearer literal', String.raw`Bearer [A-Za-z0-9_\-\.]{24,}`],
 ];
+
+/**
+ * Patterns needing a second look at the whole blob, because the evidence
+ * spans lines. Keyed by the label above. A candidate that fails its
+ * confirmation is dropped silently — it was never evidence of anything.
+ */
+const CONFIRM_MULTILINE = {
+  // A header followed by real key material. Parser code has the header and
+  // no body; a leaked key has both.
+  'private key block': /BEGIN [A-Z ]*PRIVATE KEY-----[\s"'\\]*[A-Za-z0-9+/=]{40,}/,
+};
+
+/** Fetch one blob and test it whole. Returns true if the finding is real. */
+function confirmBlob(revPath, re) {
+  try {
+    const body = execFileSync('git', ['show', revPath], {
+      encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    });
+    return re.test(body);
+  } catch {
+    return true;   // unreadable: report rather than quietly drop
+  }
+}
 
 function checkHistory() {
   const findings = [];
@@ -246,7 +278,9 @@ function checkHistory() {
       }
       continue;
     }
-    const hits = out.trim().split('\n').filter(Boolean);
+    let hits = out.trim().split('\n').filter(Boolean);
+    const confirm = CONFIRM_MULTILINE[label];
+    if (confirm) hits = hits.filter((h) => confirmBlob(h, confirm));
     if (hits.length) {
       // Location only — the finding is "this file at this commit", never
       // the value. Rotation is the fix regardless; printing it again is not.

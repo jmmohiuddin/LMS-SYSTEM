@@ -1,7 +1,7 @@
 /**
  * Dynamic-route dispatcher for /api/v1/rms/{routine,solve,substitute,
- * examroutine,generation} — one Vercel function (api/v1/rms/[action].js)
- * instead of five. See services/identity-svc/api/index.ts for the
+ * examroutine,generation,editor} — one Vercel function (api/v1/rms/[action].js)
+ * instead of six. See services/identity-svc/api/index.ts for the
  * Hobby-cap rationale.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -12,10 +12,11 @@ import solve from './solve.ts';
 import substitute from './substitute.ts';
 import examroutine from './examroutine.ts';
 import generation from './generation.ts';
+import editor from './editor.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-const ROUTES: Record<string, Handler> = { routine, solve, substitute, examroutine, generation };
+const ROUTES: Record<string, Handler> = { routine, solve, substitute, examroutine, generation, editor };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://internal').pathname;

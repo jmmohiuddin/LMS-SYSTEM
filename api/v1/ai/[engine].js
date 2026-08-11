@@ -12700,10 +12700,19 @@ var HttpError = class extends Error {
   // under the project's `node --test file.ts` convention.
   status;
   code;
-  constructor(status, message2, code) {
+  /**
+   * Structured context spread into the error body alongside `error` and
+   * `message`. For refusals a screen has to act on rather than merely print —
+   * the routine editor naming the class that already owns an hour, say — a
+   * sentence is what the user reads and this is what the UI renders. Optional
+   * everywhere; an endpoint that has nothing to add omits it.
+   */
+  detail;
+  constructor(status, message2, code, detail) {
     super(message2);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 };
 
@@ -14043,6 +14052,12 @@ ${chunks.map((c) => c.content).join("\n\n")}` : "");
     ok: true,
     reply: text,
     grounded: chunks.length > 0,
+    // F-1302: the student must be able to see WHERE an answer comes from,
+    // not merely that it is grounded. These are the textbook section paths
+    // the retrieval actually used, deduped and capped — the screen prints
+    // them under the reply. Without them "grounded" is a claim the reader
+    // cannot check, which is the thing the requirement exists to prevent.
+    sources: [...new Set(chunks.map((c) => c.section_path).filter((p) => !!p))].slice(0, 3),
     model: msg.model,
     usage: { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens }
   }, cors);

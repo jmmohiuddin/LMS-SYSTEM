@@ -1450,6 +1450,75 @@ h2.section-heading { letter-spacing: normal; }
 
 .inline-notice.is-danger { color: var(--c-accent); background: var(--c-danger-soft); }
 
+/* ── Routine editor (F-502/504/506, wireframe §8.1) ────────────────────
+   The coordinator's hardest screen. Built on .data-table so it inherits the
+   horizontal scroll and the frozen first column (§11) — six columns never
+   fit 360px, and the period is what must stay in view while the rest moves. */
+/* An explicit min-width is what makes the grid SCROLL instead of squeezing.
+   Under table-layout:fixed a table sized to its container divides the width
+   evenly and ignores per-column minimums, which crammed all five days into
+   360px and broke "পদার্থবিজ্ঞান" across lines. Sized past the viewport
+   (56 + 5x104), the columns get their real width and .table-scroll does its
+   job — ~3 days visible at the 360px floor, exactly as §11 describes. */
+.routine-grid { table-layout: fixed; min-width: 576px; }
+.routine-grid th, .routine-grid td { padding: 2px; vertical-align: top; }
+.routine-grid thead th { width: 104px; text-align: center; font-size: var(--text-2xs); }
+.routine-grid thead th:first-child { width: 56px; }
+
+.routine-period { display: flex; flex-direction: column; align-items: flex-start;
+                  padding: var(--s-2) var(--s-1) !important; }
+.routine-period-no   { font-size: var(--text-sm); font-weight: 700;
+                       font-variant-numeric: tabular-nums; }
+.routine-period-time { font-size: var(--text-3xs); color: var(--c-ink-3);
+                       font-variant-numeric: tabular-nums; }
+
+/* The break spans the week as one band, as §8.1 draws it. */
+.routine-break { background: var(--c-surface-3); color: var(--c-ink-3);
+                 text-align: center; font-size: var(--text-2xs); padding: var(--s-2) !important; }
+
+.routine-cell { padding: 2px !important; }
+.routine-slot {
+  display: flex; flex-direction: column; gap: 1px;
+  width: 100%; min-height: var(--tap-min);          /* F-812, no exceptions */
+  padding: var(--s-2) var(--s-1);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+  background: var(--c-surface); color: var(--c-ink);
+  font: inherit; text-align: left; cursor: pointer; white-space: normal;
+}
+.routine-slot-subject { font-size: var(--text-2xs); font-weight: 700; line-height: 1.3; }
+.routine-slot-meta    { font-size: var(--text-3xs); color: var(--c-ink-2); line-height: 1.3; }
+.routine-slot-meta[data-missing='true'] { color: var(--c-warn); font-weight: 600; }
+.routine-slot-empty   { font-size: var(--text-3xs); color: var(--c-ink-3); }
+.routine-mark { margin-left: 3px; font-weight: 400; color: var(--c-primary); }
+
+/* Held. The picked-up class stays obvious while the coordinator scrolls the
+   grid looking for somewhere to put it — the whole reason this is a
+   selection and not a drag. */
+.routine-slot[data-selected='true'] {
+  border-color: var(--c-primary); background: var(--c-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--c-primary);
+}
+/* Reachable. Marked across the WHOLE grid at once while something is held —
+   the feedback a drag can only give for the one cell under the pointer.
+   Dashed, not filled: these are candidates the database has not yet blessed. */
+.routine-slot[data-target='true'] {
+  border-style: dashed; border-color: var(--c-primary); color: var(--c-primary-ink);
+}
+.routine-slot[data-pinned='true'] { background: var(--c-surface-3); }
+.routine-slot:disabled { cursor: default; opacity: 1; }
+.routine-slot[data-filled='false']:disabled { border-style: dashed; opacity: .6; }
+
+/* The pick-up banner: what is in hand, and what to do with it. */
+.editor-holding { margin: 0 var(--s-4) var(--s-3); padding: var(--s-3);
+                  display: grid; gap: var(--s-1); background: var(--c-primary-soft);
+                  border-color: transparent; }
+.editor-holding-what { margin: 0; font-size: var(--text-sm); font-weight: 700; }
+.editor-holding-how  { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
+.editor-holding .btn-secondary { margin: var(--s-1) 0 0; justify-self: start; }
+
+.editor-actions { padding: var(--s-4); }
+.editor-actions .btn-primary { width: 100%; }
+
 /* ── Bulk import (F-1601, wireframe §10.2) ─────────────────────────────
    The screen a head teacher meets on day one with 784 rows. Almost all of
    this is about the sixteen that are wrong. */

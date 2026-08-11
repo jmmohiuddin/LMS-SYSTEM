@@ -25,6 +25,7 @@ import { SikhokView } from './sikhok-view.ts';
 import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
 import { ExamRoutineView } from './exam-routine-view.ts';
+import { RoutineEditorView } from './routine-editor-view.ts';
 import { ImportView } from './import-view.ts';
 import { GenerationView } from './generation-view.ts';
 import { GuardianView } from './guardian-view.ts';
@@ -366,6 +367,7 @@ async function main() {
               { path: 'scripts', glyph: 'camera', titleBn: 'উত্তরপত্র আপলোড', subtitleBn: 'হাতে-লেখা উত্তরপত্রের ছবি' },
               { path: 'fees', glyph: 'wallet', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
               { path: 'substitute', glyph: 'repeat', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
+              { path: 'routineeditor', glyph: 'clock', titleBn: 'রুটিন সম্পাদনা', subtitleBn: 'ক্লাস সরান — সংঘর্ষ হলে কারণ জানায়' },
               { path: 'examroutine', glyph: 'alert-triangle', titleBn: 'পরীক্ষার রুটিন', subtitleBn: 'শিক্ষার্থীভিত্তিক সময় সংঘর্ষ যাচাই' },
               { path: 'import', glyph: 'upload', titleBn: 'শিক্ষার্থী আমদানি', subtitleBn: 'CSV থেকে — যাচাই করে, ভুল সারি বাদ দিয়ে' },
               { path: 'guardian', glyph: 'users', titleBn: 'আমার সন্তান', subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
@@ -439,6 +441,17 @@ async function main() {
         glyph: 'alert-triangle',
         hidden: true,
         mount: (container) => { new ExamRoutineView({ root: container, doc: document, auth }); },
+      },
+      {
+        // §8.1's routine editor. Mounted here, not only listed in the More
+        // menu — a menu entry whose route nobody registered is a dead link,
+        // and esbuild tree-shakes the unreferenced view out of the bundle
+        // entirely (see the guardian route above for how that shipped once).
+        path: 'routineeditor',
+        labelBn: 'রুটিন সম্পাদনা',
+        glyph: 'clock',
+        hidden: true,
+        mount: (container) => { new RoutineEditorView({ root: container, doc: document, auth }); },
       },
       {
         path: 'sikhok',

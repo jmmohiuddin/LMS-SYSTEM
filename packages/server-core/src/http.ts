@@ -58,10 +58,19 @@ export class HttpError extends Error {
   // under the project's `node --test file.ts` convention.
   readonly status: number;
   readonly code?: string;
+  /**
+   * Structured context spread into the error body alongside `error` and
+   * `message`. For refusals a screen has to act on rather than merely print —
+   * the routine editor naming the class that already owns an hour, say — a
+   * sentence is what the user reads and this is what the UI renders. Optional
+   * everywhere; an endpoint that has nothing to add omits it.
+   */
+  readonly detail?: Record<string, unknown>;
 
-  constructor(status: number, message: string, code?: string) {
+  constructor(status: number, message: string, code?: string, detail?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }

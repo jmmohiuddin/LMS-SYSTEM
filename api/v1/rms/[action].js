@@ -48,10 +48,19 @@ var HttpError = class extends Error {
   // under the project's `node --test file.ts` convention.
   status;
   code;
-  constructor(status, message2, code) {
+  /**
+   * Structured context spread into the error body alongside `error` and
+   * `message`. For refusals a screen has to act on rather than merely print —
+   * the routine editor naming the class that already owns an hour, say — a
+   * sentence is what the user reads and this is what the UI renders. Optional
+   * everywhere; an endpoint that has nothing to add omits it.
+   */
+  detail;
+  constructor(status, message2, code, detail) {
     super(message2);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 };
 
@@ -2414,12 +2423,12 @@ async function handler4(req, res) {
     requireRole(claims, EXAM_ROLES);
     const url = new URL(req.url ?? "/", "http://internal");
     let examId = url.searchParams.get("examId") ?? "";
-    let publish = false;
+    let publish2 = false;
     let reschedule = null;
     if (req.method === "POST") {
       const body = await readJson(req);
       examId = body.examId ?? examId;
-      publish = body.publish === true;
+      publish2 = body.publish === true;
       reschedule = body.reschedule ?? null;
       if (reschedule) {
         if (!UUID_RE3.test(reschedule.examSubjectId ?? "")) {
@@ -2485,7 +2494,7 @@ async function handler4(req, res) {
           throw new HttpError(404, "paper not found in this exam", "paper_not_found");
         }
       }
-      if (publish) {
+      if (publish2) {
         try {
           await client.query(`UPDATE exams SET status = 'published' WHERE id = $1`, [examId]);
           exam.rows[0].status = "published";
@@ -2809,9 +2818,257 @@ async function explainSlot(client, slotId) {
 var BN_DIGITS3 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
 var toBn = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS3[Number(d)]);
 
-// services/rms-svc/api/index.ts
-var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5 };
+// services/rms-svc/api/editor.ts
+var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var EDITOR_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var EDITABLE = /* @__PURE__ */ new Set(["draft", "review"]);
 async function handler6(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, EDITOR_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const sectionId = new URL(req.url ?? "/", "http://internal").searchParams.get("sectionId") ?? "";
+      if (!UUID_RE5.test(sectionId)) {
+        throw new HttpError(400, "sectionId must be a valid uuid", "invalid_section_id");
+      }
+      json(res, 200, await db.withTenant(ctx, (c) => loadGrid(c, sectionId)), cors);
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      if (body.action === "move") {
+        json(res, 200, await db.withTenant(ctx, (c) => move(c, body)), cors);
+        return;
+      }
+      if (body.action === "publish") {
+        json(res, 200, await db.withTenant(ctx, (c) => publish(c, claims.sub, body.routineId ?? "")), cors);
+        return;
+      }
+      throw new HttpError(400, "action must be 'move' or 'publish'", "invalid_action");
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function loadGrid(c, sectionId) {
+  const r = await c.query(
+    `SELECT rt.id, rt.name_bn, rt.shift, rt.status, rt.version, rt.published_at,
+            rt.period_template_id,
+            cl.name_bn || '-' || sec.name AS section_label
+       FROM sections sec
+       JOIN classes cl          ON cl.id = sec.class_id
+       JOIN academic_years y    ON y.id = sec.academic_year_id AND y.is_current
+       JOIN routines rt         ON rt.academic_year_id = y.id
+      WHERE sec.id = $1
+        AND rt.status IN ('draft','review','active')
+      ORDER BY CASE rt.status WHEN 'draft' THEN 0 WHEN 'review' THEN 1 ELSE 2 END,
+               rt.version DESC
+      LIMIT 1`,
+    [sectionId]
+  );
+  const routine = r.rows[0];
+  if (!routine) {
+    return { routine: null, periods: [], slots: [], sectionId };
+  }
+  const periods = await c.query(
+    `SELECT period_no, label_bn, starts_at, ends_at, kind
+       FROM period_definitions
+      WHERE template_id = $1
+      ORDER BY period_no`,
+    [routine.period_template_id]
+  );
+  const slots = await c.query(
+    `SELECT s.id, s.day_of_week, s.period_no,
+            sub.name_bn AS subject_bn,
+            u.full_name_bn AS teacher_name,
+            rm.name AS room_name,
+            s.is_double, s.double_group_id, s.parallel_pool, s.is_pinned, s.row_version
+       FROM routine_slots s
+       LEFT JOIN subjects sub ON sub.id = s.subject_id
+       LEFT JOIN users u      ON u.id = s.teacher_id
+       LEFT JOIN rooms rm     ON rm.id = s.room_id
+      WHERE s.routine_id = $1 AND s.primary_section_id = $2 AND s.status = 'active'
+      ORDER BY s.day_of_week, s.period_no`,
+    [routine.id, sectionId]
+  );
+  return {
+    sectionId,
+    routine: {
+      id: routine.id,
+      nameBn: routine.name_bn,
+      shift: routine.shift,
+      status: routine.status,
+      version: routine.version,
+      publishedAt: routine.published_at,
+      editable: EDITABLE.has(routine.status),
+      sectionLabel: routine.section_label
+    },
+    periods: periods.rows.map((p) => ({
+      periodNo: p.period_no,
+      labelBn: p.label_bn,
+      startsAt: String(p.starts_at).slice(0, 5),
+      endsAt: String(p.ends_at).slice(0, 5),
+      kind: p.kind
+    })),
+    slots: slots.rows.map((s) => ({
+      id: s.id,
+      dayOfWeek: s.day_of_week,
+      periodNo: s.period_no,
+      subjectBn: s.subject_bn,
+      teacherName: s.teacher_name,
+      roomName: s.room_name,
+      isDouble: s.is_double,
+      doubleGroupId: s.double_group_id,
+      parallelPool: s.parallel_pool,
+      isPinned: s.is_pinned,
+      rowVersion: s.row_version
+    }))
+  };
+}
+async function move(c, body) {
+  const slotId = body.slotId ?? "";
+  if (!UUID_RE5.test(slotId)) throw new HttpError(400, "slotId must be a valid uuid", "invalid_slot_id");
+  const day2 = Number(body.dayOfWeek);
+  const periodNo = Number(body.periodNo);
+  if (!Number.isInteger(day2) || day2 < 0 || day2 > 6) {
+    throw new HttpError(400, "dayOfWeek must be 0-6", "invalid_day");
+  }
+  if (!Number.isInteger(periodNo)) throw new HttpError(400, "periodNo is required", "invalid_period");
+  const cur = await c.query(
+    `SELECT s.routine_id, rt.status, s.is_double, s.double_group_id, s.is_pinned,
+            s.teacher_id, s.room_id, s.primary_section_id, rt.period_template_id
+       FROM routine_slots s
+       JOIN routines rt ON rt.id = s.routine_id
+      WHERE s.id = $1 AND s.status = 'active'`,
+    [slotId]
+  );
+  const slot = cur.rows[0];
+  if (!slot) throw new HttpError(404, "slot not found", "slot_not_found");
+  if (!EDITABLE.has(slot.status)) {
+    throw new HttpError(
+      409,
+      "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "routine_not_editable"
+    );
+  }
+  if (slot.is_pinned) {
+    throw new HttpError(409, "\u098F\u0987 \u0995\u09CD\u09B2\u09BE\u09B8\u099F\u09BF \u09AA\u09BF\u09A8 \u0995\u09B0\u09BE \u2014 \u0986\u0997\u09C7 \u09AA\u09BF\u09A8 \u09B8\u09B0\u09BE\u09A8\u0964", "slot_pinned");
+  }
+  if (slot.is_double || slot.double_group_id) {
+    throw new HttpError(
+      409,
+      "\u09A6\u09CD\u09AC\u09C8\u09A4 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09B8\u09B0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u09A6\u09C1\u099F\u09BF \u0985\u0982\u09B6 \u098F\u0995\u09B8\u09BE\u09A5\u09C7\u0987 \u09A5\u09BE\u0995\u09C7\u0964",
+      "double_period_indivisible"
+    );
+  }
+  const pd = await c.query(
+    `SELECT id, starts_at, ends_at, kind
+       FROM period_definitions WHERE template_id = $1 AND period_no = $2`,
+    [slot.period_template_id, periodNo]
+  );
+  const target = pd.rows[0];
+  if (!target) throw new HttpError(400, "no such period in this routine", "unknown_period");
+  if (target.kind !== "teaching") {
+    throw new HttpError(409, "\u09AC\u09BF\u09B0\u09A4\u09BF\u09B0 \u0998\u09B0\u09C7 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE\u0964", "period_not_teaching");
+  }
+  try {
+    await c.query(
+      `UPDATE routine_slots
+          SET day_of_week = $2, period_no = $3, period_definition_id = $4,
+              starts_at = $5, ends_at = $6,
+              row_version = row_version + 1, updated_at = now()
+        WHERE id = $1`,
+      [slotId, day2, periodNo, target.id, target.starts_at, target.ends_at]
+    );
+  } catch (err) {
+    const e = err;
+    if (e.code === "23P01") {
+      throw await explainConflict(c, e.constraint ?? "", slot, day2, target.starts_at, target.ends_at);
+    }
+    if (e.code === "P0001") {
+      throw new HttpError(409, e.message ?? "\u09B8\u09AE\u09BE\u09A8\u09CD\u09A4\u09B0\u09BE\u09B2 \u09AC\u09CD\u09B2\u0995\u09C7\u09B0 \u09A8\u09BF\u09AF\u09BC\u09AE \u09AD\u09C7\u0999\u09C7 \u09AF\u09BE\u099A\u09CD\u099B\u09C7\u0964", "parallel_block_conflict");
+    }
+    throw err;
+  }
+  return { ok: true, slotId };
+}
+async function explainConflict(c, constraint, slot, day2, startsAt, endsAt) {
+  const dims = {
+    rs_no_teacher_double_booking: { col: "teacher_id", id: slot.teacher_id, code: "teacher_busy" },
+    rs_no_room_double_booking: { col: "room_id", id: slot.room_id, code: "room_busy" },
+    rs_no_section_double_booking: { col: "primary_section_id", id: slot.primary_section_id, code: "section_busy" }
+  };
+  const dim = dims[constraint];
+  if (!dim || !dim.id) {
+    return new HttpError(409, "\u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u0986\u09B0\u09C7\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099B\u09C7\u0964", "slot_conflict");
+  }
+  const r = await c.query(
+    `SELECT sub.name_bn AS subject_bn, u.full_name_bn AS teacher_name, rm.name AS room_name,
+            cl.name_bn || '-' || sec.name AS section_label
+       FROM routine_slots s
+       LEFT JOIN subjects sub ON sub.id = s.subject_id
+       LEFT JOIN users u      ON u.id = s.teacher_id
+       LEFT JOIN rooms rm     ON rm.id = s.room_id
+       LEFT JOIN sections sec ON sec.id = s.primary_section_id
+       LEFT JOIN classes cl   ON cl.id = sec.class_id
+      WHERE s.routine_id = $1 AND s.status = 'active' AND s.day_of_week = $2
+        AND s.${dim.col} = $3
+        AND s.starts_at < $5::time AND s.ends_at > $4::time
+      LIMIT 1`,
+    [slot.routine_id, day2, dim.id, startsAt, endsAt]
+  );
+  const other = r.rows[0];
+  if (!other) return new HttpError(409, "\u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u0986\u09B0\u09C7\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099B\u09C7\u0964", "slot_conflict");
+  const cls = other.section_label ?? "\u0985\u09A8\u09CD\u09AF \u09B6\u09BE\u0996\u09BE";
+  const subj = other.subject_bn ?? "\u0995\u09CD\u09B2\u09BE\u09B8";
+  const msg = dim.code === "teacher_busy" ? `${other.teacher_name ?? "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995"} \u09A4\u0996\u09A8 ${cls}-\u098F ${subj} \u09AA\u09A1\u09BC\u09BE\u099A\u09CD\u099B\u09C7\u09A8\u0964` : dim.code === "room_busy" ? `${other.room_name ?? "\u098F\u0987 \u0995\u0995\u09CD\u09B7"} \u09A4\u0996\u09A8 ${cls}-\u098F\u09B0 ${subj} \u0995\u09CD\u09B2\u09BE\u09B8\u09C7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09C3\u09A4 \u09B9\u099A\u09CD\u099B\u09C7\u0964` : `\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09B0 \u09A4\u0996\u09A8 ${subj} \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099B\u09C7\u0964`;
+  return new HttpError(409, msg, dim.code, {
+    conflict: {
+      subjectBn: other.subject_bn,
+      teacherName: other.teacher_name,
+      roomName: other.room_name,
+      sectionLabel: other.section_label
+    }
+  });
+}
+async function publish(c, userId, routineId) {
+  if (!UUID_RE5.test(routineId)) throw new HttpError(400, "routineId must be a valid uuid", "invalid_routine_id");
+  const r = await c.query(
+    `SELECT rt.status,
+            (SELECT count(*) FROM routine_slots s
+              WHERE s.routine_id = rt.id AND s.status = 'active'
+                AND s.slot_kind = 'teaching' AND s.teacher_id IS NULL) AS unfilled
+       FROM routines rt WHERE rt.id = $1`,
+    [routineId]
+  );
+  const rt = r.rows[0];
+  if (!rt) throw new HttpError(404, "routine not found", "routine_not_found");
+  if (!EDITABLE.has(rt.status)) {
+    throw new HttpError(409, "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7\u0987 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4\u0964", "already_published");
+  }
+  await c.query(
+    `UPDATE routines SET status = 'active', published_at = now(), published_by = $2 WHERE id = $1`,
+    [routineId, userId]
+  );
+  return { ok: true, unfilled: Number(rt.unfilled) };
+}
+
+// services/rms-svc/api/index.ts
+var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5, editor: handler6 };
+async function handler7(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -2826,5 +3083,5 @@ async function handler6(req, res) {
   return route(req, res);
 }
 export {
-  handler6 as default
+  handler7 as default
 };

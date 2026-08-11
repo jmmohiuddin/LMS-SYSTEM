@@ -654,6 +654,65 @@ export class DemoAuth extends Auth {
         return ok({ scope: 'day', date, slots: daySlots(date) });
       }
 
+      case '/api/v1/rms/editor': {
+        // §8.1's grid. The demo carries a deliberate mix: an unfilled cell, a
+        // parallel religion block, a double practical, and a pinned slot —
+        // the four states the editor has to render differently. Moves are
+        // answered by the same conflict shape the real endpoint returns, so
+        // the refusal path is demonstrable without a database.
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { action?: string; periodNo?: number };
+          if (req.action === 'publish') return ok({ ok: true, unfilled: 1 });
+          // Period 2 is where the demo's Rafiq is already teaching 9-খ, so
+          // moving onto it shows the named refusal rather than a shrug.
+          if (req.periodNo === 2) {
+            return new Response(JSON.stringify({
+              error: 'teacher_busy',
+              message: 'রফিক ইসলাম তখন নবম-খ-তে গণিত পড়াচ্ছেন।',
+              conflict: { subjectBn: 'গণিত', teacherName: 'রফিক ইসলাম', sectionLabel: 'নবম-খ' },
+            }), { status: 409, headers: { 'content-type': 'application/json' } });
+          }
+          return ok({ ok: true, slotId: 'demo-slot-1' });
+        }
+        const mk = (id: string, dow: number, periodNo: number, subject: string,
+                    teacher: string | null, room: string | null,
+                    extra: Record<string, unknown> = {}) => ({
+          id, dayOfWeek: dow, periodNo, subjectBn: subject, teacherName: teacher,
+          roomName: room, isDouble: false, doubleGroupId: null, parallelPool: null,
+          isPinned: false, rowVersion: 1, ...extra,
+        });
+        return ok({
+          sectionId: 'demo-sec-1',
+          routine: {
+            id: 'demo-routine-1', nameBn: 'নিয়মিত রুটিন', shift: 'morning',
+            status: 'draft', version: 2, publishedAt: null, editable: true,
+            sectionLabel: 'নবম-ক',
+          },
+          periods: [
+            { periodNo: 1, labelBn: 'পিরিয়ড ১', startsAt: '09:00', endsAt: '09:40', kind: 'teaching' },
+            { periodNo: 2, labelBn: 'পিরিয়ড ২', startsAt: '09:45', endsAt: '10:25', kind: 'teaching' },
+            { periodNo: 3, labelBn: 'বিরতি', startsAt: '10:25', endsAt: '10:50', kind: 'break' },
+            { periodNo: 4, labelBn: 'পিরিয়ড ৩', startsAt: '10:50', endsAt: '11:30', kind: 'teaching' },
+            { periodNo: 5, labelBn: 'পিরিয়ড ৪', startsAt: '11:35', endsAt: '12:15', kind: 'teaching' },
+          ],
+          slots: [
+            mk('demo-slot-1', 0, 1, 'গণিত', 'রফিক ইসলাম', '১০৩'),
+            mk('demo-slot-2', 1, 1, 'বাংলা', 'সালমা খাতুন', '১০৩'),
+            mk('demo-slot-3', 2, 1, 'গণিত', 'রফিক ইসলাম', '১০৩'),
+            mk('demo-slot-4', 3, 1, 'ইংরেজি', 'করিম উদ্দিন', '১০৩'),
+            mk('demo-slot-5', 4, 1, 'পদার্থবিজ্ঞান', 'নাসরিন আক্তার', '১০৩'),
+            mk('demo-slot-6', 0, 2, 'ধর্ম শিক্ষা', 'একাধিক', '৩টি কক্ষ', { parallelPool: 'religion' }),
+            mk('demo-slot-7', 1, 2, 'রসায়ন', 'আমিনুল হক', '২০১'),
+            mk('demo-slot-8', 2, 2, 'জীববিজ্ঞান', 'শিরিন আক্তার', '১০৩', { isPinned: true }),
+            mk('demo-slot-9', 0, 4, 'পদার্থ ব্যবহারিক', 'নাসরিন আক্তার', 'ল্যাব ১',
+               { isDouble: true, doubleGroupId: 'demo-dbl-1' }),
+            mk('demo-slot-10', 1, 4, 'ইংরেজি', 'করিম উদ্দিন', '১০৩'),
+            mk('demo-slot-11', 3, 4, 'রসায়ন', null, 'ল্যাব ২'),
+            mk('demo-slot-12', 0, 5, 'বাংলা', 'সালমা খাতুন', '১০৩'),
+          ],
+        });
+      }
+
       case '/api/v1/rms/substitute': {
         const req = JSON.parse(String(init.body ?? '{}')) as { assign?: boolean };
         if (req.assign) return ok({ ok: true, substitutionId: 'demo-substitution-1' });

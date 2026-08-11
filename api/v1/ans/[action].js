@@ -119,10 +119,19 @@ var HttpError = class extends Error {
   // under the project's `node --test file.ts` convention.
   status;
   code;
-  constructor(status, message, code) {
+  /**
+   * Structured context spread into the error body alongside `error` and
+   * `message`. For refusals a screen has to act on rather than merely print —
+   * the routine editor naming the class that already owns an hour, say — a
+   * sentence is what the user reads and this is what the UI renders. Optional
+   * everywhere; an endpoint that has nothing to add omits it.
+   */
+  detail;
+  constructor(status, message, code, detail) {
     super(message);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 };
 

@@ -254,31 +254,52 @@ const DEMO_PRACTICE = [
   },
 ];
 
+/**
+ * F-805 demo data, built to wireframe §6.5's own example: a Class 9 Science
+ * student with an optional 4th subject, so the mandatory footnote and the
+ * ⁴ superscript both render. Three terms, so the trend row has something to
+ * show.
+ */
 const DEMO_RESULTS = [
   {
-    examId: 'demo-exam-half', examNameBn: 'অর্ধ-বার্ষিক পরীক্ষা ২০২৬', examType: 'half_yearly',
-    totalMarks: '412.00', totalMax: '500.00', percentage: '82.40',
-    gpa: '4.50', letterGrade: 'A', subjectsFailed: 0, isPass: true,
-    rankInSection: 7, publishedAt: '2026-07-20T10:00:00Z',
+    examId: 'demo-ex-3', examNameBn: 'বার্ষিক পরীক্ষা', examType: 'term',
+    totalMarks: '742', totalMax: '900', percentage: '82.4', gpa: '4.72',
+    letterGrade: 'A+', subjectsFailed: 0, isPass: true, rankInSection: 5,
+    publishedAt: '2026-08-12T09:00:00Z',
     subjects: [
-      { subjectBn: 'বাংলা', totalMarks: '78.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
-      { subjectBn: 'ইংরেজি', totalMarks: '71.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
-      { subjectBn: 'গণিত', totalMarks: '92.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
-      { subjectBn: 'পদার্থবিজ্ঞান', totalMarks: '88.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
-      { subjectBn: 'রসায়ন', totalMarks: '83.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
+      { subjectBn: 'বাংলা', cqMarks: '52', mcqMarks: '23', practicalMarks: null, caMarks: null, totalMarks: '75', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'ইংরেজি', cqMarks: '55', mcqMarks: '22', practicalMarks: null, caMarks: null, totalMarks: '77', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'গণিত', cqMarks: '58', mcqMarks: '26', practicalMarks: null, caMarks: null, totalMarks: '84', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'পদার্থবিজ্ঞান', cqMarks: '44', mcqMarks: '19', practicalMarks: '22', caMarks: null, totalMarks: '85', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false, requirementType: 'group_compulsory' },
+      { subjectBn: 'রসায়ন', cqMarks: '41', mcqMarks: '18', practicalMarks: '21', caMarks: null, totalMarks: '80', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false, requirementType: 'group_compulsory' },
+      { subjectBn: 'জীববিজ্ঞান', cqMarks: '38', mcqMarks: '17', practicalMarks: '20', caMarks: null, totalMarks: '75', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'group_compulsory' },
+      { subjectBn: 'ইসলাম ও নৈতিক শিক্ষা', cqMarks: '48', mcqMarks: '21', practicalMarks: null, caMarks: null, totalMarks: '69', gradeLetter: 'A-', gradePoint: '3.50', isAbsent: false, requirementType: 'religion_variant' },
+      { subjectBn: 'উচ্চতর গণিত', cqMarks: '44', mcqMarks: '20', practicalMarks: null, caMarks: null, totalMarks: '64', gradeLetter: 'A-', gradePoint: '3.50', isAbsent: false, requirementType: 'optional' },
     ],
   },
   {
-    examId: 'demo-exam-first', examNameBn: 'প্রথম সাময়িক পরীক্ষা ২০২৬', examType: 'term',
-    totalMarks: '365.00', totalMax: '500.00', percentage: '73.00',
-    gpa: '4.00', letterGrade: 'A', subjectsFailed: 0, isPass: true,
-    rankInSection: 11, publishedAt: '2026-04-15T10:00:00Z',
+    examId: 'demo-ex-2', examNameBn: 'দ্বিতীয় সাময়িক', examType: 'term',
+    totalMarks: '688', totalMax: '900', percentage: '76.4', gpa: '4.31',
+    letterGrade: 'A', subjectsFailed: 0, isPass: true, rankInSection: 9,
+    publishedAt: '2026-05-20T09:00:00Z',
     subjects: [
-      { subjectBn: 'বাংলা', totalMarks: '70.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
-      { subjectBn: 'ইংরেজি', totalMarks: '64.00', gradeLetter: 'A-', gradePoint: '3.50', isAbsent: false },
-      { subjectBn: 'গণিত', totalMarks: '81.00', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false },
-      { subjectBn: 'পদার্থবিজ্ঞান', totalMarks: '75.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
-      { subjectBn: 'রসায়ন', totalMarks: '75.00', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false },
+      { subjectBn: 'বাংলা', cqMarks: '46', mcqMarks: '20', practicalMarks: null, caMarks: null, totalMarks: '66', gradeLetter: 'A-', gradePoint: '3.50', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'গণিত', cqMarks: '50', mcqMarks: '24', practicalMarks: null, caMarks: null, totalMarks: '74', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'পদার্থবিজ্ঞান', cqMarks: '40', mcqMarks: '16', practicalMarks: '19', caMarks: null, totalMarks: '75', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'group_compulsory' },
+      { subjectBn: 'উচ্চতর গণিত', cqMarks: '39', mcqMarks: '18', practicalMarks: null, caMarks: null, totalMarks: '57', gradeLetter: 'B', gradePoint: '3.00', isAbsent: false, requirementType: 'optional' },
+    ],
+  },
+  {
+    examId: 'demo-ex-1', examNameBn: 'প্রথম সাময়িক', examType: 'term',
+    totalMarks: '702', totalMax: '900', percentage: '78.0', gpa: '4.56',
+    letterGrade: 'A', subjectsFailed: 0, isPass: true, rankInSection: 7,
+    publishedAt: '2026-02-18T09:00:00Z',
+    subjects: [
+      { subjectBn: 'বাংলা', cqMarks: '48', mcqMarks: '22', practicalMarks: null, caMarks: null, totalMarks: '70', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'ইংরেজি', cqMarks: '52', mcqMarks: '20', practicalMarks: null, caMarks: null, totalMarks: '72', gradeLetter: 'A', gradePoint: '4.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'গণিত', cqMarks: '55', mcqMarks: '25', practicalMarks: null, caMarks: null, totalMarks: '80', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false, requirementType: 'compulsory' },
+      { subjectBn: 'পদার্থবিজ্ঞান', cqMarks: '42', mcqMarks: '18', practicalMarks: '21', caMarks: null, totalMarks: '81', gradeLetter: 'A+', gradePoint: '5.00', isAbsent: false, requirementType: 'group_compulsory' },
+      { subjectBn: 'উচ্চতর গণিত', cqMarks: '44', mcqMarks: '20', practicalMarks: null, caMarks: null, totalMarks: '64', gradeLetter: 'A-', gradePoint: '3.50', isAbsent: false, requirementType: 'optional' },
     ],
   },
 ];

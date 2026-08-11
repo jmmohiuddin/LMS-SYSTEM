@@ -58,14 +58,35 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                   COALESCE((
                     SELECT jsonb_agg(jsonb_build_object(
                              'subjectBn', sub.name_bn,
+                             -- Wireframe §6.5: the component breakdown is
+                             -- always visible. It is the board's own
+                             -- structure, and collapsing it to a total
+                             -- hides which half of the paper went wrong.
+                             'cqMarks', m.cq_marks::text,
+                             'mcqMarks', m.mcq_marks::text,
+                             'practicalMarks', m.practical_marks::text,
+                             'caMarks', m.ca_marks::text,
                              'totalMarks', m.total_marks::text,
                              'gradeLetter', m.grade_letter,
                              'gradePoint', m.grade_point::text,
-                             'isAbsent', m.is_absent)
+                             'isAbsent', m.is_absent,
+                             'componentFailed', m.component_failed,
+                             -- Drives the mandatory optional-subject
+                             -- footnote (F-709, wireframe §6.5). Read from
+                             -- the student's OWN derived set where it
+                             -- exists, falling back to the subject flag for
+                             -- schools not yet on subject templates.
+                             'requirementType',
+                               COALESCE(ss.requirement_type,
+                                        CASE WHEN sub.is_optional THEN 'optional' END))
                            ORDER BY sub.name_bn)
                       FROM exam_marks m
                       JOIN exam_subjects es ON es.id = m.exam_subject_id
                       JOIN subjects sub ON sub.id = es.subject_id
+                      LEFT JOIN enrolments en
+                        ON en.student_id = m.student_id AND en.status = 'active'
+                      LEFT JOIN student_subjects ss
+                        ON ss.enrolment_id = en.id AND ss.subject_id = sub.id
                      WHERE es.exam_id = r.exam_id AND m.student_id = r.student_id
                   ), '[]'::jsonb) AS subjects
              FROM exam_results r

@@ -1,7 +1,7 @@
 /**
  * Practice (অনুশীলন) — one question at a time, immediate feedback.
  *
- * Mounted at the end of a lesson by learn-view.ts. Deliberately NOT a
+ * Mounted at the end of a topic by learn-view.ts. Deliberately NOT a
  * quiz: there is no score, no pass mark, and retrying is encouraged. The
  * only thing being measured is the signal V3 needs — did they get it, and
  * how long did it take.

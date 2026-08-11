@@ -213,7 +213,7 @@ const DEMO_NEXT = [
     refId: 'demo-l-3', urgency: 'medium',
   },
   {
-    kind: 'continue_lesson', titleBn: 'পড়ন্ত বস্তুর গতি',
+    kind: 'continue_topic', titleBn: 'পড়ন্ত বস্তুর গতি',
     whyBn: 'অধ্যায় ৫: গতি অধ্যায়টি শেষ করো', route: 'learn',
     refId: 'demo-l-4', urgency: 'medium',
   },
@@ -290,7 +290,7 @@ const DEMO_CHAPTERS = [
     summaryBn: 'সরণ, দ্রুতি, বেগ ও ত্বরণের ধারণা এবং নিউটনের সূত্র।',
     estMinutes: 90, isPublished: true,
     subject: { id: 'demo-sub-phy', bn: 'পদার্থবিজ্ঞান', en: 'Physics' },
-    prerequisite: null, lessonCount: 4, completedCount: 2,
+    prerequisite: null, topicCount: 4, completedCount: 2,
   },
   {
     id: 'demo-ch-2', chapterNo: 6,
@@ -299,7 +299,7 @@ const DEMO_CHAPTERS = [
     estMinutes: 120, isPublished: true,
     subject: { id: 'demo-sub-phy', bn: 'পদার্থবিজ্ঞান', en: 'Physics' },
     prerequisite: { id: 'demo-ch-1', nameBn: 'অধ্যায় ৫: গতি' },
-    lessonCount: 5, completedCount: 0,
+    topicCount: 5, completedCount: 0,
   },
   {
     id: 'demo-ch-3', chapterNo: 3,
@@ -307,21 +307,21 @@ const DEMO_CHAPTERS = [
     summaryBn: 'উৎপাদক বিশ্লেষণ ও দ্বিঘাত সমীকরণের সমাধান।',
     estMinutes: 100, isPublished: true,
     subject: { id: 'demo-sub-math', bn: 'গণিত', en: 'Mathematics' },
-    prerequisite: null, lessonCount: 4, completedCount: 4,
+    prerequisite: null, topicCount: 4, completedCount: 4,
   },
 ];
 
-const DEMO_LESSONS = [
-  { id: 'demo-l-1', lessonNo: 1, title: { bn: 'সরণ ও দূরত্ব', en: null }, estMinutes: 20, isPublished: true, progress: { state: 'completed', secondsSpent: 1180 } },
-  { id: 'demo-l-2', lessonNo: 2, title: { bn: 'দ্রুতি ও বেগ', en: null }, estMinutes: 25, isPublished: true, progress: { state: 'completed', secondsSpent: 1420 } },
-  { id: 'demo-l-3', lessonNo: 3, title: { bn: 'ত্বরণ', en: null }, estMinutes: 20, isPublished: true, progress: { state: 'started', secondsSpent: 310 } },
-  { id: 'demo-l-4', lessonNo: 4, title: { bn: 'গতির সমীকরণ', en: null }, estMinutes: 25, isPublished: true, progress: null },
+const DEMO_TOPICS = [
+  { id: 'demo-l-1', topicNo: 1, title: { bn: 'সরণ ও দূরত্ব', en: null }, estMinutes: 20, isPublished: true, progress: { state: 'completed', secondsSpent: 1180 } },
+  { id: 'demo-l-2', topicNo: 2, title: { bn: 'দ্রুতি ও বেগ', en: null }, estMinutes: 25, isPublished: true, progress: { state: 'completed', secondsSpent: 1420 } },
+  { id: 'demo-l-3', topicNo: 3, title: { bn: 'ত্বরণ', en: null }, estMinutes: 20, isPublished: true, progress: { state: 'started', secondsSpent: 310 } },
+  { id: 'demo-l-4', topicNo: 4, title: { bn: 'গতির সমীকরণ', en: null }, estMinutes: 25, isPublished: true, progress: null },
 ];
 
-function demoLesson(lessonId: string) {
+function demoTopic(topicId: string) {
   return {
-    lesson: {
-      id: lessonId, lessonNo: 3,
+    topic: {
+      id: topicId, topicNo: 3,
       title: { bn: 'ত্বরণ', en: 'Acceleration' },
       estMinutes: 20,
       chapter: { id: 'demo-ch-1', nameBn: 'অধ্যায় ৫: গতি' },
@@ -470,7 +470,7 @@ export class DemoAuth extends Auth {
         return ok({ suggestions: DEMO_NEXT });
 
       case '/api/v1/academics/practice':
-        return ok({ lessonId: url.searchParams.get('lessonId') ?? 'demo-l-3', questions: DEMO_PRACTICE });
+        return ok({ topicId: url.searchParams.get('topicId') ?? 'demo-l-3', questions: DEMO_PRACTICE });
 
       case '/api/v1/academics/results':
         return ok({ studentId: 'demo-s1', results: DEMO_RESULTS });
@@ -478,12 +478,12 @@ export class DemoAuth extends Auth {
       case '/api/v1/academics/chapters':
         return ok({ chapters: DEMO_CHAPTERS });
 
-      case '/api/v1/academics/lessons': {
-        const lessonId = url.searchParams.get('lessonId');
-        if (lessonId) return ok(demoLesson(lessonId));
+      case '/api/v1/academics/topics': {
+        const topicId = url.searchParams.get('topicId');
+        if (topicId) return ok(demoTopic(topicId));
         return ok({
           chapterId: url.searchParams.get('chapterId') ?? 'demo-ch-1',
-          lessons: DEMO_LESSONS,
+          topics: DEMO_TOPICS,
         });
       }
 

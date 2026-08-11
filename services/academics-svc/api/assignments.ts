@@ -51,7 +51,7 @@ interface CreateBody {
   sectionId?: string;
   subjectId?: string;
   academicYearId?: string;
-  lessonId?: string | null;
+  topicId?: string | null;
   titleBn?: string;
   instructionsBn?: string;
   maxMarks?: number | null;
@@ -210,14 +210,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       const created = await db.withTenant(ctx, async (client) => {
         const r = await client.query<{ id: string }>(
           `INSERT INTO assignments
-             (tenant_id, section_id, subject_id, academic_year_id, lesson_id,
+             (tenant_id, section_id, subject_id, academic_year_id, topic_id,
               title_bn, instructions_bn, max_marks, due_at, allows_late,
               created_by, status)
            VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING id`,
           [
             sectionId, subjectId, academicYearId,
-            body.lessonId && UUID_RE.test(body.lessonId) ? body.lessonId : null,
+            body.topicId && UUID_RE.test(body.topicId) ? body.topicId : null,
             titleBn, body.instructionsBn ?? null,
             body.maxMarks ?? null, dueAt, body.allowsLate ?? true,
             claims.sub, body.status === 'draft' ? 'draft' : 'open',

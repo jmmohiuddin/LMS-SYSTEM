@@ -1,7 +1,7 @@
 /**
- * GET /api/v1/academics/practice?lessonId=
+ * GET /api/v1/academics/practice?topicId=
  *
- * Practice questions for one lesson, with the student's own attempt
+ * Practice questions for one topic, with the student's own attempt
  * history folded in so the UI can show "you got this right last time"
  * without a second request.
  *
@@ -38,9 +38,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   try {
     const claims = await authenticate(req);
-    const lessonId = query(req).get('lessonId') ?? '';
-    if (!UUID_RE.test(lessonId)) {
-      throw new HttpError(400, 'lessonId must be a valid uuid', 'invalid_lesson_id');
+    const topicId = query(req).get('topicId') ?? '';
+    if (!UUID_RE.test(topicId)) {
+      throw new HttpError(400, 'topicId must be a valid uuid', 'invalid_topic_id');
     }
 
     const db = await sharedDb();
@@ -71,16 +71,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                     WHERE a.question_id = q.id AND a.student_id = $2
                     ORDER BY a.attempt_no DESC LIMIT 1) AS last_response_ms
              FROM practice_questions q
-            WHERE q.lesson_id = $1 AND q.is_published
+            WHERE q.topic_id = $1 AND q.is_published
             ORDER BY q.question_no`,
-          [lessonId, claims.sub],
+          [topicId, claims.sub],
         );
         return qs.rows;
       },
     );
 
     json(res, 200, {
-      lessonId,
+      topicId,
       questions: result.map((q) => ({
         id: q.id,
         questionNo: q.question_no,

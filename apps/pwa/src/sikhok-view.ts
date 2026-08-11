@@ -1,7 +1,7 @@
 /**
  * SikhokAI (শিক্ষক সহায়ক) — the teacher co-pilot page.
  *
- * A form over POST /api/v1/ai/sikhok: task type (CQ / MCQ / rubric / lesson
+ * A form over POST /api/v1/ai/sikhok: task type (CQ / MCQ / rubric / topic
  * plan), class level, subject, optional chapter and instructions. The
  * response is NCTB-bounded generated Markdown, rendered as preformatted
  * text (no client-side Markdown engine on a 2 GB device budget — the

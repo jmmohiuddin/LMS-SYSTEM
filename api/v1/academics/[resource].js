@@ -1844,11 +1844,11 @@ async function handler7(req, res) {
                   ch.subject_id, s.name_bn AS subject_bn, s.name_en AS subject_en,
                   ch.prerequisite_chapter_id,
                   pre.name_bn AS prerequisite_name_bn,
-                  (SELECT count(*)::int FROM lessons l
-                    WHERE l.chapter_id = ch.id AND l.is_published) AS lesson_count,
-                  (SELECT count(*)::int FROM lessons l
-                     JOIN lesson_progress lp
-                       ON lp.lesson_id = l.id
+                  (SELECT count(*)::int FROM topics l
+                    WHERE l.chapter_id = ch.id AND l.is_published) AS topic_count,
+                  (SELECT count(*)::int FROM topics l
+                     JOIN topic_progress lp
+                       ON lp.topic_id = l.id
                       AND lp.student_id = $3
                       AND lp.state = 'completed'
                     WHERE l.chapter_id = ch.id AND l.is_published) AS completed_count
@@ -1873,7 +1873,7 @@ async function handler7(req, res) {
         isPublished: c.is_published,
         subject: { id: c.subject_id, bn: c.subject_bn, en: c.subject_en },
         prerequisite: c.prerequisite_chapter_id ? { id: c.prerequisite_chapter_id, nameBn: c.prerequisite_name_bn } : null,
-        lessonCount: c.lesson_count,
+        topicCount: c.topic_count,
         completedCount: c.completed_count
       }))
     }, cors);
@@ -1887,7 +1887,7 @@ async function handler7(req, res) {
   }
 }
 
-// services/academics-svc/api/lessons.ts
+// services/academics-svc/api/topics.ts
 var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler8(req, res) {
   const cors = corsHeaders();
@@ -1904,51 +1904,51 @@ async function handler8(req, res) {
     const claims = await authenticate(req);
     const q = query(req);
     const chapterId = q.get("chapterId") ?? "";
-    const lessonId = q.get("lessonId") ?? "";
-    if (!chapterId && !lessonId) {
-      throw new HttpError(400, "chapterId or lessonId is required", "missing_parameter");
+    const topicId = q.get("topicId") ?? "";
+    if (!chapterId && !topicId) {
+      throw new HttpError(400, "chapterId or topicId is required", "missing_parameter");
     }
     if (chapterId && !UUID_RE7.test(chapterId)) {
       throw new HttpError(400, "chapterId must be a valid uuid", "invalid_chapter_id");
     }
-    if (lessonId && !UUID_RE7.test(lessonId)) {
-      throw new HttpError(400, "lessonId must be a valid uuid", "invalid_lesson_id");
+    if (topicId && !UUID_RE7.test(topicId)) {
+      throw new HttpError(400, "topicId must be a valid uuid", "invalid_topic_id");
     }
     const db = await sharedDb();
     const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
-    if (lessonId) {
+    if (topicId) {
       const result = await db.withTenant(ctx, async (client) => {
-        const lessonRes = await client.query(
-          `SELECT l.id, l.lesson_no, l.title_bn, l.title_en, l.est_minutes,
+        const topicRes = await client.query(
+          `SELECT l.id, l.topic_no, l.title_bn, l.title_en, l.est_minutes,
                   l.chapter_id, ch.name_bn AS chapter_name_bn,
                   lp.state, lp.seconds_spent, lp.last_block_no
-             FROM lessons l
+             FROM topics l
              JOIN chapters ch ON ch.id = l.chapter_id
-             LEFT JOIN lesson_progress lp
-               ON lp.lesson_id = l.id AND lp.student_id = $2
+             LEFT JOIN topic_progress lp
+               ON lp.topic_id = l.id AND lp.student_id = $2
             WHERE l.id = $1`,
-          [lessonId, claims.sub]
+          [topicId, claims.sub]
         );
-        const lesson = lessonRes.rows[0];
-        if (!lesson) throw new HttpError(404, "lesson not found", "lesson_not_found");
+        const topic = topicRes.rows[0];
+        if (!topic) throw new HttpError(404, "topic not found", "topic_not_found");
         const blocksRes = await client.query(
           `SELECT id, block_no, kind::text, body_bn, media_key, alt_text_bn, caption_bn
-             FROM lesson_blocks
-            WHERE lesson_id = $1
+             FROM topic_blocks
+            WHERE topic_id = $1
             ORDER BY block_no`,
-          [lessonId]
+          [topicId]
         );
         return {
-          lesson: {
-            id: lesson.id,
-            lessonNo: lesson.lesson_no,
-            title: { bn: lesson.title_bn, en: lesson.title_en },
-            estMinutes: lesson.est_minutes,
-            chapter: { id: lesson.chapter_id, nameBn: lesson.chapter_name_bn },
-            progress: lesson.state ? {
-              state: lesson.state,
-              secondsSpent: lesson.seconds_spent ?? 0,
-              lastBlockNo: lesson.last_block_no
+          topic: {
+            id: topic.id,
+            topicNo: topic.topic_no,
+            title: { bn: topic.title_bn, en: topic.title_en },
+            estMinutes: topic.est_minutes,
+            chapter: { id: topic.chapter_id, nameBn: topic.chapter_name_bn },
+            progress: topic.state ? {
+              state: topic.state,
+              secondsSpent: topic.seconds_spent ?? 0,
+              lastBlockNo: topic.last_block_no
             } : null
           },
           blocks: blocksRes.rows.map((b) => ({
@@ -1965,24 +1965,24 @@ async function handler8(req, res) {
       json(res, 200, result, cors);
       return;
     }
-    const lessons = await db.withTenant(ctx, async (client) => {
+    const topics = await db.withTenant(ctx, async (client) => {
       const r = await client.query(
-        `SELECT l.id, l.lesson_no, l.title_bn, l.title_en, l.est_minutes, l.is_published,
+        `SELECT l.id, l.topic_no, l.title_bn, l.title_en, l.est_minutes, l.is_published,
                 lp.state, lp.seconds_spent
-           FROM lessons l
-           LEFT JOIN lesson_progress lp
-             ON lp.lesson_id = l.id AND lp.student_id = $2
+           FROM topics l
+           LEFT JOIN topic_progress lp
+             ON lp.topic_id = l.id AND lp.student_id = $2
           WHERE l.chapter_id = $1
-          ORDER BY l.display_order, l.lesson_no`,
+          ORDER BY l.display_order, l.topic_no`,
         [chapterId, claims.sub]
       );
       return r.rows;
     });
     json(res, 200, {
       chapterId,
-      lessons: lessons.map((l) => ({
+      topics: topics.map((l) => ({
         id: l.id,
-        lessonNo: l.lesson_no,
+        topicNo: l.topic_no,
         title: { bn: l.title_bn, en: l.title_en },
         estMinutes: l.est_minutes,
         isPublished: l.is_published,
@@ -1994,7 +1994,7 @@ async function handler8(req, res) {
       json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
       return;
     }
-    console.error("[lessons] unexpected error", err);
+    console.error("[topics] unexpected error", err);
     json(res, 500, { error: "internal_error" }, cors);
   }
 }
@@ -2193,7 +2193,7 @@ async function handler10(req, res) {
       const created = await db.withTenant(ctx, async (client) => {
         const r = await client.query(
           `INSERT INTO assignments
-             (tenant_id, section_id, subject_id, academic_year_id, lesson_id,
+             (tenant_id, section_id, subject_id, academic_year_id, topic_id,
               title_bn, instructions_bn, max_marks, due_at, allows_late,
               created_by, status)
            VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -2202,7 +2202,7 @@ async function handler10(req, res) {
             sectionId2,
             subjectId,
             academicYearId,
-            body.lessonId && UUID_RE9.test(body.lessonId) ? body.lessonId : null,
+            body.topicId && UUID_RE9.test(body.topicId) ? body.topicId : null,
             titleBn,
             body.instructionsBn ?? null,
             body.maxMarks ?? null,
@@ -2357,9 +2357,9 @@ async function handler11(req, res) {
   }
   try {
     const claims = await authenticate(req);
-    const lessonId = query(req).get("lessonId") ?? "";
-    if (!UUID_RE10.test(lessonId)) {
-      throw new HttpError(400, "lessonId must be a valid uuid", "invalid_lesson_id");
+    const topicId = query(req).get("topicId") ?? "";
+    if (!UUID_RE10.test(topicId)) {
+      throw new HttpError(400, "topicId must be a valid uuid", "invalid_topic_id");
     }
     const db = await sharedDb();
     const result = await db.withTenant(
@@ -2383,15 +2383,15 @@ async function handler11(req, res) {
                     WHERE a.question_id = q.id AND a.student_id = $2
                     ORDER BY a.attempt_no DESC LIMIT 1) AS last_response_ms
              FROM practice_questions q
-            WHERE q.lesson_id = $1 AND q.is_published
+            WHERE q.topic_id = $1 AND q.is_published
             ORDER BY q.question_no`,
-          [lessonId, claims.sub]
+          [topicId, claims.sub]
         );
         return qs.rows;
       }
     );
     json(res, 200, {
-      lessonId,
+      topicId,
       questions: result.map((q) => ({
         id: q.id,
         questionNo: q.question_no,
@@ -2467,16 +2467,16 @@ async function handler12(req, res) {
           const wrong = await client.query(
             `WITH latest AS (
                SELECT DISTINCT ON (a.question_id)
-                      a.question_id, a.lesson_id, a.is_correct
+                      a.question_id, a.topic_id, a.is_correct
                  FROM practice_attempts a
                 WHERE a.student_id = $1
                 ORDER BY a.question_id, a.attempt_no DESC
              )
-             SELECT l.lesson_id, ls.title_bn, count(*)::int AS n
+             SELECT l.topic_id, ls.title_bn, count(*)::int AS n
                FROM latest l
-               JOIN lessons ls ON ls.id = l.lesson_id
+               JOIN topics ls ON ls.id = l.topic_id
               WHERE NOT l.is_correct
-              GROUP BY l.lesson_id, ls.title_bn
+              GROUP BY l.topic_id, ls.title_bn
               ORDER BY n DESC
               LIMIT 1`,
             [claims.sub]
@@ -2487,39 +2487,39 @@ async function handler12(req, res) {
               titleBn: w.title_bn,
               whyBn: `${w.n}\u099F\u09BF \u09AA\u09CD\u09B0\u09B6\u09CD\u09A8 \u098F\u0996\u09A8\u09CB \u09AD\u09C1\u09B2 \u0986\u099B\u09C7 \u2014 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09CB`,
               route: "learn",
-              refId: w.lesson_id,
+              refId: w.topic_id,
               urgency: "medium"
             });
           }
         }
         if (out.length < MAX_SUGGESTIONS) {
           const cont = await client.query(
-            `SELECT l.id AS lesson_id, l.title_bn, c.name_bn AS chapter_bn
-               FROM lessons l
+            `SELECT l.id AS topic_id, l.title_bn, c.name_bn AS chapter_bn
+               FROM topics l
                JOIN chapters c ON c.id = l.chapter_id
               WHERE l.is_published
-                -- chapter has at least one completed lesson (already begun)
+                -- chapter has at least one completed topic (already begun)
                 AND EXISTS (
-                      SELECT 1 FROM lesson_progress p
-                       JOIN lessons l2 ON l2.id = p.lesson_id
+                      SELECT 1 FROM topic_progress p
+                       JOIN topics l2 ON l2.id = p.topic_id
                       WHERE l2.chapter_id = c.id
                         AND p.student_id = $1 AND p.state = 'completed')
-                -- but THIS lesson isn't done
+                -- but THIS topic isn't done
                 AND NOT EXISTS (
-                      SELECT 1 FROM lesson_progress p2
-                       WHERE p2.lesson_id = l.id
+                      SELECT 1 FROM topic_progress p2
+                       WHERE p2.topic_id = l.id
                          AND p2.student_id = $1 AND p2.state = 'completed')
-              ORDER BY c.chapter_no, l.lesson_no
+              ORDER BY c.chapter_no, l.topic_no
               LIMIT 1`,
             [claims.sub]
           );
           for (const c of cont.rows) {
             out.push({
-              kind: "continue_lesson",
+              kind: "continue_topic",
               titleBn: c.title_bn,
               whyBn: `${c.chapter_bn} \u0985\u09A7\u09CD\u09AF\u09BE\u09AF\u09BC\u099F\u09BF \u09B6\u09C7\u09B7 \u0995\u09B0\u09CB`,
               route: "learn",
-              refId: c.lesson_id,
+              refId: c.topic_id,
               urgency: "medium"
             });
           }
@@ -2532,13 +2532,13 @@ async function handler12(req, res) {
               WHERE c.is_published
                 -- untouched
                 AND NOT EXISTS (
-                      SELECT 1 FROM lesson_progress p
-                       JOIN lessons l ON l.id = p.lesson_id
+                      SELECT 1 FROM topic_progress p
+                       JOIN topics l ON l.id = p.topic_id
                       WHERE l.chapter_id = c.id AND p.student_id = $1)
                 -- prerequisite satisfied (or none)
                 AND (c.prerequisite_chapter_id IS NULL OR EXISTS (
-                      SELECT 1 FROM lesson_progress p2
-                       JOIN lessons l2 ON l2.id = p2.lesson_id
+                      SELECT 1 FROM topic_progress p2
+                       JOIN topics l2 ON l2.id = p2.topic_id
                       WHERE l2.chapter_id = c.prerequisite_chapter_id
                         AND p2.student_id = $1 AND p2.state = 'completed'))
               ORDER BY c.chapter_no
@@ -2579,7 +2579,7 @@ var ROUTES = {
   publish: handler5,
   scripts: handler6,
   chapters: handler7,
-  lessons: handler8,
+  topics: handler8,
   results: handler9,
   assignments: handler10,
   practice: handler11,

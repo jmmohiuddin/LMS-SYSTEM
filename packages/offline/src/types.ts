@@ -17,6 +17,10 @@ export type Entity =
   | 'exam_mark'
   | 'answer_script'
   | 'class_delivery_log'
+  | 'topic_progress'
+  // Pre-M6 alias, still accepted by the server so a phone that queued
+  // progress before the rename does not lose it. New writes use
+  // 'topic_progress'.
   | 'lesson_progress'
   | 'assignment_submission'
   | 'practice_attempt'

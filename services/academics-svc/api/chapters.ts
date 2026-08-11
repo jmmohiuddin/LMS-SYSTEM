@@ -2,9 +2,9 @@
  * GET /api/v1/academics/chapters?classId=&subjectId=
  *
  * The syllabus browse surface: every published chapter for a class (and
- * optionally one subject), each with its lesson count, total estimated
+ * optionally one subject), each with its topic count, total estimated
  * minutes, prerequisite pointer, and — for the calling student — how many
- * of its lessons they have completed.
+ * of its topics they have completed.
  *
  * Deliberately one query with the progress join baked in rather than a
  * separate /progress call: the student's chapter list is useless without
@@ -51,18 +51,18 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           summary_bn: string | null; est_minutes: number; is_published: boolean;
           subject_id: string; subject_bn: string; subject_en: string;
           prerequisite_chapter_id: string | null; prerequisite_name_bn: string | null;
-          lesson_count: number; completed_count: number;
+          topic_count: number; completed_count: number;
         }>(
           `SELECT ch.id, ch.chapter_no, ch.name_bn, ch.name_en, ch.summary_bn,
                   ch.est_minutes, ch.is_published,
                   ch.subject_id, s.name_bn AS subject_bn, s.name_en AS subject_en,
                   ch.prerequisite_chapter_id,
                   pre.name_bn AS prerequisite_name_bn,
-                  (SELECT count(*)::int FROM lessons l
-                    WHERE l.chapter_id = ch.id AND l.is_published) AS lesson_count,
-                  (SELECT count(*)::int FROM lessons l
-                     JOIN lesson_progress lp
-                       ON lp.lesson_id = l.id
+                  (SELECT count(*)::int FROM topics l
+                    WHERE l.chapter_id = ch.id AND l.is_published) AS topic_count,
+                  (SELECT count(*)::int FROM topics l
+                     JOIN topic_progress lp
+                       ON lp.topic_id = l.id
                       AND lp.student_id = $3
                       AND lp.state = 'completed'
                     WHERE l.chapter_id = ch.id AND l.is_published) AS completed_count
@@ -90,7 +90,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         prerequisite: c.prerequisite_chapter_id
           ? { id: c.prerequisite_chapter_id, nameBn: c.prerequisite_name_bn }
           : null,
-        lessonCount: c.lesson_count,
+        topicCount: c.topic_count,
         completedCount: c.completed_count,
       })),
     }, cors);

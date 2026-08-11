@@ -1,16 +1,16 @@
 /**
- * Learn (পড়াশোনা) — the syllabus browse + lesson reader.
+ * Learn (পড়াশোনা) — the syllabus browse + topic reader.
  *
  * The first genuinely student-facing screen in the product. Two modes in
  * one view because they share cached data and the transition between them
  * should never hit the network twice:
  *
  *   list   — chapters for the student's class, each with a progress ring
- *   reader — one lesson's blocks, with progress written to the outbox
+ *   reader — one topic's blocks, with progress written to the outbox
  *
- * Offline behaviour matches attendance: chapter lists and opened lessons
+ * Offline behaviour matches attendance: chapter lists and opened topics
  * are cached in localStorage, and reading progress is enqueued as a
- * `lesson_progress` op rather than PUT directly — a student on a bus with
+ * `topic_progress` op rather than PUT directly — a student on a bus with
  * no signal still records what they read.
  */
 import type { Auth } from './auth.ts';
@@ -26,13 +26,13 @@ export interface Chapter {
   isPublished: boolean;
   subject: { id: string; bn: string; en: string };
   prerequisite: { id: string; nameBn: string } | null;
-  lessonCount: number;
+  topicCount: number;
   completedCount: number;
 }
 
-interface Lesson {
+interface Topic {
   id: string;
-  lessonNo: number;
+  topicNo: number;
   title: { bn: string; en: string | null };
   estMinutes: number;
   isPublished: boolean;
@@ -51,7 +51,7 @@ interface Block {
 
 /** Only what this view needs from the sync engine. */
 export interface LearnOutbox {
-  enqueue(input: { entity: 'lesson_progress' | 'practice_attempt'; payload: unknown }): Promise<{ opId: string }>;
+  enqueue(input: { entity: 'topic_progress' | 'practice_attempt'; payload: unknown }): Promise<{ opId: string }>;
   flush(): Promise<unknown>;
 }
 
@@ -65,17 +65,17 @@ export interface LearnViewOptions {
 }
 
 const CHAPTERS_CACHE = 'shikhon_chapters_cache';
-const LESSON_CACHE_PREFIX = 'shikhon_lesson_cache_';
+const TOPIC_CACHE_PREFIX = 'shikhon_topic_cache_';
 
-type Mode = { kind: 'list' } | { kind: 'lessons'; chapter: Chapter } | { kind: 'reader'; chapter: Chapter; lessonId: string };
+type Mode = { kind: 'list' } | { kind: 'topics'; chapter: Chapter } | { kind: 'reader'; chapter: Chapter; topicId: string };
 
 export class LearnView {
   private readonly o: LearnViewOptions;
   private mode: Mode = { kind: 'list' };
   private chapters: Chapter[] = [];
-  private lessons: Lesson[] = [];
+  private topics: Topic[] = [];
   private blocks: Block[] = [];
-  private lessonTitle = '';
+  private topicTitle = '';
   private offline = false;
   private loading = true;
   private readingSince = 0;
@@ -126,49 +126,49 @@ export class LearnView {
   }
 
   private async openChapter(chapter: Chapter): Promise<void> {
-    this.mode = { kind: 'lessons', chapter };
+    this.mode = { kind: 'topics', chapter };
     this.loading = true;
     this.render();
     try {
       const res = await this.o.auth.authedFetch(
-        `/api/v1/academics/lessons?chapterId=${encodeURIComponent(chapter.id)}`,
+        `/api/v1/academics/topics?chapterId=${encodeURIComponent(chapter.id)}`,
       );
       if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as { lessons: Lesson[] };
-      this.lessons = body.lessons;
+      const body = (await res.json()) as { topics: Topic[] };
+      this.topics = body.topics;
       this.offline = false;
     } catch {
-      this.lessons = [];
+      this.topics = [];
       this.offline = true;
     }
     this.loading = false;
     this.render();
   }
 
-  private async openLesson(chapter: Chapter, lessonId: string): Promise<void> {
-    this.mode = { kind: 'reader', chapter, lessonId };
+  private async openTopic(chapter: Chapter, topicId: string): Promise<void> {
+    this.mode = { kind: 'reader', chapter, topicId };
     this.loading = true;
     this.readingSince = Date.now();
     this.lastBlockSeen = 0;
     this.practising = false;
     this.questions = [];
 
-    const cached = this.cacheGet<{ title: string; blocks: Block[] }>(LESSON_CACHE_PREFIX + lessonId);
-    if (cached) { this.lessonTitle = cached.title; this.blocks = cached.blocks; this.loading = false; }
+    const cached = this.cacheGet<{ title: string; blocks: Block[] }>(TOPIC_CACHE_PREFIX + topicId);
+    if (cached) { this.topicTitle = cached.title; this.blocks = cached.blocks; this.loading = false; }
     this.render();
 
     try {
       const res = await this.o.auth.authedFetch(
-        `/api/v1/academics/lessons?lessonId=${encodeURIComponent(lessonId)}`,
+        `/api/v1/academics/topics?topicId=${encodeURIComponent(topicId)}`,
       );
       if (!res.ok) throw new Error(String(res.status));
       const body = (await res.json()) as {
-        lesson: { title: { bn: string } }; blocks: Block[];
+        topic: { title: { bn: string } }; blocks: Block[];
       };
-      this.lessonTitle = body.lesson.title.bn;
+      this.topicTitle = body.topic.title.bn;
       this.blocks = body.blocks;
       this.offline = false;
-      this.cacheSet(LESSON_CACHE_PREFIX + lessonId, { title: this.lessonTitle, blocks: this.blocks });
+      this.cacheSet(TOPIC_CACHE_PREFIX + topicId, { title: this.topicTitle, blocks: this.blocks });
     } catch {
       this.offline = this.blocks.length > 0;
     }
@@ -176,18 +176,18 @@ export class LearnView {
     this.render();
 
     // Record that reading started, immediately — a student who closes the
-    // app mid-lesson should still show as having begun it.
-    void this.recordProgress(lessonId, 'started');
-    void this.loadPractice(lessonId);
+    // app mid-topic should still show as having begun it.
+    void this.recordProgress(topicId, 'started');
+    void this.loadPractice(topicId);
   }
 
-  private async loadPractice(lessonId: string): Promise<void> {
-    const cacheKey = `shikhon_practice_${lessonId}`;
+  private async loadPractice(topicId: string): Promise<void> {
+    const cacheKey = `shikhon_practice_${topicId}`;
     const cached = this.cacheGet<PracticeQuestion[]>(cacheKey);
     if (cached) this.questions = cached;
     try {
       const res = await this.o.auth.authedFetch(
-        `/api/v1/academics/practice?lessonId=${encodeURIComponent(lessonId)}`,
+        `/api/v1/academics/practice?topicId=${encodeURIComponent(topicId)}`,
       );
       if (res.ok) {
         const body = (await res.json()) as { questions: PracticeQuestion[] };
@@ -203,13 +203,13 @@ export class LearnView {
 
   /* ------------------------------------------------------------ progress */
 
-  private async recordProgress(lessonId: string, state: 'started' | 'completed'): Promise<void> {
+  private async recordProgress(topicId: string, state: 'started' | 'completed'): Promise<void> {
     const seconds = this.readingSince ? Math.round((Date.now() - this.readingSince) / 1000) : 0;
     try {
       await this.o.outbox.enqueue({
-        entity: 'lesson_progress',
+        entity: 'topic_progress',
         payload: {
-          lessonId,
+          topicId,
           state,
           secondsSpent: seconds,
           lastBlockNo: this.lastBlockSeen || null,
@@ -230,7 +230,7 @@ export class LearnView {
     root.textContent = '';
 
     if (this.mode.kind === 'reader') { this.renderReader(); return; }
-    if (this.mode.kind === 'lessons') { this.renderLessons(); return; }
+    if (this.mode.kind === 'topics') { this.renderTopics(); return; }
 
     // ---------------------------------------------------------- chapter list
     const header = d.createElement('header');
@@ -275,11 +275,11 @@ export class LearnView {
         const btn = d.createElement('button');
         btn.type = 'button';
         btn.className = 'card chapter-card';
-        btn.setAttribute('aria-label', `${c.name.bn}, ${c.completedCount} of ${c.lessonCount} lessons done`);
+        btn.setAttribute('aria-label', `${c.name.bn}, ${c.completedCount} of ${c.topicCount} topics done`);
 
         const ring = d.createElement('span');
         ring.className = 'chapter-ring';
-        const pct = c.lessonCount > 0 ? Math.round((c.completedCount / c.lessonCount) * 100) : 0;
+        const pct = c.topicCount > 0 ? Math.round((c.completedCount / c.topicCount) * 100) : 0;
         ring.style.setProperty('--pct', String(pct));
         ring.dataset.complete = pct === 100 ? 'true' : 'false';
         const ringText = d.createElement('span');
@@ -295,7 +295,7 @@ export class LearnView {
         const meta = d.createElement('span');
         meta.className = 'chapter-meta';
         meta.textContent =
-          `${formatCount(c.completedCount, 'bn')}/${formatCount(c.lessonCount, 'bn')} পাঠ · ` +
+          `${formatCount(c.completedCount, 'bn')}/${formatCount(c.topicCount, 'bn')} পাঠ · ` +
           `${formatCount(c.estMinutes, 'bn')} মিনিট`;
         body.append(title, meta);
 
@@ -321,8 +321,8 @@ export class LearnView {
     }
   }
 
-  private renderLessons(): void {
-    if (this.mode.kind !== 'lessons') return;
+  private renderTopics(): void {
+    if (this.mode.kind !== 'topics') return;
     const d = this.o.doc;
     const root = this.o.root;
     const chapter = this.mode.chapter;
@@ -344,37 +344,37 @@ export class LearnView {
 
     if (this.offline) root.append(this.offlineBanner());
     if (this.loading) { root.append(this.msg('লোড হচ্ছে…')); return; }
-    if (this.lessons.length === 0) { root.append(this.msg('এই অধ্যায়ে এখনো পাঠ যুক্ত হয়নি।')); return; }
+    if (this.topics.length === 0) { root.append(this.msg('এই অধ্যায়ে এখনো পাঠ যুক্ত হয়নি।')); return; }
 
     const ul = d.createElement('ul');
-    ul.className = 'lesson-list';
-    for (const l of this.lessons) {
+    ul.className = 'topic-list';
+    for (const l of this.topics) {
       const li = d.createElement('li');
       const btn = d.createElement('button');
       btn.type = 'button';
-      btn.className = 'card lesson-card';
+      btn.className = 'card topic-card';
       btn.dataset.state = l.progress?.state ?? 'new';
 
       const mark = d.createElement('span');
-      mark.className = 'lesson-mark';
+      mark.className = 'topic-mark';
       mark.setAttribute('aria-hidden', 'true');
       mark.textContent = l.progress?.state === 'completed' ? '✓'
         : l.progress?.state === 'started' ? '◐' : '○';
 
       const body = d.createElement('span');
-      body.className = 'lesson-body';
+      body.className = 'topic-body';
       const title = d.createElement('span');
-      title.className = 'lesson-title';
+      title.className = 'topic-title';
       title.textContent = l.title.bn;
       const meta = d.createElement('span');
-      meta.className = 'lesson-meta';
+      meta.className = 'topic-meta';
       meta.textContent = l.progress?.state === 'completed'
         ? `সম্পন্ন · ${formatCount(l.estMinutes, 'bn')} মিনিট`
         : `${formatCount(l.estMinutes, 'bn')} মিনিট`;
       body.append(title, meta);
 
       btn.append(mark, body);
-      btn.addEventListener('click', () => { void this.openLesson(chapter, l.id); });
+      btn.addEventListener('click', () => { void this.openTopic(chapter, l.id); });
       li.append(btn);
       ul.append(li);
     }
@@ -385,17 +385,17 @@ export class LearnView {
     if (this.mode.kind !== 'reader') return;
     const d = this.o.doc;
     const root = this.o.root;
-    const { chapter, lessonId } = this.mode;
+    const { chapter, topicId } = this.mode;
 
     root.append(this.backBar(chapter.name.bn, () => {
-      void this.recordProgress(lessonId, 'started');
+      void this.recordProgress(topicId, 'started');
       void this.openChapter(chapter);
     }));
 
     const header = d.createElement('header');
     header.className = 'page-header';
     const h1 = d.createElement('h1');
-    h1.textContent = this.lessonTitle || 'পাঠ';
+    h1.textContent = this.topicTitle || 'পাঠ';
     header.append(h1);
     root.append(header);
 
@@ -403,7 +403,7 @@ export class LearnView {
     if (this.loading && this.blocks.length === 0) { root.append(this.msg('লোড হচ্ছে…')); return; }
 
     const article = d.createElement('article');
-    article.className = 'lesson-reader';
+    article.className = 'topic-reader';
     article.setAttribute('lang', 'bn');
 
     for (const b of this.blocks) {
@@ -429,8 +429,8 @@ export class LearnView {
         outbox: this.o.outbox,
         onDone: () => {
           // Finishing the practice set is a far better completion signal
-          // than a self-declared button, so it marks the lesson done.
-          void this.recordProgress(lessonId, 'completed');
+          // than a self-declared button, so it marks the topic done.
+          void this.recordProgress(topicId, 'completed');
           this.practising = false;
           this.render();
         },
@@ -442,7 +442,7 @@ export class LearnView {
     if (this.questions.length > 0) {
       const start = d.createElement('button');
       start.type = 'button';
-      start.className = 'btn-primary lesson-done';
+      start.className = 'btn-primary topic-done';
       start.textContent = `অনুশীলন করো (${formatCount(this.questions.length, 'bn')}টি প্রশ্ন)`;
       start.addEventListener('click', () => { this.practising = true; this.render(); });
       root.append(start);
@@ -450,10 +450,10 @@ export class LearnView {
 
     const done = d.createElement('button');
     done.type = 'button';
-    done.className = this.questions.length > 0 ? 'btn-secondary lesson-done-alt' : 'btn-primary lesson-done';
+    done.className = this.questions.length > 0 ? 'btn-secondary topic-done-alt' : 'btn-primary topic-done';
     done.textContent = 'পাঠ সম্পন্ন ✓';
     done.addEventListener('click', () => {
-      void this.recordProgress(lessonId, 'completed');
+      void this.recordProgress(topicId, 'completed');
       done.textContent = 'সম্পন্ন হয়েছে ✓';
       done.disabled = true;
     });

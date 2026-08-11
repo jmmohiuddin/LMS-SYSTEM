@@ -431,34 +431,35 @@ var applyClassDeliveryLog = async (c, op) => {
   return applied(op.opId);
 };
 var MAX_SECONDS = 14400;
-var applyLessonProgress = async (c, op) => {
+var applyTopicProgress = async (c, op) => {
   const p = op.payload;
-  if (!p?.lessonId) return rejected(op.opId, "MALFORMED_PAYLOAD");
-  const lesson = await c.query(`SELECT id FROM lessons WHERE id = $1`, [p.lessonId]);
-  if (lesson.rowCount === 0) return rejected(op.opId, "LESSON_NOT_FOUND");
+  const topicId = p?.topicId ?? p?.lessonId;
+  if (!topicId) return rejected(op.opId, "MALFORMED_PAYLOAD");
+  const topic = await c.query(`SELECT id FROM topics WHERE id = $1`, [topicId]);
+  if (topic.rowCount === 0) return rejected(op.opId, "TOPIC_NOT_FOUND");
   const state = p.state === "completed" ? "completed" : "started";
   const seconds = Math.min(Math.max(Math.round(p.secondsSpent ?? 0), 0), MAX_SECONDS);
   await c.query(
-    `INSERT INTO lesson_progress
-       (id, tenant_id, lesson_id, student_id, state, seconds_spent, last_block_no,
+    `INSERT INTO topic_progress
+       (id, tenant_id, topic_id, student_id, state, seconds_spent, last_block_no,
         started_at, completed_at)
      VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, now(),
              CASE WHEN $4 = 'completed' THEN now() ELSE NULL END)
-     ON CONFLICT (tenant_id, lesson_id, student_id) DO UPDATE
+     ON CONFLICT (tenant_id, topic_id, student_id) DO UPDATE
        SET state = CASE
-             WHEN lesson_progress.state = 'completed' THEN 'completed'
+             WHEN topic_progress.state = 'completed' THEN 'completed'
              ELSE EXCLUDED.state
            END,
-           seconds_spent = LEAST(lesson_progress.seconds_spent + EXCLUDED.seconds_spent, $7),
+           seconds_spent = LEAST(topic_progress.seconds_spent + EXCLUDED.seconds_spent, $7),
            last_block_no = GREATEST(
-             COALESCE(lesson_progress.last_block_no, 0),
+             COALESCE(topic_progress.last_block_no, 0),
              COALESCE(EXCLUDED.last_block_no, 0)
            ),
            completed_at = COALESCE(
-             lesson_progress.completed_at,
+             topic_progress.completed_at,
              CASE WHEN EXCLUDED.state = 'completed' THEN now() ELSE NULL END
            )`,
-    [op.opId, p.lessonId, op.actorId, state, seconds, p.lastBlockNo ?? null, MAX_SECONDS]
+    [op.opId, p.topicId, op.actorId, state, seconds, p.lastBlockNo ?? null, MAX_SECONDS]
   );
   return applied(op.opId);
 };
@@ -506,7 +507,7 @@ var applyPracticeAttempt = async (c, op) => {
   const p = op.payload;
   if (!p?.questionId) return rejected(op.opId, "MALFORMED_PAYLOAD");
   const q = await c.query(
-    `SELECT lesson_id, kind::text, numeric_answer::text, numeric_tolerance::text, text_answer_bn
+    `SELECT topic_id, kind::text, numeric_answer::text, numeric_tolerance::text, text_answer_bn
        FROM practice_questions WHERE id = $1`,
     [p.questionId]
   );
@@ -544,7 +545,7 @@ var applyPracticeAttempt = async (c, op) => {
   const attemptNo = Math.max(1, Math.round(p.attemptNo ?? 1));
   await c.query(
     `INSERT INTO practice_attempts
-       (id, tenant_id, question_id, student_id, lesson_id, attempt_no,
+       (id, tenant_id, question_id, student_id, topic_id, attempt_no,
         selected_option_id, answer_text, answer_numeric, is_correct, response_ms)
      VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (tenant_id, question_id, student_id, attempt_no) DO NOTHING`,
@@ -552,7 +553,7 @@ var applyPracticeAttempt = async (c, op) => {
       op.opId,
       p.questionId,
       op.actorId,
-      question.lesson_id,
+      question.topic_id,
       attemptNo,
       p.selectedOptionId ?? null,
       p.answerText ?? null,
@@ -567,7 +568,9 @@ var APPLIERS = {
   attendance_session: applyAttendanceSession,
   exam_mark: applyExamMark,
   class_delivery_log: applyClassDeliveryLog,
-  lesson_progress: applyLessonProgress,
+  topic_progress: applyTopicProgress,
+  lesson_progress: applyTopicProgress,
+  // pre-M6 alias — see the note above
   assignment_submission: applyAssignmentSubmission,
   practice_attempt: applyPracticeAttempt
 };

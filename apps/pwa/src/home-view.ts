@@ -42,7 +42,7 @@ export interface HomeViewOptions {
 const KIND_GLYPH: Record<string, string> = {
   assignment: '📝',
   redo_practice: '↻',
-  continue_lesson: '📖',
+  continue_topic: '📖',
   new_chapter: '✦',
 };
 

@@ -119,12 +119,12 @@ async function seed(): Promise<void> {
     await c.query(`UPDATE chapters SET prerequisite_chapter_id = $1 WHERE id = $2`, [CH1, CH2]);
 
     await c.query(
-      `INSERT INTO lessons (id, tenant_id, chapter_id, lesson_no, title_bn, is_published)
+      `INSERT INTO topics (id, tenant_id, chapter_id, topic_no, title_bn, is_published)
        VALUES ($1,$4,$5,1,'পাঠ ১',true), ($2,$4,$5,2,'পাঠ ২',true), ($3,$4,$6,1,'পাঠ ৩',true)`,
       [L1, L2, L3, T, CH1, CH2]);
 
     await c.query(
-      `INSERT INTO practice_questions (id, tenant_id, lesson_id, question_no, kind, stem_bn, explanation_bn)
+      `INSERT INTO practice_questions (id, tenant_id, topic_id, question_no, kind, stem_bn, explanation_bn)
        VALUES ($1,$3,$4,1,'mcq','গতি কী?','ব্যাখ্যা এক'),
               ($2,$3,$4,2,'mcq','বল কী?','ব্যাখ্যা দুই')`,
       [Q1, Q2, T, L1]);
@@ -175,7 +175,7 @@ after(async () => {
 describe('authentication', { skip }, () => {
   const endpoints = () => [
     ['assignments', assignments, '/api/v1/academics/assignments'],
-    ['practice', practice, `/api/v1/academics/practice?lessonId=${L1}`],
+    ['practice', practice, `/api/v1/academics/practice?topicId=${L1}`],
     ['next', next, '/api/v1/academics/next'],
     ['results', results, '/api/v1/academics/results'],
   ] as const;
@@ -331,17 +331,17 @@ describe('assignments', { skip }, () => {
 /* ══════════════════════════════════════════════════════════════ practice */
 
 describe('practice', { skip }, () => {
-  test('a malformed lessonId is a 400, not a database error', async () => {
-    const r = await call(practice, { token: studentToken, url: '/api/v1/academics/practice?lessonId=nope' });
+  test('a malformed topicId is a 400, not a database error', async () => {
+    const r = await call(practice, { token: studentToken, url: '/api/v1/academics/practice?topicId=nope' });
     assert.equal(r.status, 400);
-    assert.equal(r.body.error, 'invalid_lesson_id');
+    assert.equal(r.body.error, 'invalid_topic_id');
   });
 
   test('questions come back with their options and the explanation', async () => {
     // The answer key IS sent deliberately (see the endpoint header): practice
     // is formative and must work with no signal. This asserts that trade is
     // actually in effect rather than half-implemented.
-    const r = await call(practice, { token: studentToken, url: `/api/v1/academics/practice?lessonId=${L1}` });
+    const r = await call(practice, { token: studentToken, url: `/api/v1/academics/practice?topicId=${L1}` });
     assert.equal(r.status, 200, r.raw);
     const qs = r.body.questions as {
       id: string; stemBn: string; explanationBn: string | null;
@@ -357,13 +357,13 @@ describe('practice', { skip }, () => {
     await db.withTenant(asStudent, async (c) => {
       await c.query(
         `INSERT INTO practice_attempts
-           (id, tenant_id, question_id, student_id, lesson_id, attempt_no, is_correct)
+           (id, tenant_id, question_id, student_id, topic_id, attempt_no, is_correct)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, 1, false)`,
         [T, Q1, STUDENT, L1]);
     });
 
-    const mine = await call(practice, { token: studentToken, url: `/api/v1/academics/practice?lessonId=${L1}` });
-    const theirs = await call(practice, { token: student2Token, url: `/api/v1/academics/practice?lessonId=${L1}` });
+    const mine = await call(practice, { token: studentToken, url: `/api/v1/academics/practice?topicId=${L1}` });
+    const theirs = await call(practice, { token: student2Token, url: `/api/v1/academics/practice?topicId=${L1}` });
 
     const attempted = (r: typeof mine) =>
       (r.body.questions as { myProgress: { attempts: number } }[])
@@ -373,8 +373,8 @@ describe('practice', { skip }, () => {
     assert.equal(attempted(theirs), 0, 'a student must NOT see another student\'s attempts');
   });
 
-  test('another school gets nothing for the same lesson id', async () => {
-    const r = await call(practice, { token: otherTenantToken, url: `/api/v1/academics/practice?lessonId=${L1}` });
+  test('another school gets nothing for the same topic id', async () => {
+    const r = await call(practice, { token: otherTenantToken, url: `/api/v1/academics/practice?topicId=${L1}` });
     // Either an empty set or a 404 is correct; leaking the questions is not.
     if (r.status === 200) {
       assert.equal((r.body.questions as unknown[]).length, 0);
@@ -435,7 +435,7 @@ describe('next-suggestion', { skip }, () => {
     await db.withTenant(asStudent, async (c) => {
       await c.query(
         `INSERT INTO practice_attempts
-           (id, tenant_id, question_id, student_id, lesson_id, attempt_no, is_correct)
+           (id, tenant_id, question_id, student_id, topic_id, attempt_no, is_correct)
          VALUES (gen_random_uuid(), $1, $2, $3, $4, 2, true)`,
         [T, Q1, STUDENT, L1]);
     });
@@ -451,16 +451,16 @@ describe('next-suggestion', { skip }, () => {
     // something behind them is unfinished is the behaviour being avoided.
     await db.withTenant(asStudent, async (c) => {
       await c.query(
-        `INSERT INTO lesson_progress (id, tenant_id, lesson_id, student_id, state, completed_at)
+        `INSERT INTO topic_progress (id, tenant_id, topic_id, student_id, state, completed_at)
          VALUES (gen_random_uuid(), $1, $2, $3, 'completed', now())`,
         [T, L1, STUDENT]);
     });
     const r = await call(next, { token: studentToken, url: '/api/v1/academics/next' });
     const s = r.body.suggestions as { kind: string; refId: string }[];
-    const cont = s.find((x) => x.kind === 'continue_lesson');
+    const cont = s.find((x) => x.kind === 'continue_topic');
     const fresh = s.find((x) => x.kind === 'new_chapter');
-    assert.ok(cont, `expected continue_lesson, got ${s.map((x) => x.kind).join(', ')}`);
-    assert.equal(cont.refId, L2, 'it must point at the next unread lesson in the begun chapter');
+    assert.ok(cont, `expected continue_topic, got ${s.map((x) => x.kind).join(', ')}`);
+    assert.equal(cont.refId, L2, 'it must point at the next unread topic in the begun chapter');
     if (fresh) {
       assert.ok(s.indexOf(cont) < s.indexOf(fresh), 'continue must rank above new_chapter');
     }

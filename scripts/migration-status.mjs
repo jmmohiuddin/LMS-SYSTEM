@@ -61,6 +61,7 @@ const SENTINELS = [
   ['023_restrictive_write_scope_fix', 'policy',     'po_read_scope'],
   ['024_ai_content_human_review',     'index',      'ix_items_awaiting_review'],
   ['025_subject_based_academic_model','function',   'app.derive_student_subjects'],
+  ['026_lessons_to_topics',           'index',      'ix_topics_chapter'],
 ];
 
 /** What each migration unlocks, for the report. Blank where it is plumbing. */
@@ -75,6 +76,7 @@ const MEANING = {
   '023_restrictive_write_scope_fix': 'unbreaks EVERY student-facing read (chapters, practice, homework, fees)',
   '024_ai_content_human_review':     'F-1304 — AI content cannot reach a student unreviewed',
   '025_subject_based_academic_model':'PRD §5 — subject templates, curriculum schemes, derived subject sets',
+  '026_lessons_to_topics':           'TRD §5.1 M6 — the content spine is chapter → topic, not lesson',
 };
 
 const QUERIES = {

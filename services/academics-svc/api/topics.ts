@@ -1,15 +1,15 @@
 /**
- * GET /api/v1/academics/lessons?chapterId=   → lessons in a chapter
- * GET /api/v1/academics/lessons?lessonId=    → one lesson with its blocks
+ * GET /api/v1/academics/topics?chapterId=   → topics in a chapter
+ * GET /api/v1/academics/topics?topicId=    → one topic with its blocks
  *
  * The second form is what the reader screen calls, and it returns the whole
- * lesson (all blocks, ordered) in one response so the PWA can cache the
- * entire lesson for offline reading in a single request. Splitting blocks
+ * topic (all blocks, ordered) in one response so the PWA can cache the
+ * entire topic for offline reading in a single request. Splitting blocks
  * into their own paginated endpoint would make offline download of a
  * chapter an N+1 problem over a 2G link.
  *
  * Progress writes do NOT go here — they ride the offline outbox as
- * `lesson_progress` ops into POST /api/v1/sync/push (see
+ * `topic_progress` ops into POST /api/v1/sync/push (see
  * services/sync-svc/src/appliers.ts), same as attendance and marks.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -28,41 +28,41 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const claims = await authenticate(req);
     const q = query(req);
     const chapterId = q.get('chapterId') ?? '';
-    const lessonId = q.get('lessonId') ?? '';
+    const topicId = q.get('topicId') ?? '';
 
-    if (!chapterId && !lessonId) {
-      throw new HttpError(400, 'chapterId or lessonId is required', 'missing_parameter');
+    if (!chapterId && !topicId) {
+      throw new HttpError(400, 'chapterId or topicId is required', 'missing_parameter');
     }
     if (chapterId && !UUID_RE.test(chapterId)) {
       throw new HttpError(400, 'chapterId must be a valid uuid', 'invalid_chapter_id');
     }
-    if (lessonId && !UUID_RE.test(lessonId)) {
-      throw new HttpError(400, 'lessonId must be a valid uuid', 'invalid_lesson_id');
+    if (topicId && !UUID_RE.test(topicId)) {
+      throw new HttpError(400, 'topicId must be a valid uuid', 'invalid_topic_id');
     }
 
     const db = await sharedDb();
     const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
 
-    /* ------------------------------------------------ single lesson + blocks */
-    if (lessonId) {
+    /* ------------------------------------------------ single topic + blocks */
+    if (topicId) {
       const result = await db.withTenant(ctx, async (client) => {
-        const lessonRes = await client.query<{
-          id: string; lesson_no: number; title_bn: string; title_en: string | null;
+        const topicRes = await client.query<{
+          id: string; topic_no: number; title_bn: string; title_en: string | null;
           est_minutes: number; chapter_id: string; chapter_name_bn: string;
           state: string | null; seconds_spent: number | null; last_block_no: number | null;
         }>(
-          `SELECT l.id, l.lesson_no, l.title_bn, l.title_en, l.est_minutes,
+          `SELECT l.id, l.topic_no, l.title_bn, l.title_en, l.est_minutes,
                   l.chapter_id, ch.name_bn AS chapter_name_bn,
                   lp.state, lp.seconds_spent, lp.last_block_no
-             FROM lessons l
+             FROM topics l
              JOIN chapters ch ON ch.id = l.chapter_id
-             LEFT JOIN lesson_progress lp
-               ON lp.lesson_id = l.id AND lp.student_id = $2
+             LEFT JOIN topic_progress lp
+               ON lp.topic_id = l.id AND lp.student_id = $2
             WHERE l.id = $1`,
-          [lessonId, claims.sub],
+          [topicId, claims.sub],
         );
-        const lesson = lessonRes.rows[0];
-        if (!lesson) throw new HttpError(404, 'lesson not found', 'lesson_not_found');
+        const topic = topicRes.rows[0];
+        if (!topic) throw new HttpError(404, 'topic not found', 'topic_not_found');
 
         const blocksRes = await client.query<{
           id: string; block_no: number; kind: string;
@@ -70,24 +70,24 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           alt_text_bn: string | null; caption_bn: string | null;
         }>(
           `SELECT id, block_no, kind::text, body_bn, media_key, alt_text_bn, caption_bn
-             FROM lesson_blocks
-            WHERE lesson_id = $1
+             FROM topic_blocks
+            WHERE topic_id = $1
             ORDER BY block_no`,
-          [lessonId],
+          [topicId],
         );
 
         return {
-          lesson: {
-            id: lesson.id,
-            lessonNo: lesson.lesson_no,
-            title: { bn: lesson.title_bn, en: lesson.title_en },
-            estMinutes: lesson.est_minutes,
-            chapter: { id: lesson.chapter_id, nameBn: lesson.chapter_name_bn },
-            progress: lesson.state
+          topic: {
+            id: topic.id,
+            topicNo: topic.topic_no,
+            title: { bn: topic.title_bn, en: topic.title_en },
+            estMinutes: topic.est_minutes,
+            chapter: { id: topic.chapter_id, nameBn: topic.chapter_name_bn },
+            progress: topic.state
               ? {
-                  state: lesson.state,
-                  secondsSpent: lesson.seconds_spent ?? 0,
-                  lastBlockNo: lesson.last_block_no,
+                  state: topic.state,
+                  secondsSpent: topic.seconds_spent ?? 0,
+                  lastBlockNo: topic.last_block_no,
                 }
               : null,
           },
@@ -106,20 +106,20 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return;
     }
 
-    /* -------------------------------------------------- lesson list for chapter */
-    const lessons = await db.withTenant(ctx, async (client) => {
+    /* -------------------------------------------------- topic list for chapter */
+    const topics = await db.withTenant(ctx, async (client) => {
       const r = await client.query<{
-        id: string; lesson_no: number; title_bn: string; title_en: string | null;
+        id: string; topic_no: number; title_bn: string; title_en: string | null;
         est_minutes: number; is_published: boolean;
         state: string | null; seconds_spent: number | null;
       }>(
-        `SELECT l.id, l.lesson_no, l.title_bn, l.title_en, l.est_minutes, l.is_published,
+        `SELECT l.id, l.topic_no, l.title_bn, l.title_en, l.est_minutes, l.is_published,
                 lp.state, lp.seconds_spent
-           FROM lessons l
-           LEFT JOIN lesson_progress lp
-             ON lp.lesson_id = l.id AND lp.student_id = $2
+           FROM topics l
+           LEFT JOIN topic_progress lp
+             ON lp.topic_id = l.id AND lp.student_id = $2
           WHERE l.chapter_id = $1
-          ORDER BY l.display_order, l.lesson_no`,
+          ORDER BY l.display_order, l.topic_no`,
         [chapterId, claims.sub],
       );
       return r.rows;
@@ -127,9 +127,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     json(res, 200, {
       chapterId,
-      lessons: lessons.map((l) => ({
+      topics: topics.map((l) => ({
         id: l.id,
-        lessonNo: l.lesson_no,
+        topicNo: l.topic_no,
         title: { bn: l.title_bn, en: l.title_en },
         estMinutes: l.est_minutes,
         isPublished: l.is_published,
@@ -141,7 +141,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       json(res, err.status, { error: err.code ?? 'error', message: err.message }, cors);
       return;
     }
-    console.error('[lessons] unexpected error', err);
+    console.error('[topics] unexpected error', err);
     json(res, 500, { error: 'internal_error' }, cors);
   }
 }

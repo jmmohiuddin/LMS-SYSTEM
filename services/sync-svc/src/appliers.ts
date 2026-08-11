@@ -257,10 +257,16 @@ export const applyClassDeliveryLog: Applier = async (c, op) => {
   return applied(op.opId);
 };
 
-/* -------------------------------------------------------------- lesson progress */
+/* -------------------------------------------------------------- topic progress */
 
-interface LessonProgressPayload {
-  lessonId: string;
+interface TopicProgressPayload {
+  topicId?: string;
+  /**
+   * Pre-M6 clients queued this as `lessonId`. See the compatibility note on
+   * APPLIERS below — a phone that queued progress before the rename and
+   * syncs after it must not lose the op.
+   */
+  lessonId?: string;
   state?: 'started' | 'completed';
   secondsSpent?: number;
   lastBlockNo?: number | null;
@@ -270,41 +276,44 @@ interface LessonProgressPayload {
 // enforces the same ceiling, this just fails soft instead of erroring.
 const MAX_SECONDS = 14400;
 
-export const applyLessonProgress: Applier = async (c, op) => {
-  const p = op.payload as LessonProgressPayload;
-  if (!p?.lessonId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
+export const applyTopicProgress: Applier = async (c, op) => {
+  const p = op.payload as TopicProgressPayload;
+  // Accept the pre-M6 field name. The id is the same uuid either way; only
+  // the key changed.
+  const topicId = p?.topicId ?? p?.lessonId;
+  if (!topicId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
 
-  const lesson = await c.query(`SELECT id FROM lessons WHERE id = $1`, [p.lessonId]);
-  if (lesson.rowCount === 0) return rejected(op.opId, 'LESSON_NOT_FOUND');
+  const topic = await c.query(`SELECT id FROM topics WHERE id = $1`, [topicId]);
+  if (topic.rowCount === 0) return rejected(op.opId, 'TOPIC_NOT_FOUND');
 
   const state = p.state === 'completed' ? 'completed' : 'started';
   const seconds = Math.min(Math.max(Math.round(p.secondsSpent ?? 0), 0), MAX_SECONDS);
 
-  // Progress is monotonic: reading time accumulates and a completed lesson
+  // Progress is monotonic: reading time accumulates and a completed topic
   // never reverts to 'started' just because the student reopened it. The
   // outbox can legitimately replay an older op after a newer one on a flaky
   // connection, so this has to be order-independent rather than last-write-wins.
   await c.query(
-    `INSERT INTO lesson_progress
-       (id, tenant_id, lesson_id, student_id, state, seconds_spent, last_block_no,
+    `INSERT INTO topic_progress
+       (id, tenant_id, topic_id, student_id, state, seconds_spent, last_block_no,
         started_at, completed_at)
      VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, now(),
              CASE WHEN $4 = 'completed' THEN now() ELSE NULL END)
-     ON CONFLICT (tenant_id, lesson_id, student_id) DO UPDATE
+     ON CONFLICT (tenant_id, topic_id, student_id) DO UPDATE
        SET state = CASE
-             WHEN lesson_progress.state = 'completed' THEN 'completed'
+             WHEN topic_progress.state = 'completed' THEN 'completed'
              ELSE EXCLUDED.state
            END,
-           seconds_spent = LEAST(lesson_progress.seconds_spent + EXCLUDED.seconds_spent, $7),
+           seconds_spent = LEAST(topic_progress.seconds_spent + EXCLUDED.seconds_spent, $7),
            last_block_no = GREATEST(
-             COALESCE(lesson_progress.last_block_no, 0),
+             COALESCE(topic_progress.last_block_no, 0),
              COALESCE(EXCLUDED.last_block_no, 0)
            ),
            completed_at = COALESCE(
-             lesson_progress.completed_at,
+             topic_progress.completed_at,
              CASE WHEN EXCLUDED.state = 'completed' THEN now() ELSE NULL END
            )`,
-    [op.opId, p.lessonId, op.actorId, state, seconds, p.lastBlockNo ?? null, MAX_SECONDS],
+    [op.opId, p.topicId, op.actorId, state, seconds, p.lastBlockNo ?? null, MAX_SECONDS],
   );
 
   return applied(op.opId);
@@ -383,11 +392,11 @@ export const applyPracticeAttempt: Applier = async (c, op) => {
   if (!p?.questionId) return rejected(op.opId, 'MALFORMED_PAYLOAD');
 
   const q = await c.query<{
-    lesson_id: string; kind: string;
+    topic_id: string; kind: string;
     numeric_answer: string | null; numeric_tolerance: string;
     text_answer_bn: string | null;
   }>(
-    `SELECT lesson_id, kind::text, numeric_answer::text, numeric_tolerance::text, text_answer_bn
+    `SELECT topic_id, kind::text, numeric_answer::text, numeric_tolerance::text, text_answer_bn
        FROM practice_questions WHERE id = $1`,
     [p.questionId],
   );
@@ -436,12 +445,12 @@ export const applyPracticeAttempt: Applier = async (c, op) => {
 
   await c.query(
     `INSERT INTO practice_attempts
-       (id, tenant_id, question_id, student_id, lesson_id, attempt_no,
+       (id, tenant_id, question_id, student_id, topic_id, attempt_no,
         selected_option_id, answer_text, answer_numeric, is_correct, response_ms)
      VALUES ($1, app.current_tenant(), $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (tenant_id, question_id, student_id, attempt_no) DO NOTHING`,
     [
-      op.opId, p.questionId, op.actorId, question.lesson_id, attemptNo,
+      op.opId, p.questionId, op.actorId, question.topic_id, attemptNo,
       p.selectedOptionId ?? null, p.answerText ?? null,
       p.answerNumeric ?? null, isCorrect, responseMs,
     ],
@@ -455,11 +464,22 @@ export const applyPracticeAttempt: Applier = async (c, op) => {
 
 /* ------------------------------------------------------------------ registry */
 
+/**
+ * Entity name → applier.
+ *
+ * `lesson_progress` is the pre-M6 (TRD §5.1) name for `topic_progress` and
+ * is kept as an alias deliberately. The offline outbox lives on the
+ * student's phone: an op queued on a bus before this deploy syncs after it,
+ * and dropping it would silently lose a student's reading progress. The
+ * alias costs one map entry; removing it needs evidence that no client is
+ * still queueing under the old name, which is a later decision.
+ */
 export const APPLIERS: Record<string, Applier> = {
   attendance_session: applyAttendanceSession,
   exam_mark: applyExamMark,
   class_delivery_log: applyClassDeliveryLog,
-  lesson_progress: applyLessonProgress,
+  topic_progress: applyTopicProgress,
+  lesson_progress: applyTopicProgress,   // pre-M6 alias — see the note above
   assignment_submission: applyAssignmentSubmission,
   practice_attempt: applyPracticeAttempt,
 };

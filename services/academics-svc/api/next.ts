@@ -19,7 +19,7 @@
  *      and never returning is the most common silent failure in
  *      self-study — this is the closest thing to spaced repetition that
  *      is honest at this data volume.
- *   3. The next unread lesson in a chapter already begun. Finishing beats
+ *   3. The next unread topic in a chapter already begun. Finishing beats
  *      starting; a half-read chapter is the highest-yield place to spend
  *      twenty minutes.
  *   4. A new chapter whose prerequisite is complete. Only offered when
@@ -34,7 +34,7 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
 
-type Kind = 'assignment' | 'redo_practice' | 'continue_lesson' | 'new_chapter';
+type Kind = 'assignment' | 'redo_practice' | 'continue_topic' | 'new_chapter';
 
 interface Suggestion {
   kind: Kind;
@@ -92,19 +92,19 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           // DISTINCT ON gives the latest attempt per question; we only want
           // the ones where that latest attempt was still wrong. A question
           // they eventually got right is not a gap.
-          const wrong = await client.query<{ lesson_id: string; title_bn: string; n: number }>(
+          const wrong = await client.query<{ topic_id: string; title_bn: string; n: number }>(
             `WITH latest AS (
                SELECT DISTINCT ON (a.question_id)
-                      a.question_id, a.lesson_id, a.is_correct
+                      a.question_id, a.topic_id, a.is_correct
                  FROM practice_attempts a
                 WHERE a.student_id = $1
                 ORDER BY a.question_id, a.attempt_no DESC
              )
-             SELECT l.lesson_id, ls.title_bn, count(*)::int AS n
+             SELECT l.topic_id, ls.title_bn, count(*)::int AS n
                FROM latest l
-               JOIN lessons ls ON ls.id = l.lesson_id
+               JOIN topics ls ON ls.id = l.topic_id
               WHERE NOT l.is_correct
-              GROUP BY l.lesson_id, ls.title_bn
+              GROUP BY l.topic_id, ls.title_bn
               ORDER BY n DESC
               LIMIT 1`,
             [claims.sub],
@@ -115,41 +115,41 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               titleBn: w.title_bn,
               whyBn: `${w.n}টি প্রশ্ন এখনো ভুল আছে — আবার চেষ্টা করো`,
               route: 'learn',
-              refId: w.lesson_id,
+              refId: w.topic_id,
               urgency: 'medium',
             });
           }
         }
 
-        /* ── Rule 3: next unread lesson in a chapter already begun ─── */
+        /* ── Rule 3: next unread topic in a chapter already begun ─── */
         if (out.length < MAX_SUGGESTIONS) {
-          const cont = await client.query<{ lesson_id: string; title_bn: string; chapter_bn: string }>(
-            `SELECT l.id AS lesson_id, l.title_bn, c.name_bn AS chapter_bn
-               FROM lessons l
+          const cont = await client.query<{ topic_id: string; title_bn: string; chapter_bn: string }>(
+            `SELECT l.id AS topic_id, l.title_bn, c.name_bn AS chapter_bn
+               FROM topics l
                JOIN chapters c ON c.id = l.chapter_id
               WHERE l.is_published
-                -- chapter has at least one completed lesson (already begun)
+                -- chapter has at least one completed topic (already begun)
                 AND EXISTS (
-                      SELECT 1 FROM lesson_progress p
-                       JOIN lessons l2 ON l2.id = p.lesson_id
+                      SELECT 1 FROM topic_progress p
+                       JOIN topics l2 ON l2.id = p.topic_id
                       WHERE l2.chapter_id = c.id
                         AND p.student_id = $1 AND p.state = 'completed')
-                -- but THIS lesson isn't done
+                -- but THIS topic isn't done
                 AND NOT EXISTS (
-                      SELECT 1 FROM lesson_progress p2
-                       WHERE p2.lesson_id = l.id
+                      SELECT 1 FROM topic_progress p2
+                       WHERE p2.topic_id = l.id
                          AND p2.student_id = $1 AND p2.state = 'completed')
-              ORDER BY c.chapter_no, l.lesson_no
+              ORDER BY c.chapter_no, l.topic_no
               LIMIT 1`,
             [claims.sub],
           );
           for (const c of cont.rows) {
             out.push({
-              kind: 'continue_lesson',
+              kind: 'continue_topic',
               titleBn: c.title_bn,
               whyBn: `${c.chapter_bn} অধ্যায়টি শেষ করো`,
               route: 'learn',
-              refId: c.lesson_id,
+              refId: c.topic_id,
               urgency: 'medium',
             });
           }
@@ -164,13 +164,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               WHERE c.is_published
                 -- untouched
                 AND NOT EXISTS (
-                      SELECT 1 FROM lesson_progress p
-                       JOIN lessons l ON l.id = p.lesson_id
+                      SELECT 1 FROM topic_progress p
+                       JOIN topics l ON l.id = p.topic_id
                       WHERE l.chapter_id = c.id AND p.student_id = $1)
                 -- prerequisite satisfied (or none)
                 AND (c.prerequisite_chapter_id IS NULL OR EXISTS (
-                      SELECT 1 FROM lesson_progress p2
-                       JOIN lessons l2 ON l2.id = p2.lesson_id
+                      SELECT 1 FROM topic_progress p2
+                       JOIN topics l2 ON l2.id = p2.topic_id
                       WHERE l2.chapter_id = c.prerequisite_chapter_id
                         AND p2.student_id = $1 AND p2.state = 'completed'))
               ORDER BY c.chapter_no

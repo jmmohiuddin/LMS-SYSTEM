@@ -41,3 +41,5 @@ apps/pwa/public/sw.js
 .claude/
 MEMORY.md
 memory/
+
+.playwright-mcp/

@@ -1220,3 +1220,49 @@ button, h1, h2, .att-counts { text-transform: none; }
 .clash-when     { grid-column: 2; font-size: 13px; color: var(--c-ink-3); }
 
 .inline-notice.is-danger { color: var(--c-accent); background: var(--c-danger-soft); }
+
+/* ── Bulk import (F-1601, wireframe §10.2) ─────────────────────────────
+   The screen a head teacher meets on day one with 784 rows. Almost all of
+   this is about the sixteen that are wrong. */
+.stepper { display: flex; list-style: none; margin: 0 var(--s-4) var(--s-3);
+           padding: 0; gap: var(--s-1); }
+.stepper-step { flex: 1; display: flex; align-items: center; gap: var(--s-1);
+                padding: var(--s-2) var(--s-1); font-size: 13px;
+                border-bottom: 3px solid var(--c-line); color: var(--c-ink-3); }
+.stepper-step[data-state='done']    { border-bottom-color: var(--c-success); color: var(--c-ink-2); }
+.stepper-step[data-state='current'] { border-bottom-color: var(--c-primary);
+                                      color: var(--c-ink-1); font-weight: 700; }
+.stepper-num { font-variant-numeric: tabular-nums; }
+.stepper-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.import-card { display: grid; gap: var(--s-3); padding: var(--s-4); }
+.import-help { margin: 0; font-size: 14px; color: var(--c-ink-2); line-height: 1.6; }
+.import-help-quiet { color: var(--c-ink-3); }
+.import-stat { margin: 0; font-size: 16px; font-weight: 700; }
+.import-stat.is-ok   { color: var(--c-success); }
+.import-stat.is-warn { color: var(--c-warn); }
+
+.import-errors { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2);
+                 max-height: 46vh; overflow-y: auto; }
+.import-errors li { display: grid; grid-template-columns: auto 1fr; gap: var(--s-2);
+                    align-items: baseline; padding-bottom: var(--s-2);
+                    border-bottom: 1px solid var(--c-line); font-size: 14px; }
+.import-errors li:last-child { border-bottom: 0; padding-bottom: 0; }
+/* Line numbers are what the operator types into Excel's "go to row" box,
+   so they get a fixed column and tabular figures. */
+.import-line { font-variant-numeric: tabular-nums; font-weight: 700;
+               color: var(--c-ink-2); white-space: nowrap; }
+.import-why { color: var(--c-ink-1); }
+.import-more { color: var(--c-ink-3); font-size: 13px; }
+
+.import-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+/* The primary action carries both counts, so the skipped students cannot
+   be pressed past without being read. It needs room to say so. */
+.import-go { min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
+             line-height: 1.4; white-space: normal; }
+
+.import-card input[type='file'] {
+  min-height: var(--tap-min); padding: var(--s-2);
+  border: 1px dashed var(--c-line); background: var(--c-surface-2);
+  font: inherit; font-size: 14px; width: 100%;
+}

@@ -25,6 +25,7 @@ import { SikhokView } from './sikhok-view.ts';
 import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
 import { ExamRoutineView } from './exam-routine-view.ts';
+import { ImportView } from './import-view.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
@@ -343,6 +344,7 @@ async function main() {
               { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
               { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
               { path: 'examroutine', glyph: '⚠', titleBn: 'পরীক্ষার রুটিন', subtitleBn: 'শিক্ষার্থীভিত্তিক সময় সংঘর্ষ যাচাই' },
+              { path: 'import', glyph: '⬆', titleBn: 'শিক্ষার্থী আমদানি', subtitleBn: 'CSV থেকে — যাচাই করে, ভুল সারি বাদ দিয়ে' },
               { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'CQ · MCQ · রুব্রিক · পাঠ পরিকল্পনা' },
               { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
               { path: 'roles', glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
@@ -365,6 +367,13 @@ async function main() {
         glyph: '⇄',
         hidden: true,
         mount: (container) => { new SubstituteView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'import',
+        labelBn: 'আমদানি',
+        glyph: '⬆',
+        hidden: true,
+        mount: (container) => { new ImportView({ root: container, doc: document, auth }); },
       },
       {
         // Coordinator surface, so hidden from the bar — §2 caps it at five

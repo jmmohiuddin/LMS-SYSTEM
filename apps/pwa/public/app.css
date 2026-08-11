@@ -31,7 +31,24 @@
       is a shared phone used with a thumb.
 
    Everything else — the warm neutral ramp, the red accent, square corners,
-   the ink-tinted elevation, the 4px spacing scale — is taken as given. */
+   the ink-tinted elevation, the 4px spacing scale — is taken as given.
+
+   ── The type scale (the one thing the design file did NOT give) ───────────
+   The standalone screens export sets font-size inline, ad hoc: fourteen raw
+   pixel values (10 → 32) with no ramp, so a card title is 15px on one screen
+   and 16px on the next, and a meta line is 12px here and 13px there. The
+   wireframe is explicit that the type scale lives in the design system and
+   is deliberately unspecified in the frames — but the design file never
+   tokenised it either. This block does. Every size below is drawn from ONE
+   eleven-rung ramp (--text-3xs … --text-4xl); no rule sets a raw px size.
+
+   The ramp steps gently through the reading sizes (13→18 in 1px increments,
+   because a dense-but-scannable product needs fine control where the words
+   are) and widens through the display sizes (20/24/28/32 for the big
+   numbers — GPA, score, activation code). Its floor is 13px, and 13px is
+   Bangla-safe; the sole exception is --text-3xs (11px), used ONLY for Latin
+   digits, monospace codes and table superscripts that never carry a Bangla
+   conjunct. The 16px body floor of Override 3 is --text-base, unchanged. */
 
 :root {
   /* ── From the design system ────────────────────────────────────────── */
@@ -110,6 +127,32 @@
   --s-1: var(--space-1); --s-2: var(--space-2); --s-3: var(--space-3);
   --s-4: var(--space-4); --s-5: var(--space-6); --s-6: var(--space-8);
 
+  /* ── Type scale ────────────────────────────────────────────────────────
+     One ramp, eleven rungs. Every font-size in this file resolves to one of
+     these; a raw px size below this block is a bug. See the file header for
+     why the floor is 13px and why --text-3xs is the one rung allowed under
+     it. Reading rungs step by 1px (13→18); display rungs widen (20→32). */
+  --text-3xs:  11px;   /* Latin/numeric/mono ONLY — codes, table sup, paths */
+  --text-2xs:  13px;   /* Bangla-safe floor — chips, captions, metas, notes */
+  --text-xs:   14px;   /* secondary body, dense controls, table cells */
+  --text-sm:   15px;   /* emphasis rows, MCQ options, card subtitles */
+  --text-base: 16px;   /* body floor (Override 3) — inputs, buttons, links */
+  --text-read: 17px;   /* long-form Bangla reading measure (lesson reader) */
+  --text-lg:   18px;   /* card titles, single prominent lines */
+  --text-xl:   20px;   /* section & screen headings (h2), ward main stat */
+  --text-2xl:  24px;   /* page titles (h1), result GPA */
+  --text-3xl:  28px;   /* stat displays, graded score */
+  --text-4xl:  32px;   /* the single largest number on a screen — F-202 code */
+
+  /* Line-height rungs, paired to the type scale by role. Applied where it
+     earns its keep — display numbers must not have body leading, and long
+     Bangla prose needs more than UI text — not chased across every rule. */
+  --lh-tight: 1.15;    /* display numbers */
+  --lh-snug:  1.3;     /* headings */
+  --lh-ui:    1.5;     /* controls, chips, dense rows */
+  --lh-body:  1.65;    /* default body copy */
+  --lh-read:  1.85;    /* long-form Bangla reading */
+
   /* Override 4 — F-812, no exceptions. */
   --tap-min: 48px;
 
@@ -117,8 +160,13 @@
   --radius:   var(--radius-md);
   --radius-2: var(--radius-lg);
 
+  /* ONE elevation across the whole product — Wireframe §1 ("One elevation
+     level … target hardware is Android Go class"). The design file ships
+     sm/md/lg; the device constraint collapses them to a single resting
+     shadow, and press feedback is carried by transform, not a second layer.
+     --shadow-2 is kept as an alias so existing callers keep resolving. */
   --shadow-1: var(--shadow-sm);
-  --shadow-2: var(--shadow-md);
+  --shadow-2: var(--shadow-sm);
 
   /* Status tints. The old palette used cool blue-greens (var(--c-success-soft)) and
      pink-whites (var(--c-danger-soft)) that read as a different product beside the warm
@@ -142,7 +190,7 @@ body {
   /* Override 3 — 16px floor. Bangla conjuncts like ক্ষ্ম are unreadable
      below ~15px on 1x DPI screens; the design system's 15px body does not
      survive contact with them. */
-  font-size: 16px;
+  font-size: var(--text-base);
   line-height: 1.75;
   /* Override 2 — no tracking. Positive letter-spacing visually severs
      Bangla conjuncts and negative destroys them. */
@@ -164,8 +212,8 @@ h1, h2, h3, h4 {
 /* The design system's -0.015em tracking, applied only where the text is
    Latin. :not([lang='bn']) rather than a class, so it cannot be forgotten. */
 h1:not([lang='bn']), h2:not([lang='bn']) { letter-spacing: -0.015em; }
-h1 { font-size: 26px; }
-h2 { font-size: 20px; }
+h1 { font-size: var(--text-2xl); }
+h2 { font-size: var(--text-xl); }
 
 /* Bangla has no case; text-transform is a no-op that breaks mixed strings. */
 button, h1, h2, .att-counts { text-transform: none; }
@@ -180,11 +228,11 @@ button, h1, h2, .att-counts { text-transform: none; }
   border-bottom: 1px solid var(--c-line);
 }
 .att-header h1 { grid-column: 1; }
-.att-sub { grid-column: 1; margin: 0; color: var(--c-ink-2); font-size: 14px; }
+.att-sub { grid-column: 1; margin: 0; color: var(--c-ink-2); font-size: var(--text-xs); }
 .sync-chip {
   grid-column: 2; grid-row: 1 / span 2;
   padding: var(--s-1) var(--s-2);
-  border-radius: 999px; font-size: 14px; white-space: nowrap;
+  border-radius: 999px; font-size: var(--text-xs); white-space: nowrap;
 }
 .sync-chip[data-state='synced'] { color: var(--c-success); background: var(--c-success-soft); }
 .sync-chip[data-state='queued'] { color: var(--c-warn);    background: var(--c-warn-soft); }
@@ -217,8 +265,8 @@ button, h1, h2, .att-counts { text-transform: none; }
   cursor: pointer;
   padding: var(--s-1);
 }
-.tile-roll  { font-size: 14px; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
-.tile-glyph { font-size: 18px; line-height: 1; }
+.tile-roll  { font-size: var(--text-xs); color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.tile-glyph { font-size: var(--text-lg); line-height: 1; }
 
 /* Status is never signalled by colour alone — each state also has a distinct
    glyph, for the ~8% of male students with a colour-vision deficiency. */
@@ -230,10 +278,37 @@ button, h1, h2, .att-counts { text-transform: none; }
 .tile[data-status='late']    .tile-glyph { color: var(--c-warn); }
 .tile[data-status='excused'] { border-style: dashed; }
 
-/* Visible focus on every interactive element — never outline:none. */
-.tile:focus-visible, button:focus-visible {
+/* Visible focus on EVERY interactive element — never outline:none. F-812
+   makes this a requirement, not a nicety: the target device is often driven
+   by an external keyboard in a computer lab, and a lost focus ring strands
+   that user. One rule covers the whole product so a new control cannot ship
+   without it; individual components used to redeclare this ad hoc (and some
+   forgot). */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
+.tile:focus-visible {
   outline: 2px solid var(--c-primary);
   outline-offset: 2px;
+}
+
+/* Text-entry focus is the accent ring drawn on the border rather than the
+   outline, so the field visibly "arms" without shifting layout. Unified
+   here so every input/select/textarea behaves identically — the old file
+   set this on .field-input only, and .login-input, .marks-input and the
+   rest had no focus treatment at all. :focus (not :focus-visible) because a
+   deliberate tap into a field should show the same armed state as a keyboard
+   tab into it. */
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--c-primary);
+  box-shadow: inset 0 0 0 1px var(--c-primary);
 }
 
 /* ---------------------------------------------------------------- buttons */
@@ -241,7 +316,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   min-height: var(--tap-min);
   padding: 0 var(--s-5);
   border-radius: var(--radius);
-  font-size: 16px; font-weight: 600;
+  font-size: var(--text-base); font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
 }
@@ -257,7 +332,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .snackbar {
   margin-top: var(--s-2); text-align: center;
-  font-size: 14px; color: var(--c-ink-2);
+  font-size: var(--text-xs); color: var(--c-ink-2);
 }
 
 /* ------------------------------------------------------------- responsive */
@@ -283,7 +358,7 @@ button, h1, h2, .att-counts { text-transform: none; }
    alone (F-812). */
 .status-chip {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 12px; font-weight: 600; line-height: 1.3;
+  font-size: var(--text-2xs); font-weight: 600; line-height: 1.3;
   padding: 3px var(--s-2);
   background: var(--c-surface-3); color: var(--c-ink-2);
   border-radius: var(--radius);
@@ -309,13 +384,13 @@ button, h1, h2, .att-counts { text-transform: none; }
   color: var(--c-ink);
   border-bottom: 1px solid var(--c-line);
 }
-.shell-who { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell-who { font-size: var(--text-xs); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shell-logout {
   /* 48px, not the design system's 36px — F-812 allows no exceptions, and
      this is reached with a thumb on a shared phone. */
   min-height: var(--tap-min); padding: 0 var(--s-3);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  background: transparent; color: var(--c-ink-2); font-size: 14px; cursor: pointer;
+  background: transparent; color: var(--c-ink-2); font-size: var(--text-xs); cursor: pointer;
 }
 .shell-view { flex: 1; padding-bottom: 76px; } /* clear the fixed tab bar */
 .shell-tabbar {
@@ -331,8 +406,8 @@ button, h1, h2, .att-counts { text-transform: none; }
   border: none; background: none; color: var(--c-ink-3); cursor: pointer;
   transition: color 100ms ease-out;
 }
-.shell-tab-glyph { font-size: 20px; line-height: 1; }
-.shell-tab-label { font-size: 12px; line-height: 1.2; }
+.shell-tab-glyph { font-size: var(--text-xl); line-height: 1; }
+.shell-tab-label { font-size: var(--text-2xs); line-height: 1.2; }
 /* Active tab needs an unmistakable signal — a colored dot on top plus the
    primary tint. The subtle color-only change we had before wasn't enough
    to tell a first-time user which page they were on. */
@@ -350,7 +425,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .home-card::after {
   content: '›';
   position: absolute; top: var(--s-2); right: var(--s-3);
-  font-size: 22px; line-height: 1; color: var(--c-ink-3);
+  font-size: var(--text-xl); line-height: 1; color: var(--c-ink-3);
   font-weight: 400;
 }
 .home-card { position: relative; }
@@ -359,16 +434,16 @@ button, h1, h2, .att-counts { text-transform: none; }
 /* ---------------------------------------------------------------- login */
 .login-wrap { max-width: 360px; margin: 0 auto; padding: var(--s-5) var(--s-4); }
 .login-form { display: flex; flex-direction: column; gap: var(--s-3); margin-top: var(--s-4); }
-.login-label { display: flex; flex-direction: column; gap: var(--s-1); font-size: 14px; color: var(--c-ink-2); }
+.login-label { display: flex; flex-direction: column; gap: var(--s-1); font-size: var(--text-xs); color: var(--c-ink-2); }
 .login-input {
   min-height: var(--tap-min); padding: 0 var(--s-3);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  font-size: 16px; background: var(--c-surface);
+  font-size: var(--text-base); background: var(--c-surface);
 }
-.login-error { color: var(--c-accent); font-size: 14px; margin: 0; }
+.login-error { color: var(--c-accent); font-size: var(--text-xs); margin: 0; }
 /* F-102 cooldown. Warn, not error — the system is working; you are waiting. */
 .login-cooldown {
-  color: var(--c-warn); font-size: 14px; margin: 0;
+  color: var(--c-warn); font-size: var(--text-xs); margin: 0;
   padding: var(--s-2) var(--s-3);
   background: var(--c-warn-soft); border-radius: var(--radius);
 }
@@ -376,7 +451,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 /* -------------------------------------------------------------- offline banner */
 .offline-banner {
   margin: 0; padding: var(--s-2) var(--s-4);
-  background: var(--c-warn-soft); color: var(--c-warn); font-size: 14px;
+  background: var(--c-warn-soft); color: var(--c-warn); font-size: var(--text-xs);
 }
 
 /* ----------------------------------------------------------------- roster */
@@ -384,7 +459,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   display: block; width: calc(100% - 2 * var(--s-4)); margin: var(--s-3) var(--s-4);
   min-height: var(--tap-min); padding: 0 var(--s-3);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  font-size: 16px; background: var(--c-surface);
+  font-size: var(--text-base); background: var(--c-surface);
 }
 .roster-list { list-style: none; margin: 0; padding: 0 var(--s-4); }
 .roster-row {
@@ -399,7 +474,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .routine-toggle { grid-column: 1 / -1; display: flex; gap: var(--s-2); margin-top: var(--s-2); }
 .routine-toggle .btn-secondary { margin: 0; flex: 1; }
 .routine-toggle .btn-secondary.active { background: var(--c-primary); color: #fff; }
-.routine-day-heading { margin: var(--s-4) var(--s-4) var(--s-1); font-size: 16px; }
+.routine-day-heading { margin: var(--s-4) var(--s-4) var(--s-1); font-size: var(--text-base); }
 .routine-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-4); }
 .routine-row {
   display: grid; grid-template-columns: 3.5em 1fr auto; align-items: center; gap: var(--s-2);
@@ -408,12 +483,12 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .routine-row[data-kind='free'] { color: var(--c-ink-2); }
 .routine-row[data-substitution='true'] { background: var(--c-warn-soft); }
-.routine-time { font-variant-numeric: tabular-nums; color: var(--c-ink-2); font-size: 14px; }
+.routine-time { font-variant-numeric: tabular-nums; color: var(--c-ink-2); font-size: var(--text-xs); }
 .routine-body { display: flex; flex-direction: column; }
 .routine-subject { font-weight: 600; }
-.routine-meta { font-size: 13px; color: var(--c-ink-2); }
-.routine-sub-tag { font-size: 12px; color: var(--c-warn); }
-.routine-chip { font-size: 12px; color: var(--c-success); white-space: nowrap; }
+.routine-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
+.routine-sub-tag { font-size: var(--text-2xs); color: var(--c-warn); }
+.routine-chip { font-size: var(--text-2xs); color: var(--c-success); white-space: nowrap; }
 
 /* ------------------------------------------------------------------ marks */
 .marks-list { list-style: none; margin: 0; padding: 0 var(--s-4) calc(var(--tap-min) + var(--s-4)); }
@@ -423,13 +498,13 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .marks-who { display: flex; align-items: center; gap: var(--s-3); min-height: 28px; }
 .marks-inputs { display: flex; flex-wrap: wrap; gap: var(--s-2); }
-.marks-label { display: flex; flex-direction: column; font-size: 12px; color: var(--c-ink-2); }
+.marks-label { display: flex; flex-direction: column; font-size: var(--text-2xs); color: var(--c-ink-2); }
 .marks-input {
   width: 5.5em; min-height: var(--tap-min); padding: 0 var(--s-2);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  font-size: 16px; font-variant-numeric: tabular-nums;
+  font-size: var(--text-base); font-variant-numeric: tabular-nums;
 }
-.marks-absent { flex-direction: row; align-items: center; gap: var(--s-1); font-size: 14px; }
+.marks-absent { flex-direction: row; align-items: center; gap: var(--s-1); font-size: var(--text-xs); }
 .marks-absent input { width: 20px; height: 20px; }
 .marks-savebar {
   position: sticky; bottom: 0; display: flex; align-items: center; gap: var(--s-3);
@@ -437,7 +512,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   border-top: 1px solid var(--c-line);
 }
 .marks-savebar .btn-primary { flex: 1; margin: 0; }
-.marks-chip { font-size: 13px; color: var(--c-ink-2); white-space: nowrap; }
+.marks-chip { font-size: var(--text-2xs); color: var(--c-ink-2); white-space: nowrap; }
 
 /* ------------------------------------------------------------------- fees */
 .fees-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-4); }
@@ -448,14 +523,14 @@ button, h1, h2, .att-counts { text-transform: none; }
   background: none; border: 0; text-align: left; font: inherit; cursor: pointer;
 }
 .fees-title { grid-area: title; font-weight: 600; }
-.fees-meta { grid-area: meta; font-size: 13px; color: var(--c-ink-2); }
+.fees-meta { grid-area: meta; font-size: var(--text-2xs); color: var(--c-ink-2); }
 .fees-amount { grid-area: amount; align-self: center; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fees-row[data-status='paid'] .fees-amount { color: var(--c-success); }
 .fees-row[data-status='overdue'] .fees-meta { color: var(--c-warn); }
 .fees-detail { padding: 0 0 var(--s-3) var(--s-2); }
 .fees-line {
   display: flex; justify-content: space-between; gap: var(--s-3);
-  padding: 2px 0; font-size: 14px;
+  padding: 2px 0; font-size: var(--text-xs);
 }
 .fees-due { color: var(--c-ink-2); }
 .fees-receipts-h { margin-top: var(--s-1); font-weight: 600; }
@@ -468,10 +543,10 @@ button, h1, h2, .att-counts { text-transform: none; }
   background: none; border: 0; border-bottom: 1px solid var(--c-line);
   text-align: left; font: inherit; cursor: pointer;
 }
-.more-glyph { width: 1.8em; font-size: 20px; text-align: center; }
+.more-glyph { width: 1.8em; font-size: var(--text-xl); text-align: center; }
 .more-body { display: flex; flex-direction: column; }
 .more-title { font-weight: 600; }
-.more-sub { font-size: 13px; color: var(--c-ink-2); }
+.more-sub { font-size: var(--text-2xs); color: var(--c-ink-2); }
 
 /* --------------------------------------------------------------------- ai */
 .ai-form { display: flex; flex-direction: column; gap: var(--s-2); padding: 0 var(--s-4); }
@@ -480,14 +555,14 @@ button, h1, h2, .att-counts { text-transform: none; }
 .ai-output {
   margin: var(--s-3) var(--s-4); padding: var(--s-3);
   background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
-  white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px;
+  white-space: pre-wrap; word-break: break-word; font: inherit; font-size: var(--text-xs);
 }
 
 /* ------------------------------------------------------------------- chat */
 .chat-log { padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
 .chat-bubble {
   max-width: 85%; padding: var(--s-2) var(--s-3); border-radius: var(--radius);
-  font-size: 15px; white-space: pre-wrap; word-break: break-word;
+  font-size: var(--text-sm); white-space: pre-wrap; word-break: break-word;
 }
 .chat-user { align-self: flex-end; background: var(--c-primary); color: #fff; border-bottom-right-radius: 4px; }
 .chat-ai { align-self: flex-start; background: var(--c-surface); border: 1px solid var(--c-line); border-bottom-left-radius: 4px; }
@@ -496,10 +571,10 @@ button, h1, h2, .att-counts { text-transform: none; }
   position: sticky; bottom: 0; display: flex; gap: var(--s-2); align-items: center;
   padding: var(--s-2) var(--s-4); background: var(--c-bg); border-top: 1px solid var(--c-line);
 }
-.chat-class { min-height: var(--tap-min); border: 1px solid var(--c-line); border-radius: var(--radius); font-size: 15px; padding: 0 var(--s-1); }
+.chat-class { min-height: var(--tap-min); border: 1px solid var(--c-line); border-radius: var(--radius); font-size: var(--text-sm); padding: 0 var(--s-1); }
 .chat-input {
   flex: 1; min-height: var(--tap-min); padding: 0 var(--s-3);
-  border: 1px solid var(--c-line); border-radius: var(--radius); font-size: 16px;
+  border: 1px solid var(--c-line); border-radius: var(--radius); font-size: var(--text-base);
 }
 .chat-send { margin: 0; flex: none; width: auto; padding: 0 var(--s-4); }
 
@@ -514,7 +589,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   min-height: var(--tap-min); padding: var(--s-2) 0; border-bottom: 1px solid var(--c-line);
 }
 .sub-assign { margin: 0; width: auto; flex: none; padding: 0 var(--s-3); }
-.sub-assigned { display: block; margin: var(--s-3) var(--s-4); font-size: 15px; }
+.sub-assigned { display: block; margin: var(--s-3) var(--s-4); font-size: var(--text-sm); }
 
 /* ============================================================== redesign
    New surfaces introduced with the home dashboard + answer-script capture.
@@ -526,13 +601,13 @@ button, h1, h2, .att-counts { text-transform: none; }
   background: transparent;
   border-bottom: 0;
 }
-.page-header h1 { font-size: 24px; letter-spacing: -0.01em; }
-.page-sub { margin: var(--s-1) 0 0; color: var(--c-ink-2); font-size: 14px; }
+.page-header h1 { font-size: var(--text-2xl); letter-spacing: -0.01em; }
+.page-sub { margin: var(--s-1) 0 0; color: var(--c-ink-2); font-size: var(--text-xs); }
 .page-sub.empty { padding: var(--s-4); text-align: center; color: var(--c-ink-3); }
 
 .section-heading {
   margin: var(--s-5) var(--s-4) var(--s-2);
-  font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+  font-size: var(--text-2xs); font-weight: 600; letter-spacing: 0.02em;
   color: var(--c-ink-3); text-transform: uppercase;
 }
 
@@ -552,9 +627,9 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 /* h6-style kicker from the design system: small, tracked, accent — but
    tracking only where the text is Latin, never on Bangla conjuncts. */
-.hero-date { margin: 0; font-size: 12px; font-weight: 600; color: var(--c-link); }
-.hero-greet { margin: var(--s-1) 0; font-size: 22px; font-weight: 700; line-height: 1.3; font-family: var(--font-heading); }
-.hero-sub { margin: 0; font-size: 14px; color: var(--c-ink-2); }
+.hero-date { margin: 0; font-size: var(--text-2xs); font-weight: 600; color: var(--c-link); }
+.hero-greet { margin: var(--s-1) 0; font-size: var(--text-xl); font-weight: 700; line-height: 1.3; font-family: var(--font-heading); }
+.hero-sub { margin: 0; font-size: var(--text-xs); color: var(--c-ink-2); }
 
 /* Card is the base surface for tappable items and grouped forms. */
 .card {
@@ -591,24 +666,24 @@ button, h1, h2, .att-counts { text-transform: none; }
   display: inline-flex; align-items: center; justify-content: center;
   width: 40px; height: 40px; border-radius: var(--radius);
   background: var(--c-surface-3);
-  font-size: 22px; line-height: 1;
+  font-size: var(--text-xl); line-height: 1;
 }
 .home-card-primary .home-glyph {
   background: var(--c-surface); color: var(--c-primary);
 }
 .home-body { display: flex; flex-direction: column; gap: 2px; }
-.home-title { font-weight: 600; font-size: 15px; color: var(--c-ink); }
-.home-sub { font-size: 12px; color: var(--c-ink-2); line-height: 1.4; }
+.home-title { font-weight: 600; font-size: var(--text-sm); color: var(--c-ink); }
+.home-sub { font-size: var(--text-2xs); color: var(--c-ink-2); line-height: 1.4; }
 
 /* Form fields (used on the scripts capture card) ------------------------ */
 .card-form { margin: var(--s-3) var(--s-4); padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
-.field { display: flex; flex-direction: column; gap: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
+.field { display: flex; flex-direction: column; gap: var(--s-1); font-size: var(--text-2xs); color: var(--c-ink-2); }
 .field-input {
   min-height: var(--tap-min); padding: 0 var(--s-3);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  background: var(--c-surface); font-size: 16px; color: var(--c-ink);
+  background: var(--c-surface); font-size: var(--text-base); color: var(--c-ink);
 }
-.field-input:focus { outline: 2px solid var(--c-primary); outline-offset: 1px; border-color: transparent; }
+/* Focus is the unified input:focus rule near the top of this file. */
 .btn-capture {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: var(--tap-min); border-radius: var(--radius);
@@ -619,14 +694,14 @@ button, h1, h2, .att-counts { text-transform: none; }
   border: 1px solid var(--c-line); border-radius: var(--radius);
   min-height: 36px; padding: 0 var(--s-2); font: inherit; cursor: pointer;
 }
-.btn-small { min-height: 36px; padding: 0 var(--s-3); font-size: 14px; }
+.btn-small { min-height: 36px; padding: 0 var(--s-3); font-size: var(--text-xs); }
 
 .inline-notice {
   margin: var(--s-2) var(--s-4);
   padding: var(--s-2) var(--s-3);
   background: var(--c-warn-soft); color: var(--c-warn);
   border: 1px solid color-mix(in srgb, var(--c-warn) 35%, transparent); border-radius: var(--radius);
-  font-size: 14px;
+  font-size: var(--text-xs);
 }
 
 /* Script pages ---------------------------------------------------------- */
@@ -640,9 +715,9 @@ button, h1, h2, .att-counts { text-transform: none; }
   border-radius: var(--radius); background: var(--c-surface-3);
 }
 .script-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.script-title { font-weight: 600; font-size: 15px; }
-.script-meta { font-size: 12px; color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
-.script-status { font-size: 12px; }
+.script-title { font-weight: 600; font-size: var(--text-sm); }
+.script-meta { font-size: var(--text-2xs); color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
+.script-status { font-size: var(--text-2xs); }
 .script-page[data-status='saved'] .script-status { color: var(--c-success); }
 .script-page[data-status='uploading'] .script-status { color: var(--c-info); }
 .script-page[data-status='error'] .script-status { color: var(--c-warn); }
@@ -654,9 +729,9 @@ button, h1, h2, .att-counts { text-transform: none; }
   margin: var(--s-3) var(--s-4); padding: var(--s-3) var(--s-4);
   background: var(--c-primary-soft); border-color: transparent;
 }
-.iso-icon { font-size: 24px; line-height: 1; }
+.iso-icon { font-size: var(--text-2xl); line-height: 1; }
 .iso-title { display: block; font-weight: 600; color: var(--c-primary-ink); }
-.iso-desc { display: block; font-size: 13px; color: var(--c-ink-2); line-height: 1.5; }
+.iso-desc { display: block; font-size: var(--text-2xs); color: var(--c-ink-2); line-height: 1.5; }
 
 .roles-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
 .role-card {
@@ -666,18 +741,18 @@ button, h1, h2, .att-counts { text-transform: none; }
     'scope scope';
   gap: var(--s-1) var(--s-3); padding: var(--s-3);
 }
-.role-name  { grid-area: name;  font-weight: 600; font-size: 15px; }
-.role-code  { grid-area: code;  font-size: 11px; color: var(--c-ink-3); font-family: ui-monospace, monospace;
+.role-name  { grid-area: name;  font-weight: 600; font-size: var(--text-sm); }
+.role-code  { grid-area: code;  font-size: var(--text-3xs); color: var(--c-ink-3); font-family: ui-monospace, monospace;
               background: var(--c-surface-3); padding: 2px var(--s-2); border-radius: var(--radius); align-self: start; }
-.role-can   { grid-area: can;   font-size: 13px; color: var(--c-ink-2); }
-.role-scope { grid-area: scope; font-size: 11px; color: var(--c-ink-3); }
+.role-can   { grid-area: can;   font-size: var(--text-2xs); color: var(--c-ink-2); }
+.role-scope { grid-area: scope; font-size: var(--text-3xs); color: var(--c-ink-3); }
 
 /* ============================================================== ledger */
 .recon-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-2); padding: 0 var(--s-4); }
 .recon-card { padding: var(--s-3); display: flex; flex-direction: column; gap: 2px; }
-.recon-provider { font-size: 12px; color: var(--c-ink-3); }
-.recon-posted { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.recon-meta { font-size: 11px; }
+.recon-provider { font-size: var(--text-2xs); color: var(--c-ink-3); }
+.recon-posted { font-size: var(--text-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.recon-meta { font-size: var(--text-3xs); }
 .recon-meta[data-state='ok']      { color: var(--c-success); }
 .recon-meta[data-state='partial'] { color: var(--c-warn); }
 
@@ -687,16 +762,16 @@ button, h1, h2, .att-counts { text-transform: none; }
   padding: var(--s-2) var(--s-3);
   background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
 }
-.ledger-code { font-family: ui-monospace, monospace; font-size: 12px; color: var(--c-ink-2); }
-.ledger-name { font-size: 14px; }
+.ledger-code { font-family: ui-monospace, monospace; font-size: var(--text-2xs); color: var(--c-ink-2); }
+.ledger-name { font-size: var(--text-xs); }
 .ledger-bal  { font-variant-numeric: tabular-nums; font-weight: 600; }
 .ledger-row[data-type='income'] .ledger-bal { color: var(--c-success); }
 
 .batch-card { margin: var(--s-2) var(--s-4); padding: var(--s-3); }
-.batch-memo { font-size: 13px; color: var(--c-ink-2); margin-bottom: var(--s-2); }
+.batch-memo { font-size: var(--text-2xs); color: var(--c-ink-2); margin-bottom: var(--s-2); }
 .batch-line {
   display: grid; grid-template-columns: 1fr auto auto; gap: var(--s-3);
-  padding: var(--s-1) 0; font-size: 13px; font-variant-numeric: tabular-nums;
+  padding: var(--s-1) 0; font-size: var(--text-2xs); font-variant-numeric: tabular-nums;
 }
 .batch-dr { color: var(--c-info); }
 .batch-cr { color: var(--c-success); }
@@ -707,16 +782,16 @@ button, h1, h2, .att-counts { text-transform: none; }
   display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); padding: var(--s-3);
 }
 .system-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.system-title { font-weight: 600; font-size: 15px; }
-.system-desc { font-size: 13px; color: var(--c-ink-2); }
+.system-title { font-weight: 600; font-size: var(--text-sm); }
+.system-desc { font-size: var(--text-2xs); color: var(--c-ink-2); }
 .system-path {
-  font-family: ui-monospace, monospace; font-size: 11px; color: var(--c-ink-3);
+  font-family: ui-monospace, monospace; font-size: var(--text-3xs); color: var(--c-ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.system-detail { font-size: 12px; color: var(--c-warn); margin-top: 2px; }
+.system-detail { font-size: var(--text-2xs); color: var(--c-warn); margin-top: 2px; }
 .system-chip {
   align-self: start;
-  padding: 4px var(--s-2); border-radius: 999px; font-size: 11px; font-weight: 600;
+  padding: 4px var(--s-2); border-radius: 999px; font-size: var(--text-3xs); font-weight: 600;
   white-space: nowrap;
 }
 .system-chip[data-state='on']         { background: var(--c-success-soft); color: var(--c-success); }
@@ -728,7 +803,7 @@ button, h1, h2, .att-counts { text-transform: none; }
    Syllabus browse + lesson reader — the student-facing learning surface. */
 
 .back-bar { padding: var(--s-3) var(--s-4) 0; }
-.back-btn { min-height: 40px; font-size: 14px; }
+.back-btn { min-height: 40px; font-size: var(--text-xs); }
 
 /* Chapter list ---------------------------------------------------------- */
 .chapter-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
@@ -752,16 +827,16 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .chapter-ring-text {
   position: relative; z-index: 1;
-  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--c-ink-2);
+  font-size: var(--text-2xs); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--c-ink-2);
 }
-.chapter-ring[data-complete='true'] .chapter-ring-text { color: var(--c-primary); font-size: 18px; }
+.chapter-ring[data-complete='true'] .chapter-ring-text { color: var(--c-primary); font-size: var(--text-lg); }
 .chapter-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.chapter-title { font-weight: 600; font-size: 15px; }
-.chapter-meta { font-size: 12px; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
-.chapter-pre { font-size: 12px; color: var(--c-warn); }
+.chapter-title { font-weight: 600; font-size: var(--text-sm); }
+.chapter-meta { font-size: var(--text-2xs); color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.chapter-pre { font-size: var(--text-2xs); color: var(--c-warn); }
 .chapter-draft {
   align-self: flex-start; margin-top: 2px;
-  font-size: 11px; font-weight: 600; padding: 1px var(--s-2); border-radius: 999px;
+  font-size: var(--text-3xs); font-weight: 600; padding: 1px var(--s-2); border-radius: 999px;
   background: var(--c-surface-3); color: var(--c-ink-3);
 }
 
@@ -773,13 +848,13 @@ button, h1, h2, .att-counts { text-transform: none; }
   cursor: pointer; background: var(--c-surface);
   border: 1px solid var(--c-line); border-radius: var(--radius);
 }
-.lesson-mark { font-size: 18px; line-height: 1; color: var(--c-ink-3); text-align: center; }
+.lesson-mark { font-size: var(--text-lg); line-height: 1; color: var(--c-ink-3); text-align: center; }
 .lesson-card[data-state='completed'] .lesson-mark { color: var(--c-success); }
 .lesson-card[data-state='started'] .lesson-mark { color: var(--c-warn); }
 .lesson-card[data-state='completed'] { background: color-mix(in srgb, var(--c-primary-soft) 55%, var(--c-surface)); }
 .lesson-body { display: flex; flex-direction: column; gap: 1px; }
-.lesson-title { font-weight: 600; font-size: 15px; }
-.lesson-meta { font-size: 12px; color: var(--c-ink-2); }
+.lesson-title { font-weight: 600; font-size: var(--text-sm); }
+.lesson-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
 
 /* Reader ---------------------------------------------------------------- */
 .lesson-reader {
@@ -787,13 +862,13 @@ button, h1, h2, .att-counts { text-transform: none; }
   /* Bangla body copy needs a slightly longer measure than Latin to avoid
      conjunct-heavy lines breaking awkwardly. */
   max-width: 68ch;
-  font-size: 17px; line-height: 1.85;
+  font-size: var(--text-read); line-height: 1.85;
 }
 .block-text { margin: 0 0 var(--s-4); }
 .block-formula {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
   background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
-  font-family: ui-monospace, "SF Mono", monospace; font-size: 18px; text-align: center;
+  font-family: ui-monospace, "SF Mono", monospace; font-size: var(--text-lg); text-align: center;
   overflow-x: auto;
 }
 /* The tinted background already says "this is the key point"; the accent
@@ -802,7 +877,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .block-key-point {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
   background: var(--c-primary-soft); border-radius: var(--radius);
-  font-size: 16px;
+  font-size: var(--text-base);
 }
 .block-example, .block-practice {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
@@ -810,13 +885,13 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .block-practice { border-style: dashed; }
 .block-label {
-  display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  display: block; font-size: var(--text-3xs); font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase; color: var(--c-ink-3); margin-bottom: var(--s-1);
 }
 .block-example p, .block-practice p { margin: 0; }
 .block-figure { margin: var(--s-3) 0 var(--s-4); }
 .block-figure img { width: 100%; height: auto; border-radius: var(--radius); background: var(--c-surface-3); }
-.block-figure figcaption { margin-top: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
+.block-figure figcaption { margin-top: var(--s-1); font-size: var(--text-2xs); color: var(--c-ink-2); }
 
 .lesson-done { margin: var(--s-4) var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }
 
@@ -829,20 +904,20 @@ button, h1, h2, .att-counts { text-transform: none; }
   text-align: left; font: inherit; color: inherit; cursor: pointer;
 }
 .result-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.result-exam { font-weight: 600; font-size: 15px; }
-.result-meta { font-size: 12px; color: var(--c-ink-2); }
+.result-exam { font-weight: 600; font-size: var(--text-sm); }
+.result-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
 .result-score { display: flex; flex-direction: column; align-items: center; gap: 0; }
 .result-gpa {
-  font-size: 24px; font-weight: 700; line-height: 1.1;
+  font-size: var(--text-2xl); font-weight: 700; line-height: 1.1;
   font-variant-numeric: tabular-nums; color: var(--c-primary);
 }
-.result-letter { font-size: 12px; font-weight: 600; color: var(--c-ink-2); }
+.result-letter { font-size: var(--text-2xs); font-weight: 600; color: var(--c-ink-2); }
 .result-card[data-pass='false'] .result-gpa { color: var(--c-accent); }
 
 .result-detail { padding: 0 var(--s-3) var(--s-3); border-top: 1px solid var(--c-line); }
 .result-subject {
   display: flex; justify-content: space-between; gap: var(--s-3);
-  padding: var(--s-2) 0; font-size: 14px; border-bottom: 1px solid var(--c-line-2);
+  padding: var(--s-2) 0; font-size: var(--text-xs); border-bottom: 1px solid var(--c-line-2);
 }
 .result-subject:last-child { border-bottom: none; }
 .result-subject-mark { font-variant-numeric: tabular-nums; color: var(--c-ink-2); white-space: nowrap; }
@@ -855,7 +930,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   min-height: var(--tap-min); padding: 0 var(--s-2);
   border: 1px solid var(--c-line); border-radius: var(--radius);
   background: var(--c-surface-2); color: var(--c-ink);
-  font: inherit; font-size: 14px; max-width: 45vw;
+  font: inherit; font-size: var(--text-xs); max-width: 45vw;
 }
 .shell-role option { color: var(--c-ink); background: var(--c-surface); }
 
@@ -880,10 +955,10 @@ button, h1, h2, .att-counts { text-transform: none; }
 .assign-card[data-state='done']    { border-left-color: var(--c-success);
   background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
 .assign-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.assign-title { font-weight: 600; font-size: 15px; }
-.assign-meta { font-size: 12px; color: var(--c-ink-2); }
+.assign-title { font-weight: 600; font-size: var(--text-sm); }
+.assign-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
 .assign-chip {
-  padding: 3px var(--s-2); border-radius: 999px; font-size: 11px; font-weight: 700;
+  padding: 3px var(--s-2); border-radius: 999px; font-size: var(--text-3xs); font-weight: 700;
   white-space: nowrap; background: var(--c-surface-3); color: var(--c-ink-2);
 }
 .assign-chip[data-state='overdue'] { background: var(--c-danger-soft); color: var(--c-accent); }
@@ -893,7 +968,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 .assign-instructions {
   margin: var(--s-2) var(--s-4); padding: var(--s-3) var(--s-4);
-  font-size: 15px; line-height: 1.7; white-space: pre-wrap;
+  font-size: var(--text-sm); line-height: 1.7; white-space: pre-wrap;
 }
 .assign-answer { min-height: 160px; padding: var(--s-3); line-height: 1.7; resize: vertical; }
 .assign-graded {
@@ -901,21 +976,21 @@ button, h1, h2, .att-counts { text-transform: none; }
   background: var(--c-primary-soft); border-color: transparent; text-align: center;
 }
 .assign-score {
-  font-size: 30px; font-weight: 700; color: var(--c-primary);
+  font-size: var(--text-3xl); font-weight: 700; color: var(--c-primary);
   font-variant-numeric: tabular-nums; line-height: 1.2;
 }
-.assign-feedback { margin: var(--s-2) 0 0; font-size: 14px; color: var(--c-ink-2); }
+.assign-feedback { margin: var(--s-2) 0 0; font-size: var(--text-xs); color: var(--c-ink-2); }
 
 /* Teacher review list */
 .sub-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
 .sub-item { padding: var(--s-3); }
 .sub-item[data-graded='true'] { background: color-mix(in srgb, var(--c-primary-soft) 40%, var(--c-surface)); }
 .sub-head { display: flex; justify-content: space-between; gap: var(--s-3); align-items: baseline; }
-.sub-who { font-weight: 600; font-size: 15px; }
-.sub-state { font-size: 12px; color: var(--c-ink-3); white-space: nowrap; }
+.sub-who { font-weight: 600; font-size: var(--text-sm); }
+.sub-state { font-size: var(--text-2xs); color: var(--c-ink-3); white-space: nowrap; }
 .sub-state[data-late='true'] { color: var(--c-warn); }
 .sub-body {
-  margin: var(--s-2) 0 0; font-size: 14px; line-height: 1.6; color: var(--c-ink-2);
+  margin: var(--s-2) 0 0; font-size: var(--text-xs); line-height: 1.6; color: var(--c-ink-2);
   white-space: pre-wrap;
 }
 .sub-grade-row { display: flex; gap: var(--s-2); margin-top: var(--s-3); align-items: center; }
@@ -927,12 +1002,12 @@ button, h1, h2, .att-counts { text-transform: none; }
    people did the same work. Sits above the submission list because it is
    the only thing on the screen waiting on the teacher. */
 .grade-conflict { background: var(--c-warn-soft); margin-bottom: var(--s-4); }
-.grade-conflict h3 { margin: 0 0 var(--s-2); font-size: 16px; }
-.conflict-who { margin: 0 0 var(--s-3); font-size: 14px; color: var(--c-ink-2); }
+.grade-conflict h3 { margin: 0 0 var(--s-2); font-size: var(--text-base); }
+.conflict-who { margin: 0 0 var(--s-3); font-size: var(--text-xs); color: var(--c-ink-2); }
 .conflict-compare {
   display: grid; grid-template-columns: auto 1fr;
   gap: var(--s-1) var(--s-3); margin: 0 0 var(--s-4);
-  font-size: 15px;
+  font-size: var(--text-sm);
 }
 .conflict-compare dt { color: var(--c-ink-2); }
 .conflict-compare dd { margin: 0; font-variant-numeric: tabular-nums; }
@@ -952,16 +1027,16 @@ button, h1, h2, .att-counts { text-transform: none; }
 .prac-card { margin: var(--s-2) var(--s-4); padding: var(--s-4); }
 .prac-meta {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 12px; color: var(--c-ink-3); margin-bottom: var(--s-2);
+  font-size: var(--text-2xs); color: var(--c-ink-3); margin-bottom: var(--s-2);
 }
-.prac-difficulty { letter-spacing: 1px; font-size: 10px; }
-.prac-stem { margin: 0 0 var(--s-3); font-size: 16px; line-height: 1.7; font-weight: 500; }
+.prac-difficulty { letter-spacing: 1px; font-size: var(--text-3xs); }
+.prac-stem { margin: 0 0 var(--s-3); font-size: var(--text-base); line-height: 1.7; font-weight: 500; }
 
 .prac-options { display: flex; flex-direction: column; gap: var(--s-2); }
 .prac-option {
   display: grid; grid-template-columns: auto 1fr; gap: var(--s-3); align-items: center;
   min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
-  text-align: left; font: inherit; font-size: 15px; cursor: pointer;
+  text-align: left; font: inherit; font-size: var(--text-sm); cursor: pointer;
   background: var(--c-surface); color: var(--c-ink);
   border: 1px solid var(--c-line); border-radius: var(--radius);
 }
@@ -970,7 +1045,7 @@ button, h1, h2, .att-counts { text-transform: none; }
    about one boy in twelve — so the glyph carries it and the colour only
    reinforces. */
 .prac-mark {
-  width: 1.25em; font-size: 15px; line-height: 1; text-align: center;
+  width: 1.25em; font-size: var(--text-sm); line-height: 1; text-align: center;
   color: var(--c-ink-2);
 }
 .prac-option[data-state='selected'] { border-color: var(--c-primary); background: var(--c-primary-soft); }
@@ -987,14 +1062,14 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 .prac-verdict {
   margin-top: var(--s-3); padding: var(--s-2) var(--s-3);
-  border-radius: var(--radius); font-weight: 600; font-size: 15px; text-align: center;
+  border-radius: var(--radius); font-weight: 600; font-size: var(--text-sm); text-align: center;
 }
 .prac-verdict[data-correct='true']  { background: var(--c-success-soft); color: var(--c-success); }
 .prac-verdict[data-correct='false'] { background: var(--c-warn-soft); color: var(--c-warn); }
 .prac-explanation {
   margin: var(--s-2) 0 0; padding: var(--s-2) var(--s-3);
   background: var(--c-surface-2); border-radius: var(--radius);
-  font-size: 14px; line-height: 1.7; color: var(--c-ink-2);
+  font-size: var(--text-xs); line-height: 1.7; color: var(--c-ink-2);
 }
 .prac-actions { display: flex; gap: var(--s-2); margin-top: var(--s-3); }
 .prac-actions .btn-primary, .prac-actions .btn-secondary { margin: 0; flex: 1; }
@@ -1024,13 +1099,13 @@ button, h1, h2, .att-counts { text-transform: none; }
 .next-glyph {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: var(--radius);
-  background: var(--c-surface-3); font-size: 18px; line-height: 1;
+  background: var(--c-surface-3); font-size: var(--text-lg); line-height: 1;
 }
 .next-card[data-urgency='high']   .next-glyph { background: var(--c-warn-soft); color: var(--c-warn); }
 .next-card[data-urgency='medium'] .next-glyph { background: var(--c-primary-soft); }
 .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.next-title { font-weight: 600; font-size: 15px; }
-.next-why { font-size: 12px; color: var(--c-ink-2); line-height: 1.45; }
+.next-title { font-weight: 600; font-size: var(--text-sm); }
+.next-why { font-size: var(--text-2xs); color: var(--c-ink-2); line-height: 1.45; }
 
 /* ============================================================ my subjects */
 /* F-802, wireframe §6.2. */
@@ -1038,7 +1113,7 @@ button, h1, h2, .att-counts { text-transform: none; }
              display: flex; flex-direction: column; gap: var(--s-2); }
 .subj-card { padding: var(--s-3); }
 .subj-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
-.subj-name { font-weight: 600; font-size: 16px; }
+.subj-name { font-weight: 600; font-size: var(--text-base); }
 .subj-chip { flex: none; font-weight: 500; }
 /* Requirement type carries a LABEL in every case, so colour is reinforcement
    and never the signal (F-812). */
@@ -1051,9 +1126,9 @@ button, h1, h2, .att-counts { text-transform: none; }
 .progress-track { height: 8px; background: var(--c-surface-3); overflow: hidden; }
 .progress-fill  { height: 100%; background: var(--c-primary); }
 /* "with numeric label, never bar-only" — §3 component vocabulary. */
-.subj-count { font-size: 13px; color: var(--c-ink-2); white-space: nowrap;
+.subj-count { font-size: var(--text-2xs); color: var(--c-ink-2); white-space: nowrap;
               font-variant-numeric: tabular-nums; }
-.subj-next { margin: var(--s-2) 0 0; font-size: 14px; color: var(--c-ink-2); }
+.subj-next { margin: var(--s-2) 0 0; font-size: var(--text-xs); color: var(--c-ink-2); }
 .subj-next-done { color: var(--c-success); }
 
 /* Skeleton — a shape of the real layout, not a spinner (§4). */
@@ -1069,8 +1144,8 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: var(--s-3);
                padding: var(--s-6) var(--s-4); text-align: center; color: var(--c-ink-2); }
-.empty-glyph { font-size: 32px; line-height: 1; color: var(--c-ink-3); }
-.empty-state p { margin: 0; font-size: 15px; max-width: 30ch; }
+.empty-glyph { font-size: var(--text-4xl); line-height: 1; color: var(--c-ink-3); }
+.empty-state p { margin: 0; font-size: var(--text-sm); max-width: 30ch; }
 .empty-state .btn-secondary { margin: 0; }
 
 /* ============================================================ my results */
@@ -1079,39 +1154,39 @@ button, h1, h2, .att-counts { text-transform: none; }
 .exam-select {
   min-height: var(--tap-min); padding: 0 var(--s-2); max-width: 55%;
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  background: var(--c-surface); color: var(--c-ink); font: inherit; font-size: 14px;
+  background: var(--c-surface); color: var(--c-ink); font: inherit; font-size: var(--text-xs);
 }
 
 .result-summary { margin: 0 var(--s-4) var(--s-3); }
 .result-summary-row { display: flex; gap: var(--s-6); }
 .result-summary-row > div { display: flex; flex-direction: column; }
-.result-stat-label { font-size: 12px; color: var(--c-ink-2); }
+.result-stat-label { font-size: var(--text-2xs); color: var(--c-ink-2); }
 .result-stat-value {
-  font-family: var(--font-heading); font-weight: 800; font-size: 28px; line-height: 1.1;
+  font-family: var(--font-heading); font-weight: 800; font-size: var(--text-3xl); line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
-.result-published { margin: var(--s-3) 0 0; font-size: 13px; color: var(--c-ink-2); }
+.result-published { margin: var(--s-3) 0 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
 
 /* data-table (§3): dense, horizontally scrollable, frozen first column —
    six mark columns do not fit 360px, and the subject name is the one thing
    that must stay in view while the rest scrolls. */
 .table-scroll { margin: 0 var(--s-4); overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
 .data-table th, .data-table td { padding: var(--s-2); white-space: nowrap; }
 .data-table thead th {
-  text-align: left; font-size: 11px; font-weight: 700;
+  text-align: left; font-size: var(--text-3xs); font-weight: 700;
   color: var(--c-ink-2); border-bottom: 2px solid var(--c-line);
 }
 .data-table tbody th {
-  text-align: left; font-weight: 600; font-size: 14px;
+  text-align: left; font-weight: 600; font-size: var(--text-xs);
   position: sticky; left: 0; background: var(--c-surface-2);
 }
 .data-table tbody tr { border-bottom: 1px solid var(--c-line-2); }
 .data-table td { text-align: right; font-variant-numeric: tabular-nums; }
 .data-table .cell-grade { text-align: left; font-weight: 700; }
-.data-table .cell-note { font-weight: 400; font-size: 11px; color: var(--c-accent); }
+.data-table .cell-note { font-weight: 400; font-size: var(--text-3xs); color: var(--c-accent); }
 .data-table .is-absent { text-align: left; color: var(--c-ink-3); font-style: normal; }
-.data-table sup { font-size: 10px; color: var(--c-link); margin-left: 2px; }
+.data-table sup { font-size: var(--text-3xs); color: var(--c-link); margin-left: 2px; }
 
 /* Separated by a rule, not a rail. The design system marks a break with
    .hr — a 2px divider — and uses no left borders anywhere. The accent rail
@@ -1120,11 +1195,11 @@ button, h1, h2, .att-counts { text-transform: none; }
 .result-footnote {
   margin: var(--s-4) var(--s-4) 0; padding: var(--s-3) 0 0;
   border-top: 2px solid var(--c-line);
-  font-size: 13px; line-height: 1.6; color: var(--c-ink-2);
+  font-size: var(--text-2xs); line-height: 1.6; color: var(--c-ink-2);
 }
 
 .result-trend { margin: var(--s-5) var(--s-4) var(--s-6); }
-.result-trend h2 { font-size: 16px; margin-bottom: var(--s-2); }
+.result-trend h2 { font-size: var(--text-base); margin-bottom: var(--s-2); }
 .trend-list { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--s-2); overflow-x: auto; }
 .trend-point {
   flex: 1 0 auto; min-width: 88px; padding: var(--s-2);
@@ -1133,9 +1208,9 @@ button, h1, h2, .att-counts { text-transform: none; }
 .trend-point[data-current='true'] { border-color: var(--c-primary); }
 .trend-gpa {
   display: block; font-family: var(--font-heading); font-weight: 800;
-  font-size: 18px; font-variant-numeric: tabular-nums;
+  font-size: var(--text-lg); font-variant-numeric: tabular-nums;
 }
-.trend-label { display: block; font-size: 11px; color: var(--c-ink-2); }
+.trend-label { display: block; font-size: var(--text-3xs); color: var(--c-ink-2); }
 
 /* ========================================================= my attendance */
 /* F-806. Excused is never folded into the headline figure and never shares
@@ -1143,15 +1218,15 @@ button, h1, h2, .att-counts { text-transform: none; }
 .att-summary { margin: 0 var(--s-4) var(--s-3); }
 .att-headline { display: flex; flex-direction: column; margin-bottom: var(--s-3); }
 .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
-.att-note { margin: var(--s-3) 0 0; font-size: 13px; color: var(--c-ink-2); }
+.att-note { margin: var(--s-3) 0 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
 
 .att-section { margin: var(--s-5) 0; }
-.att-section > h2 { font-size: 16px; margin: 0 var(--s-4) var(--s-2); }
+.att-section > h2 { font-size: var(--text-base); margin: 0 var(--s-4) var(--s-2); }
 
 .att-month-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
 .att-month { display: grid; grid-template-columns: 8rem 1fr auto; align-items: center; gap: var(--s-3); }
-.att-month-name  { font-size: 14px; }
-.att-month-count { font-size: 12px; color: var(--c-ink-2); white-space: nowrap; }
+.att-month-name  { font-size: var(--text-xs); }
+.att-month-count { font-size: var(--text-2xs); color: var(--c-ink-2); white-space: nowrap; }
 /* Below 75% a school starts intervening. The bar changes tone AND the count
    beside it says the same thing in words — colour is never the only carrier. */
 .progress-fill[data-low='true'] { background: var(--c-warn); }
@@ -1162,9 +1237,9 @@ button, h1, h2, .att-counts { text-transform: none; }
   align-items: baseline; padding: var(--s-2) 0;
   border-bottom: 1px solid var(--c-line-2);
 }
-.att-entry-date { font-size: 13px; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.att-entry-date { font-size: var(--text-2xs); color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
 .att-entry-body { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
-.att-entry-note { font-size: 12px; color: var(--c-ink-2); }
+.att-entry-note { font-size: var(--text-2xs); color: var(--c-ink-2); }
 
 /* --------------------------------------------------------- segmented bar */
 /* Wireframe §6.6's [ বাকি ] [ জমা ] [ মূল্যায়িত ]. Three options all visible
@@ -1176,7 +1251,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   flex: 1; min-height: var(--tap-min); padding: 0 var(--s-2);
   border: 0; border-right: 1px solid var(--c-line);
   background: transparent; color: var(--c-ink-2);
-  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  font: inherit; font-size: var(--text-xs); font-weight: 600; cursor: pointer;
 }
 .seg-opt:last-child { border-right: 0; }
 /* Selection is a filled block plus aria-selected — not colour alone. */
@@ -1201,10 +1276,10 @@ button, h1, h2, .att-counts { text-transform: none; }
 .inline-form input {
   min-height: var(--tap-min); padding: 0 var(--s-2);
   border: 1px solid var(--c-line); background: var(--c-surface);
-  color: var(--c-ink-1); font: inherit; font-size: 15px;
+  color: var(--c-ink-1); font: inherit; font-size: var(--text-sm);
 }
 
-.clash-head { margin: 0 0 var(--s-3); font-size: 16px; font-weight: 700; color: var(--c-accent); }
+.clash-head { margin: 0 0 var(--s-3); font-size: var(--text-base); font-weight: 700; color: var(--c-accent); }
 .clash-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
 .clash-list li {
   display: grid; gap: 2px var(--s-2); align-items: baseline;
@@ -1216,8 +1291,8 @@ button, h1, h2, .att-counts { text-transform: none; }
    them scans as a column. */
 .clash-roll { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--c-ink-2); }
 .clash-name { font-weight: 600; }
-.clash-subjects { grid-column: 2; font-size: 14px; color: var(--c-ink-2); }
-.clash-when     { grid-column: 2; font-size: 13px; color: var(--c-ink-3); }
+.clash-subjects { grid-column: 2; font-size: var(--text-xs); color: var(--c-ink-2); }
+.clash-when     { grid-column: 2; font-size: var(--text-2xs); color: var(--c-ink-3); }
 
 .inline-notice.is-danger { color: var(--c-accent); background: var(--c-danger-soft); }
 
@@ -1227,7 +1302,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .stepper { display: flex; list-style: none; margin: 0 var(--s-4) var(--s-3);
            padding: 0; gap: var(--s-1); }
 .stepper-step { flex: 1; display: flex; align-items: center; gap: var(--s-1);
-                padding: var(--s-2) var(--s-1); font-size: 13px;
+                padding: var(--s-2) var(--s-1); font-size: var(--text-2xs);
                 border-bottom: 3px solid var(--c-line); color: var(--c-ink-3); }
 .stepper-step[data-state='done']    { border-bottom-color: var(--c-success); color: var(--c-ink-2); }
 .stepper-step[data-state='current'] { border-bottom-color: var(--c-primary);
@@ -1236,9 +1311,9 @@ button, h1, h2, .att-counts { text-transform: none; }
 .stepper-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .import-card { display: grid; gap: var(--s-3); padding: var(--s-4); }
-.import-help { margin: 0; font-size: 14px; color: var(--c-ink-2); line-height: 1.6; }
+.import-help { margin: 0; font-size: var(--text-xs); color: var(--c-ink-2); line-height: 1.6; }
 .import-help-quiet { color: var(--c-ink-3); }
-.import-stat { margin: 0; font-size: 16px; font-weight: 700; }
+.import-stat { margin: 0; font-size: var(--text-base); font-weight: 700; }
 .import-stat.is-ok   { color: var(--c-success); }
 .import-stat.is-warn { color: var(--c-warn); }
 
@@ -1246,14 +1321,14 @@ button, h1, h2, .att-counts { text-transform: none; }
                  max-height: 46vh; overflow-y: auto; }
 .import-errors li { display: grid; grid-template-columns: auto 1fr; gap: var(--s-2);
                     align-items: baseline; padding-bottom: var(--s-2);
-                    border-bottom: 1px solid var(--c-line); font-size: 14px; }
+                    border-bottom: 1px solid var(--c-line); font-size: var(--text-xs); }
 .import-errors li:last-child { border-bottom: 0; padding-bottom: 0; }
 /* Line numbers are what the operator types into Excel's "go to row" box,
    so they get a fixed column and tabular figures. */
 .import-line { font-variant-numeric: tabular-nums; font-weight: 700;
                color: var(--c-ink-2); white-space: nowrap; }
 .import-why { color: var(--c-ink-1); }
-.import-more { color: var(--c-ink-3); font-size: 13px; }
+.import-more { color: var(--c-ink-3); font-size: var(--text-2xs); }
 
 .import-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
 /* The primary action carries both counts, so the skipped students cannot
@@ -1264,7 +1339,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .import-card input[type='file'] {
   min-height: var(--tap-min); padding: var(--s-2);
   border: 1px dashed var(--c-line); background: var(--c-surface-2);
-  font: inherit; font-size: 14px; width: 100%;
+  font: inherit; font-size: var(--text-xs); width: 100%;
 }
 
 /* ── Routine generation result (F-503/F-505, wireframe §8.2) ───────────
@@ -1273,20 +1348,20 @@ button, h1, h2, .att-counts { text-transform: none; }
    button, never behind a disclosure — "nothing is silently accepted" is a
    layout requirement as much as a data one. */
 .gen-counters { display: grid; gap: var(--s-1); padding: var(--s-4); }
-.gen-counter { margin: 0; font-size: 16px; font-weight: 700; }
+.gen-counter { margin: 0; font-size: var(--text-base); font-weight: 700; }
 .gen-counter.is-ok   { color: var(--c-success); }
 .gen-counter.is-warn { color: var(--c-warn); }
-.gen-meta { margin: var(--s-1) 0 0; font-size: 13px; color: var(--c-ink-3); }
+.gen-meta { margin: var(--s-1) 0 0; font-size: var(--text-2xs); color: var(--c-ink-3); }
 
-.gen-head { margin: 0 0 var(--s-2); font-size: 15px; font-weight: 700; color: var(--c-ink-1); }
+.gen-head { margin: 0 0 var(--s-2); font-size: var(--text-sm); font-weight: 700; color: var(--c-ink-1); }
 .gen-trades { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
 .gen-trades li { display: grid; gap: 2px; padding-bottom: var(--s-2);
-                 border-bottom: 1px solid var(--c-line); font-size: 14px; }
+                 border-bottom: 1px solid var(--c-line); font-size: var(--text-xs); }
 .gen-trades li:last-child { border-bottom: 0; padding-bottom: 0; }
 .gen-trade-what { color: var(--c-ink-1); }
 /* The cause is what turns a complaint into an argument for a hire, so it
    is quieter than the fact but never hidden. */
-.gen-trade-why  { color: var(--c-ink-3); font-size: 13px; }
+.gen-trade-why  { color: var(--c-ink-3); font-size: var(--text-2xs); }
 
 /* Un-run rules read as an admission, not as a result. */
 .gen-unchecked { background: var(--c-surface-2); }
@@ -1294,16 +1369,16 @@ button, h1, h2, .att-counts { text-transform: none; }
 .gen-slot-select {
   width: 100%; min-height: var(--tap-min); padding: 0 var(--s-2);
   border: 1px solid var(--c-line); background: var(--c-surface);
-  color: var(--c-ink-1); font: inherit; font-size: 15px;
+  color: var(--c-ink-1); font: inherit; font-size: var(--text-sm);
 }
 /* Background only, matching .gen-unchecked above. The left rails elsewhere
    in this file (.assign-card, .next-card) earn their colour by encoding
    state — urgency, overdue, done. This panel has no state to encode, so a
    rail here would be ornament wearing the clothes of a signal. */
 .gen-explain { margin-top: var(--s-3); padding: var(--s-3); background: var(--c-surface-2); }
-.gen-explain-head { margin: 0 0 var(--s-2); font-size: 13px; font-weight: 700;
+.gen-explain-head { margin: 0 0 var(--s-2); font-size: var(--text-2xs); font-weight: 700;
                     color: var(--c-ink-2); }
-.gen-explain-line { margin: 0 0 var(--s-1); font-size: 14px; color: var(--c-ink-1);
+.gen-explain-line { margin: 0 0 var(--s-1); font-size: var(--text-xs); color: var(--c-ink-1);
                     line-height: 1.6; }
 .gen-explain-line:last-child { margin-bottom: 0; }
 
@@ -1325,23 +1400,23 @@ button, h1, h2, .att-counts { text-transform: none; }
 @media (max-width: 359px) { .ward-grid { grid-template-columns: 1fr; } }
 
 .ward-card { padding: var(--s-3); display: grid; gap: 2px; align-content: start; }
-.ward-card-head { margin: 0; font-size: 13px; font-weight: 600; color: var(--c-ink-3); }
+.ward-card-head { margin: 0; font-size: var(--text-2xs); font-weight: 600; color: var(--c-ink-3); }
 /* The status line is the largest thing in the card: it is the answer to
    the question the guardian opened the app to ask. */
-.ward-card-main { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3; }
+.ward-card-main { margin: 0; font-size: var(--text-xl); font-weight: 700; line-height: 1.3; }
 .ward-card-main[data-tone='ok']     { color: var(--c-success); }
 .ward-card-main[data-tone='warn']   { color: var(--c-warn); }
 .ward-card-main[data-tone='danger'] { color: var(--c-accent); }
 .ward-card-main[data-tone='muted']  { color: var(--c-ink-2); }
-.ward-card-sub { margin: 0; font-size: 13px; color: var(--c-ink-3); }
+.ward-card-sub { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-3); }
 
 .ward-result { margin: 0 var(--s-4) var(--s-3); padding: var(--s-4); display: grid; gap: var(--s-2); }
-.ward-result-line { margin: 0; font-size: 18px; font-weight: 700; color: var(--c-ink-1); }
+.ward-result-line { margin: 0; font-size: var(--text-lg); font-weight: 700; color: var(--c-ink-1); }
 
 /* Payment is one tap from home (§9.1), so the control is full-width and
    the last thing on the screen — where a thumb already is. */
 .ward-cta { padding: 0 var(--s-4) var(--s-4); }
-.ward-cta .btn-primary { width: 100%; min-height: var(--tap-min); font-size: 16px; }
+.ward-cta .btn-primary { width: 100%; min-height: var(--tap-min); font-size: var(--text-base); }
 
 /* The binding shortage (F-503, §8.2). Sits above the soft-constraint list
    because it is the REASON periods are missing — a coordinator reading
@@ -1356,8 +1431,8 @@ button, h1, h2, .att-counts { text-transform: none; }
 .roster-issue { margin-left: auto; }
 .issued-code-card { margin: 0 var(--s-4) var(--s-3); padding: var(--s-4);
                     display: grid; gap: var(--s-2); text-align: center; }
-.issued-code-who { margin: 0; font-size: 14px; color: var(--c-ink-2); }
-.issued-code-value { margin: 0; font-size: 32px; font-weight: 700;
+.issued-code-who { margin: 0; font-size: var(--text-xs); color: var(--c-ink-2); }
+.issued-code-value { margin: 0; font-size: var(--text-4xl); font-weight: 700;
                      letter-spacing: 0.12em; font-variant-numeric: tabular-nums;
                      color: var(--c-ink-1); user-select: all; }
-.issued-code-note { margin: 0; font-size: 13px; color: var(--c-ink-3); line-height: 1.6; }
+.issued-code-note { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-3); line-height: 1.6; }

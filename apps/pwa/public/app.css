@@ -1,51 +1,133 @@
 /* ShikhonBD — app shell styles.
-   Implements the tokens and Bangla typography rules in
-   docs/04-UIUX-ACCESSIBILITY.md §2–3. Reference viewport: 360x640. */
+   Design tokens adopted from "Shikhon Screens (standalone).html"; layout and
+   accessibility rules from docs/04-UIUX-ACCESSIBILITY.md and the Wireframe
+   Specification v2.0 §1. Reference viewport: 360x640.
 
-/* No self-hosted font: the subset build of docs/04 §2 hasn't been produced
-   yet, and shipping a 404 @font-face broke the SW precache. The stack below
-   uses the device's Noto Sans Bengali — present on Android system-wide —
-   which is the actual rendering path on the target hardware anyway. */
+   ── Adopting the design system, and the four places it is overridden ──────
+   The design file is the source of truth for colour, spacing, radius,
+   elevation and heading treatment. Four of its choices are overridden here,
+   each because Wireframe §1 lists the conflicting rule as a constraint that
+   "has already broken something or is a stated requirement":
+
+   1. FONT. The design uses Archivo, self-hosted as woff2. Archivo carries no
+      Bangla glyphs, and this product is Bangla-primary (N-12). A self-hosted
+      webfont is also what previously 404'd and broke service-worker install
+      outright (TRD §3). Archivo is therefore named in the stack but NOT
+      self-hosted: it renders where the device already has it, and falls back
+      to the system Bangla face otherwise. No @font-face, no download, no
+      precache risk.
+
+   2. LETTER-SPACING. The design tracks headings at -0.015em and h6 at
+      +0.08em. Bangla conjuncts break under both: positive tracking severs
+      them, negative destroys them. Tracking is applied to Latin-only
+      elements and never to [lang='bn'].
+
+   3. TYPE SCALE. The design sets 15px body, 14px controls, 11-13px meta.
+      Bangla conjuncts like ক্ষ্ম are unreadable below ~15px at 1x DPI, so the
+      floor here is 16px body and 13px absolute minimum.
+
+   4. CONTROL HEIGHT. The design uses 36px buttons and inputs. F-812 requires
+      48x48px minimum tap targets with no exceptions, and the target device
+      is a shared phone used with a thumb.
+
+   Everything else — the warm neutral ramp, the red accent, square corners,
+   the ink-tinted elevation, the 4px spacing scale — is taken as given. */
 
 :root {
+  /* ── From the design system ────────────────────────────────────────── */
+  --color-bg:      #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-text:    #201e1d;
+  --color-accent:  #ec3013;
+  --color-accent-2:#e15b47;
+  --color-divider: color-mix(in srgb, #201e1d 40%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
+     same step of any role matches the others in visual value. */
+  --color-neutral-100: #f8f4f4;  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  --color-accent-100: #fff2ef;   --color-accent-200: #ffe0d9;
+  --color-accent-300: #ffc4b8;   --color-accent-400: #ff9783;
+  --color-accent-500: #ff563c;   --color-accent-600: #dd2b0f;
+  --color-accent-700: #ae1800;   --color-accent-800: #7c1405;
+  --color-accent-900: #4d170e;
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-6: 24px; --space-8: 32px;
+
+  --radius-sm: 0px; --radius-md: 0px; --radius-lg: 0px;
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+
+  /* Override 1 — Archivo named, never self-hosted. See the header. */
+  --font-heading: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-heading-weight: 800;
+  --font-body: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-bn: 'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', sans-serif;
-  --font-en: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
-  /* Primary shifted slightly warmer than the pure flag green — the flag
-     green (#006A4E) has a slight blue cast that reads muddy under 5.9:1
-     contrast at 14px. #08725A is the same hue rotated 2° toward yellow,
-     +2 on luminance, and still WCAG AA on both surfaces. */
-  --c-primary:      #08725A;
-  --c-primary-ink:  #05563F;
-  --c-primary-soft: #E6F4EF;
+  /* ── Semantic aliases ──────────────────────────────────────────────────
+     Every rule below this block is written against these names, so the
+     palette can be re-pointed at a different design system by editing this
+     block alone rather than 800 lines of rules. */
+  /* The design system's --color-accent (#ec3013) is 3.76:1 on the #f3f2f2
+     ground and 4.20:1 under white — both below AA, and F-812 makes the
+     accessibility floor a requirement rather than a preference. So the
+     accent is used at the steps of its OWN ramp that clear 4.5:1:
+       -600 for fills carrying white text  (4.74:1)
+       -700 for text and links on the bg   (6.41:1)
+     The brand hue is unchanged; only the step moves. */
+  --c-primary:      var(--color-accent-600);
+  --c-primary-ink:  var(--color-accent-800);
+  --c-primary-soft: var(--color-accent-100);
+  --c-primary-flat: var(--color-accent);       /* fills with no text over them */
+  --c-accent:       var(--color-accent-700);   /* destructive / error */
+  --c-link:         var(--color-accent-700);
 
-  /* Softer coral than the flag red — the flag red at button size is
-     visually loud enough to compete with the primary CTA. Reserved for
-     destructive/warning affordances only. */
-  --c-accent:       #E23E51;
+  /* Status colours are NOT in the design system's palette — it ships one
+     accent. Warning and success are drawn from the same warm neutral
+     lightness scale so they sit in the family rather than looking imported,
+     and both clear 4.5:1 on --color-surface. */
+  --c-warn:    #8a5a00;
+  --c-success: #1f6b3a;
+  --c-info:    #2c5aa0;
 
-  --c-warn:    #B45309;          /* 4.6:1 */
-  --c-success: #15803D;
-  --c-info:    #1D4ED8;
+  --c-ink:    var(--color-text);
+  --c-ink-2:  var(--color-neutral-700);
+  --c-ink-3:  var(--color-neutral-600);
+  --c-line:   var(--color-neutral-300);
+  --c-line-2: var(--color-neutral-200);
 
-  --c-ink:    #0F1626;           /* 17.5:1 */
-  --c-ink-2:  #475467;           /* 7.6:1 — lightest text token permitted */
-  --c-ink-3:  #6B7280;           /* 5.6:1 — meta only, never body */
-  --c-line:   #E4E7EC;
-  --c-line-2: #F1F3F5;
+  --c-surface:   var(--color-neutral-100);
+  --c-surface-2: var(--color-bg);
+  --c-surface-3: var(--color-neutral-200);
 
-  --c-surface:   #FFFFFF;
-  --c-surface-2: #F7F8FA;        /* app background — slightly warmer neutral */
-  --c-surface-3: #EFF1F4;
+  --s-1: var(--space-1); --s-2: var(--space-2); --s-3: var(--space-3);
+  --s-4: var(--space-4); --s-5: var(--space-6); --s-6: var(--space-8);
 
-  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px;
+  /* Override 4 — F-812, no exceptions. */
   --tap-min: 48px;
-  --radius:   12px;              /* one step up — reads modern without dominating */
-  --radius-2: 16px;              /* hero/large cards */
 
-  /* Two shadow levels max — compositing is expensive on Android Go */
-  --shadow-1: 0 1px 2px rgba(15, 22, 38, .04), 0 1px 1px rgba(15, 22, 38, .03);
-  --shadow-2: 0 4px 12px rgba(15, 22, 38, .06), 0 1px 2px rgba(15, 22, 38, .04);
+  /* Square, per the design system. */
+  --radius:   var(--radius-md);
+  --radius-2: var(--radius-lg);
+
+  --shadow-1: var(--shadow-sm);
+  --shadow-2: var(--shadow-md);
+
+  /* Status tints. The old palette used cool blue-greens (var(--c-success-soft)) and
+     pink-whites (var(--c-danger-soft)) that read as a different product beside the warm
+     #f3f2f2 ground. These are the same hues pulled toward the neutral
+     ramp's warmth, each still ≥4.5:1 against its paired ink. */
+  --c-danger-soft:  var(--color-accent-100);   /* #fff2ef, from the system */
+  --c-warn-soft:    #fbf1e0;
+  --c-success-soft: #e9f2ea;
+  --c-info-soft:    #e8eef7;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -54,22 +136,36 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--c-surface-2);
-  color: var(--c-ink);
-  font-family: var(--font-en);
-  /* 16px minimum: Bangla conjuncts like ক্ষ্ম are unreadable below ~15px
-     on 1x DPI screens. */
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  /* Override 3 — 16px floor. Bangla conjuncts like ক্ষ্ম are unreadable
+     below ~15px on 1x DPI screens; the design system's 15px body does not
+     survive contact with them. */
   font-size: 16px;
   line-height: 1.75;
-  /* NEVER adjust letter-spacing — positive tracking visually severs
-     conjuncts and negative destroys them. */
+  /* Override 2 — no tracking. Positive letter-spacing visually severs
+     Bangla conjuncts and negative destroys them. */
   letter-spacing: normal;
 }
 
-[lang='bn'], [lang='bn'] button, [lang='bn'] input { font-family: var(--font-bn); }
+/* Bangla renders from the device system font, always (Wireframe §1). */
+[lang='bn'], [lang='bn'] button, [lang='bn'] input, [lang='bn'] textarea {
+  font-family: var(--font-bn);
+  letter-spacing: normal;
+}
 
-h1, h2 { line-height: 1.55; margin: 0; font-weight: 600; }
-h1 { font-size: 22px; }
+h1, h2, h3, h4 {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  line-height: 1.2;
+  margin: 0;
+}
+/* The design system's -0.015em tracking, applied only where the text is
+   Latin. :not([lang='bn']) rather than a class, so it cannot be forgotten. */
+h1:not([lang='bn']), h2:not([lang='bn']) { letter-spacing: -0.015em; }
+h1 { font-size: 26px; }
+h2 { font-size: 20px; }
 
 /* Bangla has no case; text-transform is a no-op that breaks mixed strings. */
 button, h1, h2, .att-counts { text-transform: none; }
@@ -90,9 +186,9 @@ button, h1, h2, .att-counts { text-transform: none; }
   padding: var(--s-1) var(--s-2);
   border-radius: 999px; font-size: 14px; white-space: nowrap;
 }
-.sync-chip[data-state='synced'] { color: var(--c-success); background: #ECFDF5; }
-.sync-chip[data-state='queued'] { color: var(--c-warn);    background: #FFFBEB; }
-.sync-chip[data-state='failed'] { color: var(--c-accent);  background: #FEF2F2; }
+.sync-chip[data-state='synced'] { color: var(--c-success); background: var(--c-success-soft); }
+.sync-chip[data-state='queued'] { color: var(--c-warn);    background: var(--c-warn-soft); }
+.sync-chip[data-state='failed'] { color: var(--c-accent);  background: var(--c-danger-soft); }
 
 /* --------------------------------------------------------------- counters */
 .att-counts {
@@ -128,9 +224,9 @@ button, h1, h2, .att-counts { text-transform: none; }
    glyph, for the ~8% of male students with a colour-vision deficiency. */
 .tile[data-status='present'] { border-color: var(--c-success); }
 .tile[data-status='present'] .tile-glyph { color: var(--c-success); }
-.tile[data-status='absent']  { border-color: var(--c-accent); background: #FEF2F2; }
+.tile[data-status='absent']  { border-color: var(--c-accent); background: var(--c-danger-soft); }
 .tile[data-status='absent']  .tile-glyph { color: var(--c-accent); }
-.tile[data-status='late']    { border-color: var(--c-warn); background: #FFFBEB; }
+.tile[data-status='late']    { border-color: var(--c-warn); background: var(--c-warn-soft); }
 .tile[data-status='late']    .tile-glyph { color: var(--c-warn); }
 .tile[data-status='excused'] { border-style: dashed; }
 
@@ -175,6 +271,29 @@ button, h1, h2, .att-counts { text-transform: none; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
+/* ------------------------------------------------------------- status-chip */
+/* Named in the wireframe's component vocabulary (§3) with states success /
+   warning / danger / neutral / pending, and used across six screens — but
+   never actually defined, so every caller fell back to unstyled text. It is
+   a component now, and one-off chips (.assign-chip, .system-chip, .subj-chip)
+   layer their palette on top of this base rather than redefining the shape.
+
+   Modelled on the design system's .tag: small, tight, low-chrome. Colour is
+   always paired with the label text it wraps, so it never carries state
+   alone (F-812). */
+.status-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 600; line-height: 1.3;
+  padding: 3px var(--s-2);
+  background: var(--c-surface-3); color: var(--c-ink-2);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.status-chip[data-state='success'] { background: var(--c-success-soft); color: var(--c-success); }
+.status-chip[data-state='warning'] { background: var(--c-warn-soft);    color: var(--c-warn); }
+.status-chip[data-state='danger']  { background: var(--c-danger-soft);  color: var(--c-accent); }
+.status-chip[data-state='pending'] { background: var(--c-surface-3);    color: var(--c-ink-3); }
+
 /* -------------------------------------------------------------- shell chrome */
 .shell { display: flex; flex-direction: column; min-height: 100vh; }
 .shell-topbar {
@@ -182,13 +301,21 @@ button, h1, h2, .att-counts { text-transform: none; }
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-4);
-  background: var(--c-primary); color: #fff;
+  /* The design system spends its accent on actions, not chrome. A full-width
+     accent band was inherited from the previous green theme and, at this
+     saturation, reads as an alert rather than a header. Wireframe §2 draws
+     the global chrome as a plain bar. */
+  background: var(--c-surface);
+  color: var(--c-ink);
+  border-bottom: 1px solid var(--c-line);
 }
 .shell-who { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shell-logout {
-  min-height: 36px; padding: 0 var(--s-3);
-  border: 1px solid rgba(255,255,255,.6); border-radius: var(--radius);
-  background: transparent; color: #fff; font-size: 14px; cursor: pointer;
+  /* 48px, not the design system's 36px — F-812 allows no exceptions, and
+     this is reached with a thumb on a shared phone. */
+  min-height: var(--tap-min); padding: 0 var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+  background: transparent; color: var(--c-ink-2); font-size: 14px; cursor: pointer;
 }
 .shell-view { flex: 1; padding-bottom: 76px; } /* clear the fixed tab bar */
 .shell-tabbar {
@@ -243,13 +370,13 @@ button, h1, h2, .att-counts { text-transform: none; }
 .login-cooldown {
   color: var(--c-warn); font-size: 14px; margin: 0;
   padding: var(--s-2) var(--s-3);
-  background: #FFFBEB; border-radius: var(--radius);
+  background: var(--c-warn-soft); border-radius: var(--radius);
 }
 
 /* -------------------------------------------------------------- offline banner */
 .offline-banner {
   margin: 0; padding: var(--s-2) var(--s-4);
-  background: #FFFBEB; color: var(--c-warn); font-size: 14px;
+  background: var(--c-warn-soft); color: var(--c-warn); font-size: 14px;
 }
 
 /* ----------------------------------------------------------------- roster */
@@ -280,7 +407,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   border-bottom: 1px solid var(--c-line);
 }
 .routine-row[data-kind='free'] { color: var(--c-ink-2); }
-.routine-row[data-substitution='true'] { background: #FFFBEB; }
+.routine-row[data-substitution='true'] { background: var(--c-warn-soft); }
 .routine-time { font-variant-numeric: tabular-nums; color: var(--c-ink-2); font-size: 14px; }
 .routine-body { display: flex; flex-direction: column; }
 .routine-subject { font-weight: 600; }
@@ -359,7 +486,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 /* ------------------------------------------------------------------- chat */
 .chat-log { padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
 .chat-bubble {
-  max-width: 85%; padding: var(--s-2) var(--s-3); border-radius: 14px;
+  max-width: 85%; padding: var(--s-2) var(--s-3); border-radius: var(--radius);
   font-size: 15px; white-space: pre-wrap; word-break: break-word;
 }
 .chat-user { align-self: flex-end; background: var(--c-primary); color: #fff; border-bottom-right-radius: 4px; }
@@ -412,16 +539,22 @@ button, h1, h2, .att-counts { text-transform: none; }
 /* Hero: greeting + today. Uses a subtle primary tint so it reads as a
    different plane without a heavy gradient (compositing budget). */
 .hero {
-  margin: var(--s-4) var(--s-4) var(--s-2);
-  padding: var(--s-5) var(--s-4);
-  background: linear-gradient(135deg, var(--c-primary) 0%, var(--c-primary-ink) 100%);
-  color: #fff;
-  border-radius: var(--radius-2);
-  box-shadow: var(--shadow-2);
+  /* The design system spends accent on actions, not on surfaces. A
+     full-bleed accent hero was fine under the old muted green; at #dd2b0f
+     it dominates a screen whose actual job is the three suggestion cards
+     below it. Neutral ground, accent kept for the kicker. */
+  margin: var(--s-4);
+  padding: var(--s-4);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  color: var(--c-ink);
 }
-.hero-date { margin: 0; font-size: 13px; opacity: 0.82; letter-spacing: 0.02em; }
-.hero-greet { margin: var(--s-1) 0 var(--s-1); font-size: 22px; font-weight: 600; line-height: 1.35; }
-.hero-sub { margin: 0; font-size: 14px; opacity: 0.9; }
+/* h6-style kicker from the design system: small, tracked, accent — but
+   tracking only where the text is Latin, never on Bangla conjuncts. */
+.hero-date { margin: 0; font-size: 12px; font-weight: 600; color: var(--c-link); }
+.hero-greet { margin: var(--s-1) 0; font-size: 22px; font-weight: 700; line-height: 1.3; font-family: var(--font-heading); }
+.hero-sub { margin: 0; font-size: 14px; color: var(--c-ink-2); }
 
 /* Card is the base surface for tappable items and grouped forms. */
 .card {
@@ -456,7 +589,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .home-glyph {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; border-radius: 10px;
+  width: 40px; height: 40px; border-radius: var(--radius);
   background: var(--c-surface-3);
   font-size: 22px; line-height: 1;
 }
@@ -472,18 +605,18 @@ button, h1, h2, .att-counts { text-transform: none; }
 .field { display: flex; flex-direction: column; gap: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
 .field-input {
   min-height: var(--tap-min); padding: 0 var(--s-3);
-  border: 1px solid var(--c-line); border-radius: 10px;
+  border: 1px solid var(--c-line); border-radius: var(--radius);
   background: var(--c-surface); font-size: 16px; color: var(--c-ink);
 }
 .field-input:focus { outline: 2px solid var(--c-primary); outline-offset: 1px; border-color: transparent; }
 .btn-capture {
   display: inline-flex; align-items: center; justify-content: center;
-  min-height: var(--tap-min); border-radius: 10px;
+  min-height: var(--tap-min); border-radius: var(--radius);
   background: var(--c-primary); color: #fff; font-weight: 600; cursor: pointer;
 }
 .btn-ghost {
   background: transparent; color: var(--c-ink-2);
-  border: 1px solid var(--c-line); border-radius: 10px;
+  border: 1px solid var(--c-line); border-radius: var(--radius);
   min-height: 36px; padding: 0 var(--s-2); font: inherit; cursor: pointer;
 }
 .btn-small { min-height: 36px; padding: 0 var(--s-3); font-size: 14px; }
@@ -491,8 +624,8 @@ button, h1, h2, .att-counts { text-transform: none; }
 .inline-notice {
   margin: var(--s-2) var(--s-4);
   padding: var(--s-2) var(--s-3);
-  background: #FFF7ED; color: var(--c-warn);
-  border: 1px solid #FED7AA; border-radius: 10px;
+  background: var(--c-warn-soft); color: var(--c-warn);
+  border: 1px solid color-mix(in srgb, var(--c-warn) 35%, transparent); border-radius: var(--radius);
   font-size: 14px;
 }
 
@@ -504,7 +637,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .script-thumb {
   width: 84px; height: 108px; object-fit: cover;
-  border-radius: 8px; background: var(--c-surface-3);
+  border-radius: var(--radius); background: var(--c-surface-3);
 }
 .script-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .script-title { font-weight: 600; font-size: 15px; }
@@ -535,7 +668,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .role-name  { grid-area: name;  font-weight: 600; font-size: 15px; }
 .role-code  { grid-area: code;  font-size: 11px; color: var(--c-ink-3); font-family: ui-monospace, monospace;
-              background: var(--c-surface-3); padding: 2px var(--s-2); border-radius: 6px; align-self: start; }
+              background: var(--c-surface-3); padding: 2px var(--s-2); border-radius: var(--radius); align-self: start; }
 .role-can   { grid-area: can;   font-size: 13px; color: var(--c-ink-2); }
 .role-scope { grid-area: scope; font-size: 11px; color: var(--c-ink-3); }
 
@@ -552,7 +685,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .ledger-row {
   display: grid; grid-template-columns: 100px 1fr auto; gap: var(--s-2); align-items: center;
   padding: var(--s-2) var(--s-3);
-  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 8px;
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
 }
 .ledger-code { font-family: ui-monospace, monospace; font-size: 12px; color: var(--c-ink-2); }
 .ledger-name { font-size: 14px; }
@@ -586,8 +719,8 @@ button, h1, h2, .att-counts { text-transform: none; }
   padding: 4px var(--s-2); border-radius: 999px; font-size: 11px; font-weight: 600;
   white-space: nowrap;
 }
-.system-chip[data-state='on']         { background: #ECFDF5; color: var(--c-success); }
-.system-chip[data-state='dark']       { background: #FEF3C7; color: var(--c-warn); }
+.system-chip[data-state='on']         { background: var(--c-success-soft); color: var(--c-success); }
+.system-chip[data-state='dark']       { background: var(--c-warn-soft); color: var(--c-warn); }
 .system-chip[data-state='invisible']  { background: var(--c-surface-3); color: var(--c-ink-2); }
 .system-chip[data-state='unknown']    { background: var(--c-surface-3); color: var(--c-ink-3); }
 
@@ -659,7 +792,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .block-text { margin: 0 0 var(--s-4); }
 .block-formula {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
-  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 10px;
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
   font-family: ui-monospace, "SF Mono", monospace; font-size: 18px; text-align: center;
   overflow-x: auto;
 }
@@ -668,12 +801,12 @@ button, h1, h2, .att-counts { text-transform: none; }
    this file, it encoded nothing — there is only one kind of key point. */
 .block-key-point {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
-  background: var(--c-primary-soft); border-radius: 10px;
+  background: var(--c-primary-soft); border-radius: var(--radius);
   font-size: 16px;
 }
 .block-example, .block-practice {
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
-  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 10px;
+  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
 }
 .block-practice { border-style: dashed; }
 .block-label {
@@ -682,7 +815,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 }
 .block-example p, .block-practice p { margin: 0; }
 .block-figure { margin: var(--s-3) 0 var(--s-4); }
-.block-figure img { width: 100%; height: auto; border-radius: 10px; background: var(--c-surface-3); }
+.block-figure img { width: 100%; height: auto; border-radius: var(--radius); background: var(--c-surface-3); }
 .block-figure figcaption { margin-top: var(--s-1); font-size: 13px; color: var(--c-ink-2); }
 
 .lesson-done { margin: var(--s-4) var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }
@@ -719,9 +852,10 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 /* Demo role picker in the top bar */
 .shell-role {
-  min-height: 32px; max-width: 40vw; padding: 0 var(--s-2);
-  border: 1px solid rgba(255,255,255,.5); border-radius: 8px;
-  background: rgba(255,255,255,.12); color: #fff; font-size: 13px;
+  min-height: var(--tap-min); padding: 0 var(--s-2);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+  background: var(--c-surface-2); color: var(--c-ink);
+  font: inherit; font-size: 14px; max-width: 45vw;
 }
 .shell-role option { color: var(--c-ink); background: var(--c-surface); }
 
@@ -752,10 +886,10 @@ button, h1, h2, .att-counts { text-transform: none; }
   padding: 3px var(--s-2); border-radius: 999px; font-size: 11px; font-weight: 700;
   white-space: nowrap; background: var(--c-surface-3); color: var(--c-ink-2);
 }
-.assign-chip[data-state='overdue'] { background: #FEF2F2; color: var(--c-accent); }
-.assign-chip[data-state='today']   { background: #FFFBEB; color: var(--c-warn); }
-.assign-chip[data-state='soon']    { background: #FFFBEB; color: var(--c-warn); }
-.assign-chip[data-state='done']    { background: #ECFDF5; color: var(--c-success); }
+.assign-chip[data-state='overdue'] { background: var(--c-danger-soft); color: var(--c-accent); }
+.assign-chip[data-state='today']   { background: var(--c-warn-soft); color: var(--c-warn); }
+.assign-chip[data-state='soon']    { background: var(--c-warn-soft); color: var(--c-warn); }
+.assign-chip[data-state='done']    { background: var(--c-success-soft); color: var(--c-success); }
 
 .assign-instructions {
   margin: var(--s-2) var(--s-4); padding: var(--s-3) var(--s-4);
@@ -792,7 +926,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 /* F-103 grading conflict. Warn-toned, not error-toned: nothing failed, two
    people did the same work. Sits above the submission list because it is
    the only thing on the screen waiting on the teacher. */
-.grade-conflict { background: #FFFBEB; margin-bottom: var(--s-4); }
+.grade-conflict { background: var(--c-warn-soft); margin-bottom: var(--s-4); }
 .grade-conflict h3 { margin: 0 0 var(--s-2); font-size: 16px; }
 .conflict-who { margin: 0 0 var(--s-3); font-size: 14px; color: var(--c-ink-2); }
 .conflict-compare {
@@ -829,7 +963,7 @@ button, h1, h2, .att-counts { text-transform: none; }
   min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
   text-align: left; font: inherit; font-size: 15px; cursor: pointer;
   background: var(--c-surface); color: var(--c-ink);
-  border: 1px solid var(--c-line); border-radius: 10px;
+  border: 1px solid var(--c-line); border-radius: var(--radius);
 }
 /* The mark, not the colour, is what says right or wrong. Green and red
    backgrounds alone are unreadable to a red-green colour-blind student —
@@ -843,9 +977,9 @@ button, h1, h2, .att-counts { text-transform: none; }
 .prac-option[data-state='selected'] .prac-mark { color: var(--c-primary); }
 /* Correct is marked even when they picked it wrong — showing only the
    error teaches nothing about what the right answer was. */
-.prac-option[data-state='correct'] { border-color: var(--c-success); background: #ECFDF5; }
+.prac-option[data-state='correct'] { border-color: var(--c-success); background: var(--c-success-soft); }
 .prac-option[data-state='correct'] .prac-mark { color: var(--c-success); font-weight: 700; }
-.prac-option[data-state='wrong']   { border-color: var(--c-accent);  background: #FEF2F2; }
+.prac-option[data-state='wrong']   { border-color: var(--c-accent);  background: var(--c-danger-soft); }
 .prac-option[data-state='wrong'] .prac-mark { color: var(--c-accent); font-weight: 700; }
 .prac-option:disabled { cursor: default; opacity: 1; }
 
@@ -853,13 +987,13 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 .prac-verdict {
   margin-top: var(--s-3); padding: var(--s-2) var(--s-3);
-  border-radius: 8px; font-weight: 600; font-size: 15px; text-align: center;
+  border-radius: var(--radius); font-weight: 600; font-size: 15px; text-align: center;
 }
-.prac-verdict[data-correct='true']  { background: #ECFDF5; color: var(--c-success); }
-.prac-verdict[data-correct='false'] { background: #FFFBEB; color: var(--c-warn); }
+.prac-verdict[data-correct='true']  { background: var(--c-success-soft); color: var(--c-success); }
+.prac-verdict[data-correct='false'] { background: var(--c-warn-soft); color: var(--c-warn); }
 .prac-explanation {
   margin: var(--s-2) 0 0; padding: var(--s-2) var(--s-3);
-  background: var(--c-surface-2); border-radius: 8px;
+  background: var(--c-surface-2); border-radius: var(--radius);
   font-size: 14px; line-height: 1.7; color: var(--c-ink-2);
 }
 .prac-actions { display: flex; gap: var(--s-2); margin-top: var(--s-3); }
@@ -889,10 +1023,10 @@ button, h1, h2, .att-counts { text-transform: none; }
 .next-card[data-urgency='low']    { border-left-color: var(--c-line); }
 .next-glyph {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 10px;
+  width: 36px; height: 36px; border-radius: var(--radius);
   background: var(--c-surface-3); font-size: 18px; line-height: 1;
 }
-.next-card[data-urgency='high']   .next-glyph { background: #FFFBEB; color: var(--c-warn); }
+.next-card[data-urgency='high']   .next-glyph { background: var(--c-warn-soft); color: var(--c-warn); }
 .next-card[data-urgency='medium'] .next-glyph { background: var(--c-primary-soft); }
 .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .next-title { font-weight: 600; font-size: 15px; }
@@ -905,16 +1039,16 @@ button, h1, h2, .att-counts { text-transform: none; }
 .subj-card { padding: var(--s-3); }
 .subj-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
 .subj-name { font-weight: 600; font-size: 16px; }
-.subj-chip { flex: none; }
+.subj-chip { flex: none; font-weight: 500; }
 /* Requirement type carries a LABEL in every case, so colour is reinforcement
    and never the signal (F-812). */
-.subj-chip[data-requirement='optional']         { background: #FFFBEB; color: var(--c-warn); }
+.subj-chip[data-requirement='optional']         { background: var(--c-warn-soft); color: var(--c-warn); }
 .subj-chip[data-requirement='religion_variant'] { background: var(--c-primary-soft); color: var(--c-primary-ink); }
 .subj-chip[data-requirement='co_curricular']    { background: var(--c-surface-3); color: var(--c-ink-2); }
 
 .subj-progress-row { display: grid; grid-template-columns: 1fr auto;
                      align-items: center; gap: var(--s-3); margin-top: var(--s-3); }
-.progress-track { height: 8px; border-radius: 999px; background: var(--c-surface-3); overflow: hidden; }
+.progress-track { height: 8px; background: var(--c-surface-3); overflow: hidden; }
 .progress-fill  { height: 100%; background: var(--c-primary); }
 /* "with numeric label, never bar-only" — §3 component vocabulary. */
 .subj-count { font-size: 13px; color: var(--c-ink-2); white-space: nowrap;
@@ -923,7 +1057,7 @@ button, h1, h2, .att-counts { text-transform: none; }
 .subj-next-done { color: var(--c-success); }
 
 /* Skeleton — a shape of the real layout, not a spinner (§4). */
-.skel { background: var(--c-surface-3); border-radius: 6px; }
+.skel { background: var(--c-surface-3); border-radius: var(--radius); }
 .skel-title { height: 18px; width: 55%; }
 .skel-bar   { height: 8px;  width: 100%; margin-top: var(--s-3); border-radius: 999px; }
 .skel-line  { height: 13px; width: 40%;  margin-top: var(--s-2); }

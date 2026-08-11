@@ -1817,3 +1817,102 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 ::-webkit-scrollbar-thumb { background: var(--color-neutral-400);
                             border: 2px solid var(--color-bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-neutral-500); }
+
+/* ══ Dark theme — F-1607 ═══════════════════════════════════════════════════
+   Every rule in this file resolves through the semantic aliases, so dark
+   mode is a palette remap, not a second stylesheet. The neutral ramp is
+   inverted end-for-end, which carries --c-surface, --c-line, --c-ink-2 and
+   the rest along with it automatically; only the handful of tokens that
+   need a different RUNG rather than a different value are restated below.
+
+   One block, keyed on an attribute, rather than the usual pair of a
+   @media query and an attribute override — that pattern duplicates thirty
+   declarations and they drift. The boot script in index.html sets
+   data-theme from localStorage or the OS preference before first paint, so
+   there is no flash. Gating the theme on JS costs nothing here: this whole
+   UI is built in TypeScript at runtime, so a page without JS has no app to
+   theme in the first place.
+
+   Not pure black. On the LCD panels these phones actually ship with there
+   is no battery saving in #000, and on the OLED ones it smears while
+   scrolling Bangla text. Warm near-black keeps the product's identity —
+   the light theme is warm-neutral, and a cold grey dark mode would read as
+   a different app after sunset. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg:      #1a1817;
+  --color-surface: #232120;
+  --color-text:    #f2efee;
+  --color-divider: color-mix(in srgb, #f2efee 30%, transparent);
+
+  /* The ramp, inverted. 100 is now the darkest step, so --c-surface
+     (= neutral-100) stays "the raised surface" without touching its rule. */
+  --color-neutral-100: #232120;  --color-neutral-200: #2c2a29;
+  --color-neutral-300: #3a3736;  --color-neutral-400: #4e4a49;
+  --color-neutral-500: #6e6a69;  --color-neutral-600: #928d8c;
+  --color-neutral-700: #b5b0af;  --color-neutral-800: #d5d0cf;
+  --color-neutral-900: #efeae9;
+
+  /* Accent fills keep the brand step: white on #dd2b0f is 4.74:1 in either
+     theme, so a primary button looks the same at midnight as at noon.
+     Accent TEXT has to move up the ramp — accent-700 on near-black is
+     unreadable, which is the mirror of why it moved DOWN in the light
+     theme. Same obligation, opposite direction. */
+  --c-primary-text: var(--color-accent-400);
+  --c-primary-ink:  var(--color-accent-300);
+  --c-link:         var(--color-accent-400);
+  --c-accent:       var(--color-accent-400);
+  --c-primary-soft: #3a1c14;
+
+  --c-ink-3: #9a9594;
+
+  /* The status TINTS, which are backgrounds. Missing these was the whole of
+     the first dark-mode failure: the neutral ramp inverted, so text went
+     light, while these four stayed pale and every chip and notice became
+     light-on-light — worst case 1.02:1 on the routine screen, which is
+     invisible rather than merely poor. Inverting a ramp only carries the
+     tokens that ALIAS it, and these are hand-set values outside it.
+
+     Each is the same hue at a dark weight, so a warning still reads amber
+     and an error still reads red without either one glowing. */
+  --c-primary-soft: #3a1c14;
+  --c-danger-soft:  #3d1a13;
+  --c-warn-soft:    #33280f;
+  --c-success-soft: #14301f;
+  --c-info-soft:    #17233a;
+
+  /* Status colours are hand-set in both themes because the product ships
+     one accent and these are not on its ramp. The light-theme values are
+     dark inks; on near-black they vanish, so each is lifted to the same
+     visual weight it carries in the light theme. */
+  --c-warn:    #e5a83f;
+  --c-success: #5fc98d;
+  --c-info:    #86aeea;
+
+  /* Shadows do almost nothing on a dark ground and a heavier one just
+     muddies the edge. Structure is carried by the surface step and the
+     border, which the inverted ramp already provides. */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%);
+  --shadow-md: 0 3px 10px rgb(0 0 0 / 50%);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+}
+
+/* Browser surfaces follow the theme. The light-theme selection tint is a
+   pale pink that would flare on near-black, and the scrollbar thumb needs
+   to sit above the track rather than below it. */
+:root[data-theme='dark'] ::selection { background: #5a2418; color: #f2efee; }
+:root[data-theme='dark'] ::-webkit-scrollbar-thumb { border-color: var(--color-bg); }
+
+/* F-1607 theme picker (More screen). Three equal segments — the choice is
+   between peers, so none of them is a primary action. */
+.theme-picker { margin-top: var(--space-4); }
+.theme-options { display: grid; grid-template-columns: repeat(3, 1fr);
+                 gap: var(--space-2); margin: var(--space-3) var(--space-4) var(--space-4); }
+.theme-option { min-height: var(--tap-min); padding: 0 var(--space-2);
+                font-family: inherit; font-size: var(--text-2xs);
+                color: var(--c-ink-1); background: var(--c-surface);
+                border: 1px solid var(--c-line); cursor: pointer; }
+.theme-option[data-chosen='true'] { background: var(--c-primary);
+                                    border-color: var(--c-primary); color: #fff;
+                                    font-weight: 600; }

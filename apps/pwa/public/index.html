@@ -7,7 +7,34 @@
        browser/status-bar chrome should be the same material as the header
        it sits above. -->
   <meta name="theme-color" content="#eae9e9">
-  <meta name="theme-color" content="#2d2b2b" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#1a1817" media="(prefers-color-scheme: dark)">
+
+  <!-- F-1607. Runs before the stylesheet paints anything, so a student who
+       chose dark never sees a white flash on open — on a 2GB phone the gap
+       between first paint and app boot is long enough to hurt.
+       Deliberately inline and dependency-free for the same reason: an
+       external file would be one more blocking request on 3G.
+       'system' is the default and stays live, so a phone that switches
+       theme at sunset switches the app with it. -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('shikhon_theme');
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        var apply = function (pref) {
+          var dark = pref === 'dark' || (pref !== 'light' && mq.matches);
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        };
+        apply(stored);
+        // Only follow the OS while the user is on 'system'.
+        mq.addEventListener('change', function () {
+          if (!localStorage.getItem('shikhon_theme')) apply(null);
+        });
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
   <!-- Standalone PWA: let content flow under the status bar so our own
        safe-area padding (app.css) places the header correctly on notched
        phones. -->

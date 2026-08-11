@@ -42,6 +42,7 @@ export class Shell {
   private tabEls = new Map<string, HTMLButtonElement>();
   private currentRoute: ShellRoute | null = null;
   private readonly onHashChange = () => { void this.renderRoute(); };
+  private onConnectivity?: () => void;
 
   constructor(options: ShellOptions) {
     this.o = options;
@@ -53,6 +54,10 @@ export class Shell {
   /** Call when the shell itself is being torn down (e.g. on logout). */
   destroy(): void {
     removeEventListener('hashchange', this.onHashChange);
+    if (this.onConnectivity) {
+      removeEventListener('online', this.onConnectivity);
+      removeEventListener('offline', this.onConnectivity);
+    }
     this.currentRoute?.unmount?.();
   }
 
@@ -108,6 +113,19 @@ export class Shell {
       topbar.append(who, logout);
     }
 
+    // Offline is a banner, never a modal (Wireframe §4): it must not block
+    // work, and it belongs to the whole shell, not one screen — the moment a
+    // teacher needs it most is mid-task, whatever screen they are on. Hidden
+    // while online; toggled by the browser's own connectivity events.
+    const offlineBanner = d.createElement('p');
+    offlineBanner.className = 'offline-banner';
+    offlineBanner.setAttribute('role', 'status');
+    offlineBanner.textContent = '⚡ অফলাইন — কাজ চালিয়ে যান, সংযোগ পেলে জমা হবে';
+    this.onConnectivity = () => { offlineBanner.hidden = navigator.onLine; };
+    this.onConnectivity();
+    addEventListener('online', this.onConnectivity);
+    addEventListener('offline', this.onConnectivity);
+
     this.viewEl = d.createElement('div');
     this.viewEl.className = 'shell-view';
     this.viewEl.id = 'shell-view';
@@ -147,7 +165,7 @@ export class Shell {
       tabbar.append(tab);
     }
 
-    shellEl.append(topbar, this.viewEl, tabbar);
+    shellEl.append(topbar, offlineBanner, this.viewEl, tabbar);
     root.append(shellEl);
   }
 

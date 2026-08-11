@@ -89,7 +89,7 @@ type DashCards = { primary: DashboardItem[]; secondary: DashboardItem[] };
 const CARD = {
   learn:      { path: 'learn',      glyph: '📖', titleBn: 'পড়াশোনা',            subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
   subjects:   { path: 'subjects',   glyph: '📚', titleBn: 'আমার বিষয়',          subtitleBn: 'শ্রেণি ও বিভাগ অনুযায়ী' },
-  myAtt:      { path: 'my-attendance', glyph: '✓', titleBn: 'আমার হাজিরা',      subtitleBn: 'মাস ও বিষয় অনুযায়ী' },
+  myAtt:      { path: 'my-attendance', glyph: '％', titleBn: 'আমার হাজিরা',      subtitleBn: 'মাস ও বিষয় অনুযায়ী' },
   results:    { path: 'results',    glyph: '🏅', titleBn: 'ফলাফল',              subtitleBn: 'পরীক্ষার ফলাফল ও নম্বর' },
   homework:   { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'জমা দিতে হবে যেসব' },
   homeworkT:  { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'কাজ দাও ও নম্বর দাও' },
@@ -107,21 +107,37 @@ const CARD = {
   roles:      { path: 'roles',      glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস',  subtitleBn: '১০ ভূমিকা · RLS' },
   ledger:     { path: 'ledger',     glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন',   subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
   system:     { path: 'system',     glyph: '⚙', titleBn: 'সিস্টেম',            subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
+  // The guardian's own home (F-203, §9.1). It was reachable only from the
+  // More menu — the persona least able to hunt for it. It now leads the
+  // guardian dashboard; the glyph matches its More entry so the one control
+  // reads the same in both places it appears.
+  wardHome:   { path: 'guardian',   glyph: '👪', titleBn: 'আমার সন্তান',        subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
 } satisfies Record<string, DashboardItem>;
 
+// Home is an orientation surface, not an index. Each dashboard is trimmed to
+// ~6 tiles — two primary actions and a short shortcut row — and the long tail
+// lives in the "আরও" menu, which is Wireframe §2's deliberate home for it
+// ("Everything else is reachable but does not compete for bar space"). The
+// two rules behind the cut: never seat a card that only duplicates a bottom
+// tab (learn, attendance, roster are tabs already), and never carry a tile
+// whose only home is this grid — every secondary tile below is also in More,
+// so trimming relocates nothing, it only stops the screen from being a wall.
 function dashboardFor(role: string): DashCards {
   switch (role) {
     case 'student':
+      // learn and routine are tabs; homework leads because a due date is the
+      // one thing a student arrives worried about.
       return {
         primary: [CARD.subjects, CARD.homework],
-        secondary: [CARD.learn, CARD.results, CARD.myAtt, CARD.shikho, CARD.routineStu, CARD.feesStu],
+        secondary: [CARD.results, CARD.myAtt, CARD.shikho, CARD.feesStu],
       };
     case 'guardian':
+      // The ward home leads — it is the guardian's whole reason for opening
+      // the app, and it was previously buried in More. Fees second: §9.1 puts
+      // payment one tap from home.
       return {
-        // A guardian's first question is almost always fees or results,
-        // not content — so the ordering differs from the student's.
-        primary: [CARD.results, CARD.feesStu],
-        secondary: [CARD.routineStu, CARD.myAtt, CARD.subjects, CARD.learn, CARD.homework],
+        primary: [CARD.wardHome, CARD.feesStu],
+        secondary: [CARD.results, CARD.routineStu, CARD.myAtt],
       };
     case 'accountant':
       return {
@@ -132,19 +148,16 @@ function dashboardFor(role: string): DashCards {
     case 'school_owner':
       return {
         primary: [CARD.routine, CARD.ledger],
-        secondary: [
-          CARD.roster, CARD.marks, CARD.substitute, CARD.fees,
-          CARD.roles, CARD.sikhok, CARD.system,
-        ],
+        secondary: [CARD.roster, CARD.marks, CARD.fees, CARD.system],
       };
     default:
-      // Teachers and coordinators — the original, teaching-first surface.
+      // Teachers and coordinators — teaching-first. roster and attendance are
+      // tabs, so the shortcut row is the grading tail a teacher reaches for
+      // after class; the rest (sikhok, shikho, fees, roles, ledger, system)
+      // is one tap away in More.
       return {
         primary: [CARD.attendance, CARD.routine],
-        secondary: [
-          CARD.homeworkT, CARD.roster, CARD.marks, CARD.scripts, CARD.substitute, CARD.learn,
-          CARD.sikhok, CARD.shikho, CARD.fees, CARD.roles, CARD.ledger, CARD.system,
-        ],
+        secondary: [CARD.homeworkT, CARD.marks, CARD.scripts, CARD.substitute],
       };
   }
 }

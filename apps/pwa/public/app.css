@@ -607,8 +607,16 @@ textarea:focus {
 
 .section-heading {
   margin: var(--s-5) var(--s-4) var(--s-2);
-  font-size: var(--text-2xs); font-weight: 600; letter-spacing: 0.02em;
-  color: var(--c-ink-3); text-transform: uppercase;
+  font-size: var(--text-2xs); font-weight: 700;
+  /* Was --c-ink-3 (#7d7979 ≈ 3.9:1 on the ground) — below AA, and this is
+     the only label separating grouped content, so it must clear it. --c-ink-2
+     (#605d5d) is 5.8:1. */
+  color: var(--c-ink-2); text-transform: uppercase;
+  /* No letter-spacing: this label is always Bangla, and positive tracking
+     severs Bangla conjuncts (Override 2). The old 0.02em rode on a
+     :not([lang='bn']) guard that never fired — these headings inherit bn
+     from the root without carrying the attribute — so it was tracking Bangla
+     in practice. Dropped rather than re-guarded, because it is never Latin. */
 }
 
 /* Hero: greeting + today. Uses a subtle primary tint so it reads as a
@@ -1106,6 +1114,30 @@ textarea:focus {
 .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .next-title { font-weight: 600; font-size: var(--text-sm); }
 .next-why { font-size: var(--text-2xs); color: var(--c-ink-2); line-height: 1.45; }
+
+/* next-block load states (harden). The skeleton holds the slot's height from
+   first paint so the primary grid below never jumps under a thumb on a slow
+   connection — the same shape the real cards will take, never a spinner. */
+.next-skel { display: grid; gap: var(--s-2); padding: 0 var(--s-4); }
+.next-skel-card {
+  min-height: 60px; padding: var(--s-3);
+  display: grid; align-content: center; gap: var(--s-2);
+  background: var(--c-surface); border: 1px solid var(--c-line);
+}
+/* Empty ("nothing due") and failure ("couldn't load, retry") — two distinct
+   answers where the old code showed the same nothing for both. */
+.next-note { margin: 0 var(--s-4); font-size: var(--text-2xs); color: var(--c-ink-2); }
+.next-error-row {
+  display: flex; align-items: center; gap: var(--s-3);
+  margin: 0 var(--s-4);
+}
+.next-error-row .next-note { margin: 0; flex: 1; }
+.next-retry {
+  flex: none; min-height: var(--tap-min); padding: 0 var(--s-4);
+  border: 1px solid var(--c-primary); border-radius: var(--radius);
+  background: var(--c-surface); color: var(--c-primary-ink);
+  font: inherit; font-size: var(--text-xs); font-weight: 600; cursor: pointer;
+}
 
 /* ============================================================ my subjects */
 /* F-802, wireframe §6.2. */

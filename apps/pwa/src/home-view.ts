@@ -39,10 +39,14 @@ export interface HomeViewOptions {
   loadNext?: () => Promise<Suggestion[]>;
 }
 
+// Monochrome text glyphs that inherit the ink colour, not colour-emoji.
+// On Android Go the emoji font renders at a different weight and baseline
+// than the surrounding text and fractures the calm one-ink surface; these
+// sit in the type where 📝/📖 sat on top of it.
 const KIND_GLYPH: Record<string, string> = {
-  assignment: '📝',
+  assignment: '✎',
   redo_practice: '↻',
-  continue_topic: '📖',
+  continue_topic: '▸',
   new_chapter: '✦',
 };
 
@@ -91,10 +95,11 @@ export class HomeView {
     if (o.loadNext) {
       const slot = d.createElement('section');
       slot.className = 'next-slot';
+      // The suggestions arrive after first paint; the region announces itself
+      // to a screen reader when they do, and aria-busy carries the load state.
+      slot.setAttribute('aria-live', 'polite');
       o.root.append(slot);
-      void o.loadNext()
-        .then((list) => { this.renderNext(d, slot, list); })
-        .catch(() => { /* silent: the grid below is a complete fallback */ });
+      this.loadNextInto(d, slot, o.loadNext);
     }
 
     // Primary cards (large, two-up).
@@ -109,7 +114,10 @@ export class HomeView {
     if (o.secondary.length > 0) {
       const sectionH = d.createElement('h2');
       sectionH.className = 'section-heading';
-      sectionH.textContent = 'সব বিভাগ';
+      // "Quick access", not "all sections": the grid is now a short shortcut
+      // row, and the long tail lives in আরও. Naming it honestly stops it
+      // reading as the whole index.
+      sectionH.textContent = 'দ্রুত প্রবেশ';
       o.root.append(sectionH);
 
       const grid = d.createElement('div');
@@ -119,14 +127,84 @@ export class HomeView {
     }
   }
 
-  private renderNext(d: Document, slot: HTMLElement, list: Suggestion[]): void {
-    slot.textContent = '';
-    if (list.length === 0) return;
+  /**
+   * Load the suggestions with the three states the old code collapsed into
+   * one. It painted nothing until the fetch resolved and swallowed failure
+   * into nothing — on the slow connections these users actually have, the
+   * one element built for them simply, silently, wasn't there. Now: a
+   * skeleton holds the space from first paint (so the grid below never jumps
+   * under a thumb), an empty result is a quiet reassurance, and a failure is
+   * an honest retry, not a void.
+   */
+  private loadNextInto(
+    d: Document, slot: HTMLElement, loader: () => Promise<Suggestion[]>,
+  ): void {
+    this.renderNextSkeleton(d, slot);
+    slot.setAttribute('aria-busy', 'true');
+    loader()
+      .then((list) => { slot.setAttribute('aria-busy', 'false'); this.renderNext(d, slot, list); })
+      .catch(() => {
+        slot.setAttribute('aria-busy', 'false');
+        this.renderNextError(d, slot, () => this.loadNextInto(d, slot, loader));
+      });
+  }
 
+  /** The section heading, always the same string. */
+  private nextHeading(d: Document): HTMLElement {
     const h2 = d.createElement('h2');
     h2.className = 'section-heading';
     h2.textContent = 'এখন যা করবে';
-    slot.append(h2);
+    return h2;
+  }
+
+  /** Skeleton of the real list — a shape, never a spinner (Wireframe §4). */
+  private renderNextSkeleton(d: Document, slot: HTMLElement): void {
+    slot.textContent = '';
+    slot.append(this.nextHeading(d));
+    const wrap = d.createElement('div');
+    wrap.className = 'next-skel';
+    for (let i = 0; i < 2; i++) {
+      const card = d.createElement('div');
+      card.className = 'next-skel-card is-skeleton';
+      const title = d.createElement('span'); title.className = 'skel skel-title';
+      const line = d.createElement('span'); line.className = 'skel skel-line';
+      card.append(title, line);
+      wrap.append(card);
+    }
+    slot.append(wrap);
+  }
+
+  /** Couldn't load — a sentence and a retry, never a silent gap. */
+  private renderNextError(d: Document, slot: HTMLElement, retry: () => void): void {
+    slot.textContent = '';
+    slot.append(this.nextHeading(d));
+    const row = d.createElement('div');
+    row.className = 'next-error-row';
+    const p = d.createElement('p');
+    p.className = 'next-note';
+    p.textContent = 'পরামর্শ লোড হয়নি।';
+    const btn = d.createElement('button');
+    btn.type = 'button';
+    btn.className = 'next-retry';
+    btn.textContent = 'আবার চেষ্টা';
+    btn.addEventListener('click', retry);
+    row.append(p, btn);
+    slot.append(row);
+  }
+
+  private renderNext(d: Document, slot: HTMLElement, list: Suggestion[]): void {
+    slot.textContent = '';
+    slot.append(this.nextHeading(d));
+
+    // Nothing due is a real, good answer — say so, quietly, instead of
+    // leaving a blank where a moment ago there was a skeleton.
+    if (list.length === 0) {
+      const p = d.createElement('p');
+      p.className = 'next-note';
+      p.textContent = 'আজ নতুন করে কিছু করার নেই — এগিয়ে আছো।';
+      slot.append(p);
+      return;
+    }
 
     const ul = d.createElement('ul');
     ul.className = 'next-list';

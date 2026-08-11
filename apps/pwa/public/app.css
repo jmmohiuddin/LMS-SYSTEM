@@ -1181,3 +1181,42 @@ button, h1, h2, .att-counts { text-transform: none; }
 .seg-opt:last-child { border-right: 0; }
 /* Selection is a filled block plus aria-selected — not colour alone. */
 .seg-opt[data-active='true'] { background: var(--c-primary); color: #fff; }
+
+/* ── Exam routine with per-student clash check (F-510, wireframe §8.3) ──
+   The screen "that proves the subject-based model". Everything below
+   exists to make one thing readable at 360px: which papers clash, and
+   which named children are caught by them. */
+.action-row { display: flex; align-items: center; gap: var(--s-2);
+              flex-wrap: wrap; padding: var(--s-3) var(--s-4); }
+.action-row .status-chip { margin-right: auto; }
+
+/* A flagged paper is tinted AND carries a labelled chip in its own cell.
+   The tint alone would be colour-as-only-signal (F-812). */
+.data-table tr.is-flagged > * { background: var(--c-warn-soft); }
+
+/* The reschedule affordance sits under the paper it moves, so there is
+   never any doubt which row a date picker belongs to. */
+.data-table tr.row-action > td { padding: var(--s-2) var(--s-4); background: var(--c-surface-2); }
+.inline-form { display: flex; gap: var(--s-2); flex-wrap: wrap; align-items: center; }
+.inline-form input {
+  min-height: var(--tap-min); padding: 0 var(--s-2);
+  border: 1px solid var(--c-line); background: var(--c-surface);
+  color: var(--c-ink-1); font: inherit; font-size: 15px;
+}
+
+.clash-head { margin: 0 0 var(--s-3); font-size: 16px; font-weight: 700; color: var(--c-accent); }
+.clash-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.clash-list li {
+  display: grid; gap: 2px var(--s-2); align-items: baseline;
+  grid-template-columns: auto 1fr;
+  padding-bottom: var(--s-2); border-bottom: 1px solid var(--c-line);
+}
+.clash-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+/* Roll numbers are identifiers: Latin digits, tabular, so a column of
+   them scans as a column. */
+.clash-roll { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--c-ink-2); }
+.clash-name { font-weight: 600; }
+.clash-subjects { grid-column: 2; font-size: 14px; color: var(--c-ink-2); }
+.clash-when     { grid-column: 2; font-size: 13px; color: var(--c-ink-3); }
+
+.inline-notice.is-danger { color: var(--c-accent); background: var(--c-danger-soft); }

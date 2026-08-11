@@ -150,6 +150,13 @@ jobs:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
         run: node --test services/academics-svc/test/api.test.ts
 
+      # F-510's surface. Drives the real handler with a real signed JWT as
+      # the non-privileged role, so the 403/404 assertions mean something.
+      - name: F-510 · exam routine endpoint (§8.3)
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test services/rms-svc/test/examroutine.test.ts
+
       - name: Unit suites
         run: |
           set -euo pipefail

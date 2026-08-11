@@ -1,7 +1,7 @@
 /**
- * Dynamic-route dispatcher for /api/v1/rms/{routine,solve,substitute} — one
- * Vercel function (api/v1/rms/[action].js) instead of three. See
- * services/identity-svc/api/index.ts for the Hobby-cap rationale.
+ * Dynamic-route dispatcher for /api/v1/rms/{routine,solve,substitute,
+ * examroutine} — one Vercel function (api/v1/rms/[action].js) instead of
+ * four. See services/identity-svc/api/index.ts for the Hobby-cap rationale.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { corsHeaders, json } from '../../../packages/server-core/src/http.ts';
@@ -9,10 +9,11 @@ import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.t
 import routine from './routine.ts';
 import solve from './solve.ts';
 import substitute from './substitute.ts';
+import examroutine from './examroutine.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-const ROUTES: Record<string, Handler> = { routine, solve, substitute };
+const ROUTES: Record<string, Handler> = { routine, solve, substitute, examroutine };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://internal').pathname;

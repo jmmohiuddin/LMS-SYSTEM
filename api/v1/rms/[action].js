@@ -1795,9 +1795,202 @@ async function handler3(req, res) {
   }
 }
 
-// services/rms-svc/api/index.ts
-var ROUTES = { routine: handler, solve: handler2, substitute: handler3 };
+// services/rms-svc/api/examroutine.ts
+var UUID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var DATE_RE3 = /^\d{4}-\d{2}-\d{2}$/;
+var TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+var EXAM_ROLES = ["principal", "school_owner", "academic_coordinator", "dept_head"];
+function endTime(start, minutes) {
+  if (!start) return null;
+  const [h, m] = start.split(":").map(Number);
+  const total = h * 60 + m + (minutes ?? 0);
+  const hh = Math.floor(total / 60) % 24;
+  return `${String(hh).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+function hhmm(t) {
+  return t ? t.slice(0, 5) : null;
+}
+function isoDate(v) {
+  if (v === null || v === void 0) return null;
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  }
+  return String(v).slice(0, 10);
+}
 async function handler4(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, EXAM_ROLES);
+    const url = new URL(req.url ?? "/", "http://internal");
+    let examId = url.searchParams.get("examId") ?? "";
+    let publish = false;
+    let reschedule = null;
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      examId = body.examId ?? examId;
+      publish = body.publish === true;
+      reschedule = body.reschedule ?? null;
+      if (reschedule) {
+        if (!UUID_RE3.test(reschedule.examSubjectId ?? "")) {
+          throw new HttpError(400, "examSubjectId must be a valid uuid", "invalid_exam_subject_id");
+        }
+        if (!DATE_RE3.test(reschedule.examDate ?? "")) {
+          throw new HttpError(400, "examDate must be YYYY-MM-DD", "invalid_exam_date");
+        }
+        if (!TIME_RE.test(reschedule.startTime ?? "")) {
+          throw new HttpError(400, "startTime must be HH:MM", "invalid_start_time");
+        }
+      }
+    } else if (req.method !== "GET") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET" && examId === "") {
+      const exams = await db.withTenant(ctx, async (client) => {
+        const r = await client.query(
+          `SELECT e.id, e.name_bn, e.exam_type, e.starts_on, e.ends_on, e.status
+             FROM exams e
+             JOIN academic_years y ON y.id = e.academic_year_id
+            WHERE y.is_current
+            ORDER BY e.starts_on DESC`
+        );
+        return r.rows.map((e) => ({
+          id: e.id,
+          nameBn: e.name_bn,
+          examType: e.exam_type,
+          startsOn: isoDate(e.starts_on),
+          endsOn: isoDate(e.ends_on),
+          status: e.status
+        }));
+      });
+      json(res, 200, { exams }, cors);
+      return;
+    }
+    if (!UUID_RE3.test(examId)) {
+      throw new HttpError(400, "examId must be a valid uuid", "invalid_exam_id");
+    }
+    const payload = await db.withTenant(ctx, async (client) => {
+      const exam = await client.query(
+        `SELECT id, name_bn, exam_type, starts_on, ends_on, status FROM exams WHERE id = $1`,
+        [examId]
+      );
+      if (!exam.rows[0]) throw new HttpError(404, "exam not found", "exam_not_found");
+      if (reschedule) {
+        if (exam.rows[0].status === "published") {
+          throw new HttpError(
+            409,
+            "a published exam routine cannot be rescheduled here",
+            "exam_published"
+          );
+        }
+        const moved = await client.query(
+          `UPDATE exam_subjects SET exam_date = $2, start_time = $3
+            WHERE id = $1 AND exam_id = $4`,
+          [reschedule.examSubjectId, reschedule.examDate, reschedule.startTime, examId]
+        );
+        if (moved.rowCount === 0) {
+          throw new HttpError(404, "paper not found in this exam", "paper_not_found");
+        }
+      }
+      if (publish) {
+        try {
+          await client.query(`UPDATE exams SET status = 'published' WHERE id = $1`, [examId]);
+          exam.rows[0].status = "published";
+        } catch (err) {
+          const code = err.code;
+          if (code !== "23514") throw err;
+          throw new HttpError(
+            409,
+            err.message,
+            "exam_routine_clash"
+          );
+        }
+      }
+      const papers = await client.query(
+        `SELECT es.id            AS exam_subject_id,
+                sec.name         AS section_name,
+                sub.name_bn      AS subject_bn,
+                es.exam_date, es.start_time, es.duration_minutes
+           FROM exam_subjects es
+           JOIN sections sec ON sec.id = es.section_id
+           JOIN subjects sub ON sub.id = es.subject_id
+          WHERE es.exam_id = $1
+          ORDER BY es.exam_date NULLS LAST, es.start_time NULLS LAST, sub.name_bn, sec.name`,
+        [examId]
+      );
+      const clashes = await client.query(
+        `SELECT student_name_bn, roll_no, section_name, exam_date,
+                subject_a_bn, subject_b_bn, start_a, start_b
+           FROM app.exam_student_clashes($1)`,
+        [examId]
+      );
+      const flagged = /* @__PURE__ */ new Set();
+      for (const c of clashes.rows) {
+        const d = isoDate(c.exam_date);
+        flagged.add(`${d}|${c.subject_a_bn}`);
+        flagged.add(`${d}|${c.subject_b_bn}`);
+      }
+      return {
+        exam: {
+          id: exam.rows[0].id,
+          nameBn: exam.rows[0].name_bn,
+          examType: exam.rows[0].exam_type,
+          startsOn: isoDate(exam.rows[0].starts_on),
+          endsOn: isoDate(exam.rows[0].ends_on),
+          status: exam.rows[0].status
+        },
+        papers: papers.rows.map((p) => {
+          const date = isoDate(p.exam_date);
+          return {
+            examSubjectId: p.exam_subject_id,
+            sectionName: p.section_name,
+            subjectBn: p.subject_bn,
+            examDate: date,
+            startTime: hhmm(p.start_time),
+            endTime: endTime(p.start_time, p.duration_minutes),
+            durationMinutes: p.duration_minutes,
+            hasClash: date !== null && flagged.has(`${date}|${p.subject_bn}`)
+          };
+        }),
+        clashes: clashes.rows.map((c) => ({
+          studentNameBn: c.student_name_bn,
+          rollNo: c.roll_no,
+          sectionName: c.section_name,
+          examDate: isoDate(c.exam_date),
+          subjectABn: c.subject_a_bn,
+          subjectBBn: c.subject_b_bn,
+          startA: hhmm(c.start_a),
+          startB: hhmm(c.start_b)
+        })),
+        // §8.3 counts STUDENTS ("৪ জন শিক্ষার্থীর"), not clash rows. One
+        // student with three overlapping papers is one affected child.
+        affectedStudents: new Set(
+          clashes.rows.map((c) => `${c.section_name}|${c.roll_no}`)
+        ).size,
+        canPublish: clashes.rows.length === 0
+      };
+    });
+    json(res, 200, payload, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
+// services/rms-svc/api/index.ts
+var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4 };
+async function handler5(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -1812,5 +2005,5 @@ async function handler4(req, res) {
   return route(req, res);
 }
 export {
-  handler4 as default
+  handler5 as default
 };

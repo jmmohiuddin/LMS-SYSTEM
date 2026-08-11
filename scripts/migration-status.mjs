@@ -76,6 +76,7 @@ const SENTINELS = [
   ['034_parallel_blocks',             'function',   'app.assert_parallel_block_coherent'],
   ['035_double_periods',              'function',   'app.assert_double_period_coherent'],
   ['036_product_events',              'table',      'public.product_event_rollups'],
+  ['037_activation_codes',            'table',      'public.activation_codes'],
 ];
 
 /**
@@ -119,6 +120,7 @@ const MEANING = {
   '034_parallel_blocks':             'F-504 — a religion split is four classes at one hour, not a clash',
   '035_double_periods':              'F-504 — a double period is two CONTIGUOUS halves, or it is a lie',
   '036_product_events':              'F-1503 — the pilot produces data; PII cannot enter it',
+  '037_activation_codes':            'F-202 — first login without the SMS aggregator',
 };
 
 const QUERIES = {

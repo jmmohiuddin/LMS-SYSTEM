@@ -202,6 +202,11 @@ jobs:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
         run: node --test services/rms-svc/test/solve-parallel.test.ts
 
+      - name: F-202 · fallback activation
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test services/identity-svc/test/activate.test.ts
+
       - name: F-1503 · event ingest endpoint
         env:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci

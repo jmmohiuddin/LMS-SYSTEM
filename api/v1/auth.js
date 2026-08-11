@@ -271,12 +271,12 @@ async function handler(req, res) {
         }
       }
       const code = randomOtpCode(6);
-      const codeHash = sha256Buf(code);
+      const codeHash2 = sha256Buf(code);
       const inserted = await client.query(
         `INSERT INTO otp_challenges (tenant_id, phone_e164, code_hash, purpose, expires_at)
          VALUES ($1, $2, $3, $4, now() + ($5 || ' minutes')::interval)
          RETURNING id, expires_at`,
-        [tenantId, phone, codeHash, purpose, OTP_TTL_MINUTES]
+        [tenantId, phone, codeHash2, purpose, OTP_TTL_MINUTES]
       );
       console.log(`[otp-request] tenant=${tenantId} phone=${phone} purpose=${purpose} code=${code}`);
       const debugKey = header(req, "x-debug-otp");
@@ -317,7 +317,15 @@ function concat(...buffers) {
 }
 
 // node_modules/jose/dist/node/esm/runtime/base64url.js
+function normalize(input) {
+  let encoded = input;
+  if (encoded instanceof Uint8Array) {
+    encoded = decoder.decode(encoded);
+  }
+  return encoded;
+}
 var encode = (input) => Buffer2.from(input).toString("base64url");
+var decode = (input) => new Uint8Array(Buffer2.from(normalize(input), "base64url"));
 
 // node_modules/jose/dist/node/esm/util/errors.js
 var JOSEError = class extends Error {
@@ -328,6 +336,36 @@ var JOSEError = class extends Error {
     this.name = this.constructor.name;
     Error.captureStackTrace?.(this, this.constructor);
   }
+};
+var JWTClaimValidationFailed = class extends JOSEError {
+  static code = "ERR_JWT_CLAIM_VALIDATION_FAILED";
+  code = "ERR_JWT_CLAIM_VALIDATION_FAILED";
+  claim;
+  reason;
+  payload;
+  constructor(message2, payload, claim = "unspecified", reason = "unspecified") {
+    super(message2, { cause: { claim, reason, payload } });
+    this.claim = claim;
+    this.reason = reason;
+    this.payload = payload;
+  }
+};
+var JWTExpired = class extends JOSEError {
+  static code = "ERR_JWT_EXPIRED";
+  code = "ERR_JWT_EXPIRED";
+  claim;
+  reason;
+  payload;
+  constructor(message2, payload, claim = "unspecified", reason = "unspecified") {
+    super(message2, { cause: { claim, reason, payload } });
+    this.claim = claim;
+    this.reason = reason;
+    this.payload = payload;
+  }
+};
+var JOSEAlgNotAllowed = class extends JOSEError {
+  static code = "ERR_JOSE_ALG_NOT_ALLOWED";
+  code = "ERR_JOSE_ALG_NOT_ALLOWED";
 };
 var JOSENotSupported = class extends JOSEError {
   static code = "ERR_JOSE_NOT_SUPPORTED";
@@ -340,6 +378,13 @@ var JWSInvalid = class extends JOSEError {
 var JWTInvalid = class extends JOSEError {
   static code = "ERR_JWT_INVALID";
   code = "ERR_JWT_INVALID";
+};
+var JWSSignatureVerificationFailed = class extends JOSEError {
+  static code = "ERR_JWS_SIGNATURE_VERIFICATION_FAILED";
+  code = "ERR_JWS_SIGNATURE_VERIFICATION_FAILED";
+  constructor(message2 = "signature verification failed", options) {
+    super(message2, options);
+  }
 };
 
 // node_modules/jose/dist/node/esm/runtime/is_key_object.js
@@ -621,13 +666,56 @@ var fromPKCS8 = (pem2) => createPrivateKey({
   type: "pkcs8",
   format: "der"
 });
+var fromSPKI = (pem2) => createPublicKey({
+  key: Buffer3.from(pem2.replace(/(?:-----(?:BEGIN|END) PUBLIC KEY-----|\s)/g, ""), "base64"),
+  type: "spki",
+  format: "der"
+});
+
+// node_modules/jose/dist/node/esm/runtime/jwk_to_key.js
+import { createPrivateKey as createPrivateKey2, createPublicKey as createPublicKey2 } from "node:crypto";
+var parse = (key) => {
+  if (key.d) {
+    return createPrivateKey2({ format: "jwk", key });
+  }
+  return createPublicKey2({ format: "jwk", key });
+};
+var jwk_to_key_default = parse;
 
 // node_modules/jose/dist/node/esm/key/import.js
+async function importSPKI(spki, alg, options) {
+  if (typeof spki !== "string" || spki.indexOf("-----BEGIN PUBLIC KEY-----") !== 0) {
+    throw new TypeError('"spki" must be SPKI formatted string');
+  }
+  return fromSPKI(spki, alg, options);
+}
 async function importPKCS8(pkcs8, alg, options) {
   if (typeof pkcs8 !== "string" || pkcs8.indexOf("-----BEGIN PRIVATE KEY-----") !== 0) {
     throw new TypeError('"pkcs8" must be PKCS#8 formatted string');
   }
   return fromPKCS8(pkcs8, alg, options);
+}
+async function importJWK(jwk, alg) {
+  if (!isObject(jwk)) {
+    throw new TypeError("JWK must be an object");
+  }
+  alg ||= jwk.alg;
+  switch (jwk.kty) {
+    case "oct":
+      if (typeof jwk.k !== "string" || !jwk.k) {
+        throw new TypeError('missing "k" (Key Value) Parameter value');
+      }
+      return decode(jwk.k);
+    case "RSA":
+      if ("oth" in jwk && jwk.oth !== void 0) {
+        throw new JOSENotSupported('RSA JWK "oth" (Other Primes Info) Parameter value is not supported');
+      }
+    case "EC":
+    case "OKP":
+      return jwk_to_key_default({ ...jwk, alg });
+    default:
+      throw new JOSENotSupported('Unsupported "kty" (Key Type) Parameter value');
+  }
 }
 
 // node_modules/jose/dist/node/esm/lib/check_key_type.js
@@ -733,6 +821,22 @@ function validateCrit(Err, recognizedDefault, recognizedOption, protectedHeader,
   return new Set(protectedHeader.crit);
 }
 var validate_crit_default = validateCrit;
+
+// node_modules/jose/dist/node/esm/lib/validate_algorithms.js
+var validateAlgorithms = (option, algorithms) => {
+  if (algorithms !== void 0 && (!Array.isArray(algorithms) || algorithms.some((s) => typeof s !== "string"))) {
+    throw new TypeError(`"${option}" option must be an array of strings`);
+  }
+  if (!algorithms) {
+    return void 0;
+  }
+  return new Set(algorithms);
+};
+var validate_algorithms_default = validateAlgorithms;
+
+// node_modules/jose/dist/node/esm/runtime/verify.js
+import * as crypto3 from "node:crypto";
+import { promisify as promisify2 } from "node:util";
 
 // node_modules/jose/dist/node/esm/runtime/dsa_digest.js
 function dsaDigest(alg) {
@@ -918,6 +1022,155 @@ var sign2 = async (alg, key, data) => {
 };
 var sign_default = sign2;
 
+// node_modules/jose/dist/node/esm/runtime/verify.js
+var oneShotVerify = promisify2(crypto3.verify);
+var verify2 = async (alg, key, signature, data) => {
+  const k = getSignVerifyKey(alg, key, "verify");
+  if (alg.startsWith("HS")) {
+    const expected = await sign_default(alg, k, data);
+    const actual = signature;
+    try {
+      return crypto3.timingSafeEqual(actual, expected);
+    } catch {
+      return false;
+    }
+  }
+  const algorithm = dsaDigest(alg);
+  const keyInput = keyForCrypto(alg, k);
+  try {
+    return await oneShotVerify(algorithm, data, keyInput, signature);
+  } catch {
+    return false;
+  }
+};
+var verify_default = verify2;
+
+// node_modules/jose/dist/node/esm/jws/flattened/verify.js
+async function flattenedVerify(jws, key, options) {
+  if (!isObject(jws)) {
+    throw new JWSInvalid("Flattened JWS must be an object");
+  }
+  if (jws.protected === void 0 && jws.header === void 0) {
+    throw new JWSInvalid('Flattened JWS must have either of the "protected" or "header" members');
+  }
+  if (jws.protected !== void 0 && typeof jws.protected !== "string") {
+    throw new JWSInvalid("JWS Protected Header incorrect type");
+  }
+  if (jws.payload === void 0) {
+    throw new JWSInvalid("JWS Payload missing");
+  }
+  if (typeof jws.signature !== "string") {
+    throw new JWSInvalid("JWS Signature missing or incorrect type");
+  }
+  if (jws.header !== void 0 && !isObject(jws.header)) {
+    throw new JWSInvalid("JWS Unprotected Header incorrect type");
+  }
+  let parsedProt = {};
+  if (jws.protected) {
+    try {
+      const protectedHeader = decode(jws.protected);
+      parsedProt = JSON.parse(decoder.decode(protectedHeader));
+    } catch {
+      throw new JWSInvalid("JWS Protected Header is invalid");
+    }
+  }
+  if (!is_disjoint_default(parsedProt, jws.header)) {
+    throw new JWSInvalid("JWS Protected and JWS Unprotected Header Parameter names must be disjoint");
+  }
+  const joseHeader = {
+    ...parsedProt,
+    ...jws.header
+  };
+  const extensions = validate_crit_default(JWSInvalid, /* @__PURE__ */ new Map([["b64", true]]), options?.crit, parsedProt, joseHeader);
+  let b64 = true;
+  if (extensions.has("b64")) {
+    b64 = parsedProt.b64;
+    if (typeof b64 !== "boolean") {
+      throw new JWSInvalid('The "b64" (base64url-encode payload) Header Parameter must be a boolean');
+    }
+  }
+  const { alg } = joseHeader;
+  if (typeof alg !== "string" || !alg) {
+    throw new JWSInvalid('JWS "alg" (Algorithm) Header Parameter missing or invalid');
+  }
+  const algorithms = options && validate_algorithms_default("algorithms", options.algorithms);
+  if (algorithms && !algorithms.has(alg)) {
+    throw new JOSEAlgNotAllowed('"alg" (Algorithm) Header Parameter value not allowed');
+  }
+  if (b64) {
+    if (typeof jws.payload !== "string") {
+      throw new JWSInvalid("JWS Payload must be a string");
+    }
+  } else if (typeof jws.payload !== "string" && !(jws.payload instanceof Uint8Array)) {
+    throw new JWSInvalid("JWS Payload must be a string or an Uint8Array instance");
+  }
+  let resolvedKey = false;
+  if (typeof key === "function") {
+    key = await key(parsedProt, jws);
+    resolvedKey = true;
+    checkKeyTypeWithJwk(alg, key, "verify");
+    if (isJWK(key)) {
+      key = await importJWK(key, alg);
+    }
+  } else {
+    checkKeyTypeWithJwk(alg, key, "verify");
+  }
+  const data = concat(encoder.encode(jws.protected ?? ""), encoder.encode("."), typeof jws.payload === "string" ? encoder.encode(jws.payload) : jws.payload);
+  let signature;
+  try {
+    signature = decode(jws.signature);
+  } catch {
+    throw new JWSInvalid("Failed to base64url decode the signature");
+  }
+  const verified = await verify_default(alg, key, signature, data);
+  if (!verified) {
+    throw new JWSSignatureVerificationFailed();
+  }
+  let payload;
+  if (b64) {
+    try {
+      payload = decode(jws.payload);
+    } catch {
+      throw new JWSInvalid("Failed to base64url decode the payload");
+    }
+  } else if (typeof jws.payload === "string") {
+    payload = encoder.encode(jws.payload);
+  } else {
+    payload = jws.payload;
+  }
+  const result = { payload };
+  if (jws.protected !== void 0) {
+    result.protectedHeader = parsedProt;
+  }
+  if (jws.header !== void 0) {
+    result.unprotectedHeader = jws.header;
+  }
+  if (resolvedKey) {
+    return { ...result, key };
+  }
+  return result;
+}
+
+// node_modules/jose/dist/node/esm/jws/compact/verify.js
+async function compactVerify(jws, key, options) {
+  if (jws instanceof Uint8Array) {
+    jws = decoder.decode(jws);
+  }
+  if (typeof jws !== "string") {
+    throw new JWSInvalid("Compact JWS must be a string or Uint8Array");
+  }
+  const { 0: protectedHeader, 1: payload, 2: signature, length } = jws.split(".");
+  if (length !== 3) {
+    throw new JWSInvalid("Invalid Compact JWS");
+  }
+  const verified = await flattenedVerify({ payload, protected: protectedHeader, signature }, key, options);
+  const result = { payload: verified.payload, protectedHeader: verified.protectedHeader };
+  if (typeof key === "function") {
+    return { ...result, key: verified.key };
+  }
+  return result;
+}
+
 // node_modules/jose/dist/node/esm/lib/epoch.js
 var epoch_default = (date) => Math.floor(date.getTime() / 1e3);
 
@@ -977,6 +1230,116 @@ var secs_default = (str) => {
   }
   return numericDate;
 };
+
+// node_modules/jose/dist/node/esm/lib/jwt_claims_set.js
+var normalizeTyp = (value) => value.toLowerCase().replace(/^application\//, "");
+var checkAudiencePresence = (audPayload, audOption) => {
+  if (typeof audPayload === "string") {
+    return audOption.includes(audPayload);
+  }
+  if (Array.isArray(audPayload)) {
+    return audOption.some(Set.prototype.has.bind(new Set(audPayload)));
+  }
+  return false;
+};
+var jwt_claims_set_default = (protectedHeader, encodedPayload, options = {}) => {
+  let payload;
+  try {
+    payload = JSON.parse(decoder.decode(encodedPayload));
+  } catch {
+  }
+  if (!isObject(payload)) {
+    throw new JWTInvalid("JWT Claims Set must be a top-level JSON object");
+  }
+  const { typ } = options;
+  if (typ && (typeof protectedHeader.typ !== "string" || normalizeTyp(protectedHeader.typ) !== normalizeTyp(typ))) {
+    throw new JWTClaimValidationFailed('unexpected "typ" JWT header value', payload, "typ", "check_failed");
+  }
+  const { requiredClaims = [], issuer, subject, audience, maxTokenAge } = options;
+  const presenceCheck = [...requiredClaims];
+  if (maxTokenAge !== void 0)
+    presenceCheck.push("iat");
+  if (audience !== void 0)
+    presenceCheck.push("aud");
+  if (subject !== void 0)
+    presenceCheck.push("sub");
+  if (issuer !== void 0)
+    presenceCheck.push("iss");
+  for (const claim of new Set(presenceCheck.reverse())) {
+    if (!(claim in payload)) {
+      throw new JWTClaimValidationFailed(`missing required "${claim}" claim`, payload, claim, "missing");
+    }
+  }
+  if (issuer && !(Array.isArray(issuer) ? issuer : [issuer]).includes(payload.iss)) {
+    throw new JWTClaimValidationFailed('unexpected "iss" claim value', payload, "iss", "check_failed");
+  }
+  if (subject && payload.sub !== subject) {
+    throw new JWTClaimValidationFailed('unexpected "sub" claim value', payload, "sub", "check_failed");
+  }
+  if (audience && !checkAudiencePresence(payload.aud, typeof audience === "string" ? [audience] : audience)) {
+    throw new JWTClaimValidationFailed('unexpected "aud" claim value', payload, "aud", "check_failed");
+  }
+  let tolerance;
+  switch (typeof options.clockTolerance) {
+    case "string":
+      tolerance = secs_default(options.clockTolerance);
+      break;
+    case "number":
+      tolerance = options.clockTolerance;
+      break;
+    case "undefined":
+      tolerance = 0;
+      break;
+    default:
+      throw new TypeError("Invalid clockTolerance option type");
+  }
+  const { currentDate } = options;
+  const now = epoch_default(currentDate || /* @__PURE__ */ new Date());
+  if ((payload.iat !== void 0 || maxTokenAge) && typeof payload.iat !== "number") {
+    throw new JWTClaimValidationFailed('"iat" claim must be a number', payload, "iat", "invalid");
+  }
+  if (payload.nbf !== void 0) {
+    if (typeof payload.nbf !== "number") {
+      throw new JWTClaimValidationFailed('"nbf" claim must be a number', payload, "nbf", "invalid");
+    }
+    if (payload.nbf > now + tolerance) {
+      throw new JWTClaimValidationFailed('"nbf" claim timestamp check failed', payload, "nbf", "check_failed");
+    }
+  }
+  if (payload.exp !== void 0) {
+    if (typeof payload.exp !== "number") {
+      throw new JWTClaimValidationFailed('"exp" claim must be a number', payload, "exp", "invalid");
+    }
+    if (payload.exp <= now - tolerance) {
+      throw new JWTExpired('"exp" claim timestamp check failed', payload, "exp", "check_failed");
+    }
+  }
+  if (maxTokenAge) {
+    const age = now - payload.iat;
+    const max = typeof maxTokenAge === "number" ? maxTokenAge : secs_default(maxTokenAge);
+    if (age - tolerance > max) {
+      throw new JWTExpired('"iat" claim timestamp check failed (too far in the past)', payload, "iat", "check_failed");
+    }
+    if (age < 0 - tolerance) {
+      throw new JWTClaimValidationFailed('"iat" claim timestamp check failed (it should be in the past)', payload, "iat", "check_failed");
+    }
+  }
+  return payload;
+};
+
+// node_modules/jose/dist/node/esm/jwt/verify.js
+async function jwtVerify(jwt, key, options) {
+  const verified = await compactVerify(jwt, key, options);
+  if (verified.protectedHeader.crit?.includes("b64") && verified.protectedHeader.b64 === false) {
+    throw new JWTInvalid("JWTs MUST NOT use unencoded payload");
+  }
+  const payload = jwt_claims_set_default(verified.protectedHeader, verified.payload, options);
+  const result = { payload, protectedHeader: verified.protectedHeader };
+  if (typeof key === "function") {
+    return { ...result, key: verified.key };
+  }
+  return result;
+}
 
 // node_modules/jose/dist/node/esm/jws/flattened/sign.js
 var FlattenedSign = class {
@@ -1169,13 +1532,31 @@ function pem(envVar) {
   return v.includes("\\n") ? v.replace(/\\n/g, "\n") : v;
 }
 var _privateKey = null;
+var _publicKey = null;
 function privateKey() {
   if (!_privateKey) _privateKey = importPKCS8(pem("JWT_PRIVATE_KEY"), ALG);
   return _privateKey;
 }
+function publicKey() {
+  if (!_publicKey) _publicKey = importSPKI(pem("JWT_PUBLIC_KEY"), ALG);
+  return _publicKey;
+}
 async function signAccessToken(claims, expiresIn = "15m") {
   const key = await privateKey();
   return new SignJWT({ tid: claims.tid, role: claims.role, roles: claims.roles }).setProtectedHeader({ alg: ALG }).setSubject(claims.sub).setIssuedAt().setIssuer(ISSUER).setExpirationTime(expiresIn).sign(key);
+}
+async function verifyAccessToken(token) {
+  const key = await publicKey();
+  const { payload } = await jwtVerify(token, key, { issuer: ISSUER });
+  if (!payload.sub || !payload.tid || !payload.role) {
+    throw new Error("access token missing required claims");
+  }
+  return {
+    sub: payload.sub,
+    tid: payload.tid,
+    role: payload.role,
+    roles: payload.roles ?? [payload.role]
+  };
 }
 
 // services/identity-svc/src/roles.ts
@@ -1389,20 +1770,227 @@ async function handler4(req, res) {
   }
 }
 
+// services/identity-svc/api/activate.ts
+import { createHmac as createHmac2, randomBytes as randomBytes2 } from "node:crypto";
+
+// packages/server-core/src/auth.ts
+async function authenticate(req) {
+  const authHeader = header(req, "authorization");
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  if (!token) throw new HttpError(401, "missing bearer token", "unauthorized");
+  try {
+    return await verifyAccessToken(token);
+  } catch {
+    throw new HttpError(401, "invalid or expired access token", "unauthorized");
+  }
+}
+function requireRole(claims, allowed) {
+  if (!allowed.includes(claims.role)) {
+    throw new HttpError(403, `this endpoint requires one of: ${allowed.join(", ")}`, "forbidden");
+  }
+}
+
+// services/identity-svc/api/activate.ts
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var ISSUER_ROLES = ["principal", "school_owner", "academic_coordinator", "class_teacher"];
+var ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ2345678";
+var CODE_LEN = 8;
+var REFRESH_TTL_DAYS3 = 30;
+var ACCESS_TTL3 = "15m";
+function generateCode() {
+  const bytes = randomBytes2(CODE_LEN);
+  let out = "";
+  for (let i = 0; i < CODE_LEN; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
+  return out;
+}
+function codeHash(code) {
+  const pepper = process.env.ACTIVATION_PEPPER;
+  const norm = code.toUpperCase().replace(/[^A-Z2-9]/g, "").replace(/0/g, "O").replace(/O/g, "Q").replace(/[1IL]/g, "J");
+  return createHmac2("sha256", pepper).update(norm).digest();
+}
+async function handler5(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "POST") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    if (!process.env.ACTIVATION_PEPPER || process.env.ACTIVATION_PEPPER.length < 16) {
+      throw new HttpError(
+        503,
+        "activation is not configured on this deployment",
+        "activation_unconfigured"
+      );
+    }
+    const body = await readJson(req);
+    if (body.action === "issue") {
+      await issue(req, res, cors, body);
+      return;
+    }
+    if (body.action === "redeem") {
+      await redeem(res, cors, body);
+      return;
+    }
+    throw new HttpError(400, "action must be 'issue' or 'redeem'", "invalid_action");
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function issue(req, res, cors, body) {
+  const claims = await authenticate(req);
+  requireRole(claims, ISSUER_ROLES);
+  const userId = body.userId ?? "";
+  if (!UUID_RE.test(userId)) {
+    throw new HttpError(400, "userId must be a valid uuid", "invalid_user_id");
+  }
+  const code = generateCode();
+  const db = await sharedDb();
+  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+  const expiresAt = await db.withTenant(ctx, async (client) => {
+    await client.query(
+      `UPDATE activation_codes SET revoked_at = now()
+        WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
+      [userId]
+    );
+    try {
+      const r = await client.query(
+        `INSERT INTO activation_codes (tenant_id, user_id, code_hash, issued_by)
+         VALUES (app.current_tenant(), $1, $2, $3)
+         RETURNING expires_at`,
+        [userId, codeHash(code), claims.sub]
+      );
+      return r.rows[0].expires_at;
+    } catch (err) {
+      if (err.code === "42501") {
+        throw new HttpError(
+          403,
+          "you may only issue activation codes for students of your own sections",
+          "not_your_student"
+        );
+      }
+      if (err.code === "23503") {
+        throw new HttpError(404, "user not found", "user_not_found");
+      }
+      throw err;
+    }
+  });
+  json(res, 200, { code, expiresAt }, cors);
+}
+async function redeem(res, cors, body) {
+  const code = body.code ?? "";
+  const deviceId = body.deviceId ?? "";
+  const tenantId = body.tenantId ?? "";
+  if (!UUID_RE.test(tenantId)) {
+    throw new HttpError(400, "tenantId is required", "tenant_required");
+  }
+  if (code.replace(/[^A-Za-z0-9]/g, "").length < CODE_LEN) {
+    throw new HttpError(400, "code is too short", "invalid_code_format");
+  }
+  if (!deviceId) throw new HttpError(400, "deviceId is required", "device_required");
+  if (!await enforceIdentityRateLimit(res, cors, "otp_verify", `activate:${deviceId}`)) return;
+  const hash = codeHash(code);
+  const db = await sharedDb();
+  const result = await db.withTenant(
+    { tenantId, userId: "", role: "system_ingest" },
+    async (client) => {
+      const found = await client.query(
+        `SELECT id, tenant_id, user_id, used_at, revoked_at,
+              (expires_at <= now()) AS expired
+         FROM activation_codes WHERE code_hash = $1 AND tenant_id = $2`,
+        [hash, tenantId]
+      );
+      const row = found.rows[0];
+      if (!row || row.used_at || row.revoked_at || row.expired) {
+        throw new HttpError(
+          400,
+          "incorrect or expired code \u2014 ask your teacher for a new one",
+          "invalid_code"
+        );
+      }
+      await client.query(`SELECT set_config('app.user_id', $1, true)`, [row.user_id]);
+      await client.query(
+        `UPDATE activation_codes SET used_at = now() WHERE id = $1`,
+        [row.id]
+      );
+      const userRes = await client.query(
+        `SELECT id, full_name_en, full_name_bn, status FROM users
+        WHERE id = $1 AND deleted_at IS NULL`,
+        [row.user_id]
+      );
+      const user = userRes.rows[0];
+      if (!user) throw new HttpError(404, "account no longer exists", "user_not_found");
+      if (user.status !== "active" && user.status !== "invited") {
+        throw new HttpError(403, `account is ${user.status}`, "account_not_active");
+      }
+      if (user.status === "invited") {
+        await client.query(
+          `UPDATE users SET status = 'active' WHERE id = $1`,
+          [row.user_id]
+        );
+      }
+      const { primaryRole, roles } = await loadRoles(client, row.tenant_id, user.id);
+      if (!primaryRole) throw new HttpError(403, "account has no active role assigned", "no_active_role");
+      const refreshToken = randomOpaqueToken(32);
+      await client.query(
+        `INSERT INTO user_sessions (tenant_id, user_id, refresh_token_hash, device_id, device_label, expires_at)
+       VALUES ($1, $2, $3, $4, $5, now() + ($6 || ' days')::interval)`,
+        [
+          row.tenant_id,
+          user.id,
+          sha256Buf(refreshToken),
+          deviceId,
+          body.deviceLabel ?? null,
+          REFRESH_TTL_DAYS3
+        ]
+      );
+      const accessToken = await signAccessToken(
+        { sub: user.id, tid: row.tenant_id, role: primaryRole, roles },
+        ACCESS_TTL3
+      );
+      return {
+        accessToken,
+        refreshToken,
+        expiresIn: 900,
+        user: {
+          id: user.id,
+          fullNameEn: user.full_name_en,
+          fullNameBn: user.full_name_bn,
+          role: primaryRole,
+          roles
+        }
+      };
+    }
+  );
+  json(res, 200, result, cors);
+}
+
 // services/identity-svc/api/index.ts
 var ROUTES = {
   "otp/request": handler,
   "otp/verify": handler2,
   "refresh": handler3,
-  "logout": handler4
+  "logout": handler4,
+  "activate": handler5
 };
 var LIMIT_CLASS = {
   "otp/request": "otp_request",
   "otp/verify": "otp_verify",
   "refresh": "auth",
-  "logout": "auth"
+  "logout": "auth",
+  // Redemption is code-guessing surface, so it gets the strict OTP-verify
+  // buckets; the identity dimension is charged inside the handler.
+  "activate": "otp_verify"
 };
-async function handler5(req, res) {
+async function handler6(req, res) {
   const url = new URL(req.url ?? "/", "http://internal");
   const sub = (url.searchParams.get("path") ?? url.pathname.replace(/^\/api\/v1\/auth\/?/, "")).replace(/\/+$/, "");
   const route = ROUTES[sub];
@@ -1414,5 +2002,5 @@ async function handler5(req, res) {
   return route(req, res);
 }
 export {
-  handler5 as default
+  handler6 as default
 };

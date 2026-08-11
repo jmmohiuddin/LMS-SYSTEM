@@ -17,6 +17,7 @@ import otpRequest from './otp-request.ts';
 import otpVerify from './otp-verify.ts';
 import refresh from './refresh.ts';
 import logout from './logout.ts';
+import activate from './activate.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -25,6 +26,7 @@ const ROUTES: Record<string, Handler> = {
   'otp/verify': otpVerify,
   'refresh': refresh,
   'logout': logout,
+  'activate': activate,
 };
 
 // F-102. The IP dimension is charged here, before the handler runs, because
@@ -36,6 +38,9 @@ const LIMIT_CLASS: Record<string, RateLimitClass> = {
   'otp/verify': 'otp_verify',
   'refresh': 'auth',
   'logout': 'auth',
+  // Redemption is code-guessing surface, so it gets the strict OTP-verify
+  // buckets; the identity dimension is charged inside the handler.
+  'activate': 'otp_verify',
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

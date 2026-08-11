@@ -107,6 +107,13 @@ function dueLabel(dueAt: string): { text: string; state: 'overdue' | 'today' | '
 export class AssignmentsView {
   private readonly o: AssignmentsViewOptions;
   private list: Assignment[] = [];
+  /**
+   * Wireframe §6.6's [ বাকি ] [ জমা ] [ মূল্যায়িত ] filter. A student with
+   * twenty assignments across a term opens this screen to answer one
+   * question — "what do I still owe?" — and an undifferentiated list makes
+   * them scan every card to find out.
+   */
+  private filter: 'pending' | 'submitted' | 'graded' = 'pending';
   private detail: Detail | null = null;
   private openId: string | null = null;
   private loading = true;
@@ -323,9 +330,17 @@ export class AssignmentsView {
       return;
     }
 
+    root.append(this.filterBar());
+
+    const shown = this.list.filter((a) => this.matchesFilter(a));
+    if (shown.length === 0) {
+      root.append(this.emptyForFilter());
+      return;
+    }
+
     const ul = d.createElement('ul');
     ul.className = 'assign-list';
-    for (const a of this.list) {
+    for (const a of shown) {
       const li = d.createElement('li');
       const btn = d.createElement('button');
       btn.type = 'button';
@@ -542,6 +557,80 @@ export class AssignmentsView {
     p.setAttribute('role', 'status');
     p.textContent = text;
     return p;
+  }
+
+  /** Which bucket an assignment falls in, from the student's point of view. */
+  private matchesFilter(a: Assignment): boolean {
+    if (this.isStaff) {
+      // Staff read the same three buckets as marking progress, not as debt.
+      if (this.filter === 'pending')   return a.ungradedCount > 0;
+      if (this.filter === 'submitted') return a.submissionCount > 0;
+      return a.submissionCount > 0 && a.ungradedCount === 0;
+    }
+    const sub = a.mySubmission;
+    if (this.filter === 'pending')   return sub === null;
+    if (this.filter === 'submitted') return sub !== null && !sub.gradedAt;
+    return sub !== null && !!sub.gradedAt;
+  }
+
+  private countFor(f: 'pending' | 'submitted' | 'graded'): number {
+    const was = this.filter;
+    this.filter = f;
+    const n = this.list.filter((a) => this.matchesFilter(a)).length;
+    this.filter = was;
+    return n;
+  }
+
+  /**
+   * A segmented control, not a dropdown: three options that must all be
+   * visible and reachable in one tap. Each tab carries its count, so the
+   * student knows there is nothing under a tab before opening it.
+   */
+  private filterBar(): HTMLElement {
+    const d = this.o.doc;
+    const bar = d.createElement('div');
+    bar.className = 'seg-bar';
+    bar.setAttribute('role', 'tablist');
+    bar.setAttribute('aria-label', 'বাড়ির কাজের অবস্থা');
+
+    const tabs: [typeof this.filter, string][] = this.isStaff
+      ? [['pending', 'দেখা বাকি'], ['submitted', 'জমা হয়েছে'], ['graded', 'সব দেখা']]
+      : [['pending', 'বাকি'], ['submitted', 'জমা'], ['graded', 'মূল্যায়িত']];
+
+    for (const [key, label] of tabs) {
+      const b = d.createElement('button');
+      b.type = 'button';
+      b.className = 'seg-opt';
+      b.setAttribute('role', 'tab');
+      const active = this.filter === key;
+      b.setAttribute('aria-selected', String(active));
+      if (active) b.dataset.active = 'true';
+      const n = this.countFor(key);
+      b.textContent = n > 0 ? `${label} ${bn(n)}` : label;
+      b.setAttribute('aria-label', `${label}, ${bn(n)}টি`);
+      b.addEventListener('click', () => { this.filter = key; this.render(); });
+      bar.append(b);
+    }
+    return bar;
+  }
+
+  private emptyForFilter(): HTMLElement {
+    const d = this.o.doc;
+    const box = d.createElement('div');
+    box.className = 'empty-state';
+    const g = d.createElement('div');
+    g.className = 'empty-glyph';
+    g.setAttribute('aria-hidden', 'true');
+    // "Nothing pending" is good news and should not look like an error.
+    g.textContent = this.filter === 'pending' ? '✓' : '⃝';
+    const p = d.createElement('p');
+    p.textContent = this.isStaff
+      ? { pending: 'সব খাতা দেখা হয়েছে।', submitted: 'এখনো কেউ জমা দেয়নি।',
+          graded: 'এখনো কিছু মূল্যায়ন করা হয়নি।' }[this.filter]
+      : { pending: 'কোনো কাজ বাকি নেই।', submitted: 'জমা দেওয়া কোনো কাজ নেই।',
+          graded: 'এখনো কোনো কাজ মূল্যায়িত হয়নি।' }[this.filter];
+    box.append(g, p);
+    return box;
   }
 
   private msg(text: string): HTMLElement {

@@ -17,13 +17,10 @@
 # table here to drift out of sync with scripts/build.mjs. The paths are
 # byte-identical to the Vercel ones.
 
-# The two Vercel crons, same schedules (UTC). Both endpoints are also
-# reachable by path, which is what makes them testable by hand.
-[functions."sms-dispatch"]
-  schedule = "0 18 * * *"
-
-[functions."ops"]
-  schedule = "0 19 * * *"
+# Schedules are declared in code, on DEDICATED cron-* functions, not here.
+# Netlify makes a scheduled function internal-only: attaching a schedule to
+# the ops function returned 403 to the PWA's product-event ingest, which
+# shares that dispatcher. See SCHEDULED_ENTRIES in scripts/build.mjs.
 
 # The PWA is a hash-router single page: every non-asset path has to return
 # index.html or a deep link like /#/routine 404s on a cold load. Listed

@@ -63,6 +63,7 @@ const SENTINELS = [
   ['025_subject_based_academic_model','function',   'app.derive_student_subjects'],
   ['026_lessons_to_topics',           'index',      'ix_topics_chapter'],
   ['027_chapter_prerequisites_junction','table',     'public.chapter_prerequisites'],
+  ['028_exam_routine_clash_gate',     'function',   'app.exam_student_clashes'],
 ];
 
 /**
@@ -97,6 +98,7 @@ const MEANING = {
   '025_subject_based_academic_model':'PRD §5 — subject templates, curriculum schemes, derived subject sets',
   '026_lessons_to_topics':           'TRD §5.1 M6 — the content spine is chapter → topic, not lesson',
   '027_chapter_prerequisites_junction':'F-1404 — a chapter may need more than one predecessor',
+  '028_exam_routine_clash_gate':     'F-510 — no student can be scheduled into two papers at once',
 };
 
 const QUERIES = {

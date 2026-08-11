@@ -3,7 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#006A4E">
+  <!-- Matches the app's warm surface, not the retired green theme: the
+       browser/status-bar chrome should be the same material as the header
+       it sits above. -->
+  <meta name="theme-color" content="#eae9e9">
+  <meta name="theme-color" content="#2d2b2b" media="(prefers-color-scheme: dark)">
+  <!-- Standalone PWA: let content flow under the status bar so our own
+       safe-area padding (app.css) places the header correctly on notched
+       phones. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>শিখন — হাজিরা</title>
 
   <link rel="stylesheet" href="/app.css">

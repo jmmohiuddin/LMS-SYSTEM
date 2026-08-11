@@ -115,6 +115,12 @@
   --c-info:    #2c5aa0;
 
   --c-ink:    var(--color-text);
+  /* --c-ink-1 is the strongest ink, same as --c-ink. Nine rules referenced
+     it without it ever being defined (import-why, gen-*, inline-form input,
+     ward-result-line, issued-code-value…), so they were silently inheriting
+     their colour instead of resolving to it. Aliased rather than find-and-
+     replaced so both names keep working. */
+  --c-ink-1:  var(--color-text);
   --c-ink-2:  var(--color-neutral-700);
   --c-ink-3:  var(--color-neutral-600);
   --c-line:   var(--color-neutral-300);
@@ -182,6 +188,22 @@
 
 html { -webkit-text-size-adjust: 100%; }
 
+/* ── Touch ergonomics (mobile is the design floor: 360×640, thumb-driven) ──
+   The target device is a shared phone used with a thumb, often one-handed.
+   These make every control feel native on it, without touching any layout:
+   - manipulation removes the 300ms tap delay and double-tap-zoom on controls,
+     so a tap registers instantly (the difference a teacher feels 60 times a
+     minute on the attendance grid);
+   - the tap-highlight is the browser's blunt blue flash; we already draw our
+     own :active feedback, so the default only muddies it;
+   - long Bangla compounds and pasted strings must wrap, never widen the page
+     past the viewport. */
+a, button, select, input, textarea, [role='button'], [tabindex] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+body { overflow-wrap: break-word; }
+
 body {
   margin: 0;
   background: var(--color-bg);
@@ -223,7 +245,10 @@ button, h1, h2, .att-counts { text-transform: none; }
   position: sticky; top: 0; z-index: 2;
   display: grid; grid-template-columns: 1fr auto; align-items: center;
   gap: var(--s-1) var(--s-2);
-  padding: var(--s-3) var(--s-4);
+  /* Safe-area top: in a standalone PWA on a notched phone the header sits
+     under the status bar without it. max() keeps the normal padding when
+     there is no inset. */
+  padding: max(var(--s-3), env(safe-area-inset-top)) var(--s-4) var(--s-3);
   background: var(--c-surface);
   border-bottom: 1px solid var(--c-line);
 }
@@ -326,7 +351,9 @@ textarea:focus {
 
 .att-footer {
   position: fixed; inset: auto 0 0 0;
-  padding: var(--s-3) var(--s-4);
+  /* Safe-area bottom: clears the home indicator on gesture-nav phones so the
+     submit button is never half under it. */
+  padding: var(--s-3) var(--s-4) max(var(--s-3), env(safe-area-inset-bottom));
   background: var(--c-surface);
   border-top: 1px solid var(--c-line);
 }
@@ -370,12 +397,16 @@ textarea:focus {
 .status-chip[data-state='pending'] { background: var(--c-surface-3);    color: var(--c-ink-3); }
 
 /* -------------------------------------------------------------- shell chrome */
-.shell { display: flex; flex-direction: column; min-height: 100vh; }
+/* dvh, not vh: on iOS Safari 100vh is the tall viewport BEHIND the address
+   bar, so a 100vh shell leaves its fixed tab bar hidden under the browser
+   chrome until the user scrolls. dvh tracks the actually-visible height. */
+.shell { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
 .shell-topbar {
   position: sticky; top: 0; z-index: 3;
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--s-2);
-  padding: var(--s-2) var(--s-4);
+  /* Safe-area top for the notch in a standalone PWA (see .att-header). */
+  padding: max(var(--s-2), env(safe-area-inset-top)) var(--s-4) var(--s-2);
   /* The design system spends its accent on actions, not chrome. A full-width
      accent band was inherited from the previous green theme and, at this
      saturation, reads as an alert rather than a header. Wireframe §2 draws
@@ -518,7 +549,8 @@ textarea:focus {
 .marks-absent input { width: 20px; height: 20px; }
 .marks-savebar {
   position: sticky; bottom: 0; display: flex; align-items: center; gap: var(--s-3);
-  padding: var(--s-2) var(--s-4); background: var(--c-surface);
+  padding: var(--s-2) var(--s-4) max(var(--s-2), env(safe-area-inset-bottom));
+  background: var(--c-surface);
   border-top: 1px solid var(--c-line);
 }
 .marks-savebar .btn-primary { flex: 1; margin: 0; }
@@ -579,7 +611,10 @@ textarea:focus {
 .chat-typing { color: var(--c-ink-2); font-style: italic; }
 .chat-form {
   position: sticky; bottom: 0; display: flex; gap: var(--s-2); align-items: center;
-  padding: var(--s-2) var(--s-4); background: var(--c-bg); border-top: 1px solid var(--c-line);
+  /* was var(--c-bg) — not a defined token, so the composer sat on a
+     transparent bar and chat bubbles showed through as it scrolled. */
+  padding: var(--s-2) var(--s-4) max(var(--s-2), env(safe-area-inset-bottom));
+  background: var(--c-surface); border-top: 1px solid var(--c-line);
 }
 .chat-class { min-height: var(--tap-min); border: 1px solid var(--c-line); border-radius: var(--radius); font-size: var(--text-sm); padding: 0 var(--s-1); }
 .chat-input {
@@ -713,9 +748,12 @@ h2.section-heading { letter-spacing: normal; }
 .btn-ghost {
   background: transparent; color: var(--c-ink-2);
   border: 1px solid var(--c-line); border-radius: var(--radius);
-  min-height: 36px; padding: 0 var(--s-2); font: inherit; cursor: pointer;
+  min-height: 44px; padding: 0 var(--s-3); font: inherit; cursor: pointer;
 }
-.btn-small { min-height: 36px; padding: 0 var(--s-3); font-size: var(--text-xs); }
+/* 44px is the universal touch floor (Apple HIG). These secondary/inline
+   controls were 36px — comfortably tappable on a mouse, a mis-tap on a
+   thumb. Primary actions stay at the product's 48px --tap-min. */
+.btn-small { min-height: 44px; padding: 0 var(--s-3); font-size: var(--text-xs); }
 
 .inline-notice {
   margin: var(--s-2) var(--s-4);
@@ -824,7 +862,7 @@ h2.section-heading { letter-spacing: normal; }
    Syllabus browse + lesson reader — the student-facing learning surface. */
 
 .back-bar { padding: var(--s-3) var(--s-4) 0; }
-.back-btn { min-height: 40px; font-size: var(--text-xs); }
+.back-btn { min-height: 44px; font-size: var(--text-xs); }
 
 /* Chapter list ---------------------------------------------------------- */
 .chapter-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
@@ -890,7 +928,7 @@ h2.section-heading { letter-spacing: normal; }
   margin: var(--s-3) 0 var(--s-4); padding: var(--s-3) var(--s-4);
   background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
   font-family: ui-monospace, "SF Mono", monospace; font-size: var(--text-lg); text-align: center;
-  overflow-x: auto;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
 }
 /* The tinted background already says "this is the key point"; the accent
    rail was doing the same job twice. Unlike the state rails elsewhere in
@@ -1215,7 +1253,8 @@ h2.section-heading { letter-spacing: normal; }
 /* data-table (§3): dense, horizontally scrollable, frozen first column —
    six mark columns do not fit 360px, and the subject name is the one thing
    that must stay in view while the rest scrolls. */
-.table-scroll { margin: 0 var(--s-4); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll { margin: 0 var(--s-4); overflow-x: auto; -webkit-overflow-scrolling: touch;
+                overscroll-behavior-x: contain; }
 .data-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
 .data-table th, .data-table td { padding: var(--s-2); white-space: nowrap; }
 .data-table thead th {
@@ -1245,7 +1284,8 @@ h2.section-heading { letter-spacing: normal; }
 
 .result-trend { margin: var(--s-5) var(--s-4) var(--s-6); }
 .result-trend h2 { font-size: var(--text-base); margin-bottom: var(--s-2); }
-.trend-list { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--s-2); overflow-x: auto; }
+.trend-list { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--s-2); overflow-x: auto;
+              -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .trend-point {
   flex: 1 0 auto; min-width: 88px; padding: var(--s-2);
   background: var(--c-surface); border: 1px solid var(--c-line);

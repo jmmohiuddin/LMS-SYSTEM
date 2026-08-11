@@ -72,6 +72,7 @@ const SENTINELS = [
   ['030_exam_seat_plan_and_invigilation', 'table',  'public.exam_halls'],
   ['031_bulk_import',                 'table',      'public.import_batches'],
   ['032_cross_shift_availability',    'function',   'app.cross_shift_conflicts'],
+  ['033_year_rollover',               'function',   'app.commit_rollover'],
 ];
 
 /**
@@ -111,6 +112,7 @@ const MEANING = {
   '030_exam_seat_plan_and_invigilation':'F-511/F-512 — seat plan and invigilation duty roster',
   '031_bulk_import':                 'F-1601 — bulk import; a child is reachable through their guardian',
   '032_cross_shift_availability':    'F-506 — a teacher cannot be booked in both shifts at once',
+  '033_year_rollover':               'F-1605 — moving every child up a class, previewed before it lands',
 };
 
 const QUERIES = {

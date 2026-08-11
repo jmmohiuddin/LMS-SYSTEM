@@ -129,6 +129,9 @@ jobs:
       - name: F-506 · cross-shift teacher and room availability
         run: psql -v ON_ERROR_STOP=1 -f db/tests/cross_shift.sql
 
+      - name: F-1605 · academic year rollover
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/year_rollover.sql
+
       # sharedDb() refuses to boot on a BYPASSRLS role, so the limiter would
       # fail open under the owner and the 429 assertions would pass
       # vacuously. Create the same non-privileged role production runs as.

@@ -109,7 +109,14 @@ jobs:
             JOIN pg_namespace n ON n.oid=c.relnamespace
             JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped
             WHERE n.nspname='public' AND c.relkind IN ('r','p')
-              AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity);")
+              AND (NOT c.relrowsecurity
+                   OR (NOT c.relforcerowsecurity
+                       -- The one named FORCE exception (036): the F-1503
+                       -- rollup crosses tenants as the table OWNER from
+                       -- the maintenance cron; under FORCE it would
+                       -- aggregate zero rows and report success forever.
+                       -- Same exception, same reason, as schema_lint L2.
+                       AND c.relname NOT IN ('product_events','product_event_rollups')));")
           if [ "$bad" != "0" ]; then
             echo "::error::$bad tenant table(s) without RLS enabled+forced"; exit 1
           fi

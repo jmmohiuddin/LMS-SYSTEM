@@ -252,7 +252,7 @@ export class ScriptsView {
       status.className = 'script-status';
       status.textContent =
         p.status === 'saved' ? '✓ সংরক্ষিত'
-        : p.status === 'uploading' ? '⏳ আপলোড হচ্ছে…'
+        : p.status === 'uploading' ? 'আপলোড হচ্ছে…'
         : p.status === 'error' ? `${p.error ?? 'সমস্যা'}`
         : 'প্রস্তুত';
       info.append(title, meta, status);

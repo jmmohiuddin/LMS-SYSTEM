@@ -265,11 +265,30 @@ button, h1, h2, .att-counts { text-transform: none; }
 
 /* --------------------------------------------------------------- counters */
 .att-counts {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-4);
   padding: var(--s-2) var(--s-4);
   font-variant-numeric: tabular-nums;
   color: var(--c-ink);
   background: var(--c-surface);
 }
+.att-count { font-size: var(--text-2xs); color: var(--c-ink-2); }
+.att-count strong { margin-left: 2px; font-size: var(--text-base); font-weight: 700; color: var(--c-ink); }
+.att-count[data-tone='absent'] strong { color: var(--c-accent); }
+.att-count[data-tone='late']   strong { color: var(--c-warn); }
+/* Total is the completeness check; push it to the end so it reads as the
+   sum of what precedes it, not another category. */
+.att-count[data-tone='total'] { margin-left: auto; }
+.att-count[data-tone='total'] strong { color: var(--c-ink); }
+
+/* Legend — one quiet row keying the three tap states to their marks. */
+.att-legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4);
+              padding: 0 var(--s-4) var(--s-2); }
+.att-legend-item { display: inline-flex; align-items: center; gap: 5px;
+                   font-size: var(--text-2xs); color: var(--c-ink-2); }
+.att-legend-glyph { font-size: var(--text-sm); line-height: 1; }
+.att-legend-item[data-status='present'] .att-legend-glyph { color: var(--c-success); }
+.att-legend-item[data-status='absent']  .att-legend-glyph { color: var(--c-accent); }
+.att-legend-item[data-status='late']    .att-legend-glyph { color: var(--c-warn); }
 
 /* ------------------------------------------------------------------ grid */
 .att-grid {

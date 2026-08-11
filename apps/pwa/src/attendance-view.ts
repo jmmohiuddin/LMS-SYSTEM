@@ -48,7 +48,20 @@ export interface AttendanceViewOptions {
   now?: () => number;
 }
 
-const STATUS_GLYPH = { present: '✓', absent: '✗', late: '⏱', excused: '⌂' } as const;
+// Text status marks, not icons: they live inside the dense grid and take the
+// ink colour. '○' for leave, not '⌂' — the house glyph now reads as the home
+// icon, and a hollow ring is what the wireframe's legend draws for ছুটি.
+// '◷' for late, not '⏱': the stopwatch is emoji-presentation (it renders in
+// the colour-emoji font and ignores the ink colour), and this mark must sit
+// monochrome inside the dense grid like ✓ / ✗ / ○ beside it.
+const STATUS_GLYPH = { present: '✓', absent: '✗', late: '◷', excused: '○' } as const;
+
+/** The three states a tap can reach, for the legend (excused is set elsewhere). */
+const LEGEND: Array<['present' | 'absent' | 'late', string, string]> = [
+  ['present', 'উপস্থিত', 'Present'],
+  ['absent', 'অনুপস্থিত', 'Absent'],
+  ['late', 'দেরি', 'Late'],
+];
 
 export class AttendanceView {
   private readonly o: AttendanceViewOptions;
@@ -130,6 +143,12 @@ export class AttendanceView {
       glyph.textContent = STATUS_GLYPH[e.status];
       tile.append(roll, glyph);
 
+      // Name on hover / long-press, keeping the grid dense (§7.1). The full
+      // name is already in the aria-label for a screen reader; title gives a
+      // sighted teacher the same on a press without spending a grid row on it.
+      const student = this.o.students.find((s) => s.studentId === e.studentId);
+      if (student) tile.title = this.locale === 'bn' ? student.nameBn : (student.nameEn ?? student.nameBn);
+
       tile.addEventListener('click', () => this.grid.cycle(e.studentId));
       tile.addEventListener('keydown', (ev) => this.onTileKey(ev as KeyboardEvent, e.studentId));
 
@@ -153,7 +172,26 @@ export class AttendanceView {
     this.undoEl.setAttribute('role', 'status');
     footer.append(save, this.undoEl);
 
-    root.append(header, this.countsEl, markAll, grid, footer);
+    // Legend for the three tap-reachable states. Without it the mark is a
+    // guess: the glyph carries the state on each tile (F-812), but a teacher
+    // meeting the grid for the first time still needs it named once.
+    const legend = d.createElement('div');
+    legend.className = 'att-legend';
+    legend.setAttribute('aria-hidden', 'true'); // each tile states its own status
+    for (const [status, labelBn, labelEn] of LEGEND) {
+      const item = d.createElement('span');
+      item.className = 'att-legend-item';
+      item.dataset.status = status;
+      const g = d.createElement('span');
+      g.className = 'att-legend-glyph';
+      g.textContent = STATUS_GLYPH[status];
+      const l = d.createElement('span');
+      l.textContent = this.locale === 'bn' ? labelBn : labelEn;
+      item.append(g, l);
+      legend.append(item);
+    }
+
+    root.append(header, this.countsEl, markAll, legend, grid, footer);
     this.paintCounts();
     void this.paintChip();
   }
@@ -176,11 +214,30 @@ export class AttendanceView {
   }
 
   private paintCounts(): void {
+    const d = this.o.doc;
     const c = this.grid.counts();
-    this.countsEl.textContent =
-      this.locale === 'bn'
-        ? `উপস্থিত ${formatCount(c.present, 'bn')}   অনুপস্থিত ${formatCount(c.absent, 'bn')}   দেরি ${formatCount(c.late, 'bn')}`
-        : `Present ${c.present}   Absent ${c.absent}   Late ${c.late}`;
+    const bn = this.locale === 'bn';
+    // Segmented and colour-coded, with the total the wireframe asks for —
+    // the total is the teacher's answer to "have I accounted for everyone?".
+    // Each figure takes its status colour; the label stays quiet so the
+    // number is what the eye lands on. Still one aria-live region, so a
+    // screen reader hears the whole tally re-read on every change.
+    this.countsEl.textContent = '';
+    const seg = (label: string, val: number, tone: string): HTMLElement => {
+      const s = d.createElement('span');
+      s.className = 'att-count';
+      s.dataset.tone = tone;
+      const strong = d.createElement('strong');
+      strong.textContent = formatCount(val, this.locale);
+      s.append(`${label} `, strong);
+      return s;
+    };
+    this.countsEl.append(
+      seg(bn ? 'উপস্থিত' : 'Present', c.present, 'present'),
+      seg(bn ? 'অনুপস্থিত' : 'Absent', c.absent, 'absent'),
+      seg(bn ? 'দেরি' : 'Late', c.late, 'late'),
+      seg(bn ? 'মোট' : 'Total', c.total, 'total'),
+    );
   }
 
   /** The chip: queued-op count and last sync. Never blocks anything. */

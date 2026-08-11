@@ -1,0 +1,71 @@
+# Netlify deployment. The Vercel config (vercel.json) is unchanged and both
+# hosts build from the same sources — scripts/build.mjs emits the PWA once
+# and then two sets of function bundles, one per platform, from the same
+# service handlers. Nothing in apps/pwa knows which host it is running on.
+
+[build]
+  command = "npm run build"
+  publish = "apps/pwa/public"
+  functions = "netlify/functions"
+
+[build.environment]
+  # The build only runs esbuild; the handlers themselves target node22.
+  NODE_VERSION = "22"
+
+# Routes are declared per-function via `export const config = { path }` in
+# the generated bundles (Netlify Functions v2), so there is no redirect
+# table here to drift out of sync with scripts/build.mjs. The paths are
+# byte-identical to the Vercel ones.
+
+# The two Vercel crons, same schedules (UTC). Both endpoints are also
+# reachable by path, which is what makes them testable by hand.
+[functions."sms-dispatch"]
+  schedule = "0 18 * * *"
+
+[functions."ops"]
+  schedule = "0 19 * * *"
+
+# The PWA is a hash-router single page: every non-asset path has to return
+# index.html or a deep link like /#/routine 404s on a cold load. Listed
+# after the functions so /api/v1/* is claimed first.
+[[redirects]]
+  from = "/offline"
+  to = "/offline.html"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The service worker must never be served from cache, or a deploy ships new
+# assets to a client that keeps asking the old worker for them. This is the
+# CSS-cache-busting problem that bit us locally, made explicit at the edge.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Hashed assets are safe to cache hard; app.js and app.css are not hashed,
+# so they get revalidation rather than a long max-age.
+[[headers]]
+  for = "/app.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/app.css"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "DENY"

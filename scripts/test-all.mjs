@@ -33,6 +33,9 @@ import { fileURLToPath } from 'node:url';
 // pathname returns them percent-encoded, so every workspace lookup missed.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GROUPS = ['packages', 'services', 'apps'];
+// netlify/ is a workspace too — it holds the edge adapter every endpoint
+// on that host sits behind, and its tests must not be invisible either.
+const EXTRA = ['netlify'];
 
 // Preflight. packages/server-core's assertRlsEnforced already refuses to
 // start the app on a privileged role, but the DB suites call createDb
@@ -63,13 +66,17 @@ let failed = 0;
 let orphaned = [];
 const results = [];
 
-for (const group of GROUPS) {
+for (const group of [...GROUPS, ...EXTRA]) {
   const dir = join(ROOT, group);
   if (!existsSync(dir)) continue;
-  for (const name of readdirSync(dir).sort()) {
-    const ws = join(dir, name);
+  const isLeaf = EXTRA.includes(group);
+  for (const name of (isLeaf ? [''] : readdirSync(dir).sort())) {
+    const ws = isLeaf ? dir : join(dir, name);
     const hasTests = existsSync(join(ws, 'test'))
-      && readdirSync(join(ws, 'test')).some((f) => f.endsWith('.test.ts'));
+      // .mjs as well as .ts: the Netlify adapter is plain ESM, and a
+      // detector that only knew about .test.ts would have made it invisible
+      // in exactly the way this script exists to prevent.
+      && readdirSync(join(ws, 'test')).some((f) => /\.test\.(ts|mjs|js)$/.test(f));
     const pkgPath = join(ws, 'package.json');
     const pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, 'utf8')) : null;
     const script = pkg?.scripts?.test;
@@ -79,7 +86,7 @@ for (const group of GROUPS) {
     if (hasTests && !script) { orphaned.push(`${group}/${name}`); continue; }
     if (!hasTests || !script) continue;
 
-    process.stdout.write(`${(group + '/' + name).padEnd(28)} `);
+    process.stdout.write(`${(isLeaf ? group : group + '/' + name).padEnd(28)} `);
     try {
       const out = execFileSync('npm', ['test', '--silent'], { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
       const pass = /^. tests (\d+)/m.exec(out)?.[1] ?? '?';

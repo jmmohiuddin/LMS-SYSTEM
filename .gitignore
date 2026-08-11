@@ -43,3 +43,13 @@ MEMORY.md
 memory/
 
 .playwright-mcp/
+
+# Netlify function bundles are NOT committed, unlike api/.
+#
+# The api/ exception above exists because Vercel detects functions from the
+# cloned repo before the build runs. Netlify has no such constraint: it runs
+# `npm run build` first and picks up whatever lands in netlify/functions,
+# and the CLI deploy uploads the locally built copy. Committing them would
+# be ~10 duplicated bundles of the same handlers already committed under
+# api/, drifting independently.
+netlify/functions/

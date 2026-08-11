@@ -236,4 +236,38 @@ describe('routine solver across shifts (F-506)', { skip }, () => {
                       WHERE id = $1`, [PD_D1]);
     });
   });
+
+/**
+ * F-505 plumbing. The rules themselves are covered without a database in
+ * soft-constraints.test.ts; what needs one is that the report is computed
+ * over the real timetable and SURVIVES the run — §8.2 is a screen a
+ * coordinator returns to, and a report that lived only in one HTTP
+ * response has already failed "nothing silently accepted" the moment they
+ * close the tab.
+ */
+  describe('the soft-constraint report reaches the database (F-505)', () => {
+    test('solve persists violations, unplaced demand and the un-run rules', async () => {
+      await fillMorning();
+      const result = await new RmsSolver(db).solve(RT_D, asCoord);
+
+        // The fixture is deliberately impossible, so there is unplaced demand
+      // and no placements to violate anything.
+      assert.equal(result.unplaced.length, 1);
+      assert.equal(result.soft.violations.length, 0);
+
+      // And the clean report is honest about what it did not check.
+      assert.equal(result.soft.notEvaluated.length, 1);
+      assert.match(result.soft.notEvaluated[0].whyBn, /সংরক্ষিত নেই/);
+
+      await db.withTenant(asCoord, async (c) => {
+        const { rows } = await c.query<{ soft_violations: Record<string, unknown> }>(
+          'SELECT soft_violations FROM routines WHERE id = $1', [RT_D]);
+        const stored = rows[0].soft_violations;
+        assert.ok(Array.isArray(stored.unplaced), 'unplaced demand is stored');
+        assert.ok(Array.isArray(stored.soft), 'soft violations are stored');
+        assert.ok(Array.isArray(stored.notEvaluated), 'and so is what was not checked');
+        assert.equal((stored.unplaced as unknown[]).length, 1);
+      });
+      });
+  });
 });

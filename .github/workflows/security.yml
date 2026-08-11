@@ -181,6 +181,7 @@ jobs:
           node --test packages/server-core/test/pii-crypto.test.ts
           node --test packages/server-core/test/csv.test.ts
           node --test services/academics-svc/test/student-import.test.ts
+          node --test services/rms-svc/test/soft-constraints.test.ts
           # ui-core and the PWA render into jsdom, which is a devDependency
           # of those packages rather than the root.
           (cd packages/ui-core && npm install --no-audit --no-fund && npm test)

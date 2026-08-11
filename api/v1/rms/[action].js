@@ -1379,6 +1379,148 @@ async function handler(req, res) {
 
 // services/rms-svc/src/solve.ts
 import { randomUUID } from "node:crypto";
+
+// services/rms-svc/src/soft-constraints.ts
+var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS[Number(d)]);
+var DAY_BN = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var DEFAULT_ROOM_CHURN = 3;
+function evaluateSoftConstraints(input) {
+  const violations = [];
+  const churnThreshold = input.roomChurnThreshold ?? DEFAULT_ROOM_CHURN;
+  const teacher = (id) => input.teacherNames.get(id) ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995";
+  const section = (id) => input.sectionNames.get(id) ?? "\u09B6\u09BE\u0996\u09BE";
+  const subject = (id) => input.subjectNames.get(id) ?? "\u09AC\u09BF\u09B7\u09AF\u09BC";
+  const perTeacher = /* @__PURE__ */ new Map();
+  for (const s of input.slots) {
+    const list = perTeacher.get(s.teacherId);
+    if (list) list.push(s);
+    else perTeacher.set(s.teacherId, [s]);
+  }
+  for (const [teacherId, slots] of perTeacher) {
+    const limits = input.limits.get(teacherId);
+    if (!limits) continue;
+    if (slots.length > limits.maxPerWeek) {
+      const scarce = scarcestSubject(slots, input.competentTeacherCount);
+      violations.push({
+        code: "teacher_weekly_cap",
+        teacherId,
+        overBy: slots.length - limits.maxPerWeek,
+        detailBn: `${teacher(teacherId)} \u2014 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 ${bn(slots.length)} \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 (\u09B2\u0995\u09CD\u09B7\u09CD\u09AF ${bn(limits.maxPerWeek)})`,
+        ...scarce ? { causeBn: `\u09AF\u09CB\u0997\u09CD\u09AF ${subject(scarce.subjectId)} \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0995\u09AE (${bn(scarce.competent)} \u099C\u09A8)`, subjectId: scarce.subjectId } : {}
+      });
+    }
+    const byDay = /* @__PURE__ */ new Map();
+    for (const s of slots) byDay.set(s.dayOfWeek, (byDay.get(s.dayOfWeek) ?? 0) + 1);
+    for (const [day2, count] of [...byDay].sort((a, b) => a[0] - b[0])) {
+      if (count > limits.maxPerDay) {
+        violations.push({
+          code: "teacher_daily_cap",
+          teacherId,
+          dayOfWeek: day2,
+          overBy: count - limits.maxPerDay,
+          detailBn: `${teacher(teacherId)} \u2014 ${DAY_BN[day2]}\u09AC\u09BE\u09B0 ${bn(count)} \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 (\u09A6\u09C8\u09A8\u09BF\u0995 \u09B2\u0995\u09CD\u09B7\u09CD\u09AF ${bn(limits.maxPerDay)})`
+        });
+      }
+    }
+    const daysWorked = byDay.size;
+    if (daysWorked >= 6 && slots.length >= limits.maxPerWeek) {
+      violations.push({
+        code: "teacher_no_free_day",
+        teacherId,
+        detailBn: `${teacher(teacherId)} \u2014 \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0995\u09CB\u09A8\u09CB \u09AE\u09C1\u0995\u09CD\u09A4 \u09A6\u09BF\u09A8 \u09A8\u09C7\u0987 (${bn(slots.length)} \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1, ${bn(daysWorked)} \u09A6\u09BF\u09A8)`
+      });
+    }
+  }
+  const perSectionSubject = /* @__PURE__ */ new Map();
+  for (const s of input.slots) {
+    const k = `${s.sectionId}|${s.subjectId}`;
+    const list = perSectionSubject.get(k);
+    if (list) list.push(s);
+    else perSectionSubject.set(k, [s]);
+  }
+  for (const [key, slots] of perSectionSubject) {
+    const [sectionId, subjectId] = key.split("|");
+    const days = [...new Set(slots.map((s) => s.dayOfWeek))].sort((a, b) => a - b);
+    if (days.length <= Math.ceil(input.teachingDayCount / 2)) {
+      for (let i = 0; i + 1 < days.length; i++) {
+        if (days[i + 1] === days[i] + 1) {
+          violations.push({
+            code: "subject_consecutive_days",
+            sectionId,
+            subjectId,
+            dayOfWeek: days[i],
+            detailBn: `${section(sectionId)} ${subject(subjectId)} ${DAY_BN[days[i]]} \u0993 ${DAY_BN[days[i + 1]]} \u09AA\u09B0\u09AA\u09B0`
+          });
+        }
+      }
+    }
+    const byDay = /* @__PURE__ */ new Map();
+    for (const s of slots) byDay.set(s.dayOfWeek, (byDay.get(s.dayOfWeek) ?? 0) + 1);
+    for (const [day2, count] of [...byDay].sort((a, b) => a[0] - b[0])) {
+      if (count > 1 && byDay.size < input.teachingDayCount) {
+        violations.push({
+          code: "subject_twice_in_one_day",
+          sectionId,
+          subjectId,
+          dayOfWeek: day2,
+          overBy: count - 1,
+          detailBn: `${section(sectionId)} ${subject(subjectId)} \u2014 ${DAY_BN[day2]}\u09AC\u09BE\u09B0 ${bn(count)} \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u0987 \u09A6\u09BF\u09A8\u09C7`
+        });
+      }
+    }
+  }
+  for (const [teacherId, slots] of perTeacher) {
+    const byDay = /* @__PURE__ */ new Map();
+    for (const s of slots) {
+      const list = byDay.get(s.dayOfWeek);
+      if (list) list.push(s);
+      else byDay.set(s.dayOfWeek, [s]);
+    }
+    for (const [day2, daySlots] of [...byDay].sort((a, b) => a[0] - b[0])) {
+      const ordered = [...daySlots].sort((a, b) => a.periodNo - b.periodNo);
+      let moves = 0;
+      for (let i = 1; i < ordered.length; i++) {
+        const prev = ordered[i - 1].roomId;
+        const cur = ordered[i].roomId;
+        if (prev && cur && prev !== cur) moves++;
+      }
+      if (moves >= churnThreshold) {
+        violations.push({
+          code: "teacher_room_churn",
+          teacherId,
+          dayOfWeek: day2,
+          overBy: moves - churnThreshold + 1,
+          detailBn: `${teacher(teacherId)} \u2014 ${DAY_BN[day2]}\u09AC\u09BE\u09B0 \u09A6\u09BF\u09A8\u09C7 ${bn(moves)} \u09AC\u09BE\u09B0 \u0995\u0995\u09CD\u09B7 \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8`
+        });
+      }
+    }
+  }
+  violations.sort((a, b) => (b.overBy ?? 0) - (a.overBy ?? 0));
+  return {
+    violations,
+    notEvaluated: [
+      {
+        ruleBn: "\u0995\u09A0\u09BF\u09A8 \u09AC\u09BF\u09B7\u09AF\u09BC \u09A6\u09BF\u09A8\u09C7\u09B0 \u09B6\u09C1\u09B0\u09C1\u09A4\u09C7 \u09B0\u09BE\u0996\u09BE",
+        // The schema has no notion of cognitive demand, and inventing a
+        // default every school leaves untouched would make this rule fire
+        // never while appearing to be checked — worse than absent.
+        whyBn: "\u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u0995\u09BE\u09A0\u09BF\u09A8\u09CD\u09AF \u09AE\u09BE\u09A4\u09CD\u09B0\u09BE \u0995\u09CB\u09A5\u09BE\u0993 \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09BF\u09A4 \u09A8\u09C7\u0987"
+      }
+    ]
+  };
+}
+function scarcestSubject(slots, competent) {
+  let best = null;
+  for (const subjectId of new Set(slots.map((s) => s.subjectId))) {
+    const n = competent.get(subjectId);
+    if (n === void 0 || n > 2) continue;
+    if (!best || n < best.competent) best = { subjectId, competent: n };
+  }
+  return best;
+}
+
+// services/rms-svc/src/solve.ts
 var IntervalBook = class {
   byKey = /* @__PURE__ */ new Map();
   add(resourceId, day2, startsAt, endsAt) {
@@ -1498,6 +1640,7 @@ var RmsSolver = class {
         }
       }
       let inserted = 0;
+      const written = [];
       for (const p of placements) {
         try {
           await client.query(
@@ -1519,6 +1662,7 @@ var RmsSolver = class {
             ]
           );
           inserted++;
+          written.push(p);
         } catch (err) {
           const code = err.code;
           if (code === "23P01" || code === "23505") {
@@ -1534,6 +1678,33 @@ var RmsSolver = class {
           throw err;
         }
       }
+      const finalSlots = [
+        ...existing.filter((r) => r.is_mine).map((r) => ({
+          dayOfWeek: r.day_of_week,
+          periodNo: r.period_no,
+          startsAt: r.starts_at,
+          endsAt: r.ends_at,
+          sectionId: r.primary_section_id,
+          subjectId: r.subject_id,
+          teacherId: r.teacher_id,
+          roomId: r.room_id
+        })),
+        ...written.map((p) => ({
+          dayOfWeek: p.dayOfWeek,
+          periodNo: p.periodNo,
+          startsAt: p.startsAt,
+          endsAt: p.endsAt,
+          sectionId: p.sectionId,
+          subjectId: p.subjectId,
+          teacherId: p.teacherId,
+          roomId: p.roomId
+        }))
+      ];
+      const soft = evaluateSoftConstraints({
+        slots: finalSlots,
+        teachingDayCount: teachingDays.length,
+        ...await this.loadSoftContext(client, finalSlots)
+      });
       const totalDemand = demand.reduce((sum, d) => sum + d.periodsPerWeek, 0);
       const totalPlaced = existing.filter((r) => r.is_mine).length + inserted;
       const objectiveScore = totalDemand > 0 ? Math.round(totalPlaced / totalDemand * 1e4) / 100 : 100;
@@ -1544,10 +1715,88 @@ var RmsSolver = class {
             SET generated_by = 'solver', solver_run_id = $2, solver_seconds = $3,
                 objective_score = $4, soft_violations = $5::jsonb, updated_at = now()
           WHERE id = $1`,
-        [routineId, solverRunId, solverSeconds, objectiveScore, JSON.stringify(unplaced)]
+        // Both lists are persisted, because §8.2 is a screen a coordinator
+        // comes back to after the run — a report that lives only in one
+        // HTTP response has already failed the "nothing silently accepted"
+        // requirement the moment they close the tab.
+        [
+          routineId,
+          solverRunId,
+          solverSeconds,
+          objectiveScore,
+          JSON.stringify({ unplaced, soft: soft.violations, notEvaluated: soft.notEvaluated })
+        ]
       );
-      return { routineId, solverRunId, totalDemand, placed: totalPlaced, unplaced, objectiveScore, solverSeconds };
+      return {
+        routineId,
+        solverRunId,
+        totalDemand,
+        placed: totalPlaced,
+        unplaced,
+        soft,
+        objectiveScore,
+        solverSeconds
+      };
     });
+  }
+  /**
+   * Names and caps for the soft-constraint report.
+   *
+   * Loaded AFTER placement and only for the people and things that appear
+   * in it — a school of 45 teachers and 30 rooms has no reason to ship the
+   * whole staff register into a report about four of them.
+   */
+  async loadSoftContext(client, slots) {
+    const teacherIds = [...new Set(slots.map((s) => s.teacherId))];
+    const sectionIds = [...new Set(slots.map((s) => s.sectionId))];
+    const subjectIds = [...new Set(slots.map((s) => s.subjectId))];
+    const limits = /* @__PURE__ */ new Map();
+    const teacherNames = /* @__PURE__ */ new Map();
+    if (teacherIds.length > 0) {
+      const { rows } = await client.query(
+        `SELECT u.id AS user_id, u.full_name_bn,
+                sp.max_periods_per_week, sp.max_periods_per_day
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.id = ANY($1::uuid[])`,
+        [teacherIds]
+      );
+      for (const r of rows) {
+        teacherNames.set(r.user_id, r.full_name_bn);
+        if (r.max_periods_per_week !== null) {
+          limits.set(r.user_id, {
+            maxPerWeek: r.max_periods_per_week,
+            maxPerDay: r.max_periods_per_day
+          });
+        }
+      }
+    }
+    const sectionNames = /* @__PURE__ */ new Map();
+    if (sectionIds.length > 0) {
+      const { rows } = await client.query(
+        `SELECT s.id, c.name_bn || '\u2013' || s.name AS label
+           FROM sections s JOIN classes c ON c.id = s.class_id
+          WHERE s.id = ANY($1::uuid[])`,
+        [sectionIds]
+      );
+      for (const r of rows) sectionNames.set(r.id, r.label);
+    }
+    const subjectNames = /* @__PURE__ */ new Map();
+    const competentTeacherCount = /* @__PURE__ */ new Map();
+    if (subjectIds.length > 0) {
+      const { rows } = await client.query(
+        `SELECT s.id, s.name_bn,
+                (SELECT count(*) FROM teacher_competencies tc
+                  WHERE tc.subject_id = s.id AND tc.is_active) AS competent
+           FROM subjects s WHERE s.id = ANY($1::uuid[])`,
+        [subjectIds]
+      );
+      for (const r of rows) {
+        subjectNames.set(r.id, r.name_bn);
+        competentTeacherCount.set(r.id, Number(r.competent));
+      }
+    }
+    return { limits, teacherNames, sectionNames, subjectNames, competentTeacherCount };
   }
   async loadRoutine(client, routineId) {
     const { rows } = await client.query(`SELECT id, academic_year_id, shift, period_template_id, status FROM routines WHERE id = $1`, [routineId]);

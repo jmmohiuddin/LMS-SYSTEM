@@ -40,6 +40,9 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { Db, TenantContext } from '../../../packages/server-core/src/db.ts';
+import {
+  evaluateSoftConstraints, type EvaluatedSlot, type SoftConstraintReport,
+} from './soft-constraints.ts';
 
 interface TeachingPeriod {
   periodNo: number;
@@ -81,6 +84,13 @@ export interface SolveResult {
   totalDemand: number;
   placed: number;
   unplaced: UnplacedDemand[];
+  /**
+   * F-505. Every soft constraint traded away, named. Separate from
+   * `unplaced`, which is a demand that could not be met at all — the two
+   * mean different things to a coordinator and §8.2 shows them apart:
+   * "কঠিন শর্ত লঙ্ঘন: ০" above "নরম শর্ত ছাড় দেওয়া হয়েছে: ৭".
+   */
+  soft: SoftConstraintReport;
   objectiveScore: number;
   solverSeconds: number;
 }
@@ -258,6 +268,11 @@ export class RmsSolver {
       }
 
       let inserted = 0;
+      // The ones that actually landed. `placements` is what we intended;
+      // a slice of it by count would silently include a row the database
+      // rejected, and the soft-constraint report would then describe a
+      // timetable that does not exist.
+      const written: Placement[] = [];
       for (const p of placements) {
         try {
           await client.query(
@@ -279,6 +294,7 @@ export class RmsSolver {
             ],
           );
           inserted++;
+          written.push(p);
         } catch (err) {
           const code = (err as { code?: string }).code;
           if (code === '23P01' || code === '23505') {
@@ -295,6 +311,30 @@ export class RmsSolver {
         }
       }
 
+      // F-505. Evaluated over the routine as it now stands — this run's
+      // placements PLUS whatever was already there — because a coordinator
+      // reading the report cares about the timetable, not about which pass
+      // wrote which row.
+      const finalSlots: EvaluatedSlot[] = [
+        ...existing.filter((r) => r.is_mine).map((r) => ({
+          dayOfWeek: r.day_of_week, periodNo: r.period_no,
+          startsAt: r.starts_at, endsAt: r.ends_at,
+          sectionId: r.primary_section_id, subjectId: r.subject_id,
+          teacherId: r.teacher_id, roomId: r.room_id,
+        })),
+        ...written.map((p) => ({
+          dayOfWeek: p.dayOfWeek, periodNo: p.periodNo,
+          startsAt: p.startsAt, endsAt: p.endsAt,
+          sectionId: p.sectionId, subjectId: p.subjectId,
+          teacherId: p.teacherId, roomId: p.roomId,
+        })),
+      ];
+      const soft = evaluateSoftConstraints({
+        slots: finalSlots,
+        teachingDayCount: teachingDays.length,
+        ...(await this.loadSoftContext(client, finalSlots)),
+      });
+
       const totalDemand = demand.reduce((sum, d) => sum + d.periodsPerWeek, 0);
       // Only THIS routine's slots count as placed. `existing` now also
       // carries the other shift's, which constrain placement but are not
@@ -310,11 +350,87 @@ export class RmsSolver {
             SET generated_by = 'solver', solver_run_id = $2, solver_seconds = $3,
                 objective_score = $4, soft_violations = $5::jsonb, updated_at = now()
           WHERE id = $1`,
-        [routineId, solverRunId, solverSeconds, objectiveScore, JSON.stringify(unplaced)],
+        // Both lists are persisted, because §8.2 is a screen a coordinator
+        // comes back to after the run — a report that lives only in one
+        // HTTP response has already failed the "nothing silently accepted"
+        // requirement the moment they close the tab.
+        [routineId, solverRunId, solverSeconds, objectiveScore,
+         JSON.stringify({ unplaced, soft: soft.violations, notEvaluated: soft.notEvaluated })],
       );
 
-      return { routineId, solverRunId, totalDemand, placed: totalPlaced, unplaced, objectiveScore, solverSeconds };
+      return {
+        routineId, solverRunId, totalDemand, placed: totalPlaced,
+        unplaced, soft, objectiveScore, solverSeconds,
+      };
     });
+  }
+
+  /**
+   * Names and caps for the soft-constraint report.
+   *
+   * Loaded AFTER placement and only for the people and things that appear
+   * in it — a school of 45 teachers and 30 rooms has no reason to ship the
+   * whole staff register into a report about four of them.
+   */
+  private async loadSoftContext(client: pg.PoolClient, slots: EvaluatedSlot[]) {
+    const teacherIds = [...new Set(slots.map((s) => s.teacherId))];
+    const sectionIds = [...new Set(slots.map((s) => s.sectionId))];
+    const subjectIds = [...new Set(slots.map((s) => s.subjectId))];
+
+    const limits = new Map<string, { maxPerWeek: number; maxPerDay: number }>();
+    const teacherNames = new Map<string, string>();
+    if (teacherIds.length > 0) {
+      const { rows } = await client.query<{
+        user_id: string; full_name_bn: string;
+        max_periods_per_week: number; max_periods_per_day: number;
+      }>(
+        `SELECT u.id AS user_id, u.full_name_bn,
+                sp.max_periods_per_week, sp.max_periods_per_day
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.id = ANY($1::uuid[])`,
+        [teacherIds],
+      );
+      for (const r of rows) {
+        teacherNames.set(r.user_id, r.full_name_bn);
+        // A teacher with no staff_profile has no configured cap, and is
+        // therefore not judged against an invented one.
+        if (r.max_periods_per_week !== null) {
+          limits.set(r.user_id, {
+            maxPerWeek: r.max_periods_per_week, maxPerDay: r.max_periods_per_day,
+          });
+        }
+      }
+    }
+
+    const sectionNames = new Map<string, string>();
+    if (sectionIds.length > 0) {
+      const { rows } = await client.query<{ id: string; label: string }>(
+        `SELECT s.id, c.name_bn || '–' || s.name AS label
+           FROM sections s JOIN classes c ON c.id = s.class_id
+          WHERE s.id = ANY($1::uuid[])`,
+        [sectionIds],
+      );
+      for (const r of rows) sectionNames.set(r.id, r.label);
+    }
+
+    const subjectNames = new Map<string, string>();
+    const competentTeacherCount = new Map<string, number>();
+    if (subjectIds.length > 0) {
+      const { rows } = await client.query<{ id: string; name_bn: string; competent: string }>(
+        `SELECT s.id, s.name_bn,
+                (SELECT count(*) FROM teacher_competencies tc
+                  WHERE tc.subject_id = s.id AND tc.is_active) AS competent
+           FROM subjects s WHERE s.id = ANY($1::uuid[])`,
+        [subjectIds],
+      );
+      for (const r of rows) {
+        subjectNames.set(r.id, r.name_bn);
+        competentTeacherCount.set(r.id, Number(r.competent));
+      }
+    }
+
+    return { limits, teacherNames, sectionNames, subjectNames, competentTeacherCount };
   }
 
   private async loadRoutine(client: pg.PoolClient, routineId: string) {

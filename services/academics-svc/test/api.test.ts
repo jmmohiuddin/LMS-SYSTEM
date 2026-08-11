@@ -56,6 +56,7 @@ let practice: typeof import('../api/practice.ts').default;
 let next: typeof import('../api/next.ts').default;
 let results: typeof import('../api/results.ts').default;
 let subjects: typeof import('../api/subjects.ts').default;
+let attendance: typeof import('../api/attendance.ts').default;
 
 const asTeacher: TenantContext = { tenantId: T, userId: TEACHER, role: 'class_teacher' };
 const asStudent: TenantContext = { tenantId: T, userId: STUDENT, role: 'student' };
@@ -162,6 +163,7 @@ before(async () => {
   next = (await import('../api/next.ts')).default;
   results = (await import('../api/results.ts')).default;
   subjects = (await import('../api/subjects.ts')).default;
+  attendance = (await import('../api/attendance.ts')).default;
 
   await seed();
 });
@@ -183,6 +185,7 @@ describe('authentication', { skip }, () => {
     ['next', next, '/api/v1/academics/next'],
     ['results', results, '/api/v1/academics/results'],
     ['subjects', subjects, '/api/v1/academics/subjects'],
+    ['attendance', attendance, '/api/v1/academics/attendance'],
   ] as const;
 
   test('no token is 401 on every endpoint', async () => {
@@ -601,5 +604,73 @@ describe('my subjects', { skip }, () => {
     });
     assert.equal(r.status, 200);
     assert.equal((r.body.subjects as unknown[]).length, 0);
+  });
+});
+
+/* ═══════════════════════════════════════════ F-806 — my attendance */
+
+describe('my attendance', { skip }, () => {
+  test('excused absences are reported SEPARATELY and left out of the rate', async () => {
+    // The requirement in one assertion. A child with excused absences for a
+    // documented illness must not be scored as if they skipped.
+    await db.withTenant({ tenantId: T, userId: TEACHER, role: 'class_teacher' }, async (c) => {
+      const sess = (await c.query(
+        `INSERT INTO attendance_sessions
+           (id, tenant_id, section_id, academic_year_id, taken_on, mode, taken_by, taken_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, CURRENT_DATE, 'section_daily', $4, now())
+         RETURNING id`, [T, SECTION, YEAR, TEACHER])).rows[0].id;
+      for (const [day, status] of [[0, 'present'], [1, 'present'], [2, 'absent'], [3, 'excused']]) {
+        await c.query(
+          `INSERT INTO attendance_records
+             (id, tenant_id, session_id, student_id, section_id, taken_on, status,
+              marked_by, marked_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, CURRENT_DATE - $5::int, $6, $7, now())`,
+          [T, sess, STUDENT, SECTION, day, status, TEACHER]);
+      }
+    });
+
+    const r = await call(attendance, { token: studentToken, url: '/api/v1/academics/attendance' });
+    assert.equal(r.status, 200, r.raw);
+    const t = r.body.totals as {
+      present: number; absent: number; excused: number;
+      counted: number; attendedPercent: number;
+    };
+    assert.equal(t.excused, 1, 'the excused day must be counted as excused');
+    assert.equal(t.counted, 3, 'and must NOT appear in the denominator');
+    // 2 attended of 3 counted = 67%. Folding the excused day in as a miss
+    // would give 50%, which is the bug this asserts against.
+    assert.equal(t.attendedPercent, 67);
+  });
+
+  test('the absence register lists dates, not just a percentage', async () => {
+    const r = await call(attendance, { token: studentToken, url: '/api/v1/academics/attendance' });
+    const recent = r.body.recent as { takenOn: string; status: string }[];
+    assert.ok(recent.length >= 2, 'non-present days should be listed individually');
+    assert.ok(recent.every((x) => x.status !== 'present'), 'present days are not absences');
+    assert.ok(recent.every((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.takenOn)), 'each carries a date');
+  });
+
+  test('months is clamped, so a hostile value cannot scan every partition', async () => {
+    const r = await call(attendance, {
+      token: studentToken, url: '/api/v1/academics/attendance?months=99999',
+    });
+    assert.equal(r.status, 200);
+    assert.ok((r.body.months as number) <= 24);
+  });
+
+  test('a student cannot read another student\'s attendance', async () => {
+    const r = await call(attendance, {
+      token: student2Token, url: `/api/v1/academics/attendance?studentId=${STUDENT}`,
+    });
+    assert.equal(r.status, 200);
+    assert.equal((r.body.totals as { counted: number }).counted, 0);
+  });
+
+  test('another school sees nothing', async () => {
+    const r = await call(attendance, {
+      token: otherTenantToken, url: `/api/v1/academics/attendance?studentId=${STUDENT}`,
+    });
+    assert.equal(r.status, 200);
+    assert.equal((r.body.totals as { counted: number }).counted, 0);
   });
 });

@@ -451,6 +451,40 @@ const DEMO_SUBJECTS = [
     nextChapter: { id: 'demo-ch-h5', chapterNo: 5, nameBn: 'সমীকরণ ও অসমতা' } },
 ];
 
+/**
+ * F-806 demo data. Deliberately includes BOTH excused and unexcused
+ * absences, because the one thing this screen has to get right is showing
+ * them as different things.
+ */
+const DEMO_ATTENDANCE = {
+  totals: { present: 96, late: 7, absent: 5, excused: 4, halfDay: 2,
+            counted: 110, attendedPercent: 95 },
+  byMonth: [
+    { month: '2026-08', present: 6,  late: 1, absent: 0, excused: 0, halfDay: 0 },
+    { month: '2026-07', present: 20, late: 2, absent: 1, excused: 1, halfDay: 0 },
+    { month: '2026-06', present: 18, late: 1, absent: 3, excused: 2, halfDay: 1 },
+    { month: '2026-05', present: 22, late: 2, absent: 0, excused: 0, halfDay: 0 },
+    { month: '2026-04', present: 17, late: 1, absent: 1, excused: 1, halfDay: 1 },
+    { month: '2026-03', present: 13, late: 0, absent: 0, excused: 0, halfDay: 0 },
+  ],
+  bySubject: [
+    { subjectBn: 'রসায়ন',        present: 18, late: 2, absent: 3, excused: 1 },
+    { subjectBn: 'পদার্থবিজ্ঞান',   present: 20, late: 1, absent: 1, excused: 1 },
+    { subjectBn: 'গণিত',          present: 22, late: 2, absent: 1, excused: 0 },
+    { subjectBn: 'বাংলা',         present: 21, late: 1, absent: 0, excused: 1 },
+    { subjectBn: 'ইংরেজি',        present: 15, late: 1, absent: 0, excused: 1 },
+  ],
+  recent: [
+    { takenOn: '2026-07-22', status: 'excused', minutesLate: null, remark: 'ডাক্তারি ছুটি', subjectBn: null },
+    { takenOn: '2026-07-14', status: 'late',    minutesLate: 18,   remark: null, subjectBn: 'গণিত' },
+    { takenOn: '2026-06-30', status: 'absent',  minutesLate: null, remark: null, subjectBn: 'রসায়ন' },
+    { takenOn: '2026-06-19', status: 'excused', minutesLate: null, remark: 'পারিবারিক অনুষ্ঠান', subjectBn: null },
+    { takenOn: '2026-06-11', status: 'absent',  minutesLate: null, remark: null, subjectBn: 'রসায়ন' },
+    { takenOn: '2026-06-04', status: 'half_day',minutesLate: null, remark: 'অসুস্থ', subjectBn: null },
+    { takenOn: '2026-05-27', status: 'late',    minutesLate: 25,   remark: null, subjectBn: 'পদার্থবিজ্ঞান' },
+  ],
+};
+
 function ok(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -522,6 +556,9 @@ export class DemoAuth extends Auth {
         if (aid) return ok(demoAssignmentDetail(aid));
         return ok({ assignments: DEMO_ASSIGNMENTS });
       }
+
+      case '/api/v1/academics/attendance':
+        return ok({ studentId: 'demo-s1', months: 6, ...DEMO_ATTENDANCE });
 
       case '/api/v1/academics/subjects':
         return ok({ studentId: 'demo-s1', subjects: DEMO_SUBJECTS });

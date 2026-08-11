@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Offline-first PWA shell: attendance grid, service worker, sync chip.",
   "scripts": {
-    "test": "node --test test/attendance-view.test.ts test/login-cooldown.test.ts"
+    "test": "node --test test/attendance-view.test.ts test/login-cooldown.test.ts test/shell-tabs.test.ts"
   },
   "engines": {
     "node": ">=22"

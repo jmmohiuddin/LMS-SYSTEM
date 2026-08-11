@@ -1136,3 +1136,32 @@ button, h1, h2, .att-counts { text-transform: none; }
   font-size: 18px; font-variant-numeric: tabular-nums;
 }
 .trend-label { display: block; font-size: 11px; color: var(--c-ink-2); }
+
+/* ========================================================= my attendance */
+/* F-806. Excused is never folded into the headline figure and never shares
+   a colour with an unexcused absence — that distinction is the screen. */
+.att-summary { margin: 0 var(--s-4) var(--s-3); }
+.att-headline { display: flex; flex-direction: column; margin-bottom: var(--s-3); }
+.att-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.att-note { margin: var(--s-3) 0 0; font-size: 13px; color: var(--c-ink-2); }
+
+.att-section { margin: var(--s-5) 0; }
+.att-section > h2 { font-size: 16px; margin: 0 var(--s-4) var(--s-2); }
+
+.att-month-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
+.att-month { display: grid; grid-template-columns: 8rem 1fr auto; align-items: center; gap: var(--s-3); }
+.att-month-name  { font-size: 14px; }
+.att-month-count { font-size: 12px; color: var(--c-ink-2); white-space: nowrap; }
+/* Below 75% a school starts intervening. The bar changes tone AND the count
+   beside it says the same thing in words — colour is never the only carrier. */
+.progress-fill[data-low='true'] { background: var(--c-warn); }
+
+.att-register { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
+.att-entry {
+  display: grid; grid-template-columns: 7rem 1fr; gap: var(--s-3);
+  align-items: baseline; padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--c-line-2);
+}
+.att-entry-date { font-size: 13px; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.att-entry-body { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.att-entry-note { font-size: 12px; color: var(--c-ink-2); }

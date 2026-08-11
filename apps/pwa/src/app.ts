@@ -31,6 +31,7 @@ import { LedgerView } from './ledger-view.ts';
 import { SystemView } from './system-view.ts';
 import { LearnView } from './learn-view.ts';
 import { SubjectsView } from './subjects-view.ts';
+import { MyAttendanceView } from './my-attendance-view.ts';
 import { ResultsView } from './results-view.ts';
 import { AssignmentsView } from './assignments-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
@@ -83,6 +84,7 @@ type DashCards = { primary: DashboardItem[]; secondary: DashboardItem[] };
 const CARD = {
   learn:      { path: 'learn',      glyph: '📖', titleBn: 'পড়াশোনা',            subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
   subjects:   { path: 'subjects',   glyph: '📚', titleBn: 'আমার বিষয়',          subtitleBn: 'শ্রেণি ও বিভাগ অনুযায়ী' },
+  myAtt:      { path: 'my-attendance', glyph: '✓', titleBn: 'আমার হাজিরা',      subtitleBn: 'মাস ও বিষয় অনুযায়ী' },
   results:    { path: 'results',    glyph: '🏅', titleBn: 'ফলাফল',              subtitleBn: 'পরীক্ষার ফলাফল ও নম্বর' },
   homework:   { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'জমা দিতে হবে যেসব' },
   homeworkT:  { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'কাজ দাও ও নম্বর দাও' },
@@ -107,14 +109,14 @@ function dashboardFor(role: string): DashCards {
     case 'student':
       return {
         primary: [CARD.subjects, CARD.homework],
-        secondary: [CARD.learn, CARD.results, CARD.shikho, CARD.routineStu, CARD.feesStu],
+        secondary: [CARD.learn, CARD.results, CARD.myAtt, CARD.shikho, CARD.routineStu, CARD.feesStu],
       };
     case 'guardian':
       return {
         // A guardian's first question is almost always fees or results,
         // not content — so the ordering differs from the student's.
         primary: [CARD.results, CARD.feesStu],
-        secondary: [CARD.routineStu, CARD.subjects, CARD.learn, CARD.homework],
+        secondary: [CARD.routineStu, CARD.myAtt, CARD.subjects, CARD.learn, CARD.homework],
       };
     case 'accountant':
       return {
@@ -251,11 +253,24 @@ async function main() {
         },
       },
       {
+        path: 'my-attendance',
+        labelBn: 'আমার হাজিরা',
+        glyph: '✓',
+        // Not a tab: the wireframe's student bar is হোম / পড়াশোনা / বাড়ির কাজ /
+        // রুটিন / আরও. Reached from the dashboard card and the More menu.
+        hidden: true,
+        mount: (container) => {
+          new MyAttendanceView({ root: container, doc: document, auth });
+        },
+      },
+      {
         // F-802. Registered before 'learn' because the subject list is the
         // entry point to chapters, not a sibling of them (wireframe §6.2).
         path: 'subjects',
         labelBn: 'আমার বিষয়',
         glyph: '📚',
+        hidden: true,   // see my-attendance above — §2 caps the bar at five
+
         mount: (container) => {
           new SubjectsView({
             root: container, doc: document, auth,

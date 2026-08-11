@@ -115,8 +115,18 @@ export class Shell {
     const tabbar = d.createElement('nav');
     tabbar.className = 'shell-tabbar';
     tabbar.setAttribute('aria-label', 'প্রধান মেনু');
-    for (const route of this.o.routes) {
-      if (route.hidden) continue;
+    // Wireframe §2: "Five tabs on the bar, role-aware. Everything else is
+    // reachable but does not compete for bar space — a deliberate constraint
+    // against tab sprawl as the feature count grew past the original
+    // three-tab design."
+    //
+    // Enforced here rather than trusted to whoever adds the next route. At
+    // 360px a sixth tab wraps its label onto two lines and the bar stops
+    // being scannable, which is exactly how the constraint gets violated:
+    // one reasonable-looking addition at a time.
+    const MAX_TABS = 5;
+    const barRoutes = this.o.routes.filter((r) => !r.hidden).slice(0, MAX_TABS);
+    for (const route of barRoutes) {
       const tab = d.createElement('button');
       tab.type = 'button';
       tab.className = 'shell-tab';

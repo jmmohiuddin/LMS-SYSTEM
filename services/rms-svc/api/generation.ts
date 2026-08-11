@@ -46,6 +46,9 @@ interface StoredReport {
   unplaced?: Array<{ sectionId: string; subjectId: string; missing: number; reason: string }>;
   soft?: SoftViolation[];
   notEvaluated?: Array<{ ruleBn: string; whyBn: string }>;
+  /** F-503's binding shortage, in resource terms. See §8.2. */
+  shortages?: Array<{ capability: string; demandedPeriods: number;
+                      capableRooms: number; freePeriods: number; detailBn: string }>;
 }
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -177,6 +180,7 @@ async function report(client: Client, routineId: string) {
     soft: stored.soft ?? [],
     unplaced: stored.unplaced ?? [],
     notEvaluated: stored.notEvaluated ?? [],
+    shortages: stored.shortages ?? [],
     slots: slots.rows.map((s) => ({
       id: s.id, dayOfWeek: s.day_of_week, periodNo: s.period_no,
       startsAt: s.starts_at.slice(0, 5), sectionLabel: s.section_label,

@@ -183,6 +183,11 @@ jobs:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
         run: node --test services/rms-svc/test/generation.test.ts
 
+      - name: F-504/F-503 · room matching and the infeasibility diagnosis
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test services/rms-svc/test/solve-rooms.test.ts
+
       - name: F-506 · routine solver across shifts
         env:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci

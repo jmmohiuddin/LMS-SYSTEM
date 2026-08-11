@@ -50,6 +50,10 @@ const REPORT = {
   unplaced: [{ missing: 2, reason: 'no_free_slot' }],
   notEvaluated: [{ ruleBn: 'কঠিন বিষয় দিনের শুরুতে রাখা',
                    whyBn: 'বিষয়ের কাঠিন্য মাত্রা কোথাও সংরক্ষিত নেই' }],
+  shortages: [{
+    capability: 'chemistry_lab', demandedPeriods: 12, capableRooms: 1, freePeriods: 8,
+    detailBn: '"chemistry_lab" কক্ষে ১২টি পিরিয়ড দরকার; ১টি কক্ষে ৮টি খালি',
+  }],
   slots: [SLOT],
 };
 
@@ -95,7 +99,7 @@ describe('generation result screen (§8.2)', () => {
     // "Nothing is silently accepted" is a layout requirement as much as a
     // data one. If the list sat below the button, or behind a disclosure,
     // the screen would satisfy F-505 on paper and fail it in use.
-    const nodes = [...root.querySelectorAll('.gen-trades:not(.gen-unchecked-list), .action-row')];
+    const nodes = [...root.querySelectorAll('.gen-trades:not(.gen-unchecked-list):not(.gen-shortage-list), .action-row')];
     assert.ok(nodes.length >= 2);
     assert.ok(nodes[0].classList.contains('gen-trades'),
               'the trade list comes first in document order');
@@ -103,20 +107,43 @@ describe('generation result screen (§8.2)', () => {
       .find((b) => b.textContent === 'গ্রহণ করুন');
     assert.ok(accept, 'and the accept button exists at all');
     assert.equal(
-      root.querySelector('.gen-trades:not(.gen-unchecked-list)')!.compareDocumentPosition(accept!)
+      root.querySelector('.gen-trades:not(.gen-unchecked-list):not(.gen-shortage-list)')!.compareDocumentPosition(accept!)
         & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
       dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
       'accept follows the list, never precedes it');
   });
 
+  test('the binding shortage is stated in resource terms, above the trades', () => {
+    // §8.2: infeasibility "reports the binding shortage in resource terms
+    // the coordinator can act on — not 'no solution found'". And above
+    // the trade list, because it is the REASON periods are missing.
+    const box = root.querySelector('.gen-shortage');
+    assert.ok(box);
+    assert.match(box!.textContent ?? '', /১২টি পিরিয়ড দরকার/);
+    assert.match(box!.textContent ?? '', /৮টি খালি/);
+
+    const trades = root.querySelector('.gen-trades:not(.gen-unchecked-list):not(.gen-shortage-list)');
+    assert.ok(trades);
+    assert.equal(
+      box!.compareDocumentPosition(trades!) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+      dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+      'the shortage comes before the trades it explains');
+  });
+
+  test('a routine that fits shows no shortage block', async () => {
+    const r = await mount({ ...REPORT, shortages: [] });
+    assert.equal(r.querySelector('.gen-shortage'), null,
+                 'a school with a spare lab does not need to be told about it');
+  });
+
   test('a trade shows its cause when there is one', () => {
-    const first = root.querySelector('.gen-trades li');
+    const first = root.querySelector('.gen-trades:not(.gen-shortage-list) li');
     assert.match(first?.textContent ?? '', /রফিক ইসলাম — সাপ্তাহিক ২৬ পিরিয়ড/);
     assert.match(first?.textContent ?? '', /যোগ্য গণিত শিক্ষক কম/);
   });
 
   test('a trade without a cause does not invent one', () => {
-    const items = [...root.querySelectorAll('.gen-trades li')];
+    const items = [...root.querySelectorAll('.gen-trades:not(.gen-shortage-list) li')];
     const churn = items.find((li) => li.textContent?.includes('কক্ষ পরিবর্তন'));
     assert.ok(churn);
     assert.equal(churn!.querySelector('.gen-trade-why'), null);
@@ -145,7 +172,7 @@ describe('generation result screen (§8.2)', () => {
       .find((b) => b.textContent?.includes('আরও'));
     assert.match(more?.textContent ?? '', /আরও ৪টি দেখুন/);
     more!.click();
-    assert.equal(r.querySelectorAll('.gen-trades:not(.gen-unchecked-list) li').length, 12);
+    assert.equal(r.querySelectorAll('.gen-trades:not(.gen-unchecked-list):not(.gen-shortage-list) li').length, 12);
   });
 });
 
@@ -190,10 +217,10 @@ describe('accepting and discarding', () => {
   });
 
   test('a clean routine says so rather than showing an empty list', async () => {
-    const clean = { ...REPORT, soft: [], unplaced: [] };
+    const clean = { ...REPORT, soft: [], unplaced: [], shortages: [] };
     const root = await mount(clean);
     assert.match(root.textContent ?? '', /কোনো নরম শর্ত ছাড় দিতে হয়নি/);
-    assert.equal(root.querySelector('.gen-trades:not(.gen-unchecked-list)'), null);
+    assert.equal(root.querySelector('.gen-trades:not(.gen-unchecked-list):not(.gen-shortage-list)'), null);
     // But the un-run rules are STILL shown: a clean report that hides what
     // it did not check is the failure F-505 is about.
     assert.ok(root.querySelector('.gen-unchecked'));

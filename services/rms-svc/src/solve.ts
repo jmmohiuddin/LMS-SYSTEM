@@ -24,10 +24,16 @@
  * enforce the same thing, and a solver that ignored it would happily produce
  * a routine that cannot be published.
  *
+ * Room matching (F-504). A subject that names a required capability —
+ * a chemistry practical needing a chemistry lab — is placed into a room
+ * that HAS that capability and is free at that hour, not into the
+ * section's home classroom. Where no capable room is free, the demand is
+ * reported unplaced with the binding shortage in resource terms, which is
+ * what §8.2 asks for: "রসায়নের ১২টি ল্যাব পিরিয়ড দরকার; ল্যাব ১-এ ৮টি খালি"
+ * rather than "no solution found".
+ *
  * Deliberately out of scope for this MVP pass (documented, not accidental):
  *   - class_subjects.double_periods_per_week — every placement is single.
- *   - subjects.requires_capability vs rooms.capabilities — every placement
- *     uses the section's home_room_id verbatim, no room-matching search.
  *   - teacher_leaves — date-specific, doesn't apply to a weekly template.
  *
  * Clash-freedom is guaranteed by routine_slots' three GiST exclusion
@@ -56,6 +62,8 @@ interface Demand {
   subjectId: string;
   teacherId: string;
   periodsPerWeek: number;
+  /** subjects.requires_capability — null for an ordinary classroom subject. */
+  requiresCapability: string | null;
 }
 
 interface Placement {
@@ -75,7 +83,16 @@ export interface UnplacedDemand {
   subjectId: string;
   teacherId: string;
   missing: number;
+  /**
+   * no_free_slot          — no hour works for this teacher and section
+   * no_capable_room       — the school has NO room with the capability
+   * no_free_capable_room  — it has one, and it is full
+   *
+   * The three send a coordinator to three different places, so they are
+   * three reasons rather than one.
+   */
   reason: string;
+  capability?: string;
 }
 
 export interface SolveResult {
@@ -91,8 +108,25 @@ export interface SolveResult {
    * "কঠিন শর্ত লঙ্ঘন: ০" above "নরম শর্ত ছাড় দেওয়া হয়েছে: ৭".
    */
   soft: SoftConstraintReport;
+  /**
+   * F-503's infeasibility diagnosis, in the terms §8.2 requires:
+   * "রসায়নের ১২টি ল্যাব পিরিয়ড দরকার; ল্যাব ১-এ ৮টি খালি" — not
+   * "no solution found". Only capabilities that actually ran short appear.
+   */
+  shortages: CapabilityShortage[];
   objectiveScore: number;
   solverSeconds: number;
+}
+
+export interface CapabilityShortage {
+  capability: string;
+  /** Periods a week the routine asked for. */
+  demandedPeriods: number;
+  /** Rooms in the school that have it. Zero is a different problem. */
+  capableRooms: number;
+  /** Slots those rooms still had free when the solver gave up. */
+  freePeriods: number;
+  detailBn: string;
 }
 
 /**
@@ -132,6 +166,12 @@ class IntervalBook {
 function norm(t: string): string {
   return t.length === 5 ? `${t}:00` : t;
 }
+
+/** Returned by pickRoom when no room can host this period. */
+const NO_ROOM = Symbol('no-room');
+
+const BN_DIGITS = '০১২৩৪৫৬৭৮৯';
+const bnNum = (n: number): string => String(n).replace(/\d/g, (d) => BN_DIGITS[Number(d)]);
 
 export class RmsSolver {
   private readonly db: Db;
@@ -184,6 +224,12 @@ export class RmsSolver {
 
       const roomBySection = new Map(sections.map((s) => [s.id, s.homeRoomId]));
 
+      // F-504. Rooms that carry each capability a subject in this routine
+      // asks for. Loaded once: a school has thirty rooms and the set does
+      // not change during a solve.
+      const wantedCaps = [...new Set(demand.map((d) => d.requiresCapability).filter(Boolean))] as string[];
+      const roomsByCapability = await this.loadCapableRooms(client, wantedCaps);
+
       const isUnavailable = (teacherId: string, day: number, startsAt: string, endsAt: string): boolean => {
         const rows = unavailability.get(teacherId);
         if (!rows) return false;
@@ -205,7 +251,7 @@ export class RmsSolver {
 
         for (let i = 0; i < remaining; i++) {
           const usedDays = sectionSubjectDays.get(ssKey) ?? new Set<number>();
-          let found: { day: number; period: TeachingPeriod } | null = null;
+          let found: { day: number; period: TeachingPeriod; roomId: string | null } | null = null;
 
           // Pass 1: prefer a day this (section, subject) hasn't used yet, to
           // spread occurrences across the week. Pass 2: allow any day if
@@ -215,16 +261,23 @@ export class RmsSolver {
             for (const day of teachingDays) {
               if (preferUnusedDay && usedDays.has(day)) continue;
               for (const period of periods) {
-                const room = roomBySection.get(d.sectionId) ?? null;
                 if (teacherBusy.overlaps(d.teacherId, day, period.startsAt, period.endsAt)) continue;
                 if (sectionBusy.overlaps(d.sectionId, day, period.startsAt, period.endsAt)) continue;
-                // The room constraint spans shifts too, and a two-shift
-                // school shares rooms. Skipping this only moved the failure
-                // to the INSERT, where it became a soft violation instead of
-                // a placement somewhere else that would have worked.
-                if (room && roomBusy.overlaps(room, day, period.startsAt, period.endsAt)) continue;
                 if (isUnavailable(d.teacherId, day, period.startsAt, period.endsAt)) continue;
-                found = { day, period };
+
+                // F-504. A subject that names a capability goes in a room
+                // that HAS it — a chemistry practical belongs in a
+                // chemistry lab, not in the section's classroom because
+                // that is where the section usually sits.
+                //
+                // The room constraint spans shifts (F-506), and a
+                // two-shift school shares its rooms, so freedom is checked
+                // against the whole year rather than this routine.
+                const room = this.pickRoom(
+                  d, roomBySection, roomsByCapability, roomBusy, day, period);
+                if (room === NO_ROOM) continue;
+
+                found = { day, period, roomId: room };
                 break;
               }
               if (found) break;
@@ -234,8 +287,7 @@ export class RmsSolver {
 
           if (!found) break;
 
-          const { day, period } = found;
-          const roomId = roomBySection.get(d.sectionId) ?? null;
+          const { day, period, roomId } = found;
           teacherBusy.add(d.teacherId, day, period.startsAt, period.endsAt);
           sectionBusy.add(d.sectionId, day, period.startsAt, period.endsAt);
           if (roomId) roomBusy.add(roomId, day, period.startsAt, period.endsAt);
@@ -257,12 +309,20 @@ export class RmsSolver {
         }
 
         if (placedForThis < remaining) {
+          // Which shortage stopped it matters: "no hour is free" sends a
+          // coordinator to the timetable, "no lab is free" sends them to
+          // the room register or to the builders. Reporting both as
+          // no_free_slot would send them to the wrong place.
+          const capped = d.requiresCapability !== null
+            && (roomsByCapability.get(d.requiresCapability)?.length ?? 0) > 0;
           unplaced.push({
             sectionId: d.sectionId,
             subjectId: d.subjectId,
             teacherId: d.teacherId,
             missing: remaining - placedForThis,
-            reason: 'no_free_slot',
+            reason: d.requiresCapability === null ? 'no_free_slot'
+                  : capped ? 'no_free_capable_room' : 'no_capable_room',
+            ...(d.requiresCapability ? { capability: d.requiresCapability } : {}),
           });
         }
       }
@@ -335,6 +395,37 @@ export class RmsSolver {
         ...(await this.loadSoftContext(client, finalSlots)),
       });
 
+      // F-503 / §8.2. Only for capabilities that actually blocked
+      // something — a school with a spare lab does not need to be told
+      // about it, and a report full of non-problems is one nobody reads.
+      const shortages: CapabilityShortage[] = [];
+      for (const cap of new Set(unplaced.map((u) => u.capability).filter(Boolean) as string[])) {
+        const rooms = roomsByCapability.get(cap) ?? [];
+        let free = 0;
+        for (const roomId of rooms) {
+          for (const day of teachingDays) {
+            for (const p of periods) {
+              if (!roomBusy.overlaps(roomId, day, p.startsAt, p.endsAt)) free++;
+            }
+          }
+        }
+        const demanded = demand
+          .filter((d) => d.requiresCapability === cap)
+          .reduce((sum, d) => sum + d.periodsPerWeek, 0);
+        shortages.push({
+          capability: cap,
+          demandedPeriods: demanded,
+          capableRooms: rooms.length,
+          freePeriods: free,
+          detailBn: rooms.length === 0
+            // The two say different things to a coordinator: one is a
+            // timetable problem, the other is a building problem.
+            ? `"${cap}" সুবিধাসম্পন্ন কোনো কক্ষ নেই — ${bnNum(demanded)}টি পিরিয়ড দরকার`
+            : `"${cap}" কক্ষে ${bnNum(demanded)}টি পিরিয়ড দরকার; `
+              + `${bnNum(rooms.length)}টি কক্ষে ${bnNum(free)}টি খালি`,
+        });
+      }
+
       const totalDemand = demand.reduce((sum, d) => sum + d.periodsPerWeek, 0);
       // Only THIS routine's slots count as placed. `existing` now also
       // carries the other shift's, which constrain placement but are not
@@ -355,12 +446,13 @@ export class RmsSolver {
         // HTTP response has already failed the "nothing silently accepted"
         // requirement the moment they close the tab.
         [routineId, solverRunId, solverSeconds, objectiveScore,
-         JSON.stringify({ unplaced, soft: soft.violations, notEvaluated: soft.notEvaluated })],
+         JSON.stringify({ unplaced, soft: soft.violations,
+                          notEvaluated: soft.notEvaluated, shortages })],
       );
 
       return {
         routineId, solverRunId, totalDemand, placed: totalPlaced,
-        unplaced, soft, objectiveScore, solverSeconds,
+        unplaced, soft, shortages, objectiveScore, solverSeconds,
       };
     });
   }
@@ -479,6 +571,70 @@ export class RmsSolver {
     }));
   }
 
+  /**
+   * Which room this demand can use at this hour, or NO_ROOM.
+   *
+   * Two different questions wearing one name. A subject with a required
+   * capability needs a room that HAS it and is free; an ordinary subject
+   * uses the section's home room, and a section with no home room is
+   * placed roomless rather than refused — small schools genuinely run
+   * that way, and a null room_id is honest about it.
+   */
+  private pickRoom(
+    d: Demand,
+    roomBySection: Map<string, string | null>,
+    roomsByCapability: Map<string, string[]>,
+    roomBusy: IntervalBook,
+    day: number,
+    period: TeachingPeriod,
+  ): string | null | typeof NO_ROOM {
+    if (d.requiresCapability === null) {
+      const home = roomBySection.get(d.sectionId) ?? null;
+      if (home === null) return null;   // no home room recorded; place it roomless
+      return roomBusy.overlaps(home, day, period.startsAt, period.endsAt) ? NO_ROOM : home;
+    }
+
+    const candidates = roomsByCapability.get(d.requiresCapability) ?? [];
+    for (const roomId of candidates) {
+      if (!roomBusy.overlaps(roomId, day, period.startsAt, period.endsAt)) return roomId;
+    }
+    // A capability subject is never dropped into an ordinary classroom as
+    // a fallback. A chemistry practical in a room with no gas or water is
+    // not a lesson that happened.
+    return NO_ROOM;
+  }
+
+  /**
+   * capability → room ids that have it, in a stable order.
+   *
+   * Ordered by code so a re-run fills the same lab first: §8.2 requires
+   * that "regenerating after one change must not reshuffle the whole
+   * school".
+   */
+  private async loadCapableRooms(
+    client: pg.PoolClient,
+    capabilities: string[],
+  ): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (capabilities.length === 0) return map;
+    const { rows } = await client.query<{ capability: string; id: string }>(
+      `SELECT cap AS capability, r.id
+         FROM unnest($1::text[]) AS cap
+         JOIN rooms r ON cap = ANY(r.capabilities) AND r.is_bookable
+        ORDER BY cap, r.code`,
+      [capabilities],
+    );
+    for (const r of rows) {
+      const list = map.get(r.capability);
+      if (list) list.push(r.id);
+      else map.set(r.capability, [r.id]);
+    }
+    // A capability nobody has still gets an entry, so the caller can tell
+    // "no such room exists" from "they are all busy".
+    for (const c of capabilities) if (!map.has(c)) map.set(c, []);
+    return map;
+  }
+
   private async loadSections(
     client: pg.PoolClient,
     academicYearId: string,
@@ -497,10 +653,13 @@ export class RmsSolver {
       subject_id: string;
       teacher_id: string;
       periods_per_week: number;
+      requires_capability: string | null;
     }>(
-      `SELECT sst.section_id, sst.subject_id, sst.teacher_id, cs.periods_per_week
+      `SELECT sst.section_id, sst.subject_id, sst.teacher_id, cs.periods_per_week,
+              sub.requires_capability
          FROM section_subject_teachers sst
          JOIN sections s ON s.id = sst.section_id
+         JOIN subjects sub ON sub.id = sst.subject_id
          JOIN class_subjects cs ON cs.class_id = s.class_id
           AND cs.subject_id = sst.subject_id AND cs.academic_year_id = sst.academic_year_id
         WHERE sst.academic_year_id = $1 AND s.shift = $2`,
@@ -511,6 +670,7 @@ export class RmsSolver {
       subjectId: r.subject_id,
       teacherId: r.teacher_id,
       periodsPerWeek: r.periods_per_week,
+      requiresCapability: r.requires_capability,
     }));
   }
 

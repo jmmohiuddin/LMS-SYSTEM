@@ -1540,6 +1540,9 @@ var IntervalBook = class {
 function norm(t) {
   return t.length === 5 ? `${t}:00` : t;
 }
+var NO_ROOM = Symbol("no-room");
+var BN_DIGITS2 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bnNum = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS2[Number(d)]);
 var RmsSolver = class {
   db;
   now;
@@ -1576,6 +1579,8 @@ var RmsSolver = class {
         placedCount.set(ssKey, (placedCount.get(ssKey) ?? 0) + 1);
       }
       const roomBySection = new Map(sections.map((s) => [s.id, s.homeRoomId]));
+      const wantedCaps = [...new Set(demand.map((d) => d.requiresCapability).filter(Boolean))];
+      const roomsByCapability = await this.loadCapableRooms(client, wantedCaps);
       const isUnavailable = (teacherId, day2, startsAt, endsAt) => {
         const rows = unavailability.get(teacherId);
         if (!rows) return false;
@@ -1596,12 +1601,19 @@ var RmsSolver = class {
             for (const day3 of teachingDays) {
               if (preferUnusedDay && usedDays.has(day3)) continue;
               for (const period2 of periods) {
-                const room = roomBySection.get(d.sectionId) ?? null;
                 if (teacherBusy.overlaps(d.teacherId, day3, period2.startsAt, period2.endsAt)) continue;
                 if (sectionBusy.overlaps(d.sectionId, day3, period2.startsAt, period2.endsAt)) continue;
-                if (room && roomBusy.overlaps(room, day3, period2.startsAt, period2.endsAt)) continue;
                 if (isUnavailable(d.teacherId, day3, period2.startsAt, period2.endsAt)) continue;
-                found = { day: day3, period: period2 };
+                const room = this.pickRoom(
+                  d,
+                  roomBySection,
+                  roomsByCapability,
+                  roomBusy,
+                  day3,
+                  period2
+                );
+                if (room === NO_ROOM) continue;
+                found = { day: day3, period: period2, roomId: room };
                 break;
               }
               if (found) break;
@@ -1609,8 +1621,7 @@ var RmsSolver = class {
             if (found) break;
           }
           if (!found) break;
-          const { day: day2, period } = found;
-          const roomId = roomBySection.get(d.sectionId) ?? null;
+          const { day: day2, period, roomId } = found;
           teacherBusy.add(d.teacherId, day2, period.startsAt, period.endsAt);
           sectionBusy.add(d.sectionId, day2, period.startsAt, period.endsAt);
           if (roomId) roomBusy.add(roomId, day2, period.startsAt, period.endsAt);
@@ -1630,12 +1641,14 @@ var RmsSolver = class {
           placedForThis++;
         }
         if (placedForThis < remaining) {
+          const capped = d.requiresCapability !== null && (roomsByCapability.get(d.requiresCapability)?.length ?? 0) > 0;
           unplaced.push({
             sectionId: d.sectionId,
             subjectId: d.subjectId,
             teacherId: d.teacherId,
             missing: remaining - placedForThis,
-            reason: "no_free_slot"
+            reason: d.requiresCapability === null ? "no_free_slot" : capped ? "no_free_capable_room" : "no_capable_room",
+            ...d.requiresCapability ? { capability: d.requiresCapability } : {}
           });
         }
       }
@@ -1705,6 +1718,26 @@ var RmsSolver = class {
         teachingDayCount: teachingDays.length,
         ...await this.loadSoftContext(client, finalSlots)
       });
+      const shortages = [];
+      for (const cap of new Set(unplaced.map((u) => u.capability).filter(Boolean))) {
+        const rooms = roomsByCapability.get(cap) ?? [];
+        let free = 0;
+        for (const roomId of rooms) {
+          for (const day2 of teachingDays) {
+            for (const p of periods) {
+              if (!roomBusy.overlaps(roomId, day2, p.startsAt, p.endsAt)) free++;
+            }
+          }
+        }
+        const demanded = demand.filter((d) => d.requiresCapability === cap).reduce((sum, d) => sum + d.periodsPerWeek, 0);
+        shortages.push({
+          capability: cap,
+          demandedPeriods: demanded,
+          capableRooms: rooms.length,
+          freePeriods: free,
+          detailBn: rooms.length === 0 ? `"${cap}" \u09B8\u09C1\u09AC\u09BF\u09A7\u09BE\u09B8\u09AE\u09CD\u09AA\u09A8\u09CD\u09A8 \u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09A8\u09C7\u0987 \u2014 ${bnNum(demanded)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0` : `"${cap}" \u0995\u0995\u09CD\u09B7\u09C7 ${bnNum(demanded)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0; ${bnNum(rooms.length)}\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 ${bnNum(free)}\u099F\u09BF \u0996\u09BE\u09B2\u09BF`
+        });
+      }
       const totalDemand = demand.reduce((sum, d) => sum + d.periodsPerWeek, 0);
       const totalPlaced = existing.filter((r) => r.is_mine).length + inserted;
       const objectiveScore = totalDemand > 0 ? Math.round(totalPlaced / totalDemand * 1e4) / 100 : 100;
@@ -1724,7 +1757,12 @@ var RmsSolver = class {
           solverRunId,
           solverSeconds,
           objectiveScore,
-          JSON.stringify({ unplaced, soft: soft.violations, notEvaluated: soft.notEvaluated })
+          JSON.stringify({
+            unplaced,
+            soft: soft.violations,
+            notEvaluated: soft.notEvaluated,
+            shortages
+          })
         ]
       );
       return {
@@ -1734,6 +1772,7 @@ var RmsSolver = class {
         placed: totalPlaced,
         unplaced,
         soft,
+        shortages,
         objectiveScore,
         solverSeconds
       };
@@ -1833,6 +1872,52 @@ var RmsSolver = class {
       periodDefinitionId: r.id
     }));
   }
+  /**
+   * Which room this demand can use at this hour, or NO_ROOM.
+   *
+   * Two different questions wearing one name. A subject with a required
+   * capability needs a room that HAS it and is free; an ordinary subject
+   * uses the section's home room, and a section with no home room is
+   * placed roomless rather than refused — small schools genuinely run
+   * that way, and a null room_id is honest about it.
+   */
+  pickRoom(d, roomBySection, roomsByCapability, roomBusy, day2, period) {
+    if (d.requiresCapability === null) {
+      const home = roomBySection.get(d.sectionId) ?? null;
+      if (home === null) return null;
+      return roomBusy.overlaps(home, day2, period.startsAt, period.endsAt) ? NO_ROOM : home;
+    }
+    const candidates = roomsByCapability.get(d.requiresCapability) ?? [];
+    for (const roomId of candidates) {
+      if (!roomBusy.overlaps(roomId, day2, period.startsAt, period.endsAt)) return roomId;
+    }
+    return NO_ROOM;
+  }
+  /**
+   * capability → room ids that have it, in a stable order.
+   *
+   * Ordered by code so a re-run fills the same lab first: §8.2 requires
+   * that "regenerating after one change must not reshuffle the whole
+   * school".
+   */
+  async loadCapableRooms(client, capabilities) {
+    const map = /* @__PURE__ */ new Map();
+    if (capabilities.length === 0) return map;
+    const { rows } = await client.query(
+      `SELECT cap AS capability, r.id
+         FROM unnest($1::text[]) AS cap
+         JOIN rooms r ON cap = ANY(r.capabilities) AND r.is_bookable
+        ORDER BY cap, r.code`,
+      [capabilities]
+    );
+    for (const r of rows) {
+      const list = map.get(r.capability);
+      if (list) list.push(r.id);
+      else map.set(r.capability, [r.id]);
+    }
+    for (const c of capabilities) if (!map.has(c)) map.set(c, []);
+    return map;
+  }
   async loadSections(client, academicYearId, shift) {
     const { rows } = await client.query(
       `SELECT id, home_room_id FROM sections WHERE academic_year_id = $1 AND shift = $2`,
@@ -1842,9 +1927,11 @@ var RmsSolver = class {
   }
   async loadDemand(client, academicYearId, shift) {
     const { rows } = await client.query(
-      `SELECT sst.section_id, sst.subject_id, sst.teacher_id, cs.periods_per_week
+      `SELECT sst.section_id, sst.subject_id, sst.teacher_id, cs.periods_per_week,
+              sub.requires_capability
          FROM section_subject_teachers sst
          JOIN sections s ON s.id = sst.section_id
+         JOIN subjects sub ON sub.id = sst.subject_id
          JOIN class_subjects cs ON cs.class_id = s.class_id
           AND cs.subject_id = sst.subject_id AND cs.academic_year_id = sst.academic_year_id
         WHERE sst.academic_year_id = $1 AND s.shift = $2`,
@@ -1854,7 +1941,8 @@ var RmsSolver = class {
       sectionId: r.section_id,
       subjectId: r.subject_id,
       teacherId: r.teacher_id,
-      periodsPerWeek: r.periods_per_week
+      periodsPerWeek: r.periods_per_week,
+      requiresCapability: r.requires_capability
     }));
   }
   async loadExistingSlots(client, routineId, academicYearId) {
@@ -2389,6 +2477,7 @@ async function report(client, routineId) {
     soft: stored.soft ?? [],
     unplaced: stored.unplaced ?? [],
     notEvaluated: stored.notEvaluated ?? [],
+    shortages: stored.shortages ?? [],
     slots: slots.rows.map((s) => ({
       id: s.id,
       dayOfWeek: s.day_of_week,
@@ -2503,8 +2592,8 @@ async function explainSlot(client, slotId) {
     freeCount
   };
 }
-var BN_DIGITS2 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var toBn = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS2[Number(d)]);
+var BN_DIGITS3 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var toBn = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS3[Number(d)]);
 
 // services/rms-svc/api/index.ts
 var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5 };

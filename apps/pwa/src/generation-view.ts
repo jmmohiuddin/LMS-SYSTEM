@@ -59,12 +59,21 @@ export interface Explanation {
   roomWhyBn: string | null;
 }
 
+export interface CapabilityShortage {
+  capability: string;
+  demandedPeriods: number;
+  capableRooms: number;
+  freePeriods: number;
+  detailBn: string;
+}
+
 interface Report {
   routine: { id: string; nameBn: string; status: string; objectiveScore: number | null };
   hardViolations: number;
   soft: SoftViolation[];
   unplaced: Array<{ missing: number; reason: string }>;
   notEvaluated: Array<{ ruleBn: string; whyBn: string }>;
+  shortages: CapabilityShortage[];
   slots: GenSlot[];
 }
 
@@ -185,6 +194,9 @@ export class GenerationView {
     if (!this.data) return;
 
     root.append(this.counters(this.data));
+    // Above the trade list: a shortage is why periods are missing, and a
+    // coordinator reading "৪টি পিরিয়ড বসানো যায়নি" without it has to guess.
+    if (this.data.shortages.length > 0) root.append(this.shortageList(this.data));
     if (this.data.soft.length > 0 || this.data.unplaced.length > 0) {
       root.append(this.tradeList(this.data));
     }
@@ -218,6 +230,36 @@ export class GenerationView {
       score.textContent = `চাহিদার ${bn(Math.round(r.routine.objectiveScore))}% পূরণ হয়েছে`;
       box.append(score);
     }
+    return box;
+  }
+
+  /**
+   * F-503 / §8.2: "Infeasibility reports the binding shortage in resource
+   * terms the coordinator can act on — not 'no solution found'."
+   *
+   * This is the section somebody screenshots and takes to a budget
+   * meeting, so it leads with the resource and the two numbers.
+   */
+  private shortageList(r: Report): HTMLElement {
+    const d = this.o.doc;
+    const box = d.createElement('section');
+    box.className = 'card gen-shortage';
+    const h = d.createElement('h2');
+    h.className = 'gen-head';
+    h.textContent = 'কেন বসানো যায়নি';
+    box.append(h);
+
+    const ul = d.createElement('ul');
+    ul.className = 'gen-trades gen-shortage-list';
+    for (const s of r.shortages) {
+      const li = d.createElement('li');
+      const what = d.createElement('span');
+      what.className = 'gen-trade-what';
+      what.textContent = s.detailBn;
+      li.append(what);
+      ul.append(li);
+    }
+    box.append(ul);
     return box;
   }
 

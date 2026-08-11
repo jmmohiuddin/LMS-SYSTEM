@@ -26,6 +26,7 @@ import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
 import { ExamRoutineView } from './exam-routine-view.ts';
 import { ImportView } from './import-view.ts';
+import { GenerationView } from './generation-view.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
@@ -367,6 +368,19 @@ async function main() {
         glyph: '⇄',
         hidden: true,
         mount: (container) => { new SubstituteView({ root: container, doc: document, auth }); },
+      },
+      {
+        // Reached from the routine editor with ?routineId=…; there is no
+        // generation result without a routine to be the result of.
+        path: 'generation',
+        labelBn: 'রুটিন ফলাফল',
+        glyph: '⚙',
+        hidden: true,
+        mount: (container) => {
+          const routineId = new URLSearchParams(
+            (location.hash.split('?')[1] ?? '')).get('routineId') ?? '';
+          new GenerationView({ root: container, doc: document, auth, routineId });
+        },
       },
       {
         path: 'import',

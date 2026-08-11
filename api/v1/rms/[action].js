@@ -2271,9 +2271,244 @@ async function handler4(req, res) {
   }
 }
 
-// services/rms-svc/api/index.ts
-var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4 };
+// services/rms-svc/api/generation.ts
+var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var RMS_ROLES2 = ["principal", "school_owner", "academic_coordinator", "dept_head"];
 async function handler5(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, RMS_ROLES2);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const url = new URL(req.url ?? "/", "http://internal");
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      const routineId2 = body.routineId ?? "";
+      if (!UUID_RE4.test(routineId2)) {
+        throw new HttpError(400, "routineId must be a valid uuid", "invalid_routine_id");
+      }
+      if (body.action !== "accept" && body.action !== "discard") {
+        throw new HttpError(400, "action must be 'accept' or 'discard'", "invalid_action");
+      }
+      const out = await db.withTenant(ctx, async (client) => {
+        if (body.action === "accept") {
+          try {
+            await client.query(
+              `UPDATE routines SET status = 'active', published_at = now(), published_by = $2
+                WHERE id = $1 AND status IN ('draft','review')`,
+              [routineId2, claims.sub]
+            );
+          } catch (err) {
+            const code = err.code;
+            if (code !== "23514" && code !== "23P01") throw err;
+            throw new HttpError(
+              409,
+              err.message,
+              code === "23514" ? "cross_shift_clash" : "slot_conflict"
+            );
+          }
+          return { status: "active" };
+        }
+        await client.query(
+          `UPDATE routines SET status = 'archived' WHERE id = $1 AND status IN ('draft','review')`,
+          [routineId2]
+        );
+        return { status: "archived" };
+      });
+      json(res, 200, out, cors);
+      return;
+    }
+    if (req.method !== "GET") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    const slotId = url.searchParams.get("slotId") ?? "";
+    if (slotId) {
+      if (!UUID_RE4.test(slotId)) throw new HttpError(400, "slotId must be a valid uuid", "invalid_slot_id");
+      json(res, 200, await db.withTenant(ctx, (c) => explainSlot(c, slotId)), cors);
+      return;
+    }
+    const routineId = url.searchParams.get("routineId") ?? "";
+    if (!UUID_RE4.test(routineId)) {
+      throw new HttpError(400, "routineId must be a valid uuid", "invalid_routine_id");
+    }
+    json(res, 200, await db.withTenant(ctx, (c) => report(c, routineId)), cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function report(client, routineId) {
+  const r = await client.query(
+    `SELECT id, name_bn, status, shift, objective_score, solver_seconds,
+            generated_by, soft_violations
+       FROM routines WHERE id = $1`,
+    [routineId]
+  );
+  if (!r.rows[0]) throw new HttpError(404, "routine not found", "routine_not_found");
+  const row = r.rows[0];
+  const stored = row.soft_violations ?? {};
+  const slots = await client.query(
+    `SELECT rs.id, rs.day_of_week, rs.period_no, rs.starts_at,
+            c.name_bn || '\u2013' || sec.name AS section_label,
+            sub.name_bn AS subject_bn, u.full_name_bn AS teacher_name_bn,
+            rm.code AS room_code
+       FROM routine_slots rs
+       JOIN sections sec ON sec.id = rs.primary_section_id
+       JOIN classes  c   ON c.id = sec.class_id
+       JOIN subjects sub ON sub.id = rs.subject_id
+       JOIN users    u   ON u.id = rs.teacher_id
+       LEFT JOIN rooms rm ON rm.id = rs.room_id
+      WHERE rs.routine_id = $1 AND rs.status = 'active' AND rs.slot_kind = 'teaching'
+      ORDER BY rs.day_of_week, rs.period_no`,
+    [routineId]
+  );
+  return {
+    routine: {
+      id: row.id,
+      nameBn: row.name_bn,
+      status: row.status,
+      shift: row.shift,
+      generatedBy: row.generated_by,
+      objectiveScore: row.objective_score === null ? null : Number(row.objective_score),
+      solverSeconds: row.solver_seconds === null ? null : Number(row.solver_seconds)
+    },
+    // Always zero for a stored routine: the three exclusion constraints
+    // make a hard violation unstorable. Shown because "০" is the statement
+    // that the guarantee is real, not a computed result.
+    hardViolations: 0,
+    soft: stored.soft ?? [],
+    unplaced: stored.unplaced ?? [],
+    notEvaluated: stored.notEvaluated ?? [],
+    slots: slots.rows.map((s) => ({
+      id: s.id,
+      dayOfWeek: s.day_of_week,
+      periodNo: s.period_no,
+      startsAt: s.starts_at.slice(0, 5),
+      sectionLabel: s.section_label,
+      subjectBn: s.subject_bn,
+      teacherNameBn: s.teacher_name_bn,
+      roomCode: s.room_code
+    }))
+  };
+}
+async function explainSlot(client, slotId) {
+  const s = await client.query(
+    `SELECT rs.subject_id, rs.teacher_id, rs.room_id, rs.day_of_week,
+            rs.starts_at, rs.ends_at, rs.academic_year_id, rs.period_no,
+            rs.routine_id,
+            c.level_no, c.name_bn || '\u2013' || sec.name AS section_label,
+            sub.name_bn AS subject_bn, sub.requires_capability,
+            u.full_name_bn AS teacher_name_bn, rm.code AS room_code,
+            sec.home_room_id
+       FROM routine_slots rs
+       JOIN sections sec ON sec.id = rs.primary_section_id
+       JOIN classes  c   ON c.id = sec.class_id
+       JOIN subjects sub ON sub.id = rs.subject_id
+       JOIN users    u   ON u.id = rs.teacher_id
+       LEFT JOIN rooms rm ON rm.id = rs.room_id
+      WHERE rs.id = $1`,
+    [slotId]
+  );
+  if (!s.rows[0]) throw new HttpError(404, "slot not found", "slot_not_found");
+  const row = s.rows[0];
+  const qualified = await client.query(
+    `SELECT tc.teacher_id,
+            EXISTS (
+              SELECT 1 FROM routine_slots o
+               WHERE o.teacher_id = tc.teacher_id
+                 AND o.academic_year_id = $2
+                 AND o.day_of_week = $3
+                 AND o.starts_at < $5::time AND $4::time < o.ends_at
+                 AND o.status = 'active'
+                 -- This routine's OWN slots count, plus any ACTIVE
+                 -- routine's. A generated routine is a draft, so without
+                 -- the first half the explanation would never see the
+                 -- placements it is explaining and would call every
+                 -- colleague free. Same rule the solver places by.
+                 AND (o.routine_id = $8 OR o.routine_status = 'active')
+                 AND o.id <> $6
+            )
+            -- A teacher who declared this hour unavailable was never a
+            -- candidate either. The solver filters on it, so an
+            -- explanation that ignored it would count people who could not
+            -- have taken the slot.
+            OR EXISTS (
+              SELECT 1 FROM teacher_availability ta
+               WHERE ta.teacher_id = tc.teacher_id
+                 AND ta.kind = 'unavailable'
+                 AND ta.day_of_week = $3
+                 AND ta.starts_at < $5::time AND $4::time < ta.ends_at
+            ) AS busy
+       FROM teacher_competencies tc
+      WHERE tc.subject_id = $1 AND tc.is_active
+        AND $7 BETWEEN tc.min_class_level AND tc.max_class_level`,
+    [
+      row.subject_id,
+      row.academic_year_id,
+      row.day_of_week,
+      row.starts_at,
+      row.ends_at,
+      slotId,
+      row.level_no,
+      row.routine_id
+    ]
+  );
+  const qualifiedCount = qualified.rows.length;
+  const freeCount = qualified.rows.filter((q) => !q.busy).length;
+  let teacherWhyBn;
+  if (qualifiedCount === 0) {
+    teacherWhyBn = `${row.teacher_name_bn} \u2014 ${row.subject_bn} \u098F\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AF\u09CB\u0997\u09CD\u09AF\u09A4\u09BE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09BF\u09A4 \u09A8\u09C7\u0987`;
+  } else if (qualifiedCount === 1) {
+    teacherWhyBn = `${row.teacher_name_bn} \u2014 ${row.subject_bn} \u098F\u09B0 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u09AF\u09CB\u0997\u09CD\u09AF \u09B6\u09BF\u0995\u09CD\u09B7\u0995`;
+  } else if (freeCount === 1) {
+    teacherWhyBn = `${row.teacher_name_bn} \u2014 \u098F\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u09AF\u09CB\u0997\u09CD\u09AF \u0993 \u09AE\u09C1\u0995\u09CD\u09A4 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 (${toBn(qualifiedCount)} \u099C\u09A8 \u09AF\u09CB\u0997\u09CD\u09AF)`;
+  } else {
+    teacherWhyBn = `${row.teacher_name_bn} \u2014 ${toBn(freeCount)} \u099C\u09A8 \u09AF\u09CB\u0997\u09CD\u09AF \u0993 \u09AE\u09C1\u0995\u09CD\u09A4 \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u098F\u0995\u099C\u09A8`;
+  }
+  let roomWhyBn = null;
+  if (row.room_code) {
+    if (row.requires_capability) {
+      const rooms = await client.query(
+        `SELECT count(*) FROM rooms WHERE $1 = ANY(capabilities) AND is_bookable`,
+        [row.requires_capability]
+      );
+      const n = Number(rooms.rows[0].count);
+      roomWhyBn = n === 1 ? `${row.room_code} \u2014 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7` : `${row.room_code} \u2014 ${toBn(n)}\u099F\u09BF \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u098F\u0995\u099F\u09BF`;
+    } else if (row.home_room_id && row.home_room_id === row.room_id) {
+      roomWhyBn = `${row.room_code} \u2014 \u09B6\u09BE\u0996\u09BE\u09B0 \u09A8\u09BF\u099C\u09B8\u09CD\u09AC \u0995\u0995\u09CD\u09B7`;
+    } else {
+      roomWhyBn = `${row.room_code} \u2014 \u09B8\u09BE\u09A7\u09BE\u09B0\u09A3 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u0995\u0995\u09CD\u09B7`;
+    }
+  }
+  return {
+    slotId,
+    sectionLabel: row.section_label,
+    subjectBn: row.subject_bn,
+    dayOfWeek: row.day_of_week,
+    periodNo: row.period_no,
+    startsAt: row.starts_at.slice(0, 5),
+    teacherWhyBn,
+    roomWhyBn,
+    qualifiedCount,
+    freeCount
+  };
+}
+var BN_DIGITS2 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var toBn = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS2[Number(d)]);
+
+// services/rms-svc/api/index.ts
+var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5 };
+async function handler6(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -2288,5 +2523,5 @@ async function handler5(req, res) {
   return route(req, res);
 }
 export {
-  handler5 as default
+  handler6 as default
 };

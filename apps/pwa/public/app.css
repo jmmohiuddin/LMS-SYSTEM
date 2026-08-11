@@ -1266,3 +1266,40 @@ button, h1, h2, .att-counts { text-transform: none; }
   border: 1px dashed var(--c-line); background: var(--c-surface-2);
   font: inherit; font-size: 14px; width: 100%;
 }
+
+/* ── Routine generation result (F-503/F-505, wireframe §8.2) ───────────
+   The screen where a coordinator decides whether to accept a machine's
+   timetable for 1,200 children. The trade-offs sit ABOVE the accept
+   button, never behind a disclosure — "nothing is silently accepted" is a
+   layout requirement as much as a data one. */
+.gen-counters { display: grid; gap: var(--s-1); padding: var(--s-4); }
+.gen-counter { margin: 0; font-size: 16px; font-weight: 700; }
+.gen-counter.is-ok   { color: var(--c-success); }
+.gen-counter.is-warn { color: var(--c-warn); }
+.gen-meta { margin: var(--s-1) 0 0; font-size: 13px; color: var(--c-ink-3); }
+
+.gen-head { margin: 0 0 var(--s-2); font-size: 15px; font-weight: 700; color: var(--c-ink-1); }
+.gen-trades { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.gen-trades li { display: grid; gap: 2px; padding-bottom: var(--s-2);
+                 border-bottom: 1px solid var(--c-line); font-size: 14px; }
+.gen-trades li:last-child { border-bottom: 0; padding-bottom: 0; }
+.gen-trade-what { color: var(--c-ink-1); }
+/* The cause is what turns a complaint into an argument for a hire, so it
+   is quieter than the fact but never hidden. */
+.gen-trade-why  { color: var(--c-ink-3); font-size: 13px; }
+
+/* Un-run rules read as an admission, not as a result. */
+.gen-unchecked { background: var(--c-surface-2); }
+
+.gen-slot-select {
+  width: 100%; min-height: var(--tap-min); padding: 0 var(--s-2);
+  border: 1px solid var(--c-line); background: var(--c-surface);
+  color: var(--c-ink-1); font: inherit; font-size: 15px;
+}
+.gen-explain { margin-top: var(--s-3); padding: var(--s-3);
+               border-left: 3px solid var(--c-primary); background: var(--c-surface-2); }
+.gen-explain-head { margin: 0 0 var(--s-2); font-size: 13px; font-weight: 700;
+                    color: var(--c-ink-2); }
+.gen-explain-line { margin: 0 0 var(--s-1); font-size: 14px; color: var(--c-ink-1);
+                    line-height: 1.6; }
+.gen-explain-line:last-child { margin-bottom: 0; }

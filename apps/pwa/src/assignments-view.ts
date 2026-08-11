@@ -120,8 +120,14 @@ export class AssignmentsView {
   private offline = false;
   private notice: string | null = '';
   private draft = '';
+  private draftStatusEl: HTMLElement | null = null;
   /** F-103. Non-null while a grading race is waiting on a human. */
   private conflict: GradeConflict | null = null;
+
+  /** Per-assignment autosave key (§6.6: "drafts autosave continuously"). */
+  private draftKey(assignmentId: string): string {
+    return `shikhon_assign_draft_${assignmentId}`;
+  }
 
   constructor(options: AssignmentsViewOptions) {
     this.o = options;
@@ -169,6 +175,13 @@ export class AssignmentsView {
       // Pre-fill with the student's existing answer so editing is natural.
       const mine = this.detail.submissions.find((s) => s.studentId === this.o.auth.userId);
       if (mine?.bodyBn) this.draft = mine.bodyBn;
+      // A locally-autosaved draft is unsent work in progress — it wins over
+      // the last submitted body, because it is what the student was in the
+      // middle of writing when the tab closed or the phone died.
+      try {
+        const saved = localStorage.getItem(this.draftKey(id));
+        if (saved !== null) this.draft = saved;
+      } catch { /* private mode — fall back to in-memory draft */ }
       this.offline = false;
     } catch {
       this.offline = true;
@@ -185,6 +198,10 @@ export class AssignmentsView {
         payload: { assignmentId: this.detail.assignment.id, bodyBn: this.draft.trim() },
       });
       void Promise.resolve(this.o.outbox.flush()).catch(() => {});
+      // Submitted: the autosaved draft has served its purpose. Clear it so a
+      // stale draft can never resurrect over the answer that was actually
+      // sent. (A later edit starts a fresh draft, and a fresh version.)
+      try { localStorage.removeItem(this.draftKey(this.detail.assignment.id)); } catch { /* ignore */ }
       this.notice = 'জমা হয়েছে ✓ (অফলাইন হলে সংযোগ ফিরলে পাঠানো হবে)';
     } catch {
       this.notice = 'জমা দেওয়া যায়নি — আবার চেষ্টা করুন।';
@@ -472,8 +489,28 @@ export class AssignmentsView {
     ta.rows = 8;
     ta.value = this.draft;
     ta.placeholder = 'এখানে লেখো…';
-    ta.addEventListener('input', () => { this.draft = ta.value; });
+    const assignmentId = a.id;
+    ta.addEventListener('input', () => {
+      this.draft = ta.value;
+      // Autosave continuously (§6.6). localStorage is synchronous and an
+      // answer is a few KB — a student on a dying battery or a flaky signal
+      // must not lose typed work to a backgrounded, evicted tab. An emptied
+      // field clears the key, so "I deleted it" is not later "restored".
+      try {
+        if (ta.value) localStorage.setItem(this.draftKey(assignmentId), ta.value);
+        else localStorage.removeItem(this.draftKey(assignmentId));
+      } catch { /* private mode / quota — the in-memory draft still holds */ }
+      if (this.draftStatusEl) this.draftStatusEl.textContent = ta.value ? 'খসড়া সংরক্ষিত' : '';
+    });
     label.append(ta);
+
+    // Reassures the student their work is kept even before they submit —
+    // the whole point of autosave is that they can trust leaving the screen.
+    const status = d.createElement('span');
+    status.className = 'assign-draft-status';
+    status.setAttribute('aria-live', 'polite');
+    status.textContent = this.draft ? 'খসড়া সংরক্ষিত' : '';
+    this.draftStatusEl = status;
 
     const send = d.createElement('button');
     send.type = 'button';
@@ -481,7 +518,7 @@ export class AssignmentsView {
     send.textContent = mine ? 'উত্তর হালনাগাদ করো' : 'জমা দাও';
     send.addEventListener('click', () => { void this.submit(); });
 
-    form.append(label, send);
+    form.append(label, status, send);
     root.append(form);
   }
 

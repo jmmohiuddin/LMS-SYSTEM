@@ -1062,6 +1062,9 @@ h2.section-heading { letter-spacing: normal; }
   font-size: var(--text-sm); line-height: 1.7; white-space: pre-wrap;
 }
 .assign-answer { min-height: 160px; padding: var(--s-3); line-height: 1.7; resize: vertical; }
+/* Autosave reassurance — quiet, success-toned, so the student trusts that
+   leaving the screen will not lose the answer (§6.6). */
+.assign-draft-status { min-height: 1.2em; font-size: var(--text-2xs); color: var(--c-success); }
 .assign-graded {
   margin: var(--s-2) var(--s-4); padding: var(--s-4);
   background: var(--c-primary-soft); border-color: transparent; text-align: center;

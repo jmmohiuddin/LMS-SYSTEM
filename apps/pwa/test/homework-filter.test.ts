@@ -53,6 +53,95 @@ function mount(list: unknown[]) {
   return { root, view: new AssignmentsView({ root, doc: dom.window.document, auth, outbox: null as never }) };
 }
 
+const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+/** Mounts a student view whose auth answers both the list and one detail. */
+function mountWithDetail(id: string) {
+  const root = dom.window.document.getElementById('root')!;
+  root.textContent = '';
+  const ops: Array<Record<string, unknown>> = [];
+  const auth = {
+    role: 'student', userId: 's-1',
+    authedFetch: async (url: string) => ({
+      ok: true, status: 200,
+      json: async () =>
+        url.includes('assignmentId=')
+          ? {
+              assignment: {
+                id, titleBn: 'গণিত ৪.২', instructionsBn: 'করো', maxMarks: '20',
+                dueAt: soon(), allowsLate: true, status: 'open',
+                subjectBn: 'গণিত', sectionName: 'ক',
+              },
+              submissions: [],
+            }
+          : { assignments: [assignment(id, null)] },
+    }),
+  } as never;
+  const outbox = {
+    enqueue: async (i: Record<string, unknown>) => { ops.push(i); return { opId: `op-${ops.length}` }; },
+    flush: async () => {},
+  } as never;
+  return { root, ops, view: new AssignmentsView({ root, doc: dom.window.document, auth, outbox }) };
+}
+
+describe('homework draft autosave (F-902, §6.6)', () => {
+  test('THE ONE THAT MATTERS — a typed answer survives a reload', async () => {
+    localStorage.clear();
+    const first = mountWithDetail('hw-1');
+    await settle();
+    (first.root.querySelector('.assign-card') as HTMLElement).click();
+    await settle();
+
+    const ta = first.root.querySelector('.assign-answer') as HTMLTextAreaElement;
+    ta.value = 'আমার উত্তর ১';
+    ta.dispatchEvent(new dom.window.Event('input'));
+
+    assert.equal(localStorage.getItem('shikhon_assign_draft_hw-1'), 'আমার উত্তর ১',
+      'the draft is persisted on every keystroke');
+    assert.match(first.root.querySelector('.assign-draft-status')?.textContent ?? '', /সংরক্ষিত/);
+
+    // A brand-new view instance is a page reload: the answer must come back.
+    const again = mountWithDetail('hw-1');
+    await settle();
+    (again.root.querySelector('.assign-card') as HTMLElement).click();
+    await settle();
+    assert.equal((again.root.querySelector('.assign-answer') as HTMLTextAreaElement).value,
+      'আমার উত্তর ১', 'the draft is restored after reload');
+  });
+
+  test('submitting clears the draft so a stale copy cannot resurrect', async () => {
+    localStorage.clear();
+    const { root, ops } = mountWithDetail('hw-2');
+    await settle();
+    (root.querySelector('.assign-card') as HTMLElement).click();
+    await settle();
+    const ta = root.querySelector('.assign-answer') as HTMLTextAreaElement;
+    ta.value = 'জমা দেওয়ার উত্তর';
+    ta.dispatchEvent(new dom.window.Event('input'));
+    assert.ok(localStorage.getItem('shikhon_assign_draft_hw-2'));
+
+    ([...root.querySelectorAll('button')].find((b) => b.textContent === 'জমা দাও') as HTMLButtonElement).click();
+    await settle();
+    assert.equal(ops.length, 1, 'the answer is queued to the outbox');
+    assert.equal(localStorage.getItem('shikhon_assign_draft_hw-2'), null, 'and the draft is cleared');
+  });
+
+  test('emptying the field clears the saved draft, so a blank is not "restored"', async () => {
+    localStorage.clear();
+    const { root } = mountWithDetail('hw-3');
+    await settle();
+    (root.querySelector('.assign-card') as HTMLElement).click();
+    await settle();
+    const ta = root.querySelector('.assign-answer') as HTMLTextAreaElement;
+    ta.value = 'কিছু';
+    ta.dispatchEvent(new dom.window.Event('input'));
+    assert.ok(localStorage.getItem('shikhon_assign_draft_hw-3'));
+    ta.value = '';
+    ta.dispatchEvent(new dom.window.Event('input'));
+    assert.equal(localStorage.getItem('shikhon_assign_draft_hw-3'), null);
+  });
+});
+
 describe('homework inbox filter', () => {
   test('the three buckets are mutually exclusive and cover every assignment', async () => {
     // Never-submitted, submitted-awaiting-marks, and graded. The middle one

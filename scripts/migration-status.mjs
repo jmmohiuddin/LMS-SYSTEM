@@ -74,6 +74,7 @@ const SENTINELS = [
   ['032_cross_shift_availability',    'function',   'app.cross_shift_conflicts'],
   ['033_year_rollover',               'function',   'app.commit_rollover'],
   ['034_parallel_blocks',             'function',   'app.assert_parallel_block_coherent'],
+  ['035_double_periods',              'function',   'app.assert_double_period_coherent'],
 ];
 
 /**
@@ -115,6 +116,7 @@ const MEANING = {
   '032_cross_shift_availability':    'F-506 — a teacher cannot be booked in both shifts at once',
   '033_year_rollover':               'F-1605 — moving every child up a class, previewed before it lands',
   '034_parallel_blocks':             'F-504 — a religion split is four classes at one hour, not a clash',
+  '035_double_periods':              'F-504 — a double period is two CONTIGUOUS halves, or it is a lie',
 };
 
 const QUERIES = {

@@ -62,6 +62,8 @@ interface Demand {
   subjectId: string;
   teacherId: string;
   periodsPerWeek: number;
+  /** class_subjects.double_periods_per_week — pairs that must be contiguous. */
+  doublePeriodsPerWeek: number;
   /** subjects.requires_capability — null for an ordinary classroom subject. */
   requiresCapability: string | null;
 }
@@ -78,6 +80,9 @@ interface Placement {
   roomId: string | null;
   /** F-504. The selection pool this slot was placed as part of, if any. */
   parallelPool: string | null;
+  isDouble: boolean;
+  /** Links the two halves of one double period. */
+  doubleGroupId: string | null;
 }
 
 export interface UnplacedDemand {
@@ -89,6 +94,7 @@ export interface UnplacedDemand {
    * no_free_slot          — no hour works for this teacher and section
    * no_capable_room       — the school has NO room with the capability
    * no_free_capable_room  — it has one, and it is full
+   * no_contiguous_pair    — a required double ran as scattered singles
    *
    * The three send a coordinator to three different places, so they are
    * three reasons rather than one.
@@ -186,6 +192,13 @@ interface PlacementUnit {
   pool: string | null;
   members: Demand[];
   periodsPerWeek: number;
+  /**
+   * Contiguous pairs this unit needs (F-504). Zero for parallel blocks:
+   * a religion split has no practical to set up, and a four-teacher
+   * four-room double would be the hardest placement in the whole
+   * timetable for no pedagogical reason.
+   */
+  doublePeriods: number;
 }
 
 /**
@@ -206,7 +219,8 @@ export function groupIntoUnits(
     const pool = poolOf.get(`${d.sectionId}|${d.subjectId}`);
     if (pool === undefined) {
       units.push({
-        key: d.subjectId, pool: null, members: [d], periodsPerWeek: d.periodsPerWeek,
+        key: d.subjectId, pool: null, members: [d],
+        periodsPerWeek: d.periodsPerWeek, doublePeriods: d.doublePeriodsPerWeek,
       });
       continue;
     }
@@ -228,6 +242,7 @@ export function groupIntoUnits(
       // scheduling the Hindu group for fewer hours than the Muslim group
       // is a decision no timetable should make silently.
       periodsPerWeek: Math.max(...members.map((m) => m.periodsPerWeek)),
+      doublePeriods: 0,
     });
   }
   return units;
@@ -270,6 +285,9 @@ export class RmsSolver {
       const sectionBusy = new IntervalBook();
       const sectionSubjectDays = new Map<string, Set<number>>();
       const placedCount = new Map<string, number>();
+      // Distinct double groups already placed, so a re-run tops up doubles
+      // rather than stacking new pairs on old ones.
+      const placedDoubleGroups = new Map<string, Set<string>>();
 
       for (const row of existing) {
         if (row.teacher_id) teacherBusy.add(row.teacher_id, row.day_of_week, row.starts_at, row.ends_at);
@@ -283,6 +301,10 @@ export class RmsSolver {
         if (!sectionSubjectDays.has(ssKey)) sectionSubjectDays.set(ssKey, new Set());
         sectionSubjectDays.get(ssKey)!.add(row.day_of_week);
         placedCount.set(ssKey, (placedCount.get(ssKey) ?? 0) + 1);
+        if (row.double_group_id) {
+          if (!placedDoubleGroups.has(ssKey)) placedDoubleGroups.set(ssKey, new Set());
+          placedDoubleGroups.get(ssKey)!.add(row.double_group_id);
+        }
       }
 
       const roomBySection = new Map(sections.map((s) => [s.id, s.homeRoomId]));
@@ -326,8 +348,59 @@ export class RmsSolver {
         const d = unit.members[0];
         const ssKey = `${d.sectionId}|${unit.key}`;
         const already = placedCount.get(ssKey) ?? 0;
-        const remaining = Math.max(0, unit.periodsPerWeek - already);
+        let remaining = Math.max(0, unit.periodsPerWeek - already);
         let placedForThis = 0;
+
+        // ── F-504: contiguous double periods, placed FIRST ─────────────
+        // Doubles need two abutting free periods, which get scarcer as the
+        // week fills; place them before anything eats the pairs. Each
+        // double consumes two of the subject's weekly periods.
+        const doublesWanted = Math.max(
+          0, unit.doublePeriods - (placedDoubleGroups.get(ssKey)?.size ?? 0));
+        let doublesPlaced = 0;
+        for (let dp = 0; dp < doublesWanted && remaining >= 2; dp++) {
+          const pair = this.findDoubleSlot(
+            d, unit, teachingDays, periods, sectionSubjectDays.get(ssKey) ?? new Set(),
+            teacherBusy, sectionBusy, roomBusy, isUnavailable,
+            roomBySection, roomsByCapability, spareRooms);
+          if (!pair) break;   // reported below as unplaced, with the reason
+
+          const { day, first, second, roomId } = pair;
+          const groupId = randomUUID();
+          teacherBusy.add(d.teacherId, day, first.startsAt, second.endsAt);
+          sectionBusy.add(d.sectionId, day, first.startsAt, second.endsAt);
+          if (roomId) roomBusy.add(roomId, day, first.startsAt, second.endsAt);
+          if (!sectionSubjectDays.has(ssKey)) sectionSubjectDays.set(ssKey, new Set());
+          sectionSubjectDays.get(ssKey)!.add(day);
+
+          for (const half of [first, second]) {
+            placements.push({
+              sectionId: d.sectionId, subjectId: d.subjectId, teacherId: d.teacherId,
+              dayOfWeek: day, periodNo: half.periodNo,
+              periodDefinitionId: half.periodDefinitionId,
+              startsAt: half.startsAt, endsAt: half.endsAt,
+              roomId, parallelPool: null, isDouble: true, doubleGroupId: groupId,
+            });
+          }
+          remaining -= 2;
+          placedForThis += 2;
+          doublesPlaced++;
+        }
+        if (doublesPlaced < doublesWanted) {
+          // The periods themselves fall through to the singles loop below —
+          // four scattered periods still beat two missing ones — but the
+          // degradation is REPORTED, not silent. A practical taught in
+          // 45-minute fragments is a different lesson than the one the
+          // curriculum asked for, and F-505 forbids trading it away
+          // without saying so.
+          unplaced.push({
+            sectionId: d.sectionId,
+            subjectId: d.subjectId,
+            teacherId: d.teacherId,
+            missing: doublesWanted - doublesPlaced,
+            reason: 'no_contiguous_pair',
+          });
+        }
 
         for (let i = 0; i < remaining; i++) {
           const usedDays = sectionSubjectDays.get(ssKey) ?? new Set<number>();
@@ -399,6 +472,8 @@ export class RmsSolver {
               endsAt: period.endsAt,
               roomId,
               parallelPool: unit.pool,
+              isDouble: false,
+              doubleGroupId: null,
             });
           });
           placedForThis++;
@@ -446,9 +521,9 @@ export class RmsSolver {
             `INSERT INTO routine_slots
                (tenant_id, routine_id, day_of_week, period_no, period_definition_id,
                 starts_at, ends_at, slot_kind, primary_section_id, subject_id, teacher_id,
-                room_id, parallel_pool)
+                room_id, parallel_pool, is_double, double_group_id)
              VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, 'teaching',
-                     $7, $8, $9, $10, $11)`,
+                     $7, $8, $9, $10, $11, $12, $13)`,
             [
               routineId,
               p.dayOfWeek,
@@ -461,6 +536,8 @@ export class RmsSolver {
               p.teacherId,
               p.roomId,
               p.parallelPool,
+              p.isDouble,
+              p.doubleGroupId,
             ],
           );
           await client.query('RELEASE SAVEPOINT slot_insert');
@@ -684,6 +761,58 @@ export class RmsSolver {
   }
 
   /**
+   * A day and two ABUTTING periods where this demand's teacher, section
+   * and a room are free for the whole stretch — or null.
+   *
+   * Adjacency is by TIME, not by period number: period 3 ending at 11:15
+   * and period 4 starting at 11:35 have tiffin between them, and a double
+   * across tiffin is two singles wearing a label. The trigger in
+   * migration 035 enforces the same rule at COMMIT, so a solver that got
+   * this wrong could not store its mistake.
+   */
+  private findDoubleSlot(
+    d: Demand,
+    unit: PlacementUnit,
+    teachingDays: number[],
+    periods: TeachingPeriod[],
+    usedDays: Set<number>,
+    teacherBusy: IntervalBook,
+    sectionBusy: IntervalBook,
+    roomBusy: IntervalBook,
+    isUnavailable: (t: string, day: number, s: string, e: string) => boolean,
+    roomBySection: Map<string, string | null>,
+    roomsByCapability: Map<string, string[]>,
+    spareRooms: string[],
+  ): { day: number; first: TeachingPeriod; second: TeachingPeriod; roomId: string | null } | null {
+    for (const preferUnusedDay of [true, false]) {
+      for (const day of teachingDays) {
+        if (preferUnusedDay && usedDays.has(day)) continue;
+        for (let i = 0; i + 1 < periods.length; i++) {
+          const first = periods[i];
+          const second = periods[i + 1];
+          if (norm(first.endsAt) !== norm(second.startsAt)) continue;
+
+          const spanStart = first.startsAt;
+          const spanEnd = second.endsAt;
+          if (teacherBusy.overlaps(d.teacherId, day, spanStart, spanEnd)) continue;
+          if (sectionBusy.overlaps(d.sectionId, day, spanStart, spanEnd)) continue;
+          if (isUnavailable(d.teacherId, day, spanStart, spanEnd)) continue;
+
+          // One room for BOTH halves. A practical that changes room at
+          // half time abandons its own apparatus.
+          const rooms = this.pickRoomsForUnit(
+            unit, roomBySection, roomsByCapability, spareRooms, roomBusy, day,
+            { ...first, startsAt: spanStart, endsAt: spanEnd });
+          if (rooms === null) continue;
+
+          return { day, first, second, roomId: rooms[0] };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * A room for every member of a block at this hour, or null if the block
    * cannot run here.
    *
@@ -837,10 +966,11 @@ export class RmsSolver {
       subject_id: string;
       teacher_id: string;
       periods_per_week: number;
+      double_periods_per_week: number;
       requires_capability: string | null;
     }>(
       `SELECT sst.section_id, sst.subject_id, sst.teacher_id, cs.periods_per_week,
-              sub.requires_capability
+              cs.double_periods_per_week, sub.requires_capability
          FROM section_subject_teachers sst
          JOIN sections s ON s.id = sst.section_id
          JOIN subjects sub ON sub.id = sst.subject_id
@@ -854,6 +984,7 @@ export class RmsSolver {
       subjectId: r.subject_id,
       teacherId: r.teacher_id,
       periodsPerWeek: r.periods_per_week,
+      doublePeriodsPerWeek: r.double_periods_per_week,
       requiresCapability: r.requires_capability,
     }));
   }
@@ -870,6 +1001,7 @@ export class RmsSolver {
       starts_at: string;
       ends_at: string;
       room_id: string | null;
+      double_group_id: string | null;
       is_mine: boolean;
     }>(
       // F-506. This routine's own slots, PLUS every slot in any other
@@ -877,7 +1009,7 @@ export class RmsSolver {
       // teacher booked in the morning is not free in the afternoon just
       // because a different routine_id owns that hour.
       `SELECT rs.primary_section_id, rs.subject_id, rs.teacher_id, rs.day_of_week,
-              rs.period_no, rs.starts_at, rs.ends_at, rs.room_id,
+              rs.period_no, rs.starts_at, rs.ends_at, rs.room_id, rs.double_group_id,
               (rs.routine_id = $1) AS is_mine
          FROM routine_slots rs
         WHERE rs.academic_year_id = $2

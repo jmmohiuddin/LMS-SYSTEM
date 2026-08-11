@@ -733,11 +733,18 @@ button, h1, h2, .att-counts { text-transform: none; }
   cursor: pointer; background: var(--c-surface);
   border: 1px solid var(--c-line); border-radius: var(--radius); box-shadow: var(--shadow-1);
 }
-/* Urgency lives in .assign-chip, which states it in words AND colour, and
-   in .assign-meta, which gives the date. This card used to carry a third
-   copy as a coloured left rail — same information, no text, so it helped
-   nobody who could not already read the chip. */
-.assign-card[data-state='done'] { background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
+/* urgency-rail-card — a named component in the wireframe's vocabulary (§3),
+   with states high / medium / low / none, and drawn in §6.1 as the leading
+   ▐ on every suggestion card. The rail is how the list scans without
+   reading; F-812 is satisfied because .assign-chip states the same urgency
+   in words beside it, so colour is never the only carrier. */
+.assign-card { border-left: 3px solid transparent; }
+.assign-card[data-state='overdue'] { border-left-color: var(--c-accent); }
+.assign-card[data-state='today']   { border-left-color: var(--c-warn); }
+.assign-card[data-state='soon']    { border-left-color: var(--c-warn); }
+.assign-card[data-state='later']   { border-left-color: var(--c-line); }
+.assign-card[data-state='done']    { border-left-color: var(--c-success);
+  background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
 .assign-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .assign-title { font-weight: 600; font-size: 15px; }
 .assign-meta { font-size: 12px; color: var(--c-ink-2); }
@@ -872,9 +879,14 @@ button, h1, h2, .att-counts { text-transform: none; }
   transition: transform 80ms ease-out;
 }
 .next-card:active { transform: scale(0.99); }
-/* Urgency rides on the glyph tile below, and .next-why states the reason in
-   words on every card — the endpoint guarantees a non-empty reason. The
-   left rail this replaced was a third channel saying the same thing. */
+/* urgency-rail-card again (§3, §6.1), matching the assignment list so the
+   two read as one system. .next-why states the reason in words on every
+   card — the endpoint guarantees a non-empty one — so the rail adds scan
+   speed rather than carrying the meaning alone. */
+.next-card { border-left: 3px solid transparent; }
+.next-card[data-urgency='high']   { border-left-color: var(--c-warn); }
+.next-card[data-urgency='medium'] { border-left-color: var(--c-primary); }
+.next-card[data-urgency='low']    { border-left-color: var(--c-line); }
 .next-glyph {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: 10px;
@@ -885,3 +897,44 @@ button, h1, h2, .att-counts { text-transform: none; }
 .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .next-title { font-weight: 600; font-size: 15px; }
 .next-why { font-size: 12px; color: var(--c-ink-2); line-height: 1.45; }
+
+/* ============================================================ my subjects */
+/* F-802, wireframe §6.2. */
+.subj-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5);
+             display: flex; flex-direction: column; gap: var(--s-2); }
+.subj-card { padding: var(--s-3); }
+.subj-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.subj-name { font-weight: 600; font-size: 16px; }
+.subj-chip { flex: none; }
+/* Requirement type carries a LABEL in every case, so colour is reinforcement
+   and never the signal (F-812). */
+.subj-chip[data-requirement='optional']         { background: #FFFBEB; color: var(--c-warn); }
+.subj-chip[data-requirement='religion_variant'] { background: var(--c-primary-soft); color: var(--c-primary-ink); }
+.subj-chip[data-requirement='co_curricular']    { background: var(--c-surface-3); color: var(--c-ink-2); }
+
+.subj-progress-row { display: grid; grid-template-columns: 1fr auto;
+                     align-items: center; gap: var(--s-3); margin-top: var(--s-3); }
+.progress-track { height: 8px; border-radius: 999px; background: var(--c-surface-3); overflow: hidden; }
+.progress-fill  { height: 100%; background: var(--c-primary); }
+/* "with numeric label, never bar-only" — §3 component vocabulary. */
+.subj-count { font-size: 13px; color: var(--c-ink-2); white-space: nowrap;
+              font-variant-numeric: tabular-nums; }
+.subj-next { margin: var(--s-2) 0 0; font-size: 14px; color: var(--c-ink-2); }
+.subj-next-done { color: var(--c-success); }
+
+/* Skeleton — a shape of the real layout, not a spinner (§4). */
+.skel { background: var(--c-surface-3); border-radius: 6px; }
+.skel-title { height: 18px; width: 55%; }
+.skel-bar   { height: 8px;  width: 100%; margin-top: var(--s-3); border-radius: 999px; }
+.skel-line  { height: 13px; width: 40%;  margin-top: var(--s-2); }
+.is-skeleton { pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .skel { animation: skel-pulse 1.4s ease-in-out infinite; }
+  @keyframes skel-pulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
+}
+
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: var(--s-3);
+               padding: var(--s-6) var(--s-4); text-align: center; color: var(--c-ink-2); }
+.empty-glyph { font-size: 32px; line-height: 1; color: var(--c-ink-3); }
+.empty-state p { margin: 0; font-size: 15px; max-width: 30ch; }
+.empty-state .btn-secondary { margin: 0; }

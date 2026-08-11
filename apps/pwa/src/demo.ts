@@ -394,6 +394,42 @@ const DEMO_CQ = `উদ্দীপক: রফিক একটি ৫ কেজ�
 
 (ডেমো মোড — আসল SikhokAI চালু হলে NCTB পাঠ্যবই থেকে অধ্যায়-নির্দিষ্ট প্রশ্ন তৈরি হবে।)`;
 
+/**
+ * F-802 demo data. A real Class 9 Science subject set: four compulsory,
+ * three group-compulsory, one religion variant and one optional — the same
+ * shape db/tests/subject_model.sql asserts, so the demo cannot drift into
+ * showing a set the schema would not produce.
+ */
+const DEMO_SUBJECTS = [
+  { subjectId: 'demo-sub-101', nameBn: 'বাংলা', nctbCode: '101', requirementType: 'compulsory',
+    requirementLabelBn: 'আবশ্যিক', totalChapters: 14, completedChapters: 9, progressPercent: 64,
+    nextChapter: { id: 'demo-ch-b10', chapterNo: 10, nameBn: 'অপরিচিতা' } },
+  { subjectId: 'demo-sub-107', nameBn: 'ইংরেজি', nctbCode: '107', requirementType: 'compulsory',
+    requirementLabelBn: 'আবশ্যিক', totalChapters: 12, completedChapters: 12, progressPercent: 100,
+    nextChapter: null },
+  { subjectId: 'demo-sub-109', nameBn: 'গণিত', nctbCode: '109', requirementType: 'compulsory',
+    requirementLabelBn: 'আবশ্যিক', totalChapters: 17, completedChapters: 11, progressPercent: 65,
+    nextChapter: { id: 'demo-ch-m12', chapterNo: 12, nameBn: 'দুই চলকবিশিষ্ট সরল সহসমীকরণ' } },
+  { subjectId: 'demo-sub-150', nameBn: 'বাংলাদেশ ও বিশ্বপরিচয়', nctbCode: '150', requirementType: 'compulsory',
+    requirementLabelBn: 'আবশ্যিক', totalChapters: 12, completedChapters: 5, progressPercent: 42,
+    nextChapter: { id: 'demo-ch-g6', chapterNo: 6, nameBn: 'বাংলাদেশের অর্থনীতি' } },
+  { subjectId: 'demo-sub-136', nameBn: 'পদার্থবিজ্ঞান', nctbCode: '136', requirementType: 'group_compulsory',
+    requirementLabelBn: 'বিভাগ আবশ্যিক', totalChapters: 14, completedChapters: 8, progressPercent: 57,
+    nextChapter: { id: 'demo-ch-p9', chapterNo: 9, nameBn: 'তরঙ্গ ও শব্দ' } },
+  { subjectId: 'demo-sub-137', nameBn: 'রসায়ন', nctbCode: '137', requirementType: 'group_compulsory',
+    requirementLabelBn: 'বিভাগ আবশ্যিক', totalChapters: 12, completedChapters: 6, progressPercent: 50,
+    nextChapter: { id: 'demo-ch-c7', chapterNo: 7, nameBn: 'রাসায়নিক বিক্রিয়া' } },
+  { subjectId: 'demo-sub-138', nameBn: 'জীববিজ্ঞান', nctbCode: '138', requirementType: 'group_compulsory',
+    requirementLabelBn: 'বিভাগ আবশ্যিক', totalChapters: 14, completedChapters: 4, progressPercent: 29,
+    nextChapter: { id: 'demo-ch-b5', chapterNo: 5, nameBn: 'অঙ্গ ও অঙ্গতন্ত্র' } },
+  { subjectId: 'demo-sub-111', nameBn: 'ইসলাম ও নৈতিক শিক্ষা', nctbCode: '111', requirementType: 'religion_variant',
+    requirementLabelBn: 'ধর্ম', totalChapters: 12, completedChapters: 7, progressPercent: 58,
+    nextChapter: { id: 'demo-ch-i8', chapterNo: 8, nameBn: 'ইবাদত' } },
+  { subjectId: 'demo-sub-126', nameBn: 'উচ্চতর গণিত', nctbCode: '126', requirementType: 'optional',
+    requirementLabelBn: 'চতুর্থ বিষয়', totalChapters: 12, completedChapters: 4, progressPercent: 33,
+    nextChapter: { id: 'demo-ch-h5', chapterNo: 5, nameBn: 'সমীকরণ ও অসমতা' } },
+];
+
 function ok(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -465,6 +501,9 @@ export class DemoAuth extends Auth {
         if (aid) return ok(demoAssignmentDetail(aid));
         return ok({ assignments: DEMO_ASSIGNMENTS });
       }
+
+      case '/api/v1/academics/subjects':
+        return ok({ studentId: 'demo-s1', subjects: DEMO_SUBJECTS });
 
       case '/api/v1/academics/next':
         return ok({ suggestions: DEMO_NEXT });

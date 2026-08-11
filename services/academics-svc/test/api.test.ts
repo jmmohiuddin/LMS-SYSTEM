@@ -55,6 +55,7 @@ let assignments: typeof import('../api/assignments.ts').default;
 let practice: typeof import('../api/practice.ts').default;
 let next: typeof import('../api/next.ts').default;
 let results: typeof import('../api/results.ts').default;
+let subjects: typeof import('../api/subjects.ts').default;
 
 const asTeacher: TenantContext = { tenantId: T, userId: TEACHER, role: 'class_teacher' };
 const asStudent: TenantContext = { tenantId: T, userId: STUDENT, role: 'student' };
@@ -158,6 +159,7 @@ before(async () => {
   practice = (await import('../api/practice.ts')).default;
   next = (await import('../api/next.ts')).default;
   results = (await import('../api/results.ts')).default;
+  subjects = (await import('../api/subjects.ts')).default;
 
   await seed();
 });
@@ -178,6 +180,7 @@ describe('authentication', { skip }, () => {
     ['practice', practice, `/api/v1/academics/practice?topicId=${L1}`],
     ['next', next, '/api/v1/academics/next'],
     ['results', results, '/api/v1/academics/results'],
+    ['subjects', subjects, '/api/v1/academics/subjects'],
   ] as const;
 
   test('no token is 401 on every endpoint', async () => {
@@ -506,5 +509,95 @@ describe('results', { skip }, () => {
     const r = await call(results, { token: otherTenantToken, url: '/api/v1/academics/results' });
     assert.equal(r.status, 200);
     assert.equal(((r.body.results ?? []) as unknown[]).length, 0);
+  });
+});
+
+/* ═════════════════════════════════════════════ F-802 — my subjects */
+
+describe('my subjects', { skip }, () => {
+  // The fixture has no subject template, so derivation has nothing to
+  // resolve. That is the honest zero state for a school mid-onboarding,
+  // and the endpoint must render it rather than error.
+  test('a student with no derived subjects gets an empty list, not an error', async () => {
+    const r = await call(subjects, { token: studentToken, url: '/api/v1/academics/subjects' });
+    assert.equal(r.status, 200, r.raw);
+    assert.ok(Array.isArray(r.body.subjects));
+  });
+
+  test('a malformed studentId is a 400, not a database error', async () => {
+    const r = await call(subjects, {
+      token: teacherToken, url: '/api/v1/academics/subjects?studentId=nope',
+    });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, 'invalid_student_id');
+  });
+
+  test('a derived subject set comes back with progress and the next chapter', async () => {
+    // Build the smallest real template: one compulsory subject, one
+    // published chapter, one published topic.
+    await db.withTenant({ tenantId: T, userId: TEACHER, role: 'principal' }, async (c) => {
+      const scheme = '7a000000-0000-4000-8000-00000000005c';
+      const tpl    = '7a000000-0000-4000-8000-00000000007c';
+      await c.query(
+        `INSERT INTO curriculum_schemes
+           (id, tenant_id, academic_year_id, stage, assessment_model, grade_rule_set, effective_from)
+         VALUES ($1,$2,$3,'secondary','marks_cq_mcq',
+                 '{"bands":[{"min":0,"grade":"F","point":0}]}'::jsonb,'2026-01-01')`,
+        [scheme, T, YEAR]);
+      await c.query(
+        `INSERT INTO subject_templates (id, tenant_id, curriculum_scheme_id, class_id, group_code)
+         VALUES ($1,$2,$3,$4,NULL)`, [tpl, T, scheme, CLASS]);
+      await c.query(
+        `INSERT INTO subject_template_items
+           (tenant_id, template_id, subject_id, requirement_type, display_order)
+         VALUES ($1,$2,$3,'compulsory',1)`, [T, tpl, SUBJECT]);
+      await c.query(
+        `INSERT INTO topics (id, tenant_id, chapter_id, topic_no, title_bn, is_published)
+         VALUES (gen_random_uuid(), $1, $2, 9, 'পাঠ ৯', true)`, [T, CH1]);
+      await c.query(`SELECT app.derive_student_subjects($1::uuid)`, [
+        (await c.query('SELECT id FROM enrolments WHERE student_id = $1', [STUDENT])).rows[0].id,
+      ]);
+    });
+
+    const r = await call(subjects, { token: studentToken, url: '/api/v1/academics/subjects' });
+    assert.equal(r.status, 200, r.raw);
+    const list = r.body.subjects as {
+      nameBn: string; requirementType: string; requirementLabelBn: string;
+      totalChapters: number; progressPercent: number;
+      nextChapter: { chapterNo: number } | null;
+    }[];
+    assert.equal(list.length, 1, 'the derived set should hold exactly the templated subject');
+    assert.equal(list[0].requirementType, 'compulsory');
+    // The chip is a Bangla LABEL, so requirement type is never carried by
+    // colour alone (F-812, wireframe §6.2).
+    assert.equal(list[0].requirementLabelBn, 'আবশ্যিক');
+    assert.ok(list[0].totalChapters >= 1, 'published chapters should be counted');
+    assert.ok(list[0].nextChapter, 'an unfinished chapter must surface as the next one');
+  });
+
+  test('a student cannot read another student\'s subject set', async () => {
+    // Not an ordinary read scope: a subject set reveals a child's religion.
+    // RLS returns nothing rather than erroring, so this asserts emptiness.
+    const r = await call(subjects, {
+      token: student2Token, url: `/api/v1/academics/subjects?studentId=${STUDENT}`,
+    });
+    assert.equal(r.status, 200);
+    assert.equal((r.body.subjects as unknown[]).length, 0);
+  });
+
+  test('a teacher who holds the section can read it', async () => {
+    const r = await call(subjects, {
+      token: teacherToken, url: `/api/v1/academics/subjects?studentId=${STUDENT}`,
+    });
+    assert.equal(r.status, 200, r.raw);
+    assert.ok((r.body.subjects as unknown[]).length >= 1);
+  });
+
+  test('another school sees nothing', async () => {
+    const r = await call(subjects, {
+      token: otherTenantToken, url: `/api/v1/academics/subjects?studentId=${STUDENT}`,
+    });
+    assert.equal(r.status, 200);
+    assert.equal((r.body.subjects as unknown[]).length, 0);
   });
 });

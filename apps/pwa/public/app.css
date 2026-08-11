@@ -1306,3 +1306,39 @@ button, h1, h2, .att-counts { text-transform: none; }
 .gen-explain-line { margin: 0 0 var(--s-1); font-size: 14px; color: var(--c-ink-1);
                     line-height: 1.6; }
 .gen-explain-line:last-child { margin-bottom: 0; }
+
+/* ── Guardian home (F-1001/F-1002/F-203, wireframe §9.1) ───────────────
+   "This persona has the lowest technical comfort in the product and may
+   use the app four times a year — it must survive being forgotten."
+   Everything below is sized and worded for somebody who does not remember
+   what anything meant last time. */
+
+/* The switcher never scrolls away — §9.1 calls it the single most-used
+   control on this surface. */
+.ward-switcher { position: sticky; top: 0; z-index: 2; margin-top: 0; }
+.ward-identity { padding-bottom: var(--s-2); }
+
+.ward-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3);
+             margin: 0 var(--s-4) var(--s-3); }
+/* Below ~340px two cards side by side start truncating the money, which is
+   the one number that must never be clipped. */
+@media (max-width: 359px) { .ward-grid { grid-template-columns: 1fr; } }
+
+.ward-card { padding: var(--s-3); display: grid; gap: 2px; align-content: start; }
+.ward-card-head { margin: 0; font-size: 13px; font-weight: 600; color: var(--c-ink-3); }
+/* The status line is the largest thing in the card: it is the answer to
+   the question the guardian opened the app to ask. */
+.ward-card-main { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3; }
+.ward-card-main[data-tone='ok']     { color: var(--c-success); }
+.ward-card-main[data-tone='warn']   { color: var(--c-warn); }
+.ward-card-main[data-tone='danger'] { color: var(--c-accent); }
+.ward-card-main[data-tone='muted']  { color: var(--c-ink-2); }
+.ward-card-sub { margin: 0; font-size: 13px; color: var(--c-ink-3); }
+
+.ward-result { margin: 0 var(--s-4) var(--s-3); padding: var(--s-4); display: grid; gap: var(--s-2); }
+.ward-result-line { margin: 0; font-size: 18px; font-weight: 700; color: var(--c-ink-1); }
+
+/* Payment is one tap from home (§9.1), so the control is full-width and
+   the last thing on the screen — where a thumb already is. */
+.ward-cta { padding: 0 var(--s-4) var(--s-4); }
+.ward-cta .btn-primary { width: 100%; min-height: var(--tap-min); font-size: 16px; }

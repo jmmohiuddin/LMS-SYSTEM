@@ -1729,9 +1729,14 @@ button.subj-card::after {
                color: var(--c-ink-1); }
 .perf-q-meta { margin: var(--space-1) 0 0; font-size: var(--text-xs); color: var(--c-ink-2);
                font-variant-numeric: tabular-nums; }
+/* The panel's conclusion, so it carries weight rather than decoration.
+   It had a 3px side tab; the only other side-borders in this system are
+   transparent reserved gutters, and .perf-wide-note — the same kind of
+   callout on this same screen — sets itself apart with a fill alone. Two
+   callouts styled differently for no reason is the defect; font-weight
+   does the emphasis without inventing a third grouping device. */
 .perf-reteach { margin: var(--space-3) 0 0; padding: var(--space-3);
-                background: var(--color-neutral-100);
-                border-inline-start: 3px solid var(--color-neutral-700);
+                background: var(--color-neutral-100); font-weight: 600;
                 font-size: var(--text-sm); line-height: var(--lh-normal); color: var(--c-ink-1); }
 
 /* ── §7.5 attention list (F-1502) ────────────────────────────────────────

@@ -641,6 +641,23 @@ textarea:focus {
 .chat-user { align-self: flex-end; background: var(--c-primary); color: #fff; border-bottom-right-radius: 4px; }
 .chat-ai { align-self: flex-start; background: var(--c-surface); border: 1px solid var(--c-line); border-bottom-left-radius: 4px; }
 .chat-typing { color: var(--c-ink-2); font-style: italic; }
+
+/* ── ShikhoAI answer states (F-1302, §6.7) ────────────────────────────────
+   Every assistant turn is a bubble plus a state line naming where the answer
+   came from. The line is the requirement: a student must be able to tell the
+   textbook from the model's general knowledge without being told twice. */
+.chat-answer { display: flex; flex-direction: column; align-items: flex-start;
+               gap: var(--s-1); max-width: 85%; align-self: flex-start; }
+.chat-answer .chat-bubble { max-width: 100%; }
+.chat-source { margin: 0; font-size: var(--text-3xs); line-height: 1.5; color: var(--c-ink-3); }
+/* Grounded is the reassuring state and the only one that earns the accentless
+   success tone; ungrounded is a caution, not an error; refused and
+   unavailable are quiet facts. */
+.chat-answer[data-kind='grounded']    .chat-source { color: var(--c-success); font-weight: 600; }
+.chat-answer[data-kind='ungrounded']  .chat-source { color: var(--c-warn); }
+.chat-answer[data-kind='refused']     .chat-bubble,
+.chat-answer[data-kind='unavailable'] .chat-bubble { background: var(--c-surface-3); }
+.chat-offline-cta { margin-top: var(--s-1); }
 .chat-form {
   position: sticky; bottom: 0; display: flex; gap: var(--s-2); align-items: center;
   /* was var(--c-bg) — not a defined token, so the composer sat on a

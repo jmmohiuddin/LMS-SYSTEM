@@ -264,6 +264,12 @@ async function shikho(req: IncomingMessage, res: ServerResponse, cors: Record<st
     ok: true,
     reply: text,
     grounded: chunks.length > 0,
+    // F-1302: the student must be able to see WHERE an answer comes from,
+    // not merely that it is grounded. These are the textbook section paths
+    // the retrieval actually used, deduped and capped — the screen prints
+    // them under the reply. Without them "grounded" is a claim the reader
+    // cannot check, which is the thing the requirement exists to prevent.
+    sources: [...new Set(chunks.map((c) => c.section_path).filter((p): p is string => !!p))].slice(0, 3),
     model: msg.model,
     usage: { inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens },
   }, cors);

@@ -678,10 +678,17 @@ export class DemoAuth extends Auth {
         });
 
       case '/api/v1/ai/shikho': {
-        const req = JSON.parse(String(init.body ?? '{}')) as { message?: string };
+        const req = JSON.parse(String(init.body ?? '{}')) as { message?: string; classLevel?: number };
+        // Demo alternates the two answer states on purpose. F-1302's whole
+        // point is that a student can tell a textbook-grounded answer from
+        // general knowledge, and a demo that only ever shows one of them
+        // demonstrates neither. Question marks read as a curriculum lookup;
+        // anything else falls through to the ungrounded state.
+        const grounded = (req.message ?? '').includes('?') || (req.message ?? '').includes('？');
         return ok({
           ok: true,
-          grounded: false,
+          grounded,
+          sources: grounded ? ['পদার্থবিজ্ঞান ৯ম-১০ম / অধ্যায় ৯ — তরঙ্গ ও শব্দ'] : [],
           reply:
             `ভালো প্রশ্ন! "${(req.message ?? '').slice(0, 40)}" নিয়ে ভাবা যাক। ` +
             'সরাসরি উত্তর না বলে একটা প্রশ্ন করি: এই সমস্যায় প্রথম ধাপে কোন সূত্রটা কাজে লাগতে পারে বলে মনে হয়? ' +

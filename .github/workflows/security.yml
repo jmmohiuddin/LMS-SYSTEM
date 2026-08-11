@@ -114,6 +114,9 @@ jobs:
       - name: F-106 · double-entry ledger
         run: psql -v ON_ERROR_STOP=1 -f db/tests/ledger.sql
 
+      - name: F-1304 · human review of AI-generated content
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/ai_human_review.sql
+
       # sharedDb() refuses to boot on a BYPASSRLS role, so the limiter would
       # fail open under the owner and the 429 assertions would pass
       # vacuously. Create the same non-privileged role production runs as.

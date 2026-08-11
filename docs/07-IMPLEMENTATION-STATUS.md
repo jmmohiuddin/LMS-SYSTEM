@@ -310,12 +310,22 @@ Both were recorded as "Built" and are not:
 
 - **F-502 (manual routine editor)** → should read **Partial**. `routine-view.ts` is 227
   lines and read-only: no drag-and-drop, no live constraint feedback.
-- **F-1304 (mandatory human review of AI content)** → should read **New**. The `reviewed_by`
-  columns that exist are on `ai_safeguarding_flags` (self-harm/abuse escalation) and
-  `question_items` (item provenance). Neither gates AI-generated content reaching a student,
-  and `sikhok-view.ts` has no review/draft/publish workflow. This is a stated invariant
-  ("nothing AI-generated reaches a student without a named human publishing it") currently
-  carried by the AI gateway shipping dark rather than by any control.
+- **F-1304 (mandatory human review of AI content)** → was recorded **Built**, was actually
+  **New**, and is now **enforced in the database** (migration 024). The `reviewed_by`,
+  `is_approved` and `ai_session_id` columns had existed since migration 005 and appeared in
+  zero lines of application code — the same shape as F-101's encryption columns and F-103's
+  `row_version`.
+
+  The gate went in *before* the code path that would violate it: nothing today writes
+  generated content to the item bank, so this is the cheapest this will ever be. Approval
+  requires a named reviewer, `reviewed_at` is stamped by the database rather than accepted
+  from the caller, AI-generated items must keep the `ai_session_id` that produced them, and
+  — the one that matters in practice — **editing an approved item revokes its approval**,
+  including a change to an MCQ option or a CQ part. Review does not usually get skipped;
+  review goes stale.
+
+  Paper generation must select from the `student_ready_question_items` view, never from
+  `question_items` directly. A filter you have to remember is a filter someone will forget.
 
 ---
 

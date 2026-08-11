@@ -123,6 +123,9 @@ jobs:
       - name: F-510 · per-student exam clash detection
         run: psql -v ON_ERROR_STOP=1 -f db/tests/exam_clash.sql
 
+      - name: F-511/F-512 · exam seat plan and invigilation duty
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/seat_plan.sql
+
       # sharedDb() refuses to boot on a BYPASSRLS role, so the limiter would
       # fail open under the owner and the 429 assertions would pass
       # vacuously. Create the same non-privileged role production runs as.

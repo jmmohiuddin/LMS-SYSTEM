@@ -64,6 +64,12 @@ const SENTINELS = [
   ['026_lessons_to_topics',           'index',      'ix_topics_chapter'],
   ['027_chapter_prerequisites_junction','table',     'public.chapter_prerequisites'],
   ['028_exam_routine_clash_gate',     'function',   'app.exam_student_clashes'],
+  // 029 replaces a function body and creates no object, so it is probed by
+  // looking inside the body for the join it adds. Blunt, but the honest
+  // alternative — inventing an object purely to be probed — is worse.
+  ['029_exam_clash_section_scope',    'function_body', 'app.exam_student_clashes',
+                                      'e.section_id = p.section_id'],
+  ['030_exam_seat_plan_and_invigilation', 'table',  'public.exam_halls'],
 ];
 
 /**
@@ -99,6 +105,8 @@ const MEANING = {
   '026_lessons_to_topics':           'TRD §5.1 M6 — the content spine is chapter → topic, not lesson',
   '027_chapter_prerequisites_junction':'F-1404 — a chapter may need more than one predecessor',
   '028_exam_routine_clash_gate':     'F-510 — no student can be scheduled into two papers at once',
+  '029_exam_clash_section_scope':    'unbreaks publication of EVERY multi-section exam routine',
+  '030_exam_seat_plan_and_invigilation':'F-511/F-512 — seat plan and invigilation duty roster',
 };
 
 const QUERIES = {
@@ -108,6 +116,11 @@ const QUERIES = {
   index: `SELECT 1 FROM pg_class WHERE relname = $1 AND relkind = 'i'`,
   function: `SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
               WHERE n.nspname = split_part($1,'.',1) AND p.proname = split_part($1,'.',2)`,
+  // For migrations that only CREATE OR REPLACE: does the live body contain
+  // the text the migration introduces?
+  function_body: `SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                   WHERE n.nspname = split_part($1,'.',1) AND p.proname = split_part($1,'.',2)
+                     AND p.prosrc LIKE '%' || $2 || '%'`,
   policy: `SELECT 1 FROM pg_policy WHERE polname = $1`,
   constraint: `SELECT 1 FROM pg_constraint WHERE conname = $1`,
 };
@@ -140,9 +153,10 @@ const known = new Set(SENTINELS.map(([name]) => name));
 const unprobed = onDisk.filter((m) => !known.has(m));
 
 const results = [];
-for (const [name, kind, object] of SENTINELS) {
+for (const [name, kind, object, pattern] of SENTINELS) {
   if (!onDisk.includes(name)) continue;   // sentinel for a deleted migration
-  const { rowCount } = await client.query(QUERIES[kind], [object]);
+  const params = kind === 'function_body' ? [object, pattern] : [object];
+  const { rowCount } = await client.query(QUERIES[kind], params);
   results.push({ name, applied: rowCount > 0, kind, object });
 }
 await client.end();

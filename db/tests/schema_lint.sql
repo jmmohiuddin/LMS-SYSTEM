@@ -70,6 +70,16 @@ BEGIN
   END LOOP;
 
   -- ── L2: every tenant table must have RLS ENABLED and FORCED ────────
+  --
+  -- Named exceptions to FORCE (never to ENABLE), each with the reason it
+  -- exists — an exception without its reason beside it is just a hole:
+  --
+  --   product_events, product_event_rollups (036): the F-1503 rollup runs
+  --   as the table OWNER from the maintenance cron with no tenant GUC,
+  --   and must cross tenants to aggregate. Under FORCE the owner is bound
+  --   too, so the rollup would aggregate zero rows and report success —
+  --   in production, forever. shikhon_app (every request path) remains
+  --   fully bound by RLS; db/tests/product_events.sql asserts both sides.
   FOR r IN
     SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -77,7 +87,9 @@ BEGIN
       AND EXISTS (SELECT 1 FROM pg_attribute a
                   WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
                     AND a.attnum > 0 AND NOT a.attisdropped)
-      AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity)
+      AND (NOT c.relrowsecurity
+           OR (NOT c.relforcerowsecurity
+               AND c.relname NOT IN ('product_events', 'product_event_rollups')))
     ORDER BY 1
   LOOP
     failures := failures || format('L2 %s: RLS enabled=%s forced=%s (both must be true)',

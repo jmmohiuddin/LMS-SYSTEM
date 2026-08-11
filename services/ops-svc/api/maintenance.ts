@@ -35,6 +35,11 @@ const STEPS = [
   // two days is dead weight. Purely a size control; dropping a row is
   // equivalent to that client's bucket being full, which it would be anyway.
   ['prune_rate_limit_buckets', 'SELECT app.prune_rate_limit_buckets()'],
+  // F-1503. Recomputes a 7-day rollup window (late offline events land in
+  // the day they OCCURRED) and prunes raw events past 90 days. Runs here,
+  // as the owner, because shikhon_app deliberately cannot delete an
+  // analytics row — an editable metric is a negotiable one.
+  ['rollup_product_events', 'SELECT * FROM app.rollup_product_events()'],
 ] as const;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

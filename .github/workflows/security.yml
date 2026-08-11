@@ -138,6 +138,9 @@ jobs:
       - name: F-504 · contiguous double periods
         run: psql -v ON_ERROR_STOP=1 -f db/tests/double_periods.sql
 
+      - name: F-1503 · product events — PII refused by construction
+        run: psql -v ON_ERROR_STOP=1 -f db/tests/product_events.sql
+
       # sharedDb() refuses to boot on a BYPASSRLS role, so the limiter would
       # fail open under the owner and the 429 assertions would pass
       # vacuously. Create the same non-privileged role production runs as.
@@ -198,6 +201,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
         run: node --test services/rms-svc/test/solve-parallel.test.ts
+
+      - name: F-1503 · event ingest endpoint
+        env:
+          DATABASE_URL: postgresql://shikhon_runtime:ci@localhost:5432/shikhon_ci
+        run: node --test services/ops-svc/test/events.test.ts
 
       - name: F-504 · solver places doubles as contiguous pairs
         env:

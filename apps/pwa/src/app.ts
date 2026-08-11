@@ -28,6 +28,7 @@ import { ExamRoutineView } from './exam-routine-view.ts';
 import { ImportView } from './import-view.ts';
 import { GenerationView } from './generation-view.ts';
 import { GuardianView } from './guardian-view.ts';
+import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
@@ -188,6 +189,10 @@ async function main() {
   const realAuth = new Auth({ apiBase, deviceId: deviceId('d') });
   const demoMode = params.get('demo') === '1' || (LOGIN_DISABLED && !realAuth.isLoggedIn());
   const auth = demoMode ? new DemoAuth() : realAuth;
+  // F-1503. One tracker for the session; flushed on boot (draining
+  // whatever a previous offline session queued) and after login.
+  const tracker = new Tracker({ auth });
+  if (!demoMode) void tracker.flush();
 
   // Demo visits share the same localStorage caches as real sessions (the
   // views neither know nor care where their data came from), so purge any
@@ -492,7 +497,13 @@ async function main() {
       doc: document,
       auth,
       tenantId,
-      onLoggedIn: () => { shell = startShell(); },
+      onLoggedIn: () => {
+        // F-1503's activation domain: first-login-per-role is the funnel's
+        // first step, and the flush drains anything queued while offline.
+        tracker.track('activation.login', { role: auth.role || 'unknown' });
+        void tracker.flush();
+        shell = startShell();
+      },
     });
   }
 

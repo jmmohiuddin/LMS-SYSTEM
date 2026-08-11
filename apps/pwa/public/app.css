@@ -575,6 +575,19 @@ textarea:focus {
 .marks-savebar .btn-primary { flex: 1; margin: 0; }
 .marks-chip { font-size: var(--text-2xs); color: var(--c-ink-2); white-space: nowrap; }
 
+/* F-709 over-max: the field flags red and states, in words, that the value
+   was not saved — so the number still sitting in the box is never mistaken
+   for a stored mark. */
+.marks-input[aria-invalid='true'] { border-color: var(--c-accent); background: var(--c-danger-soft); }
+.marks-error { display: block; margin-top: 2px; font-size: var(--text-3xs);
+               font-weight: 600; color: var(--c-accent); }
+
+/* Completeness — "have I marked everyone?" Quiet until it is done, then it
+   goes green so the teacher can leave the screen without counting rows. */
+.marks-complete { margin: var(--s-2) var(--s-4) var(--s-1); font-size: var(--text-2xs);
+                  font-weight: 600; color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.marks-complete[data-done='true'] { color: var(--c-success); }
+
 /* ------------------------------------------------------------------- fees */
 .fees-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-4); }
 .fees-row { border-bottom: 1px solid var(--c-line); }

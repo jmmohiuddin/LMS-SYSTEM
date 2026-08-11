@@ -54,6 +54,8 @@ interface MarksResponse {
   marks: MarkRow[];
 }
 
+type MarkKey = 'cqMarks' | 'mcqMarks' | 'practicalMarks' | 'caMarks';
+
 /** Only what this view needs from the sync engine — keeps it testable. */
 export interface MarksOutbox {
   enqueue(input: {
@@ -84,6 +86,8 @@ export class MarksView {
   private offline = false;
   private loading = false;
   private savedAt = 0;
+  private completeEl: HTMLElement | null = null;
+  private activeKeys: MarkKey[] = [];
 
   constructor(options: MarksViewOptions) {
     this.o = options;
@@ -197,6 +201,54 @@ export class MarksView {
     this.paintSaveBar();
   }
 
+  /** Drop one field from a student's pending change (F-709: an over-max
+   *  value is never queued), and forget the student entirely if nothing else
+   *  is pending. */
+  private clearDirtyField(studentId: string, key: MarkKey): void {
+    const cur = this.dirty.get(studentId);
+    if (!cur) return;
+    delete (cur as Record<string, unknown>)[key];
+    if (Object.keys(cur).length === 0) this.dirty.delete(studentId);
+    this.savedAt = 0;
+    this.paintSaveBar();
+  }
+
+  /** Flag or clear an over-max field. max=null clears. The message names the
+   *  ceiling and says plainly that nothing was saved, so the number the
+   *  teacher still sees in the box is not mistaken for a stored mark. */
+  private fieldError(input: HTMLInputElement, max: number | null): void {
+    const label = input.parentElement;
+    const existing = label?.querySelector<HTMLElement>('.marks-error') ?? null;
+    if (max === null) {
+      input.removeAttribute('aria-invalid');
+      existing?.remove();
+      return;
+    }
+    input.setAttribute('aria-invalid', 'true');
+    const err = existing ?? this.o.doc.createElement('span');
+    err.className = 'marks-error';
+    err.setAttribute('role', 'alert');
+    err.textContent = `সর্বোচ্চ ${formatCount(max, 'bn')} — সংরক্ষণ হয়নি`;
+    if (!existing) label?.append(err);
+  }
+
+  /** "am I done?" — how many students are accounted for (a mark in any active
+   *  component, or marked absent), out of the section total. Reflects unsaved
+   *  edits so the count moves as the teacher types. */
+  private paintComplete(): void {
+    const el = this.completeEl;
+    const sheet = this.sheet;
+    if (!el || !sheet) return;
+    const total = sheet.marks.length;
+    let done = 0;
+    for (const row of sheet.marks) {
+      const m = { ...row, ...this.dirty.get(row.studentId) };
+      if (m.isAbsent || this.activeKeys.some((k) => m[k] !== null && m[k] !== undefined)) done++;
+    }
+    el.textContent = `নম্বর দেওয়া হয়েছে ${formatCount(done, 'bn')} / ${formatCount(total, 'bn')}`;
+    el.dataset.done = String(done === total);
+  }
+
   private saveBarEl: HTMLElement | null = null;
 
   private paintSaveBar(): void {
@@ -221,6 +273,15 @@ export class MarksView {
     const h1 = d.createElement('h1');
     h1.textContent = 'নম্বর এন্ট্রি';
     header.append(h1);
+    // Once a sheet is chosen, name what is being marked in the header — the
+    // wireframe's "১ম সাময়িক · নবম–ক · পদার্থবিজ্ঞান". Answers "which paper am
+    // I in?" without scrolling back to the picker.
+    if (this.selected) {
+      const sub = d.createElement('p');
+      sub.className = 'att-sub';
+      sub.textContent = `${this.selected.exam.nameBn} · ${this.selected.subject.subject.bn}`;
+      header.append(sub);
+    }
     if (this.offline) {
       const banner = d.createElement('p');
       banner.className = 'offline-banner';
@@ -293,13 +354,20 @@ export class MarksView {
       root.append(notice);
     }
 
-    type MarkKey = 'cqMarks' | 'mcqMarks' | 'practicalMarks' | 'caMarks';
     const components = ([
       { key: 'cqMarks', label: 'সৃজনশীল', max: sheet.maxima.cq },
       { key: 'mcqMarks', label: 'MCQ', max: sheet.maxima.mcq },
       { key: 'practicalMarks', label: 'ব্যবহারিক', max: sheet.maxima.practical },
       { key: 'caMarks', label: 'ধারাবাহিক', max: sheet.maxima.ca },
     ] as { key: MarkKey; label: string; max: number }[]).filter((c) => c.max > 0);
+    this.activeKeys = components.map((c) => c.key);
+
+    // Completeness counter, always visible: the teacher's answer to "have I
+    // marked everyone?" (§7.2). Sits above the list so it does not scroll away.
+    this.completeEl = d.createElement('p');
+    this.completeEl.className = 'marks-complete';
+    this.completeEl.setAttribute('aria-live', 'polite');
+    root.append(this.completeEl);
 
     const list = d.createElement('ul');
     list.className = 'marks-list';
@@ -335,8 +403,28 @@ export class MarksView {
         const v = row[comp.key];
         input.value = v === null || v === undefined ? '' : String(v);
         input.addEventListener('input', () => {
-          const n = input.value === '' ? null : Math.min(Math.max(Number(input.value), 0), comp.max);
+          const raw = input.value.trim();
+          if (raw === '') {
+            this.fieldError(input, null);
+            this.markDirty(row.studentId, { [comp.key]: null } as Partial<MarkRow>);
+            this.paintComplete();
+            return;
+          }
+          const n = Number(raw);
+          // F-709: a mark over the paper's ceiling (or negative / not a
+          // number) is REJECTED inline and persists nothing. The old code
+          // silently clamped 75 to 70 — so a teacher who typed 75 saved 70
+          // and never knew. Now the field flags it and the value is not
+          // recorded until it is corrected.
+          if (!Number.isFinite(n) || n < 0 || n > comp.max) {
+            this.fieldError(input, comp.max);
+            this.clearDirtyField(row.studentId, comp.key);
+            this.paintComplete();
+            return;
+          }
+          this.fieldError(input, null);
           this.markDirty(row.studentId, { [comp.key]: n } as Partial<MarkRow>);
+          this.paintComplete();
         });
         label.append(input);
         inputs.append(label);
@@ -375,5 +463,7 @@ export class MarksView {
       this.saveBarEl = bar;
       this.paintSaveBar();
     }
+
+    this.paintComplete();
   }
 }

@@ -244,3 +244,88 @@ before go-live.
 - [ ] Provision KMS and populate `tenants.dek_wrapped` + `blind_index_pepper`; until then the
       NID/BRC columns must stay NULL.
 - [ ] Decide the production data-residency region.
+
+---
+
+## 7. How this deploys, and the trap in it
+
+**The API was returning 404 on every route in production, and had been since the
+last hand-run `vercel --prod`.** Worth understanding before changing anything here.
+
+`scripts/build.mjs` bundles each service into `api/v1/…​.js`, because Vercel's Node
+builder only transpiles a function's own file and will not follow imports out into
+`services/` or `packages/`. Those bundles were `.gitignore`d as generated output,
+which is normally correct.
+
+It is not correct here. **Vercel's Git-integration build decides which Serverless
+Functions exist by looking at the cloned repository, before the build command
+runs.** With `api/` ignored, the clone had no `api/` directory, Vercel created zero
+functions, and the ten bundles written moments later were never part of the
+deployment. The build log is the tell:
+
+```
+> node scripts/build.mjs
+build complete — app.js + sw.js + 10 API bundles written
+Build Completed in /vercel/output [3s]        ← 40ms later, no function phase
+```
+
+A working build has a second `Installing dependencies…` phase after that line —
+`@vercel/node` compiling the functions it found. Confirm with
+`vercel inspect <url>`: it lists `λ api/v1/…` per function, or nothing at all.
+
+The site kept working because the PWA is static and served from
+`outputDirectory`. Only the API vanished, and only on Git deploys — a hand-run
+`vercel --prod` uploads the local `api/*.js` files and therefore works, which is
+why the fault survived so long.
+
+### What is in place now (stopgap)
+
+The `api/` bundles are committed. Run `npm run build` and commit the result
+whenever a service changes; CI fails if they drift
+(`.github/workflows/frontend.yml`). `esbuild` is pinned to an exact version so
+the bundles are byte-reproducible and that check stays meaningful.
+
+The cost is ~0.9 MB of generated output per change in git history, most of it the
+Anthropic SDK inside `api/v1/ai/[engine].js`.
+
+### The replacement
+
+Build and deploy from CI, so nothing generated is committed and nothing depends
+on Vercel's file detection. Needs a `VERCEL_TOKEN` repository secret (Vercel →
+Account Settings → Tokens); `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are already in
+`.vercel/project.json`. Then turn off Vercel's Git auto-deploy so the two do not
+race, and add:
+
+```yaml
+name: deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install --no-audit --no-fund
+      - run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - run: npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - run: npx vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+```
+
+`vercel build` runs on a checkout where `build.mjs` has already produced `api/`,
+so the functions are found the same way they are when you deploy by hand. Once
+this is live, re-ignore `api/` and delete the committed bundles.
+
+**Whichever path you are on, check after deploying:**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://shikhon-lms.vercel.app/api/v1/academics/next
+```
+
+`401` is healthy — the endpoint exists and is refusing an unauthenticated caller.
+`404` means the functions did not deploy again.

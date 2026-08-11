@@ -2,9 +2,11 @@ name: frontend
 
 on:
   push:
-    paths: ['packages/ui-core/**', 'apps/pwa/**', '.github/workflows/frontend.yml']
+    paths: ['packages/ui-core/**', 'apps/pwa/**', 'services/**', 'packages/server-core/**',
+            'api/**', 'scripts/build.mjs', 'package.json', '.github/workflows/frontend.yml']
   pull_request:
-    paths: ['packages/ui-core/**', 'apps/pwa/**', '.github/workflows/frontend.yml']
+    paths: ['packages/ui-core/**', 'apps/pwa/**', 'services/**', 'packages/server-core/**',
+            'api/**', 'scripts/build.mjs', 'package.json', '.github/workflows/frontend.yml']
 
 jobs:
   test:
@@ -44,6 +46,21 @@ jobs:
       # a student on a 2G connection downloads, gzipped, against the real
       # documented number. Comments and whitespace no longer count against
       # a budget they never cost the user.
+      # The api/ bundles are committed (see .gitignore for why Vercel needs
+      # them in the clone). Committed generated files rot silently, so this
+      # rebuilds and fails if what is in git is not what the sources produce.
+      # esbuild is pinned exactly in package.json to keep this reproducible.
+      - name: Committed API bundles match the sources
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm run build
+          if ! git diff --exit-code --stat -- api/; then
+            echo "::error::api/ bundles are stale — run 'npm run build' and commit the result"
+            exit 1
+          fi
+          echo "api/ bundles are current"
+
       - name: Critical-path size budget
         run: |
           set -euo pipefail

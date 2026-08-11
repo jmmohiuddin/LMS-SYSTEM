@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
-    "esbuild": "^0.21.0",
+    "esbuild": "0.21.5",
     "jose": "^5.9.0",
     "pg": "^8.13.0"
   },

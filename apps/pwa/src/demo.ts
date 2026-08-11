@@ -572,6 +572,57 @@ export class DemoAuth extends Auth {
       case '/api/v1/academics/results':
         return ok({ studentId: 'demo-s1', results: DEMO_RESULTS });
 
+      case '/api/v1/academics/ward': {
+        // §9.1's guardian home. The real endpoint bundles everything the
+        // wireframe draws in one round trip, so the demo stub does too —
+        // splitting the ward list from the per-student payload would let
+        // a bug live where the two responses disagree and only prod
+        // finds it. The switcher is offered even when there is only one
+        // ward, deliberately: §9.1 calls the switcher "the single most-
+        // used control", and a guardian with two children is who this
+        // screen is really for.
+        const WARDS = [
+          { studentId: 'demo-s1', enrolmentId: 'demo-e1',
+            nameBn: 'রাফির হাসান', sectionLabel: 'নবম–ক',
+            rollNo: 7, relationBn: 'পিতা' },
+          { studentId: 'demo-s2', enrolmentId: 'demo-e2',
+            nameBn: 'তাহিয়া হাসান', sectionLabel: 'পঞ্চম–খ',
+            rollNo: 3, relationBn: 'পিতা' },
+        ];
+        const wanted = url.searchParams.get('studentId');
+        if (!wanted) return ok({ wards: WARDS, student: null });
+        const ward = WARDS.find((w) => w.studentId === wanted);
+        if (!ward) return new Response(
+          JSON.stringify({ error: 'student_not_found' }),
+          { status: 404, headers: { 'content-type': 'application/json' } });
+        const HOMES: Record<string, {
+          attendance: { todayStatus: string | null; monthPercent: number | null;
+                        present: number; absent: number; late: number;
+                        halfDay: number; excused: number };
+          fees: { outstanding: number; earliestDue: string | null; overdueCount: number };
+          result: { examNameBn: string; gpa: number | null;
+                    rankInSection: number | null; sectionSize: number | null } | null;
+        }> = {
+          'demo-s1': {
+            attendance: { todayStatus: 'present', monthPercent: 92,
+                          present: 18, absent: 1, late: 1, halfDay: 0, excused: 0 },
+            fees: { outstanding: 1500, earliestDue: '2026-08-25', overdueCount: 0 },
+            result: { examNameBn: 'দ্বিতীয় সাময়িক', gpa: 4.42,
+                      rankInSection: 7, sectionSize: 52 },
+          },
+          'demo-s2': {
+            // Deliberately a second child in a very different state —
+            // an absence today, a bill overdue, no result yet — so the
+            // ward-switch actually changes the screen.
+            attendance: { todayStatus: 'absent', monthPercent: 78,
+                          present: 14, absent: 3, late: 2, halfDay: 1, excused: 0 },
+            fees: { outstanding: 2750, earliestDue: '2026-08-05', overdueCount: 1 },
+            result: null,
+          },
+        };
+        return ok({ wards: WARDS, student: { ...ward, ...HOMES[wanted] } });
+      }
+
       case '/api/v1/academics/chapters':
         return ok({ chapters: DEMO_CHAPTERS });
 

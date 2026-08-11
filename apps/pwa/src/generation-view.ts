@@ -2,7 +2,7 @@
  * Routine generation result — F-503, F-505, wireframe §8.2
  *
  *   ✓ কঠিন শর্ত লঙ্ঘন: ০
- *   ⚠ নরম শর্ত ছাড় দেওয়া হয়েছে: ৭
+ *   নরম শর্ত ছাড় দেওয়া হয়েছে: ৭
  *   যা ছাড় দিতে হয়েছে
  *   • রফিক ইসলাম — সাপ্তাহিক ২৬ পিরিয়ড (লক্ষ্য ২৪) — যোগ্য গণিত শিক্ষক কম
  *   [ কেন এই বরাদ্দ? ]  স্লট বেছে নিন
@@ -186,7 +186,7 @@ export class GenerationView {
       const p = d.createElement('p');
       p.className = 'inline-notice is-danger';
       p.setAttribute('role', 'alert');
-      p.textContent = `⚠ ${this.error}`;
+      p.textContent = `${this.error}`;
       root.append(p);
     }
 
@@ -220,7 +220,7 @@ export class GenerationView {
     const soft = d.createElement('p');
     soft.className = r.soft.length > 0 ? 'gen-counter is-warn' : 'gen-counter is-ok';
     soft.textContent = r.soft.length > 0
-      ? `⚠ নরম শর্ত ছাড় দেওয়া হয়েছে: ${bn(r.soft.length)}`
+      ? `নরম শর্ত ছাড় দেওয়া হয়েছে: ${bn(r.soft.length)}`
       : '✓ কোনো নরম শর্ত ছাড় দিতে হয়নি';
     box.append(soft);
 
@@ -310,7 +310,7 @@ export class GenerationView {
       p.className = 'gen-counter is-warn';
       // Distinct from a soft trade: an unplaced period is a class that
       // does not happen, not a preference given up.
-      p.textContent = `⚠ ${bn(missing)}টি পিরিয়ড বসানো যায়নি`;
+      p.textContent = `${bn(missing)}টি পিরিয়ড বসানো যায়নি`;
       box.append(p);
     }
     return box;

@@ -12,8 +12,11 @@
  * paint immediately and the suggestions slot in when they arrive, so the
  * shell is never blocked on a request.
  */
+import { iconSvg } from './icon.ts';
+
 export interface DashboardItem {
   path: string;
+  /** An icon name from ./icon.ts, not an emoji. */
   glyph: string;
   titleBn: string;
   subtitleBn: string;
@@ -39,15 +42,13 @@ export interface HomeViewOptions {
   loadNext?: () => Promise<Suggestion[]>;
 }
 
-// Monochrome text glyphs that inherit the ink colour, not colour-emoji.
-// On Android Go the emoji font renders at a different weight and baseline
-// than the surrounding text and fractures the calm one-ink surface; these
-// sit in the type where 📝/📖 sat on top of it.
+// Icon names (see ./icon.ts), not emoji: one drawn set, one stroke weight,
+// tinting with the card's urgency colour via currentColor.
 const KIND_GLYPH: Record<string, string> = {
-  assignment: '✎',
-  redo_practice: '↻',
-  continue_topic: '▸',
-  new_chapter: '✦',
+  assignment: 'edit',
+  redo_practice: 'refresh',
+  continue_topic: 'arrow-right',
+  new_chapter: 'star',
 };
 
 function greetingBn(): string {
@@ -218,7 +219,7 @@ export class HomeView {
       const glyph = d.createElement('span');
       glyph.className = 'next-glyph';
       glyph.setAttribute('aria-hidden', 'true');
-      glyph.textContent = KIND_GLYPH[s.kind] ?? '•';
+      glyph.innerHTML = iconSvg(KIND_GLYPH[s.kind] ?? '');
 
       const body = d.createElement('span');
       body.className = 'next-body';
@@ -249,7 +250,7 @@ export class HomeView {
     const glyph = d.createElement('span');
     glyph.className = 'home-glyph';
     glyph.setAttribute('aria-hidden', 'true');
-    glyph.textContent = item.glyph;
+    glyph.innerHTML = iconSvg(item.glyph);
 
     const body = d.createElement('span');
     body.className = 'home-body';

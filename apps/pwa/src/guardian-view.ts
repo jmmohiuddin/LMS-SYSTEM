@@ -1,10 +1,10 @@
 /**
  * Guardian home — F-1001, F-1002, F-203, wireframe §9.1
  *
- *   [☰] শিখন      [ আনিকা ▾ ]         [🔔 1]
+ *   [☰] শিখন      [ আনিকা ▾ ]         [1]
  *   আনিকা রহমান · নবম–ক · রোল ০১
  *   ┌ আজকের হাজিরা ┬ বকেয়া ফি ┐
- *   │ ✓ উপস্থিত     │ ৳ ২,৫০০ ⚠ │
+ *   │ ✓ উপস্থিত     │ ৳ ২,৫০০ │
  *   │ এ মাসে ৯৪%    │ ১৫ আগস্ট  │
  *   ফলাফল প্রকাশিত — ১ম সাময়িক · GPA 4.56 · মেধাক্রম ৭/৫২
  *   [        ফি পরিশোধ করুন        ]
@@ -172,7 +172,7 @@ export class GuardianView {
     if (this.wards.length > 1) root.append(this.switcher());
 
     if (this.error) { root.append(this.errorState()); return; }
-    if (this.offline) root.append(this.banner('⚡ অফলাইন — সর্বশেষ সংরক্ষিত তথ্য'));
+    if (this.offline) root.append(this.banner('অফলাইন — সর্বশেষ সংরক্ষিত তথ্য'));
 
     if (this.loading && !this.home) { root.append(this.skeleton()); return; }
     if (!this.home) { root.append(this.emptyState()); return; }
@@ -262,7 +262,7 @@ export class GuardianView {
     const feeMain = d.createElement('p');
     feeMain.className = 'ward-card-main';
     feeMain.dataset.tone = owed === 0 ? 'ok' : h.fees.overdueCount > 0 ? 'danger' : 'warn';
-    feeMain.textContent = owed === 0 ? '✓ বকেয়া নেই' : `${formatBdt(owed)} ⚠`;
+    feeMain.textContent = owed === 0 ? '✓ বকেয়া নেই' : `${formatBdt(owed)} `;
     fee.append(feeMain);
 
     const feeSub = d.createElement('p');
@@ -378,7 +378,7 @@ export class GuardianView {
     box.className = 'empty-state';
     const glyph = d.createElement('div');
     glyph.className = 'empty-glyph';
-    glyph.textContent = '⚠';
+    glyph.textContent = '';
     glyph.setAttribute('aria-hidden', 'true');
     const msg = d.createElement('p');
     msg.textContent = 'তথ্য লোড হয়নি।';

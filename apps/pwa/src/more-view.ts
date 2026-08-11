@@ -3,6 +3,8 @@
  * tabs (04-UIUX: 360 px reference width); every additional feature page
  * lives here as a hash link, so deep links like #/fees keep working too.
  */
+import { iconSvg } from './icon.ts';
+
 export interface MoreItem {
   path: string;
   glyph: string;
@@ -38,7 +40,7 @@ export class MoreView {
       const glyph = d.createElement('span');
       glyph.className = 'more-glyph';
       glyph.setAttribute('aria-hidden', 'true');
-      glyph.textContent = item.glyph;
+      glyph.innerHTML = iconSvg(item.glyph);
       const body = d.createElement('span');
       body.className = 'more-body';
       const title = d.createElement('span');

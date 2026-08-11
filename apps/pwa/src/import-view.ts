@@ -165,7 +165,7 @@ export class ImportView {
       const p = d.createElement('p');
       p.className = 'inline-notice is-danger';
       p.setAttribute('role', 'alert');
-      p.textContent = `⚠ ${this.error}`;
+      p.textContent = `${this.error}`;
       root.append(p);
     }
 
@@ -266,7 +266,7 @@ export class ImportView {
     if (r.rowsRejected > 0) {
       const bad = d.createElement('p');
       bad.className = 'import-stat is-warn';
-      bad.textContent = `⚠ ${bn(r.rowsRejected)}টি সারিতে সমস্যা`;
+      bad.textContent = `${bn(r.rowsRejected)}টি সারিতে সমস্যা`;
       card.append(bad);
 
       const ul = d.createElement('ul');
@@ -295,7 +295,7 @@ export class ImportView {
       const dl = d.createElement('button');
       dl.type = 'button';
       dl.className = 'btn-secondary';
-      dl.textContent = '⬇ সমস্যার তালিকা';
+      dl.textContent = 'সমস্যার তালিকা';
       dl.addEventListener('click', () => { this.downloadErrors(); });
 
       const again = d.createElement('button');
@@ -348,14 +348,14 @@ export class ImportView {
       // means the skipped rows are still on screen once the work is done.
       const skipped = d.createElement('p');
       skipped.className = 'import-stat is-warn';
-      skipped.textContent = `⚠ ${bn(r.rowsRejected)}টি সারি বাদ দেওয়া হয়েছে`;
+      skipped.textContent = `${bn(r.rowsRejected)}টি সারি বাদ দেওয়া হয়েছে`;
       card.append(skipped);
 
       if (r.errorCsv) {
         const dl = d.createElement('button');
         dl.type = 'button';
         dl.className = 'btn-secondary';
-        dl.textContent = '⬇ বাদ পড়া সারির তালিকা';
+        dl.textContent = 'বাদ পড়া সারির তালিকা';
         dl.addEventListener('click', () => { this.downloadErrors(); });
         card.append(dl);
       }

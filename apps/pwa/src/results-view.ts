@@ -145,7 +145,7 @@ export class ResultsView {
     if (this.offline) {
       const b = d.createElement('p');
       b.className = 'inline-notice';
-      b.textContent = '⚡ অফলাইন — সংরক্ষিত ফলাফল দেখানো হচ্ছে';
+      b.textContent = 'অফলাইন — সংরক্ষিত ফলাফল দেখানো হচ্ছে';
       root.append(b);
     }
 

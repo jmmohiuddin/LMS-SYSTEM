@@ -86,32 +86,34 @@ function deviceId(key: string): string {
  */
 type DashCards = { primary: DashboardItem[]; secondary: DashboardItem[] };
 
+// glyph is an icon name from ./icon.ts (rendered as inline SVG), never an
+// emoji: one drawn set, one stroke weight, tintable with currentColor.
 const CARD = {
-  learn:      { path: 'learn',      glyph: '📖', titleBn: 'পড়াশোনা',            subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
-  subjects:   { path: 'subjects',   glyph: '📚', titleBn: 'আমার বিষয়',          subtitleBn: 'শ্রেণি ও বিভাগ অনুযায়ী' },
-  myAtt:      { path: 'my-attendance', glyph: '％', titleBn: 'আমার হাজিরা',      subtitleBn: 'মাস ও বিষয় অনুযায়ী' },
-  results:    { path: 'results',    glyph: '🏅', titleBn: 'ফলাফল',              subtitleBn: 'পরীক্ষার ফলাফল ও নম্বর' },
-  homework:   { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'জমা দিতে হবে যেসব' },
-  homeworkT:  { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ',         subtitleBn: 'কাজ দাও ও নম্বর দাও' },
-  shikho:     { path: 'shikho',     glyph: '💬', titleBn: 'শিখো টিউটর',         subtitleBn: 'প্রশ্ন করো, উত্তর বুঝে নাও' },
-  routineStu: { path: 'routine',    glyph: '⏲', titleBn: 'আজকের রুটিন',        subtitleBn: 'তোমার ক্লাসের সময়সূচি' },
-  feesStu:    { path: 'fees',       glyph: '৳', titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
-  attendance: { path: 'attendance', glyph: '✓', titleBn: 'হাজিরা নিন',         subtitleBn: 'আজকের শ্রেণিকক্ষ' },
-  routine:    { path: 'routine',    glyph: '⏲', titleBn: 'আজকের রুটিন',        subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
-  roster:     { path: 'roster',     glyph: '☰', titleBn: 'শিক্ষার্থী',          subtitleBn: 'সেকশন রোস্টার' },
-  marks:      { path: 'marks',      glyph: '✎', titleBn: 'নম্বর এন্ট্রি',        subtitleBn: 'CQ · MCQ · ব্যবহারিক' },
-  scripts:    { path: 'scripts',    glyph: '📷', titleBn: 'উত্তরপত্র',           subtitleBn: 'ছবি তুলে আপলোড' },
-  substitute: { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক',        subtitleBn: 'ফাঁকা শিক্ষক খুঁজুন' },
-  sikhok:     { path: 'sikhok',     glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI',    subtitleBn: 'প্রশ্নপত্র ও পাঠ পরিকল্পনা' },
-  fees:       { path: 'fees',       glyph: '৳', titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
-  roles:      { path: 'roles',      glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস',  subtitleBn: '১০ ভূমিকা · RLS' },
-  ledger:     { path: 'ledger',     glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন',   subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
-  system:     { path: 'system',     glyph: '⚙', titleBn: 'সিস্টেম',            subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
+  learn:      { path: 'learn',      glyph: 'book-open',    titleBn: 'পড়াশোনা',            subtitleBn: 'অধ্যায়, পাঠ ও অগ্রগতি' },
+  subjects:   { path: 'subjects',   glyph: 'layers',       titleBn: 'আমার বিষয়',          subtitleBn: 'শ্রেণি ও বিভাগ অনুযায়ী' },
+  myAtt:      { path: 'my-attendance', glyph: 'percent',   titleBn: 'আমার হাজিরা',      subtitleBn: 'মাস ও বিষয় অনুযায়ী' },
+  results:    { path: 'results',    glyph: 'award',        titleBn: 'ফলাফল',              subtitleBn: 'পরীক্ষার ফলাফল ও নম্বর' },
+  homework:   { path: 'assignments', glyph: 'clipboard',   titleBn: 'বাড়ির কাজ',         subtitleBn: 'জমা দিতে হবে যেসব' },
+  homeworkT:  { path: 'assignments', glyph: 'clipboard',   titleBn: 'বাড়ির কাজ',         subtitleBn: 'কাজ দাও ও নম্বর দাও' },
+  shikho:     { path: 'shikho',     glyph: 'message',      titleBn: 'শিখো টিউটর',         subtitleBn: 'প্রশ্ন করো, উত্তর বুঝে নাও' },
+  routineStu: { path: 'routine',    glyph: 'clock',        titleBn: 'আজকের রুটিন',        subtitleBn: 'তোমার ক্লাসের সময়সূচি' },
+  feesStu:    { path: 'fees',       glyph: 'wallet',       titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
+  attendance: { path: 'attendance', glyph: 'check-square', titleBn: 'হাজিরা নিন',         subtitleBn: 'আজকের শ্রেণিকক্ষ' },
+  routine:    { path: 'routine',    glyph: 'clock',        titleBn: 'আজকের রুটিন',        subtitleBn: 'ক্লাস ও বদলি চিহ্নিতসহ' },
+  roster:     { path: 'roster',     glyph: 'users',        titleBn: 'শিক্ষার্থী',          subtitleBn: 'সেকশন রোস্টার' },
+  marks:      { path: 'marks',      glyph: 'edit',         titleBn: 'নম্বর এন্ট্রি',        subtitleBn: 'CQ · MCQ · ব্যবহারিক' },
+  scripts:    { path: 'scripts',    glyph: 'camera',       titleBn: 'উত্তরপত্র',           subtitleBn: 'ছবি তুলে আপলোড' },
+  substitute: { path: 'substitute', glyph: 'repeat',       titleBn: 'বদলি শিক্ষক',        subtitleBn: 'ফাঁকা শিক্ষক খুঁজুন' },
+  sikhok:     { path: 'sikhok',     glyph: 'star',         titleBn: 'শিক্ষক সহায়ক AI',    subtitleBn: 'প্রশ্নপত্র ও পাঠ পরিকল্পনা' },
+  fees:       { path: 'fees',       glyph: 'wallet',       titleBn: 'বেতন ও ফি',          subtitleBn: 'ইনভয়েস ও রসিদ' },
+  roles:      { path: 'roles',      glyph: 'lock',         titleBn: 'ভূমিকা ও অ্যাক্সেস',  subtitleBn: '১০ ভূমিকা · RLS' },
+  ledger:     { path: 'ledger',     glyph: 'book',         titleBn: 'লেজার ও পুনর্মিলন',   subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
+  system:     { path: 'system',     glyph: 'settings',     titleBn: 'সিস্টেম',            subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
   // The guardian's own home (F-203, §9.1). It was reachable only from the
   // More menu — the persona least able to hunt for it. It now leads the
   // guardian dashboard; the glyph matches its More entry so the one control
   // reads the same in both places it appears.
-  wardHome:   { path: 'guardian',   glyph: '👪', titleBn: 'আমার সন্তান',        subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
+  wardHome:   { path: 'guardian',   glyph: 'users',        titleBn: 'আমার সন্তান',        subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
 } satisfies Record<string, DashboardItem>;
 
 // Home is an orientation surface, not an index. Each dashboard is trimmed to
@@ -251,7 +253,7 @@ async function main() {
       {
         path: 'home',
         labelBn: 'হোম',
-        glyph: '⌂',
+        glyph: 'home',
         mount: (container) => {
           const { primary, secondary } = dashboardFor(auth.role);
           const learner = ['student', 'guardian'].includes(auth.role);
@@ -277,7 +279,7 @@ async function main() {
       {
         path: 'my-attendance',
         labelBn: 'আমার হাজিরা',
-        glyph: '✓',
+        glyph: 'check-square',
         // Not a tab: the wireframe's student bar is হোম / পড়াশোনা / বাড়ির কাজ /
         // রুটিন / আরও. Reached from the dashboard card and the More menu.
         hidden: true,
@@ -290,7 +292,7 @@ async function main() {
         // entry point to chapters, not a sibling of them (wireframe §6.2).
         path: 'subjects',
         labelBn: 'আমার বিষয়',
-        glyph: '📚',
+        glyph: 'layers',
         hidden: true,   // see my-attendance above — §2 caps the bar at five
 
         mount: (container) => {
@@ -303,7 +305,7 @@ async function main() {
       {
         path: 'learn',
         labelBn: 'পড়াশোনা',
-        glyph: '📖',
+        glyph: 'book-open',
         mount: (container) => {
           new LearnView({ root: container, doc: document, auth, outbox: engine });
         },
@@ -311,7 +313,7 @@ async function main() {
       {
         path: 'attendance',
         labelBn: 'হাজিরা',
-        glyph: '✓',
+        glyph: 'check-square',
         mount: (container) => {
           new AttendanceView({
             root: container,
@@ -328,20 +330,20 @@ async function main() {
       {
         path: 'routine',
         labelBn: 'রুটিন',
-        glyph: '⏲',
+        glyph: 'clock',
         hidden: true,
         mount: (container) => { new RoutineView({ root: container, doc: document, auth }); },
       },
       {
         path: 'roster',
         labelBn: 'শিক্ষার্থী',
-        glyph: '☰',
+        glyph: 'users',
         mount: (container) => { new RosterView({ root: container, doc: document, auth }); },
       },
       {
         path: 'marks',
         labelBn: 'নম্বর',
-        glyph: '✎',
+        glyph: 'edit',
         hidden: true,
         mount: (container) => {
           new MarksView({ root: container, doc: document, auth, outbox: engine });
@@ -350,27 +352,28 @@ async function main() {
       {
         path: 'more',
         labelBn: 'আরও',
-        glyph: '⋯',
+        glyph: 'more-horizontal',
         mount: (container) => {
           new MoreView({
             root: container,
             doc: document,
+            // glyph is an icon name from ./icon.ts (inline SVG), not an emoji.
             items: [
-              { path: 'assignments', glyph: '📝', titleBn: 'বাড়ির কাজ', subtitleBn: 'কাজ দাও, জমা দেখো ও নম্বর দাও' },
-              { path: 'results', glyph: '🏅', titleBn: 'ফলাফল', subtitleBn: 'প্রকাশিত পরীক্ষার ফলাফল' },
-              { path: 'routine', glyph: '⏲', titleBn: 'রুটিন', subtitleBn: 'দৈনিক ও সাপ্তাহিক ক্লাস সময়সূচি' },
-              { path: 'marks', glyph: '✎', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'অফলাইন CQ / MCQ / ব্যবহারিক' },
-              { path: 'scripts', glyph: '📷', titleBn: 'উত্তরপত্র আপলোড', subtitleBn: 'হাতে-লেখা উত্তরপত্রের ছবি' },
-              { path: 'fees', glyph: '৳', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
-              { path: 'substitute', glyph: '⇄', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
-              { path: 'examroutine', glyph: '⚠', titleBn: 'পরীক্ষার রুটিন', subtitleBn: 'শিক্ষার্থীভিত্তিক সময় সংঘর্ষ যাচাই' },
-              { path: 'import', glyph: '⬆', titleBn: 'শিক্ষার্থী আমদানি', subtitleBn: 'CSV থেকে — যাচাই করে, ভুল সারি বাদ দিয়ে' },
-              { path: 'guardian', glyph: '👪', titleBn: 'আমার সন্তান', subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
-              { path: 'sikhok', glyph: '✦', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'CQ · MCQ · রুব্রিক · পাঠ পরিকল্পনা' },
-              { path: 'shikho', glyph: '💬', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
-              { path: 'roles', glyph: '🔐', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
-              { path: 'ledger', glyph: '📒', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
-              { path: 'system', glyph: '⚙', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
+              { path: 'assignments', glyph: 'clipboard', titleBn: 'বাড়ির কাজ', subtitleBn: 'কাজ দাও, জমা দেখো ও নম্বর দাও' },
+              { path: 'results', glyph: 'award', titleBn: 'ফলাফল', subtitleBn: 'প্রকাশিত পরীক্ষার ফলাফল' },
+              { path: 'routine', glyph: 'clock', titleBn: 'রুটিন', subtitleBn: 'দৈনিক ও সাপ্তাহিক ক্লাস সময়সূচি' },
+              { path: 'marks', glyph: 'edit', titleBn: 'নম্বর এন্ট্রি', subtitleBn: 'অফলাইন CQ / MCQ / ব্যবহারিক' },
+              { path: 'scripts', glyph: 'camera', titleBn: 'উত্তরপত্র আপলোড', subtitleBn: 'হাতে-লেখা উত্তরপত্রের ছবি' },
+              { path: 'fees', glyph: 'wallet', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
+              { path: 'substitute', glyph: 'repeat', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
+              { path: 'examroutine', glyph: 'alert-triangle', titleBn: 'পরীক্ষার রুটিন', subtitleBn: 'শিক্ষার্থীভিত্তিক সময় সংঘর্ষ যাচাই' },
+              { path: 'import', glyph: 'upload', titleBn: 'শিক্ষার্থী আমদানি', subtitleBn: 'CSV থেকে — যাচাই করে, ভুল সারি বাদ দিয়ে' },
+              { path: 'guardian', glyph: 'users', titleBn: 'আমার সন্তান', subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
+              { path: 'sikhok', glyph: 'star', titleBn: 'শিক্ষক সহায়ক AI', subtitleBn: 'CQ · MCQ · রুব্রিক · পাঠ পরিকল্পনা' },
+              { path: 'shikho', glyph: 'message', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
+              { path: 'roles', glyph: 'lock', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
+              { path: 'ledger', glyph: 'book', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
+              { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
           });
         },
@@ -378,14 +381,14 @@ async function main() {
       {
         path: 'fees',
         labelBn: 'বেতন',
-        glyph: '৳',
+        glyph: 'wallet',
         hidden: true,
         mount: (container) => { new FeesView({ root: container, doc: document, auth }); },
       },
       {
         path: 'substitute',
         labelBn: 'বদলি',
-        glyph: '⇄',
+        glyph: 'repeat',
         hidden: true,
         mount: (container) => { new SubstituteView({ root: container, doc: document, auth }); },
       },
@@ -394,7 +397,7 @@ async function main() {
         // generation result without a routine to be the result of.
         path: 'generation',
         labelBn: 'রুটিন ফলাফল',
-        glyph: '⚙',
+        glyph: 'settings',
         hidden: true,
         mount: (container) => {
           const routineId = new URLSearchParams(
@@ -405,7 +408,7 @@ async function main() {
       {
         path: 'import',
         labelBn: 'আমদানি',
-        glyph: '⬆',
+        glyph: 'upload',
         hidden: true,
         mount: (container) => { new ImportView({ root: container, doc: document, auth }); },
       },
@@ -418,7 +421,7 @@ async function main() {
         // route table is not what they walk.
         path: 'guardian',
         labelBn: 'আমার সন্তান',
-        glyph: '👪',
+        glyph: 'users',
         hidden: true,
         mount: (container) => {
           new GuardianView({
@@ -433,35 +436,35 @@ async function main() {
         // and those five belong to the people who open the app every day.
         path: 'examroutine',
         labelBn: 'পরীক্ষার রুটিন',
-        glyph: '⚠',
+        glyph: 'alert-triangle',
         hidden: true,
         mount: (container) => { new ExamRoutineView({ root: container, doc: document, auth }); },
       },
       {
         path: 'sikhok',
         labelBn: 'শিক্ষক AI',
-        glyph: '✦',
+        glyph: 'star',
         hidden: true,
         mount: (container) => { new SikhokView({ root: container, doc: document, auth }); },
       },
       {
         path: 'shikho',
         labelBn: 'শিখো',
-        glyph: '💬',
+        glyph: 'message',
         hidden: true,
         mount: (container) => { new ShikhoView({ root: container, doc: document, auth }); },
       },
       {
         path: 'scripts',
         labelBn: 'উত্তরপত্র',
-        glyph: '📷',
+        glyph: 'camera',
         hidden: true,
         mount: (container) => { new ScriptsView({ root: container, doc: document, auth }); },
       },
       {
         path: 'assignments',
         labelBn: 'বাড়ির কাজ',
-        glyph: '📝',
+        glyph: 'clipboard',
         hidden: true,
         mount: (container) => {
           new AssignmentsView({ root: container, doc: document, auth, outbox: engine });
@@ -470,28 +473,28 @@ async function main() {
       {
         path: 'results',
         labelBn: 'ফলাফল',
-        glyph: '🏅',
+        glyph: 'award',
         hidden: true,
         mount: (container) => { new ResultsView({ root: container, doc: document, auth }); },
       },
       {
         path: 'roles',
         labelBn: 'ভূমিকা',
-        glyph: '🔐',
+        glyph: 'lock',
         hidden: true,
         mount: (container) => { new RolesView({ root: container, doc: document }); },
       },
       {
         path: 'ledger',
         labelBn: 'লেজার',
-        glyph: '📒',
+        glyph: 'book',
         hidden: true,
         mount: (container) => { new LedgerView({ root: container, doc: document, auth }); },
       },
       {
         path: 'system',
         labelBn: 'সিস্টেম',
-        glyph: '⚙',
+        glyph: 'settings',
         hidden: true,
         mount: (container) => { new SystemView({ root: container, doc: document, auth }); },
       },

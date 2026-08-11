@@ -183,7 +183,7 @@ export class AttendanceView {
         : `Present ${c.present}   Absent ${c.absent}   Late ${c.late}`;
   }
 
-  /** The ⚡ chip: queued-op count and last sync. Never blocks anything. */
+  /** The chip: queued-op count and last sync. Never blocks anything. */
   async paintChip(): Promise<void> {
     const s = await this.o.outbox.state();
     if (s.pending === 0 && s.failed === 0) {
@@ -198,8 +198,8 @@ export class AttendanceView {
     } else {
       this.chipEl.textContent =
         this.locale === 'bn'
-          ? `⚡ ${formatCount(s.pending, 'bn')}টি অপেক্ষমাণ`
-          : `⚡ ${s.pending} queued`;
+          ? `${formatCount(s.pending, 'bn')}টি অপেক্ষমাণ`
+          : `${s.pending} queued`;
       this.chipEl.dataset.state = 'queued';
     }
   }

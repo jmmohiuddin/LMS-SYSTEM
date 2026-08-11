@@ -451,8 +451,18 @@ textarea:focus {
 /* -------------------------------------------------------------- offline banner */
 .offline-banner {
   margin: 0; padding: var(--s-2) var(--s-4);
+  display: flex; align-items: center; gap: var(--s-2);
   background: var(--c-warn-soft); color: var(--c-warn); font-size: var(--text-xs);
 }
+.offline-icon { font-size: var(--text-lg); line-height: 1; flex: none; }
+
+/* ── Icon system (see src/icon.ts) ─────────────────────────────────────────
+   Every navigation/action glyph is inline SVG sized in em, so the container's
+   font-size (set on .home-glyph, .shell-tab-glyph, etc.) still controls it,
+   and coloured by currentColor so it tints with its container. display:block
+   drops the inline-SVG baseline gap that would knock it off-centre. */
+.home-glyph svg, .shell-tab-glyph svg, .more-glyph svg,
+.next-glyph svg, .offline-icon svg { display: block; }
 
 /* ----------------------------------------------------------------- roster */
 .section-picker {

@@ -194,7 +194,7 @@ export class ScriptsView {
 
     const captureLabel = d.createElement('label');
     captureLabel.className = 'btn-primary btn-capture';
-    captureLabel.textContent = this.busy ? 'প্রস্তুত হচ্ছে…' : '📷 পৃষ্ঠা তুলুন';
+    captureLabel.textContent = this.busy ? 'প্রস্তুত হচ্ছে…' : 'পৃষ্ঠা তুলুন';
     const fileInput = d.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = 'image/*';
@@ -253,7 +253,7 @@ export class ScriptsView {
       status.textContent =
         p.status === 'saved' ? '✓ সংরক্ষিত'
         : p.status === 'uploading' ? '⏳ আপলোড হচ্ছে…'
-        : p.status === 'error' ? `⚠ ${p.error ?? 'সমস্যা'}`
+        : p.status === 'error' ? `${p.error ?? 'সমস্যা'}`
         : 'প্রস্তুত';
       info.append(title, meta, status);
 

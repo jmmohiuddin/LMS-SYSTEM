@@ -112,7 +112,7 @@ export class SubjectsView {
     root.append(header);
 
     if (this.offline) {
-      root.append(this.banner('⚡ অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));
+      root.append(this.banner('অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));
     }
 
     if (this.loading) { this.renderSkeleton(root); return; }
@@ -166,7 +166,7 @@ export class SubjectsView {
     box.className = 'empty-state';
     const glyph = d.createElement('div');
     glyph.className = 'empty-glyph';
-    glyph.textContent = '⚠';
+    glyph.textContent = '';
     glyph.setAttribute('aria-hidden', 'true');
     const msg = d.createElement('p');
     msg.textContent = 'বিষয়ের তালিকা লোড হয়নি।';

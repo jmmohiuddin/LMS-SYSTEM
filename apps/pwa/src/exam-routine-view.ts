@@ -178,7 +178,7 @@ export class ExamRoutineView {
     root.append(header);
 
     if (this.exams.length > 1) root.append(this.selector());
-    if (this.error) root.append(this.notice(`⚠ ${this.error}`, 'inline-notice is-danger'));
+    if (this.error) root.append(this.notice(`${this.error}`, 'inline-notice is-danger'));
 
     if (this.loading) { root.append(this.skeleton()); return; }
     if (!exam) { root.append(this.empty()); return; }
@@ -299,12 +299,12 @@ export class ExamRoutineView {
       }
 
       // A glyph AND a word. Colour and shape alone fail F-812, and a bare
-      // ⚠ tells a coordinator nothing about what to do.
+      // tells a coordinator nothing about what to do.
       const st = d.createElement('td');
       const chip = d.createElement('span');
       chip.className = 'status-chip';
       chip.dataset.state = p.hasClash ? 'warning' : 'success';
-      chip.textContent = p.hasClash ? '⚠ সংঘর্ষ' : '✓ ঠিক আছে';
+      chip.textContent = p.hasClash ? 'সংঘর্ষ' : '✓ ঠিক আছে';
       st.append(chip);
       tr.append(st);
 
@@ -395,7 +395,7 @@ export class ExamRoutineView {
     h.className = 'clash-head';
     // The headline counts STUDENTS, as §8.3 does. One student sitting three
     // overlapping papers is one child with a problem, not three.
-    h.textContent = `⚠ ${bn(data.affectedStudents)} জন শিক্ষার্থীর দুটি পরীক্ষা একই সময়ে`;
+    h.textContent = `${bn(data.affectedStudents)} জন শিক্ষার্থীর দুটি পরীক্ষা একই সময়ে`;
     box.append(h);
 
     const ul = d.createElement('ul');

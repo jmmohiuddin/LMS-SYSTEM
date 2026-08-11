@@ -123,7 +123,7 @@ export class MyAttendanceView {
     if (this.offline) {
       const b = d.createElement('p');
       b.className = 'inline-notice';
-      b.textContent = '⚡ অফলাইন — সংরক্ষিত হিসাব দেখানো হচ্ছে';
+      b.textContent = 'অফলাইন — সংরক্ষিত হিসাব দেখানো হচ্ছে';
       root.append(b);
     }
 
@@ -355,7 +355,7 @@ export class MyAttendanceView {
     const box = d.createElement('div');
     box.className = 'empty-state';
     const g = d.createElement('div');
-    g.className = 'empty-glyph'; g.textContent = '⚠'; g.setAttribute('aria-hidden', 'true');
+    g.className = 'empty-glyph'; g.textContent = ''; g.setAttribute('aria-hidden', 'true');
     const p = d.createElement('p');
     p.textContent = 'হাজিরার হিসাব লোড হয়নি।';
     const retry = d.createElement('button');

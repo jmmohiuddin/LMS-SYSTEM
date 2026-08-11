@@ -46,7 +46,7 @@ export class RolesView {
     // Isolation banner — visually confirms the tenant isolation invariant.
     const banner = d.createElement('div');
     banner.className = 'card iso-banner';
-    const bIcon = d.createElement('span'); bIcon.className = 'iso-icon'; bIcon.textContent = '🔐';
+    const bIcon = d.createElement('span'); bIcon.className = 'iso-icon'; bIcon.textContent = '';
     const bBody = d.createElement('div');
     const bTitle = d.createElement('span'); bTitle.className = 'iso-title'; bTitle.textContent = 'বিচ্ছিন্নতা সক্রিয়';
     const bDesc = d.createElement('span'); bDesc.className = 'iso-desc';

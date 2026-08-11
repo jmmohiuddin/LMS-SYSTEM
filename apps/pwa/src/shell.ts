@@ -11,6 +11,8 @@
  * (this is a static PWA shell), so a plain in-page anchor jump is the
  * simplest thing that survives a reload and works fully offline.
  */
+import { iconSvg } from './icon.ts';
+
 export interface ShellRoute {
   path: string;       // hash fragment without '#/', e.g. 'attendance'
   labelBn: string;
@@ -120,7 +122,13 @@ export class Shell {
     const offlineBanner = d.createElement('p');
     offlineBanner.className = 'offline-banner';
     offlineBanner.setAttribute('role', 'status');
-    offlineBanner.textContent = '⚡ অফলাইন — কাজ চালিয়ে যান, সংযোগ পেলে জমা হবে';
+    const offlineIcon = d.createElement('span');
+    offlineIcon.className = 'offline-icon';
+    offlineIcon.setAttribute('aria-hidden', 'true');
+    offlineIcon.innerHTML = iconSvg('wifi-off');
+    const offlineText = d.createElement('span');
+    offlineText.textContent = 'অফলাইন — কাজ চালিয়ে যান, সংযোগ পেলে জমা হবে';
+    offlineBanner.append(offlineIcon, offlineText);
     this.onConnectivity = () => { offlineBanner.hidden = navigator.onLine; };
     this.onConnectivity();
     addEventListener('online', this.onConnectivity);
@@ -154,8 +162,9 @@ export class Shell {
       tab.setAttribute('aria-label', route.labelBn);
       const glyph = d.createElement('span');
       glyph.className = 'shell-tab-glyph';
+      // route.glyph is an icon name (see ./icon.ts), rendered as inline SVG.
       glyph.setAttribute('aria-hidden', 'true');
-      glyph.textContent = route.glyph;
+      glyph.innerHTML = iconSvg(route.glyph);
       const label = d.createElement('span');
       label.className = 'shell-tab-label';
       label.textContent = route.labelBn;

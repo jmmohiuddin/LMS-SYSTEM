@@ -378,7 +378,9 @@ export class GuardianView {
     box.className = 'empty-state';
     const glyph = d.createElement('div');
     glyph.className = 'empty-glyph';
-    glyph.textContent = '';
+    // U+2715 — no emoji form, so it takes the ink and cannot be stripped by
+    // an emoji sweep the way the warning sign that used to sit here was.
+    glyph.textContent = '✕';
     glyph.setAttribute('aria-hidden', 'true');
     const msg = d.createElement('p');
     msg.textContent = 'তথ্য লোড হয়নি।';

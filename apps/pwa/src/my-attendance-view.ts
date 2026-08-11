@@ -355,7 +355,9 @@ export class MyAttendanceView {
     const box = d.createElement('div');
     box.className = 'empty-state';
     const g = d.createElement('div');
-    g.className = 'empty-glyph'; g.textContent = ''; g.setAttribute('aria-hidden', 'true');
+    // U+2715, not the warning-sign emoji that used to be here: no emoji form,
+    // so it inherits the ink and survives an emoji sweep.
+    g.className = 'empty-glyph'; g.textContent = '✕'; g.setAttribute('aria-hidden', 'true');
     const p = d.createElement('p');
     p.textContent = 'হাজিরার হিসাব লোড হয়নি।';
     const retry = d.createElement('button');

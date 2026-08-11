@@ -166,7 +166,12 @@ export class SubjectsView {
     box.className = 'empty-state';
     const glyph = d.createElement('div');
     glyph.className = 'empty-glyph';
-    glyph.textContent = '';
+    // U+2715, which has no emoji form at all. This element held the warning
+    // sign, which the no-emoji sweep stripped — leaving the string empty and
+    // the error state silently iconless. Not re-fixed with a variation
+    // selector: that only asks a font for text presentation and is ignored
+    // often enough to reintroduce the bug. A glyph with no emoji form cannot.
+    glyph.textContent = '✕';
     glyph.setAttribute('aria-hidden', 'true');
     const msg = d.createElement('p');
     msg.textContent = 'বিষয়ের তালিকা লোড হয়নি।';
@@ -184,8 +189,16 @@ export class SubjectsView {
   private card(s: SubjectRow): HTMLElement {
     const d = this.o.doc;
     const li = d.createElement('li');
-    li.className = 'card subj-card';
-    li.dataset.requirement = s.requirementType;
+    // A real <button> when the card opens something, matching .chapter-card,
+    // .assign-card and .next-card. This was a <li role="button"> with its own
+    // tabIndex and Enter/Space handling — the documented workaround, but a
+    // workaround: it re-implements by hand what the element gives for free,
+    // and it made this the one card in the product that was not a button.
+    const openable = Boolean(this.o.onOpenSubject);
+    const card = d.createElement(openable ? 'button' : 'div');
+    if (openable) (card as HTMLButtonElement).type = 'button';
+    card.className = 'card subj-card';
+    card.dataset.requirement = s.requirementType;
 
     const head = d.createElement('div');
     head.className = 'subj-head';
@@ -201,7 +214,7 @@ export class SubjectsView {
     chip.dataset.requirement = s.requirementType;
     chip.textContent = s.requirementLabelBn;
     head.append(name, chip);
-    li.append(head);
+    card.append(head);
 
     // progress-bar, "with numeric label, never bar-only" (§3 component
     // vocabulary). The number is the point: a bar alone is unreadable at
@@ -212,8 +225,11 @@ export class SubjectsView {
     track.setAttribute('aria-valuemin', '0');
     track.setAttribute('aria-valuemax', String(s.totalChapters));
     track.setAttribute('aria-valuenow', String(s.completedChapters));
+    // Bangla numerals in the spoken label too: the visible count already uses
+    // them, and a screen reader that says the figures in English mid-Bangla
+    // is reading a different sentence than the one on screen.
     track.setAttribute('aria-label',
-      `${s.nameBn}: ${s.totalChapters}টির মধ্যে ${s.completedChapters}টি অধ্যায় শেষ`);
+      `${s.nameBn}: ${bn(s.totalChapters)}টির মধ্যে ${bn(s.completedChapters)}টি অধ্যায় শেষ`);
     const fill = d.createElement('div');
     fill.className = 'progress-fill';
     fill.style.width = `${s.progressPercent}%`;
@@ -226,7 +242,7 @@ export class SubjectsView {
     const row = d.createElement('div');
     row.className = 'subj-progress-row';
     row.append(track, count);
-    li.append(row);
+    card.append(row);
 
     if (s.nextChapter?.nameBn) {
       const next = d.createElement('p');
@@ -235,25 +251,21 @@ export class SubjectsView {
       next.textContent = no
         ? `পরবর্তী: অধ্যায় ${bn(no)} — ${s.nextChapter.nameBn}`
         : `পরবর্তী: ${s.nextChapter.nameBn}`;
-      li.append(next);
+      card.append(next);
     } else if (s.totalChapters > 0) {
       const done = d.createElement('p');
       done.className = 'subj-next subj-next-done';
       done.textContent = 'সব অধ্যায় শেষ ✓';
-      li.append(done);
+      card.append(done);
     }
 
-    if (this.o.onOpenSubject) {
-      li.tabIndex = 0;
-      li.setAttribute('role', 'button');
-      li.setAttribute('aria-label', `${s.nameBn} খুলুন`);
-      const open = () => this.o.onOpenSubject?.(s.subjectId);
-      li.addEventListener('click', open);
-      li.addEventListener('keydown', (e) => {
-        const k = e as KeyboardEvent;
-        if (k.key === 'Enter' || k.key === ' ') { k.preventDefault(); open(); }
-      });
+    if (openable) {
+      // No tabIndex, no role, no hand-rolled Enter/Space: a <button> brings
+      // all three. Only the accessible name has to be said out loud.
+      card.setAttribute('aria-label', `${s.nameBn} খুলুন`);
+      card.addEventListener('click', () => this.o.onOpenSubject?.(s.subjectId));
     }
+    li.append(card);
     return li;
   }
 

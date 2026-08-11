@@ -6,6 +6,8 @@
  * when authenticated (this makes it useful for real principals) and falls
  * back to descriptive counts in demo mode.
  */
+import { iconSvg } from './icon.ts';
+
 export interface RolesViewOptions {
   root: HTMLElement;
   doc: Document;
@@ -46,7 +48,12 @@ export class RolesView {
     // Isolation banner — visually confirms the tenant isolation invariant.
     const banner = d.createElement('div');
     banner.className = 'card iso-banner';
-    const bIcon = d.createElement('span'); bIcon.className = 'iso-icon'; bIcon.textContent = '';
+    // The padlock this banner used to carry was an emoji; there is no decent
+    // text padlock to swap in, and this is a real semantic icon in a card —
+    // exactly what the drawn set exists for. It takes the ink like the rest.
+    const bIcon = d.createElement('span'); bIcon.className = 'iso-icon';
+    bIcon.setAttribute('aria-hidden', 'true');
+    bIcon.innerHTML = iconSvg('lock');
     const bBody = d.createElement('div');
     const bTitle = d.createElement('span'); bTitle.className = 'iso-title'; bTitle.textContent = 'বিচ্ছিন্নতা সক্রিয়';
     const bDesc = d.createElement('span'); bDesc.className = 'iso-desc';

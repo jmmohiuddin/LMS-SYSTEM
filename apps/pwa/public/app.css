@@ -1263,7 +1263,22 @@ h2.section-heading { letter-spacing: normal; }
 /* F-802, wireframe §6.2. */
 .subj-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5);
              display: flex; flex-direction: column; gap: var(--s-2); }
-.subj-card { padding: var(--s-3); }
+.subj-card { padding: var(--s-3); display: block; width: 100%; }
+/* Button reset for the openable variant (it is a real <button> now, so it
+   arrives with the browser's font, centre alignment and default colour). */
+button.subj-card {
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  position: relative; padding-right: var(--s-6);
+}
+button.subj-card:active { transform: scale(0.995); }
+/* The same corner chevron the home cards carry. Those got it because "several
+   users read the first cut as static tiles" — subject cards open the reader
+   and had no affordance at all, which is the identical trap. */
+button.subj-card::after {
+  content: '›';
+  position: absolute; top: var(--s-2); right: var(--s-3);
+  font-size: var(--text-xl); line-height: 1; color: var(--c-ink-3);
+}
 .subj-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
 .subj-name { font-weight: 600; font-size: var(--text-base); }
 .subj-chip { flex: none; font-weight: 500; }

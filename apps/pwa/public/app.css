@@ -612,12 +612,15 @@ textarea:focus {
      the only label separating grouped content, so it must clear it. --c-ink-2
      (#605d5d) is 5.8:1. */
   color: var(--c-ink-2); text-transform: uppercase;
-  /* No letter-spacing: this label is always Bangla, and positive tracking
-     severs Bangla conjuncts (Override 2). The old 0.02em rode on a
-     :not([lang='bn']) guard that never fired — these headings inherit bn
-     from the root without carrying the attribute — so it was tracking Bangla
-     in practice. Dropped rather than re-guarded, because it is never Latin. */
 }
+/* Bangla is never tracked (Override 2: positive tracking severs conjuncts,
+   negative destroys them). Two rules were tracking these always-Bangla
+   labels: this class once set 0.02em, and the h1/h2:not([lang='bn']) rule
+   still applies -0.015em — both because the headings inherit `bn` from the
+   root without carrying the attribute the guard checks. This wins on source
+   order (equal specificity to the h2 rule) and holds every section heading
+   at normal tracking. Every .section-heading in the app is an <h2>. */
+h2.section-heading { letter-spacing: normal; }
 
 /* Hero: greeting + today. Uses a subtle primary tint so it reads as a
    different plane without a heavy gradient (compositing budget). */

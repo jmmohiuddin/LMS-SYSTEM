@@ -230,6 +230,55 @@ BEGIN
   RAISE NOTICE 'PASS 8 — a student who no longer holds the subject has no clash';
 END $$;
 
+-- ---------------------------------------------------------------------
+-- 9. THE REGRESSION 028 SHIPPED WITH. A second section sitting the SAME
+--    subject at the SAME hour is not a clash — it is how every school with
+--    more than one section runs an exam.
+--
+--    Migration 028 joined student_subjects to the paper on subject alone,
+--    so every Class 9 student matched both sections' rows and was reported
+--    as sitting "রসায়ন and রসায়ন" against themselves. A false positive on
+--    the ordinary case, which blocked publication of correct routines.
+--    Migration 029 scopes the join to the paper's own section.
+-- ---------------------------------------------------------------------
+DO $$
+DECLARE n integer;
+BEGIN
+  -- A second section of the same class, one student in it, same Chemistry
+  -- paper at the same hour as section ক's.
+  INSERT INTO sections (id, tenant_id, class_id, academic_year_id, name)
+  VALUES ('7d000000-0000-4000-8000-0000000000c3', app.current_tenant(),
+          '7d000000-0000-4000-8000-0000000000c1',
+          '7d000000-0000-4000-8000-000000000091', 'খ');
+
+  INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164)
+  VALUES ('7d000000-0000-4000-8000-0000000000a3', app.current_tenant(),
+          'চন্দনা', 'Chandana', '+8801794000004');
+
+  INSERT INTO enrolments (id, tenant_id, student_id, section_id, academic_year_id, roll_no, status)
+  VALUES ('7d000000-0000-4000-8000-0000000000e3', app.current_tenant(),
+          '7d000000-0000-4000-8000-0000000000a3',
+          '7d000000-0000-4000-8000-0000000000c3',
+          '7d000000-0000-4000-8000-000000000091', 1, 'active');
+
+  INSERT INTO student_subjects (tenant_id, enrolment_id, subject_id, requirement_type, source)
+  VALUES (app.current_tenant(), '7d000000-0000-4000-8000-0000000000e3',
+          '7d000000-0000-4000-8000-000000000137', 'group_compulsory', 'template');
+
+  INSERT INTO exam_subjects
+    (tenant_id, exam_id, section_id, subject_id, exam_date, start_time, duration_minutes, cq_max, mcq_max)
+  VALUES (app.current_tenant(), '7d000000-0000-4000-8000-000000000092',
+          '7d000000-0000-4000-8000-0000000000c3',
+          '7d000000-0000-4000-8000-000000000137', '2026-12-14', '10:00', 180, 50, 25);
+
+  SELECT count(*) INTO n FROM app.exam_student_clashes('7d000000-0000-4000-8000-000000000092');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FAIL 9: two sections sitting the same paper at the same hour '
+                    'produced % clash(es); the join is not scoped to the paper''s section', n;
+  END IF;
+  RAISE NOTICE 'PASS 9 — two sections sitting রসায়ন at the same hour is not a clash';
+END $$;
+
 ROLLBACK;
 
 RESET ROLE;

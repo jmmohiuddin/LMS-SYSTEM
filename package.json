@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "vercel-build": "node scripts/build.mjs",
-    "test": "node scripts/test-all.mjs"
+    "test": "node scripts/test-all.mjs",
+    "deploy:netlify": "node scripts/deploy-netlify.mjs"
   },
   "engines": {
     "node": ">=22"

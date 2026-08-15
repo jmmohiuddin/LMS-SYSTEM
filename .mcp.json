@@ -6,6 +6,17 @@
       "headers": {
         "Authorization": "Bearer ${GITHUB_PAT}"
       }
+    },
+    "perplexity": {
+      "type": "http",
+      "url": "https://api.perplexity.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${PERPLEXITY_API_KEY}"
+      }
+    },
+    "perplexity-docs": {
+      "type": "http",
+      "url": "https://docs.perplexity.ai/mcp"
     }
   }
 }

@@ -65,3 +65,15 @@ netlify/functions/
 # Untracked rather than deleted: they still resolve on this machine.
 .claude/skills/
 .netlify/
+
+# Source specification documents, kept local by choice.
+#
+# The PRD, TRD, wireframe and design files are what this product is built
+# FROM, and docs/09-PRD-AUDIT.md audits against them — but this repository
+# is public, and publishing the full product strategy is a separate
+# decision from publishing the code. They live in the working tree and are
+# read from there; they are simply not committed.
+Shikhon PRD v2.0*
+Shikhon TRD v2.0*
+Shikhon Wireframe Specification*
+Shikhon Screens*

@@ -11,10 +11,16 @@
  * date/weekStart default to "today" / "the Sunday on or before today" in
  * the tenant's local sense — we take whatever the caller sends (YYYY-MM-DD)
  * at face value; the PWA is expected to compute these from the device
- * clock, which is what the teacher actually cares about.
+ * clock, which is what the teacher actually cares about. When it sends
+ * nothing, the default is computed in Asia/Dhaka and not in the host's
+ * zone — see dhakaToday() in server-core/src/time.ts.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
+// Dhaka-local, NOT the host clock. A serverless host runs in UTC, and
+// between 00:00 and 06:00 in Bangladesh that names yesterday — the hours a
+// teacher checks the routine before school. See server-core/src/time.ts.
+import { dhakaToday as todayIso, sundayOnOrBefore } from '../../../packages/server-core/src/time.ts';
 import { corsHeaders, query, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireStaff } from '../../../packages/server-core/src/auth.ts';
 
@@ -54,16 +60,6 @@ function mapRow(r: TeacherDayRow) {
   };
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/** Sunday on/before `iso` — Bangladesh's week starts Sunday (see 006 migration comment). */
-function sundayOnOrBefore(iso: string): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
-  return d.toISOString().slice(0, 10);
-}
 
 function addDays(iso: string, n: number): string {
   const d = new Date(`${iso}T00:00:00Z`);

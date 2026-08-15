@@ -69,6 +69,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
+import { dhakaToday } from '../../../packages/server-core/src/time.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -445,7 +446,7 @@ async function loadMarkDrops(client: Client, head: Header): Promise<Map<string, 
             ROUND(p.pct - t.pct) AS "dropPoints"
        FROM this_exam t JOIN prev p ON p.student_id = t.student_id
       WHERE p.pct - t.pct >= $5`,
-    [head.examSubjectId, head.sectionId, head.subjectId, head.examStartsOn ?? new Date().toISOString().slice(0, 10), MARK_DROP_POINTS],
+    [head.examSubjectId, head.sectionId, head.subjectId, head.examStartsOn ?? dhakaToday(), MARK_DROP_POINTS],
   );
   return new Map(rows.map((r) => [r.studentId, Number(r.dropPoints)]));
 }

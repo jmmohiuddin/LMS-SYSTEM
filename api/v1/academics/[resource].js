@@ -3907,6 +3907,12 @@ async function apply(c, body) {
   };
 }
 
+// packages/server-core/src/time.ts
+var DHAKA_UTC_OFFSET_MS = 6 * 60 * 60 * 1e3;
+function dhakaToday(now = Date.now()) {
+  return new Date(now + DHAKA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 // services/academics-svc/api/classperf.ts
 var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PERF_ROLES = ["class_teacher", "subject_teacher", "academic_coordinator", "principal", "school_owner"];
@@ -4195,7 +4201,7 @@ async function loadMarkDrops(client, head) {
             ROUND(p.pct - t.pct) AS "dropPoints"
        FROM this_exam t JOIN prev p ON p.student_id = t.student_id
       WHERE p.pct - t.pct >= $5`,
-    [head.examSubjectId, head.sectionId, head.subjectId, head.examStartsOn ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), MARK_DROP_POINTS]
+    [head.examSubjectId, head.sectionId, head.subjectId, head.examStartsOn ?? dhakaToday(), MARK_DROP_POINTS]
   );
   return new Map(rows.map((r) => [r.studentId, Number(r.dropPoints)]));
 }

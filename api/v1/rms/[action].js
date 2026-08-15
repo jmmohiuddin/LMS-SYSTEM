@@ -216,6 +216,17 @@ function sendIfRefused(res, cors, verdict) {
   return false;
 }
 
+// packages/server-core/src/time.ts
+var DHAKA_UTC_OFFSET_MS = 6 * 60 * 60 * 1e3;
+function dhakaToday(now = Date.now()) {
+  return new Date(now + DHAKA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+function sundayOnOrBefore(iso) {
+  const d = /* @__PURE__ */ new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return d.toISOString().slice(0, 10);
+}
+
 // node_modules/jose/dist/node/esm/runtime/base64url.js
 import { Buffer as Buffer2 } from "node:buffer";
 
@@ -1316,14 +1327,6 @@ function mapRow(r) {
     deliveryLogged: r.delivery_logged
   };
 }
-function todayIso() {
-  return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-}
-function sundayOnOrBefore(iso) {
-  const d = /* @__PURE__ */ new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
-  return d.toISOString().slice(0, 10);
-}
 function addDays(iso, n) {
   const d = /* @__PURE__ */ new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
@@ -1348,7 +1351,7 @@ async function handler(req, res) {
     const db = await sharedDb();
     const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
     if (scope === "day") {
-      const date = q.get("date") ?? todayIso();
+      const date = q.get("date") ?? dhakaToday();
       if (!DATE_RE.test(date)) throw new HttpError(400, "date must be YYYY-MM-DD", "invalid_date");
       const slots = await db.withTenant(ctx, async (client) => {
         const r = await client.query(
@@ -1360,7 +1363,7 @@ async function handler(req, res) {
       json(res, 200, { scope, date, slots }, cors);
       return;
     }
-    const rawStart = q.get("weekStart") ?? sundayOnOrBefore(todayIso());
+    const rawStart = q.get("weekStart") ?? sundayOnOrBefore(dhakaToday());
     if (!DATE_RE.test(rawStart)) throw new HttpError(400, "weekStart must be YYYY-MM-DD", "invalid_date");
     const weekStart = sundayOnOrBefore(rawStart);
     const days = await db.withTenant(ctx, async (client) => {

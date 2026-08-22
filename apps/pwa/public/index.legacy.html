@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Matches the app's warm surface, not the retired green theme: the
+       browser/status-bar chrome should be the same material as the header
+       it sits above. -->
+  <meta name="theme-color" content="#eae9e9">
+  <meta name="theme-color" content="#1a1817" media="(prefers-color-scheme: dark)">
+
+  <!-- F-1607. Runs before the stylesheet paints anything, so a student who
+       chose dark never sees a white flash on open — on a 2GB phone the gap
+       between first paint and app boot is long enough to hurt.
+       Deliberately inline and dependency-free for the same reason: an
+       external file would be one more blocking request on 3G.
+       'system' is the default and stays live, so a phone that switches
+       theme at sunset switches the app with it. -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('shikhon_theme');
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        var apply = function (pref) {
+          var dark = pref === 'dark' || (pref !== 'light' && mq.matches);
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        };
+        apply(stored);
+        // Only follow the OS while the user is on 'system'.
+        mq.addEventListener('change', function () {
+          if (!localStorage.getItem('shikhon_theme')) apply(null);
+        });
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
+  <!-- Standalone PWA: let content flow under the status bar so our own
+       safe-area padding (app.css) places the header correctly on notched
+       phones. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>শিখন — হাজিরা</title>
+
+  <!-- Ata Ekta LMS design fonts — Hind Siliguri (Bangla primary), Inter (Latin).
+       preconnect first so the DNS+TLS handshake overlaps with the CSS request. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <!-- use-credentials: on SSO-protected Vercel preview URLs the manifest
+       fetch must carry the auth cookie or it 302s into vercel.com/sso-api
+       and dies on CORS. Production (shikhon-lms.vercel.app) is public and
+       unaffected either way. -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+</head>
+<body>
+  <!-- The shell renders before any data arrives, so a cold offline start
+       shows a working screen rather than an error page. -->
+  <main id="root" lang="bn">
+    <p class="att-sub" style="padding:var(--s-4)">লোড হচ্ছে…</p>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+    }
+  </script>
+</body>
+</html>

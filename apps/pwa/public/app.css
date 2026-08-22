@@ -51,42 +51,76 @@
    conjunct. The 16px body floor of Override 3 is --text-base, unchanged. */
 
 :root {
-  /* ── From the design system ────────────────────────────────────────── */
-  --color-bg:      #f3f2f2;
-  --color-surface: #eae9e9;
-  --color-text:    #201e1d;
-  --color-accent:  #ec3013;
-  --color-accent-2:#e15b47;
-  --color-divider: color-mix(in srgb, #201e1d 40%, transparent);
+  /* ── From the "Ata Ekta LMS" design system (imported 2026-08-22) ────
+     Brand primary is #e53935 (red). White ground, warm neutral text.
+     Rounded corners (8/12/16). Hind Siliguri Bangla + Inter Latin.
+     The four accessibility overrides in the header (font, letter-spacing,
+     type scale floor, tap targets) still apply. */
+  --color-bg:      #ffffff;
+  --color-surface: #f9fafb;
+  --color-text:    #1f2937;
+  --color-accent:  #e53935;
+  --color-accent-2:#8b5cf6;    /* purple — tertiary, exams/assignments only */
+  --color-divider: color-mix(in srgb, #1f2937 40%, transparent);
 
-  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
-     same step of any role matches the others in visual value. */
-  --color-neutral-100: #f8f4f4;  --color-neutral-200: #eae7e7;
-  --color-neutral-300: #d7d3d3;  --color-neutral-400: #bab6b6;
-  --color-neutral-500: #9b9797;  --color-neutral-600: #7d7979;
-  --color-neutral-700: #605d5d;  --color-neutral-800: #444141;
-  --color-neutral-900: #2d2b2b;
+  /* Neutral ramp — cool gray, matches design's #f9fafb/#f1f5f9/#e5e7eb/
+     #d1d5db/#6b7280/#1f2937 tokens; extended into a 100-900 ramp. */
+  --color-neutral-100: #f9fafb;  --color-neutral-200: #f1f5f9;
+  --color-neutral-300: #e5e7eb;  --color-neutral-400: #d1d5db;
+  --color-neutral-500: #9ca3af;  --color-neutral-600: #6b7280;
+  --color-neutral-700: #4b5563;  --color-neutral-800: #374151;
+  --color-neutral-900: #1f2937;
 
-  --color-accent-100: #fff2ef;   --color-accent-200: #ffe0d9;
-  --color-accent-300: #ffc4b8;   --color-accent-400: #ff9783;
-  --color-accent-500: #ff563c;   --color-accent-600: #dd2b0f;
-  --color-accent-700: #ae1800;   --color-accent-800: #7c1405;
-  --color-accent-900: #4d170e;
+  /* Brand red ramp — anchored to #e53935 with matching soft/hover/ink. */
+  --color-accent-100: #fef2f2;   --color-accent-200: #fee2e2;
+  --color-accent-300: #fecaca;   --color-accent-400: #fca5a5;
+  --color-accent-500: #f87171;   --color-accent-600: #e53935;
+  --color-accent-700: #dc2626;   --color-accent-800: #b91c1c;
+  --color-accent-900: #7f1d1d;
+
+  /* Design's semantic status colors (added — no equivalents existed). */
+  --color-primary:        #e53935;
+  --color-primary-hover:  #dc2626;
+  --color-primary-soft:   #fee2e2;
+  --color-primary-ink:    #7f1d1d;
+  --color-success:        #22c55e;
+  --color-success-soft:   #dcfce7;
+  --color-success-ink:    #166534;
+  --color-warning:        #f59e0b;
+  --color-warning-soft:   #fef3c7;
+  --color-warning-ink:    #92400e;
+  --color-danger:         #dc2626;
+  --color-danger-soft:    #fee2e2;
+  --color-danger-ink:     #7f1d1d;
+  --color-info:           #3b82f6;
+  --color-info-soft:      #dbeafe;
+  --color-info-ink:       #1e40af;
+  --color-accent-2-soft:  #ede9fe;
+  --color-accent-2-ink:   #5b21b6;
+  --color-surface-muted:  #f1f5f9;
+  --color-border:         #e5e7eb;
+  --color-border-strong:  #d1d5db;
+  --color-text-muted:     #6b7280;
+  --color-text-faint:     #9ca3af;
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
   --space-4: 16px; --space-6: 24px; --space-8: 32px;
 
-  --radius-sm: 0px; --radius-md: 0px; --radius-lg: 0px;
+  /* Rounded corners now — design uses 8/12/16 for sm/md/lg + 999 pill. */
+  --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+  --radius-pill: 999px;
 
-  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
-  --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
-  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.07);
+  --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.10);
 
-  /* Override 1 — Archivo named, never self-hosted. See the header. */
-  --font-heading: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-heading-weight: 800;
-  --font-body: 'Archivo', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-bn: 'Noto Sans Bengali', 'Hind Siliguri', 'SolaimanLipi', sans-serif;
+  /* Override 1 — Inter named for Latin, Hind Siliguri primary for Bangla.
+     Design system uses these; still not self-hosted for the SW-precache
+     reason in the header. Google Fonts loaded via index.html <link>. */
+  --font-heading: 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-heading-weight: 700;
+  --font-body: 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-bn: 'Hind Siliguri', 'Noto Sans Bengali', 'SolaimanLipi', sans-serif;
 
   /* ── Semantic aliases ──────────────────────────────────────────────────
      Every rule below this block is written against these names, so the
@@ -380,9 +414,21 @@ textarea:focus {
   cursor: pointer;
   border: 1px solid transparent;
 }
-.btn-primary   { background: var(--c-primary); color: #fff; width: 100%; }
-.btn-secondary { background: var(--c-surface); color: var(--c-primary-ink);
-                 border-color: var(--c-primary); margin: 0 var(--s-4); }
+.btn-primary   {
+  background: var(--color-primary); color: #fff; width: 100%;
+  box-shadow: var(--shadow-sm);
+}
+.btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); }
+.btn-secondary {
+  background: var(--color-bg); color: var(--color-text);
+  border-color: var(--color-border-strong); margin: 0 var(--s-4);
+}
+.btn-success {
+  background: var(--color-success); color: #fff; width: 100%;
+  min-height: var(--tap-min); padding: 0 var(--s-5);
+  border-radius: var(--radius); font-size: var(--text-base); font-weight: 600;
+  cursor: pointer; border: 1px solid transparent;
+}
 
 .att-footer {
   position: fixed; inset: auto 0 0 0;
@@ -498,13 +544,50 @@ textarea:focus {
 .home-card-primary::after { color: var(--c-primary-text); }
 
 /* ---------------------------------------------------------------- login */
-.login-wrap { max-width: 360px; margin: 0 auto; padding: var(--s-5) var(--s-4); }
+/* Ata Ekta LMS layout: brand-mark tile, name, tagline, form. Centered
+   with generous top padding so the screen looks intentional on tall
+   viewports. */
+.login-wrap {
+  max-width: 360px; margin: 0 auto;
+  padding: var(--s-6) var(--s-4);
+  display: flex; flex-direction: column; align-items: stretch;
+  min-height: 100dvh; justify-content: center;
+}
+.login-brand { text-align: center; margin-bottom: var(--s-6); }
+.login-brandmark {
+  width: 56px; height: 56px; margin: 0 auto var(--s-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-bn); font-weight: 700; font-size: 22px;
+}
+.login-brandname {
+  font-size: var(--text-xl); font-weight: 700; color: var(--color-text);
+}
+.login-tagline {
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  margin-top: 6px;
+}
+.visually-hidden {
+  position: absolute !important; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
 .login-form { display: flex; flex-direction: column; gap: var(--s-3); margin-top: var(--s-4); }
 .login-label { display: flex; flex-direction: column; gap: var(--s-1); font-size: var(--text-xs); color: var(--c-ink-2); }
 .login-input {
   min-height: var(--tap-min); padding: 0 var(--s-3);
-  border: 1px solid var(--c-line); border-radius: var(--radius);
-  font-size: var(--text-base); background: var(--c-surface);
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  font-size: var(--text-base); background: var(--color-bg);
+}
+.login-input:focus {
+  outline: none; border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+.login-activate-entry { margin-top: var(--s-3); }
+.login-activate-hint {
+  text-align: center; margin-top: var(--s-3);
+  color: var(--color-text-faint); font-size: var(--text-2xs);
 }
 .login-error { color: var(--c-accent); font-size: var(--text-xs); margin: 0; }
 /* F-102 cooldown. Warn, not error — the system is working; you are waiting. */
@@ -732,69 +815,68 @@ textarea:focus {
    at normal tracking. Every .section-heading in the app is an <h2>. */
 h2.section-heading { letter-spacing: normal; }
 
-/* Hero: greeting + today. Uses a subtle primary tint so it reads as a
-   different plane without a heavy gradient (compositing budget). */
+/* Ata Ekta LMS teacher-home layout: plain hero (no chrome), white cards
+   with a hairline border, glyphs in tinted soft squares. */
 .hero {
-  /* The design system spends accent on actions, not on surfaces. A
-     full-bleed accent hero was fine under the old muted green; at #dd2b0f
-     it dominates a screen whose actual job is the three suggestion cards
-     below it. Neutral ground, accent kept for the kicker. */
-  margin: var(--s-4);
-  padding: var(--s-4);
-  background: var(--c-surface);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
-  color: var(--c-ink);
+  margin: 0;
+  padding: var(--s-5) var(--s-4) var(--s-3);
+  background: transparent;
+  border: 0;
+  color: var(--color-text);
 }
-/* h6-style kicker from the design system: small, tracked, accent — but
-   tracking only where the text is Latin, never on Bangla conjuncts. */
-.hero-date { margin: 0; font-size: var(--text-2xs); font-weight: 600; color: var(--c-link); }
-.hero-greet { margin: var(--s-1) 0; font-size: var(--text-xl); font-weight: 700; line-height: 1.3; font-family: var(--font-heading); }
-.hero-sub { margin: 0; font-size: var(--text-xs); color: var(--c-ink-2); }
+.hero-date { margin: 0 0 4px; font-size: var(--text-2xs); font-weight: 500; color: var(--color-text-muted); }
+.hero-greet { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.25; font-family: var(--font-heading); color: var(--color-text); }
+.hero-sub { margin: 4px 0 0; font-size: var(--text-2xs); color: var(--color-text-muted); }
 
-/* Card is the base surface for tappable items and grouped forms. */
+/* Card — white base with hairline border, small resting shadow. */
 .card {
-  background: var(--c-surface);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Home tiles ------------------------------------------------------------- */
 .card-grid {
-  display: grid; gap: var(--s-3);
+  display: grid; gap: 10px;
   padding: 0 var(--s-4);
 }
 .primary-grid { grid-template-columns: 1fr 1fr; }
 .secondary-grid { grid-template-columns: repeat(2, 1fr); }
 .home-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-2);
-  min-height: 96px; padding: var(--s-3);
-  background: var(--c-surface);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
+  min-height: 96px; padding: var(--s-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
   text-align: left; font: inherit; color: inherit; cursor: pointer;
-  transition: transform 80ms ease-out, box-shadow 80ms ease-out;
+  transition: transform 80ms ease-out, box-shadow 80ms ease-out, border-color 120ms ease-out;
 }
-.home-card:active { transform: scale(0.98); box-shadow: var(--shadow-2); }
+.home-card:hover { border-color: var(--color-border-strong); }
+.home-card:active { transform: scale(0.98); }
 .home-card-primary {
   min-height: 128px;
-  background: var(--c-primary-soft);
+  background: var(--color-primary-soft);
   border-color: transparent;
 }
 .home-glyph {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; border-radius: var(--radius);
-  background: var(--c-surface-3);
-  font-size: var(--text-xl); line-height: 1;
+  width: 34px; height: 34px; border-radius: 10px;
+  background: var(--color-primary-soft); color: var(--color-primary);
+  font-size: var(--text-lg); line-height: 1;
 }
+/* Rotate through the design's accent tints so the grid reads as a set of
+   distinct actions, not four copies of the same tile. */
+.secondary-grid .home-card:nth-child(4n+2) .home-glyph { background: var(--color-info-soft);     color: var(--color-info); }
+.secondary-grid .home-card:nth-child(4n+3) .home-glyph { background: var(--color-accent-2-soft); color: var(--color-accent-2); }
+.secondary-grid .home-card:nth-child(4n)   .home-glyph { background: var(--color-warning-soft);  color: var(--color-warning); }
 .home-card-primary .home-glyph {
-  background: var(--c-surface); color: var(--c-primary-text);
+  background: var(--color-bg); color: var(--color-primary);
 }
 .home-body { display: flex; flex-direction: column; gap: 2px; }
-.home-title { font-weight: 600; font-size: var(--text-sm); color: var(--c-ink); }
-.home-sub { font-size: var(--text-2xs); color: var(--c-ink-2); line-height: 1.4; }
+.home-title { font-weight: 600; font-size: var(--text-sm); color: var(--color-text); }
+.home-sub { font-size: var(--text-2xs); color: var(--color-text-muted); line-height: 1.4; }
 
 /* Form fields (used on the scripts capture card) ------------------------ */
 .card-form { margin: var(--s-3) var(--s-4); padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }

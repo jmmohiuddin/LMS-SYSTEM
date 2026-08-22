@@ -1,0 +1,29 @@
+<!-- @dsCard group="Components" viewport="700x220" subtitle="Primary, secondary, success, danger, ghost" name="Buttons" -->
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<div id="root" style="padding:24px;background:var(--color-bg)"></div>
+<script type="text/babel">
+const VARIANTS = {
+  primary: { bg: 'var(--color-primary)', fg: 'var(--color-text-on-primary)' },
+  secondary: { bg: 'var(--color-bg)', fg: 'var(--color-text)', border: 'var(--color-border-strong)' },
+  success: { bg: 'var(--color-success)', fg: '#fff' },
+  danger: { bg: 'var(--color-danger)', fg: '#fff' },
+  ghost: { bg: 'transparent', fg: 'var(--color-primary)' },
+};
+function Btn({ variant, children }) {
+  const v = VARIANTS[variant];
+  return <button style={{height:44,padding:'0 20px',borderRadius:'var(--radius-md)',border:v.border?`1px solid ${v.border}`:'none',background:v.bg,color:v.fg,fontFamily:'var(--font-bn)',fontSize:14,fontWeight:600,boxShadow:variant==='primary'?'var(--shadow-sm)':'none'}}>{children}</button>;
+}
+function Demo(){
+  return <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center'}}>
+    <Btn variant="primary">উপস্থিতি সংরক্ষণ</Btn>
+    <Btn variant="secondary">বাতিল করুন</Btn>
+    <Btn variant="success">সব উপস্থিত</Btn>
+    <Btn variant="danger">মুছে ফেলুন</Btn>
+    <Btn variant="ghost">সব দেখুন</Btn>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script>

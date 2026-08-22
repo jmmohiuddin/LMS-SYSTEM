@@ -1,0 +1,7 @@
+:root {
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --tap-min: 48px; /* accessibility floor for tap targets */
+}

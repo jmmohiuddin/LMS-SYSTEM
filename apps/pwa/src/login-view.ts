@@ -85,8 +85,27 @@ export class LoginView {
     const wrap = d.createElement('div');
     wrap.className = 'login-wrap';
 
+    // Ata Ekta LMS brand-mark: 56px rounded red square with "শি" glyph,
+    // brand name below, tagline under it. Matches ui_kits/lms/index.html
+    // login screen exactly.
+    const brand = d.createElement('div');
+    brand.className = 'login-brand';
+    const mark = d.createElement('div');
+    mark.className = 'login-brandmark';
+    mark.textContent = 'শি';
+    const brandName = d.createElement('div');
+    brandName.className = 'login-brandname';
+    brandName.textContent = 'ShikhonBD';
+    const tagline = d.createElement('div');
+    tagline.className = 'login-tagline';
+    tagline.textContent = 'আপনার শিক্ষা প্রতিষ্ঠানের ডিজিটাল প্ল্যাটফর্ম';
+    brand.append(mark, brandName, tagline);
+
+    // Kept for a11y and page title, but hidden — brand element above
+    // carries the visible headline now.
     const h1 = d.createElement('h1');
     h1.textContent = 'শিখন';
+    h1.className = 'visually-hidden';
 
     if (LOGIN_DISABLED && this.step !== 'activate') {
       // F-202. The OTP kill switch used to be a dead end; now it is a
@@ -103,7 +122,7 @@ export class LoginView {
       const hint = d.createElement('p');
       hint.className = 'att-sub login-activate-hint';
       hint.textContent = 'কোড পাবেন আপনার শ্রেণিশিক্ষক বা অফিস থেকে।';
-      wrap.append(h1, notice, enter, hint);
+      wrap.append(h1, brand, notice, enter, hint);
       root.append(wrap);
       return;
     }
@@ -219,7 +238,7 @@ export class LoginView {
     this.submitEl = submit;
     form.append(submit);
 
-    wrap.append(h1, sub, this.errorEl, this.cooldownEl, form);
+    wrap.append(h1, brand, sub, this.errorEl, this.cooldownEl, form);
     root.append(wrap);
     this.paintCooldown();
   }

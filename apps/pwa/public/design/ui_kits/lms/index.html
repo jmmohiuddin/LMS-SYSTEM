@@ -1,0 +1,714 @@
+<!-- @dsCard group="LMS" viewport="1440x960" subtitle="Login, teacher home, attendance, students, marks, guardian dashboard, desktop shell" name="ShikhonBD screens" -->
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<title>Ata Ekta LMS — UI Kit</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--color-surface);font-family:var(--font-bn);color:var(--color-text)}
+  .switcher{display:flex;gap:4px;padding:14px 20px;background:var(--color-bg);border-bottom:1px solid var(--color-border);overflow-x:auto;position:sticky;top:0;z-index:10}
+  .switcher button{flex:none;border:none;background:var(--color-surface-muted);color:var(--color-text-muted);font-family:var(--font-bn);font-size:13px;font-weight:600;padding:9px 16px;border-radius:var(--radius-pill);cursor:pointer;white-space:nowrap}
+  .switcher button.active{background:var(--color-primary);color:#fff}
+  .stage{padding:36px 20px;display:flex;justify-content:flex-start;overflow-x:auto}
+  .screen{display:none}
+  .screen.active{display:block}
+  .phone{width:390px;background:var(--color-bg);border-radius:36px;box-shadow:var(--shadow-lg);overflow:hidden;border:8px solid #111827;display:flex;flex-direction:column;height:800px}
+  .phone-body{flex:1;overflow-y:auto;background:var(--color-bg)}
+  a{color:var(--color-primary)}
+  .hero{padding:20px 18px 14px}
+  .hero-date{font-size:12px;color:var(--color-text-muted);margin:0 0 4px}
+  .hero-greet{font-size:22px;font-weight:700;margin:0}
+  .hero-sub{font-size:13px;color:var(--color-text-muted);margin:4px 0 0}
+  .section-title{font-size:15px;font-weight:600;margin:22px 18px 10px;display:flex;justify-content:space-between;align-items:center}
+  .section-title a{font-size:12.5px;font-weight:600;text-decoration:none}
+  .card{background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:48px;padding:0 20px;border-radius:var(--radius-md);font-family:var(--font-bn);font-size:14px;font-weight:600;border:none;cursor:pointer}
+  .btn-primary{background:var(--color-primary);color:#fff;box-shadow:var(--shadow-sm)}
+  .btn-secondary{background:var(--color-bg);color:var(--color-text);border:1px solid var(--color-border-strong)}
+  .btn-success{background:var(--color-success);color:#fff}
+  .bottomnav{display:flex;border-top:1px solid var(--color-border);background:var(--color-bg)}
+  .bottomnav .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 2px;font-size:10.5px;color:var(--color-text-muted)}
+  .bottomnav .tab.active{color:var(--color-primary);font-weight:600}
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:600}
+  .quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 18px}
+  .quick{display:flex;flex-direction:column;gap:8px;align-items:flex-start;padding:16px;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-bg)}
+  .quick .icon{width:34px;height:34px;border-radius:10px;align-items:center;justify-content:center;display:flex}
+  .quick span.label{font-size:13px;font-weight:600}
+  .day-tab{flex:none;border:none;background:var(--color-surface-muted);color:var(--color-text-muted);font-family:var(--font-bn);font-size:12.5px;font-weight:600;padding:7px 14px;border-radius:var(--radius-pill);cursor:pointer}
+  .day-tab.active{background:var(--color-primary);color:#fff}
+  .morerow{display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--color-border);cursor:pointer}
+  .stat3{display:flex;gap:10px}
+  .stat3>div{flex:1;text-align:center;padding:14px 8px}
+  .dnav{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-md);text-decoration:none;font-size:13.5px;color:var(--color-text);font-weight:500;background:transparent;cursor:pointer}
+  .dnav.active{color:var(--color-primary);background:var(--color-primary-soft);font-weight:600}
+  .dpage{display:none}
+  .dpage.active{display:block}
+  table.dtable{width:100%;border-collapse:collapse;font-size:13.5px}
+  table.dtable th{text-align:left;padding:10px 12px;font-size:11.5px;color:var(--color-text-muted);border-bottom:1px solid var(--color-border);font-weight:600}
+  table.dtable td{padding:11px 12px;border-bottom:1px solid var(--color-border)}
+  table.dtable tr:last-child td{border-bottom:none}
+</style>
+</head>
+<body>
+
+<div class="switcher" id="switcher">
+  <button data-s="login" class="active">লগইন</button>
+  <button data-s="teacher-home">শিক্ষক হোম</button>
+  <button data-s="attendance">উপস্থিতি (মোবাইল)</button>
+  <button data-s="students">শিক্ষার্থী তালিকা (মোবাইল)</button>
+  <button data-s="guardian">অভিভাবক ড্যাশবোর্ড</button>
+  <button data-s="guardian-attendance">অভিভাবক · উপস্থিতি</button>
+  <button data-s="guardian-results">অভিভাবক · ফলাফল</button>
+  <button data-s="guardian-fees">অভিভাবক · ফি</button>
+  <button data-s="guardian-more">অভিভাবক · আরও</button>
+  <button data-s="teacher-routine">শিক্ষক · রুটিন</button>
+  <button data-s="teacher-more">শিক্ষক · আরও</button>
+  <button data-s="desktop">ডেস্কটপ (অধ্যক্ষ)</button>
+  <button data-s="marks">নম্বর প্রদান</button>
+</div>
+
+<div class="stage">
+
+  <!-- LOGIN -->
+  <div class="screen active" id="s-login">
+    <div class="phone">
+      <div class="phone-body" style="display:flex;flex-direction:column;justify-content:center;padding:32px 28px;height:100%">
+        <div style="text-align:center;margin-bottom:36px">
+          <div style="width:56px;height:56px;border-radius:16px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px;margin:0 auto 14px">শি</div>
+          <div style="font-size:20px;font-weight:700">ShikhonBD</div>
+          <div style="font-size:13px;color:var(--color-text-muted);margin-top:6px">আপনার শিক্ষা প্রতিষ্ঠানের ডিজিটাল প্ল্যাটফর্ম</div>
+        </div>
+        <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500;margin-bottom:14px">ফোন নম্বর
+          <input type="tel" placeholder="01xxxxxxxxx" style="height:48px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 14px;font-size:14px;font-family:inherit">
+        </label>
+        <button class="btn btn-primary" style="width:100%">ওটিপি পাঠান</button>
+        <div style="text-align:center;margin-top:18px;font-size:12px;color:var(--color-text-faint)">ডেমো মোডে প্রবেশ করুন</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEACHER HOME -->
+  <div class="screen" id="s-teacher-home">
+    <div class="phone">
+      <div class="phone-body">
+        <div class="hero">
+          <p class="hero-date">মঙ্গলবার, ২০ মে</p>
+          <h1 class="hero-greet">শুভ সকাল, রহিম উদ্দিন 👋</h1>
+          <p class="hero-sub">আজ কী করতে চান?</p>
+        </div>
+        <div style="margin:0 18px" class="card">
+          <div style="padding:14px 16px">
+            <div style="font-size:13px;font-weight:600;color:var(--color-text-muted);margin-bottom:10px">আজকের ক্লাস · ৬ষ্ঠ শ্রেণি - এ</div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;justify-content:space-between;font-size:13.5px"><span style="color:var(--color-text-muted)">০৮:৩০ AM</span><span style="font-weight:500">গণিত</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:13.5px"><span style="color:var(--color-text-muted)">১০:০০ AM</span><span style="font-weight:500">ইংরেজি</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:13.5px"><span style="color:var(--color-text-muted)">১২:০০ PM</span><span style="font-weight:500">বিজ্ঞান</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="section-title">দ্রুত প্রবেশ</div>
+        <div class="quick-grid">
+          <div class="quick"><span class="icon" style="background:var(--color-primary-soft);color:var(--color-primary)"><i data-lucide="calendar-check"></i></span><span class="label">উপস্থিতি নিন</span></div>
+          <div class="quick"><span class="icon" style="background:var(--color-info-soft);color:var(--color-info)"><i data-lucide="bar-chart-3"></i></span><span class="label">নম্বর দিন</span></div>
+          <div class="quick"><span class="icon" style="background:var(--color-accent-2-soft);color:var(--color-accent-2)"><i data-lucide="calendar-days"></i></span><span class="label">রুটিন দেখুন</span></div>
+          <div class="quick"><span class="icon" style="background:var(--color-warning-soft);color:var(--color-warning)"><i data-lucide="users"></i></span><span class="label">শিক্ষার্থী</span></div>
+        </div>
+        <div class="section-title">সাম্প্রতিক নোটিশ <a href="#">সব দেখুন</a></div>
+        <div style="margin:0 18px 20px" class="card">
+          <div style="padding:0 16px">
+            <div style="padding:12px 0;border-bottom:1px solid var(--color-border);font-size:13.5px">আগামীকাল স্কুল ছুটি ঘোষণা করা হয়েছে।</div>
+            <div style="padding:12px 0;font-size:13.5px">অভিভাবক সমাবেশ ২৪ মে সকাল ১০টায়।</div>
+          </div>
+        </div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab active" data-jump="teacher-home"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="students"><i data-lucide="users" style="width:20px;height:20px"></i>শিক্ষার্থী</div>
+        <div class="tab" data-jump="teacher-routine"><i data-lucide="calendar-days" style="width:20px;height:20px"></i>রুটিন</div>
+        <div class="tab" data-jump="teacher-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ATTENDANCE (mobile) -->
+  <div class="screen" id="s-attendance">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 8px">
+          <div style="font-size:17px;font-weight:700">উপস্থিতি নিন</div>
+          <div style="font-size:12.5px;color:var(--color-text-muted);margin-top:2px">৬ষ্ঠ শ্রেণি - এ · ২০ মে, ২০২৬</div>
+        </div>
+        <div style="padding:0 18px 10px"><button class="btn btn-success" style="width:100%">সব উপস্থিত হিসেবে চিহ্নিত করুন</button></div>
+        <div id="attendance-rows"></div>
+      </div>
+      <div style="padding:12px 18px;border-top:1px solid var(--color-border)">
+        <button class="btn btn-primary" style="width:100%">উপস্থিতি সংরক্ষণ করুন</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STUDENTS LIST (mobile) -->
+  <div class="screen" id="s-students">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">শিক্ষার্থী</div></div>
+        <div style="padding:0 18px 12px;display:flex;gap:8px">
+          <div style="flex:1;display:flex;align-items:center;gap:8px;height:44px;padding:0 12px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface)">
+            <i data-lucide="search" style="width:16px;height:16px;color:var(--color-text-muted)"></i>
+            <span style="font-size:13.5px;color:var(--color-text-muted)">শিক্ষার্থী খুঁজুন...</span>
+          </div>
+          <button style="width:44px;height:44px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);background:var(--color-bg);display:flex;align-items:center;justify-content:center"><i data-lucide="sliders-horizontal" style="width:17px;height:17px"></i></button>
+        </div>
+        <div style="padding:0 18px" id="students-rows"></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="teacher-home"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab active" data-jump="students"><i data-lucide="users" style="width:20px;height:20px"></i>শিক্ষার্থী</div>
+        <div class="tab" data-jump="teacher-routine"><i data-lucide="calendar-days" style="width:20px;height:20px"></i>রুটিন</div>
+        <div class="tab" data-jump="teacher-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUARDIAN DASHBOARD -->
+  <div class="screen" id="s-guardian">
+    <div class="phone">
+      <div class="phone-body">
+        <div class="hero">
+          <p class="hero-date">মঙ্গলবার, ২০ মে</p>
+          <h1 class="hero-greet" style="font-size:19px">শুভ সকাল, আসমা বেগম 👋</h1>
+        </div>
+        <div style="margin:0 18px" class="card">
+          <div style="padding:16px;display:flex;gap:12px;align-items:center">
+            <div style="width:48px;height:48px;border-radius:50%;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px">আ</div>
+            <div><div style="font-size:16px;font-weight:700">আরাফাত রহমান</div><div style="font-size:12.5px;color:var(--color-text-muted);margin-top:2px">৮ম শ্রেণি · সেকশন এ · রোল ১২</div></div>
+          </div>
+        </div>
+        <div class="section-title">আজকের উপস্থিতি</div>
+        <div style="margin:0 18px" class="card"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:14px;font-weight:500">উপস্থিতির অবস্থা</span>
+          <span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink)">✓ উপস্থিত</span>
+        </div></div>
+        <div class="section-title">সামগ্রিক উপস্থিতি</div>
+        <div style="margin:0 18px" class="card"><div style="padding:18px;text-align:center">
+          <div style="font-size:32px;font-weight:700;color:var(--color-primary)">৯৬%</div>
+          <div style="font-size:12.5px;color:var(--color-text-muted);margin-top:2px">এই বছরের সামগ্রিক উপস্থিতি</div>
+        </div></div>
+        <div class="section-title">সাম্প্রতিক ফলাফল <a href="#">সব দেখুন</a></div>
+        <div style="margin:0 18px" class="card"><div style="padding:6px 16px">
+          <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13.5px"><span>গণিত</span><span style="font-weight:600">৮২</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13.5px"><span>ইংরেজি</span><span style="font-weight:600">৭৬</span></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:13.5px"><span>বিজ্ঞান</span><span style="font-weight:600">৮৮</span></div>
+        </div></div>
+        <div class="section-title">ফি এর অবস্থা</div>
+        <div style="margin:0 18px" class="card"><div style="padding:16px;display:flex;justify-content:space-between;align-items:center">
+          <div><div style="font-size:14px;font-weight:500">জানুয়ারি মাসের ফি</div></div>
+          <span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink)">পরিশোধিত ✓</span>
+        </div></div>
+        <div class="section-title">গুরুত্বপূর্ণ নোটিশ</div>
+        <div style="margin:0 18px 22px" class="card"><div style="padding:16px;font-size:13.5px">বৃহস্পতিবার অভিভাবক সমাবেশ অনুষ্ঠিত হবে।</div></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab active" data-jump="guardian"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="guardian-attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="guardian-results"><i data-lucide="bar-chart-3" style="width:20px;height:20px"></i>ফলাফল</div>
+        <div class="tab" data-jump="guardian-fees"><i data-lucide="wallet" style="width:20px;height:20px"></i>ফি</div>
+        <div class="tab" data-jump="guardian-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEACHER ROUTINE (mobile) -->
+  <div class="screen" id="s-teacher-routine">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">আমার রুটিন</div></div>
+        <div style="display:flex;gap:6px;padding:0 18px 14px;overflow-x:auto">
+          <button class="day-tab" data-d="rob">রবি</button>
+          <button class="day-tab" data-d="som">সোম</button>
+          <button class="day-tab active" data-d="mongol">মঙ্গল</button>
+          <button class="day-tab" data-d="budh">বুধ</button>
+          <button class="day-tab" data-d="brihospoti">বৃহঃ</button>
+        </div>
+        <div style="padding:0 18px" id="routine-rows"></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="teacher-home"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="students"><i data-lucide="users" style="width:20px;height:20px"></i>শিক্ষার্থী</div>
+        <div class="tab active" data-jump="teacher-routine"><i data-lucide="calendar-days" style="width:20px;height:20px"></i>রুটিন</div>
+        <div class="tab" data-jump="teacher-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEACHER MORE (mobile) -->
+  <div class="screen" id="s-teacher-more">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">আরও</div></div>
+        <div style="padding:0 18px" id="teacher-more-rows"></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="teacher-home"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="students"><i data-lucide="users" style="width:20px;height:20px"></i>শিক্ষার্থী</div>
+        <div class="tab" data-jump="teacher-routine"><i data-lucide="calendar-days" style="width:20px;height:20px"></i>রুটিন</div>
+        <div class="tab active" data-jump="teacher-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUARDIAN ATTENDANCE (mobile) -->
+  <div class="screen" id="s-guardian-attendance">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">উপস্থিতি</div></div>
+        <div style="margin:0 18px" class="card"><div style="padding:18px;text-align:center">
+          <div style="font-size:32px;font-weight:700;color:var(--color-primary)">৯৬%</div>
+          <div style="font-size:12.5px;color:var(--color-text-muted);margin-top:2px">এই বছরের সামগ্রিক উপস্থিতি</div>
+        </div></div>
+        <div class="section-title">সাম্প্রতিক উপস্থিতি</div>
+        <div style="margin:0 18px 20px" class="card"><div style="padding:0 16px" id="guardian-att-rows"></div></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="guardian"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab active" data-jump="guardian-attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="guardian-results"><i data-lucide="bar-chart-3" style="width:20px;height:20px"></i>ফলাফল</div>
+        <div class="tab" data-jump="guardian-fees"><i data-lucide="wallet" style="width:20px;height:20px"></i>ফি</div>
+        <div class="tab" data-jump="guardian-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUARDIAN RESULTS (mobile) -->
+  <div class="screen" id="s-guardian-results">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">ফলাফল</div></div>
+        <div style="padding:0 18px 12px">
+          <select style="height:44px;width:100%;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 12px;font-family:inherit;font-size:13.5px"><option>অর্ধবার্ষিক পরীক্ষা - ২০২৬</option></select>
+        </div>
+        <div style="margin:0 18px" class="card"><div style="padding:6px 16px" id="guardian-result-rows"></div></div>
+        <div style="margin:16px 18px 20px" class="card"><div style="padding:18px;text-align:center">
+          <div style="font-size:28px;font-weight:700;color:var(--color-primary)">GPA ৪.৭৫</div>
+        </div></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="guardian"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="guardian-attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab active" data-jump="guardian-results"><i data-lucide="bar-chart-3" style="width:20px;height:20px"></i>ফলাফল</div>
+        <div class="tab" data-jump="guardian-fees"><i data-lucide="wallet" style="width:20px;height:20px"></i>ফি</div>
+        <div class="tab" data-jump="guardian-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUARDIAN FEES (mobile) -->
+  <div class="screen" id="s-guardian-fees">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">ফি</div></div>
+        <div style="margin:0 18px" class="card"><div class="stat3">
+          <div><div style="font-size:11.5px;color:var(--color-text-muted)">মোট বকেয়া</div><div style="font-size:17px;font-weight:700;margin-top:2px">৳ ২,৫০০</div></div>
+          <div style="border-left:1px solid var(--color-border)"><div style="font-size:11.5px;color:var(--color-text-muted)">পরিশোধিত</div><div style="font-size:17px;font-weight:700;margin-top:2px;color:var(--color-success)">৳ ২,০০০</div></div>
+          <div style="border-left:1px solid var(--color-border)"><div style="font-size:11.5px;color:var(--color-text-muted)">বাকি</div><div style="font-size:17px;font-weight:700;margin-top:2px;color:var(--color-danger)">৳ ৫০০</div></div>
+        </div></div>
+        <div style="padding:14px 18px"><button class="btn btn-primary" style="width:100%">এখনই পরিশোধ করুন</button></div>
+        <div style="padding:0 18px 6px;display:flex;gap:8px">
+          <span class="badge" style="background:var(--color-surface-muted);color:var(--color-text)">bKash</span>
+          <span class="badge" style="background:var(--color-surface-muted);color:var(--color-text)">Nagad</span>
+          <span class="badge" style="background:var(--color-surface-muted);color:var(--color-text)">Rocket</span>
+        </div>
+        <div class="section-title">পূর্ববর্তী পরিশোধ</div>
+        <div style="margin:0 18px 20px" class="card"><div style="padding:0 16px" id="guardian-fee-rows"></div></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="guardian"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="guardian-attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="guardian-results"><i data-lucide="bar-chart-3" style="width:20px;height:20px"></i>ফলাফল</div>
+        <div class="tab active" data-jump="guardian-fees"><i data-lucide="wallet" style="width:20px;height:20px"></i>ফি</div>
+        <div class="tab" data-jump="guardian-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUARDIAN MORE (mobile) -->
+  <div class="screen" id="s-guardian-more">
+    <div class="phone">
+      <div class="phone-body">
+        <div style="padding:16px 18px 10px"><div style="font-size:17px;font-weight:700">আরও</div></div>
+        <div style="padding:0 18px" id="guardian-more-rows"></div>
+      </div>
+      <div class="bottomnav">
+        <div class="tab" data-jump="guardian"><i data-lucide="home" style="width:20px;height:20px"></i>হোম</div>
+        <div class="tab" data-jump="guardian-attendance"><i data-lucide="calendar-check" style="width:20px;height:20px"></i>উপস্থিতি</div>
+        <div class="tab" data-jump="guardian-results"><i data-lucide="bar-chart-3" style="width:20px;height:20px"></i>ফলাফল</div>
+        <div class="tab" data-jump="guardian-fees"><i data-lucide="wallet" style="width:20px;height:20px"></i>ফি</div>
+        <div class="tab active" data-jump="guardian-more"><i data-lucide="more-horizontal" style="width:20px;height:20px"></i>আরও</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DESKTOP (PRINCIPAL) -->
+  <div class="screen" id="s-desktop">
+    <div style="width:1240px;background:var(--color-bg);border-radius:20px;box-shadow:var(--shadow-lg);overflow:hidden;display:flex;height:760px">
+      <nav style="width:224px;background:var(--color-surface);border-right:1px solid var(--color-border);padding:18px 14px;display:flex;flex-direction:column;gap:2px;flex:none">
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 10px 18px;font-weight:700;font-size:16px">
+          <span style="width:26px;height:26px;border-radius:8px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">শি</span>
+          ShikhonBD
+        </div>
+        <a class="dnav active" data-page="dashboard" data-i="layout-dashboard">ড্যাশবোর্ড</a>
+        <a class="dnav" data-page="attendance" data-i="calendar-check">উপস্থিতি</a>
+        <a class="dnav" data-page="academic" data-i="book-open">একাডেমিক</a>
+        <a class="dnav" data-page="teachers" data-i="graduation-cap">শিক্ষক</a>
+        <a class="dnav" data-page="students" data-i="users">শিক্ষার্থী</a>
+        <a class="dnav" data-page="results" data-i="award">ফলাফল</a>
+        <a class="dnav" data-page="finance" data-i="wallet">ফাইন্যান্স</a>
+        <a class="dnav" data-page="reports" data-i="file-bar-chart">রিপোর্ট</a>
+        <a class="dnav" data-page="settings" data-i="settings">সেটিংস</a>
+      </nav>
+      <div style="flex:1;overflow-y:auto;padding:26px 30px;background:var(--color-bg)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px">
+          <div><div style="font-size:22px;font-weight:700">স্বাগতম, ফারুক আহমেদ 👋</div><div style="font-size:13px;color:var(--color-text-muted);margin-top:4px">২০ মে, ২০২৬ · মঙ্গলবার</div></div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <div style="width:38px;height:38px;border-radius:50%;background:var(--color-surface-muted);display:flex;align-items:center;justify-content:center"><i data-lucide="bell" style="width:17px;height:17px"></i></div>
+            <div style="width:38px;height:38px;border-radius:50%;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600">ফ</div>
+          </div>
+        </div>
+
+        <div class="dpage active" id="dpage-dashboard">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:26px">
+            <div class="card" style="padding:16px;display:flex;gap:12px;align-items:center"><span style="width:40px;height:40px;border-radius:10px;background:var(--color-info-soft);color:var(--color-info);display:flex;align-items:center;justify-content:center"><i data-lucide="users"></i></span><div><div style="font-size:12px;color:var(--color-text-muted)">মোট শিক্ষার্থী</div><div style="font-size:19px;font-weight:700">২৮৬ জন</div></div></div>
+            <div class="card" style="padding:16px;display:flex;gap:12px;align-items:center"><span style="width:40px;height:40px;border-radius:10px;background:var(--color-success-soft);color:var(--color-success);display:flex;align-items:center;justify-content:center"><i data-lucide="calendar-check"></i></span><div><div style="font-size:12px;color:var(--color-text-muted)">আজকের উপস্থিতি</div><div style="font-size:19px;font-weight:700">২৪৮ জন</div></div></div>
+            <div class="card" style="padding:16px;display:flex;gap:12px;align-items:center"><span style="width:40px;height:40px;border-radius:10px;background:var(--color-warning-soft);color:var(--color-warning);display:flex;align-items:center;justify-content:center"><i data-lucide="calendar-days"></i></span><div><div style="font-size:12px;color:var(--color-text-muted)">আজকের ক্লাস</div><div style="font-size:19px;font-weight:700">৫ টি</div></div></div>
+            <div class="card" style="padding:16px;display:flex;gap:12px;align-items:center"><span style="width:40px;height:40px;border-radius:10px;background:var(--color-accent-2-soft);color:var(--color-accent-2);display:flex;align-items:center;justify-content:center"><i data-lucide="file-check-2"></i></span><div><div style="font-size:12px;color:var(--color-text-muted)">অ্যাসাইনমেন্ট</div><div style="font-size:19px;font-weight:700">৩ টি</div></div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:18px">
+            <div class="card" style="padding:18px">
+              <div style="display:flex;justify-content:space-between;margin-bottom:12px"><span style="font-weight:600;font-size:15px">আজকের ক্লাস</span><a href="#" style="font-size:12.5px;font-weight:600;text-decoration:none">সব দেখুন</a></div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13.5px"><span style="color:var(--color-text-muted);width:90px">০৮:০০ AM</span><span style="flex:1">৬ষ্ঠ শ্রেণি - এ · গণিত</span></div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13.5px"><span style="color:var(--color-text-muted);width:90px">১০:০০ AM</span><span style="flex:1">৬ষ্ঠ শ্রেণি - এ · ইংরেজি</span></div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:13.5px"><span style="color:var(--color-text-muted);width:90px">০২:০০ PM</span><span style="flex:1">৭ম শ্রেণি - বি · বাংলা</span></div>
+              </div>
+            </div>
+            <div class="card" style="padding:18px">
+              <div style="font-weight:600;font-size:15px;margin-bottom:12px">সাম্প্রতিক নোটিশ</div>
+              <div style="display:flex;flex-direction:column;gap:12px;font-size:13px">
+                <div style="padding-bottom:12px;border-bottom:1px solid var(--color-border)">আগামীকাল স্কুল ছুটি ঘোষণা করা হয়েছে।<div style="color:var(--color-text-faint);font-size:11.5px;margin-top:4px">১৯ মে, ২০২৬</div></div>
+                <div>বার্ষিক পরীক্ষা ১ জুন থেকে শুরু হবে।<div style="color:var(--color-text-faint);font-size:11.5px;margin-top:4px">১৭ মে, ২০২৬</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dpage" id="dpage-attendance">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <div style="font-weight:600;font-size:15px">উপস্থিতি ব্যবস্থাপনা</div>
+            <div style="display:flex;gap:8px">
+              <select style="height:38px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 10px;font-family:inherit;font-size:13px"><option>৬ষ্ঠ শ্রেণি - এ</option></select>
+              <button class="btn btn-success" style="height:38px;padding:0 14px;font-size:13px">সব উপস্থিত</button>
+              <button class="btn btn-primary" style="height:38px;padding:0 14px;font-size:13px">সংরক্ষণ করুন</button>
+            </div>
+          </div>
+          <div class="card"><div style="padding:0 18px" id="desk-attendance-rows"></div></div>
+        </div>
+
+        <div class="dpage" id="dpage-academic">
+          <div style="font-weight:600;font-size:15px;margin-bottom:14px">শ্রেণি ও বিষয়</div>
+          <div class="card"><table class="dtable">
+            <thead><tr><th>শ্রেণি</th><th>সেকশন</th><th>বিষয় সংখ্যা</th><th>শ্রেণি শিক্ষক</th></tr></thead>
+            <tbody>
+              <tr><td>৬ষ্ঠ শ্রেণি</td><td>২ টি (এ, বি)</td><td>১০</td><td>রহিম উদ্দিন</td></tr>
+              <tr><td>৭ম শ্রেণি</td><td>২ টি (এ, বি)</td><td>১০</td><td>সেলিনা আক্তার</td></tr>
+              <tr><td>৮ম শ্রেণি</td><td>২ টি (এ, বি)</td><td>১১</td><td>ফারুক হোসেন</td></tr>
+              <tr><td>৯ম শ্রেণি</td><td>২ টি (বিজ্ঞান, মানবিক)</td><td>১২</td><td>নাসরিন সুলতানা</td></tr>
+              <tr><td>১০ম শ্রেণি</td><td>২ টি (বিজ্ঞান, মানবিক)</td><td>১২</td><td>কামরুল ইসলাম</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="dpage" id="dpage-teachers">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-weight:600;font-size:15px">শিক্ষকবৃন্দ</div><button class="btn btn-primary" style="height:38px;padding:0 14px;font-size:13px">নতুন শিক্ষক যোগ করুন</button></div>
+          <div class="card"><table class="dtable">
+            <thead><tr><th>নাম</th><th>বিষয়</th><th>ফোন</th><th>নিয়োজিত শ্রেণি</th></tr></thead>
+            <tbody>
+              <tr><td>রহিম উদ্দিন</td><td>গণিত</td><td>০১৭xxxxxxxx</td><td>৬ষ্ঠ - এ, ৭ম - বি</td></tr>
+              <tr><td>সেলিনা আক্তার</td><td>ইংরেজি</td><td>০১৮xxxxxxxx</td><td>৭ম - এ, ৮ম - এ</td></tr>
+              <tr><td>ফারুক হোসেন</td><td>বিজ্ঞান</td><td>০১৯xxxxxxxx</td><td>৮ম - বি, ৯ম - বিজ্ঞান</td></tr>
+              <tr><td>নাসরিন সুলতানা</td><td>বাংলা</td><td>০১৬xxxxxxxx</td><td>৯ম - মানবিক, ১০ম - এ</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="dpage" id="dpage-students">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div style="font-weight:600;font-size:15px">শিক্ষার্থী তালিকা</div>
+            <div style="display:flex;gap:8px;align-items:center;height:38px;padding:0 12px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);width:220px">
+              <i data-lucide="search" style="width:15px;height:15px;color:var(--color-text-muted)"></i>
+              <span style="font-size:13px;color:var(--color-text-muted)">শিক্ষার্থী খুঁজুন...</span>
+            </div>
+          </div>
+          <div class="card"><table class="dtable">
+            <thead><tr><th>রোল</th><th>নাম</th><th>শ্রেণি</th><th>সেকশন</th><th>অভিভাবকের ফোন</th></tr></thead>
+            <tbody>
+              <tr><td>১</td><td>সাদিয়া ইসলাম</td><td>৮ম শ্রেণি</td><td>এ</td><td>০১৭xxxxxxxx</td></tr>
+              <tr><td>২</td><td>আরিফ রহমান</td><td>৮ম শ্রেণি</td><td>এ</td><td>০১৮xxxxxxxx</td></tr>
+              <tr><td>৩</td><td>ফারিয়া আক্তার</td><td>৮ম শ্রেণি</td><td>এ</td><td>০১৯xxxxxxxx</td></tr>
+              <tr><td>৪</td><td>মেহেদী হাসান</td><td>৮ম শ্রেণি</td><td>এ</td><td>০১৬xxxxxxxx</td></tr>
+              <tr><td>৫</td><td>রাকিবুল ইসলাম</td><td>৮ম শ্রেণি</td><td>এ</td><td>০১৫xxxxxxxx</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="dpage" id="dpage-results">
+          <div style="font-weight:600;font-size:15px;margin-bottom:14px">পরীক্ষার ফলাফল</div>
+          <div class="card"><table class="dtable">
+            <thead><tr><th>পরীক্ষা</th><th>শ্রেণি</th><th>অবস্থা</th><th></th></tr></thead>
+            <tbody>
+              <tr><td>অর্ধবার্ষিক পরীক্ষা - ২০২৬</td><td>৬ষ্ঠ - ১০ম</td><td><span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink)">প্রকাশিত</span></td><td><a href="#">দেখুন</a></td></tr>
+              <tr><td>মাসিক মূল্যায়ন - মে</td><td>৬ষ্ঠ - ১০ম</td><td><span class="badge" style="background:var(--color-warning-soft);color:var(--color-warning-ink)">অপেক্ষমাণ</span></td><td><a href="#">ফলাফল প্রকাশ করুন</a></td></tr>
+              <tr><td>বার্ষিক পরীক্ষা - ২০২৫</td><td>৬ষ্ঠ - ১০ম</td><td><span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink)">প্রকাশিত</span></td><td><a href="#">দেখুন</a></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="dpage" id="dpage-finance">
+          <div style="font-weight:600;font-size:15px;margin-bottom:14px">ফাইন্যান্স</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px">
+            <div class="card" style="padding:16px"><div style="font-size:12px;color:var(--color-text-muted)">এই মাসে আদায়</div><div style="font-size:19px;font-weight:700;margin-top:2px">৳ ৩,৮৫,০০০</div></div>
+            <div class="card" style="padding:16px"><div style="font-size:12px;color:var(--color-text-muted)">মোট বকেয়া</div><div style="font-size:19px;font-weight:700;margin-top:2px;color:var(--color-danger)">৳ ৪২,৫০০</div></div>
+            <div class="card" style="padding:16px"><div style="font-size:12px;color:var(--color-text-muted)">পরিশোধিত শিক্ষার্থী</div><div style="font-size:19px;font-weight:700;margin-top:2px">২৪৪ / ২৮৬</div></div>
+          </div>
+          <div class="card"><table class="dtable">
+            <thead><tr><th>শিক্ষার্থী</th><th>পরিমাণ</th><th>মাধ্যম</th><th>অবস্থা</th></tr></thead>
+            <tbody>
+              <tr><td>আরিফ রহমান</td><td>৳ ২,৫০০</td><td>bKash</td><td><span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink)">পরিশোধিত</span></td></tr>
+              <tr><td>ফারিয়া আক্তার</td><td>৳ ২,৫০০</td><td>Nagad</td><td><span class="badge" style="background:var(--color-warning-soft);color:var(--color-warning-ink)">পেন্ডিং</span></td></tr>
+              <tr><td>মেহেদী হাসান</td><td>৳ ২,৫০০</td><td>Rocket</td><td><span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink)">পরিশোধিত</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        <div class="dpage" id="dpage-reports">
+          <div style="font-weight:600;font-size:15px;margin-bottom:14px">রিপোর্ট</div>
+          <div class="card"><div style="padding:0 18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--color-border)"><div><div style="font-size:14px;font-weight:500">উপস্থিতি রিপোর্ট</div><div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">মাস অনুযায়ী শ্রেণি-ভিত্তিক উপস্থিতি</div></div><button class="btn btn-secondary" style="height:36px;padding:0 14px;font-size:12.5px">ডাউনলোড</button></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--color-border)"><div><div style="font-size:14px;font-weight:500">ফলাফল রিপোর্ট</div><div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">পরীক্ষা অনুযায়ী ফলাফল সারসংক্ষেপ</div></div><button class="btn btn-secondary" style="height:36px;padding:0 14px;font-size:12.5px">ডাউনলোড</button></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0"><div><div style="font-size:14px;font-weight:500">ফি আদায় রিপোর্ট</div><div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">মাসিক আদায় ও বকেয়ার হিসাব</div></div><button class="btn btn-secondary" style="height:36px;padding:0 14px;font-size:12.5px">ডাউনলোড</button></div>
+          </div></div>
+        </div>
+
+        <div class="dpage" id="dpage-settings">
+          <div style="font-weight:600;font-size:15px;margin-bottom:14px">সেটিংস</div>
+          <div class="card" style="padding:20px;max-width:480px;display:flex;flex-direction:column;gap:14px">
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500">প্রতিষ্ঠানের নাম
+              <input value="Ata Ekta School and College" style="height:42px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 12px;font-family:inherit;font-size:13.5px">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500">শিক্ষাবর্ষ
+              <select style="height:42px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 12px;font-family:inherit;font-size:13.5px"><option>২০২৬</option></select>
+            </label>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid var(--color-border)">
+              <span style="font-size:13.5px">এসএমএস বিজ্ঞপ্তি সক্রিয় রাখুন</span>
+              <div style="width:40px;height:22px;border-radius:999px;background:var(--color-primary);position:relative"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;right:2px"></div></div>
+            </div>
+            <button class="btn btn-primary" style="align-self:flex-start;margin-top:6px">সংরক্ষণ করুন</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- MARKS ENTRY -->
+  <div class="screen" id="s-marks">
+    <div style="width:900px;background:var(--color-bg);border-radius:20px;box-shadow:var(--shadow-lg);padding:26px 28px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+        <div style="font-size:18px;font-weight:700">নম্বর প্রদান</div>
+        <button class="btn btn-primary">নম্বর সংরক্ষণ করুন</button>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:18px">
+        <select style="height:44px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 12px;font-family:inherit;font-size:13.5px"><option>অর্ধবার্ষিক পরীক্ষা - ২০২৬</option></select>
+        <select style="height:44px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);padding:0 12px;font-family:inherit;font-size:13.5px"><option>গণিত</option></select>
+        <div style="margin-left:auto;font-size:13px;color:var(--color-text-muted);align-self:center">সর্বোচ্চ নম্বর: ১০০</div>
+      </div>
+      <table class="dtable">
+        <thead><tr><th>রোল</th><th>শিক্ষার্থীর নাম</th><th style="text-align:right">প্রাপ্ত নম্বর</th><th style="text-align:right">গ্রেড</th></tr></thead>
+        <tbody id="marks-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+lucide.createIcons();
+
+document.querySelectorAll('.bottomnav .tab[data-jump]').forEach(t => {
+  t.style.cursor = 'pointer';
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.switcher button').forEach(b => b.classList.remove('active'));
+    const target = document.querySelector('.switcher button[data-s="' + t.dataset.jump + '"]');
+    if (target) target.classList.add('active');
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('s-' + t.dataset.jump).classList.add('active');
+  });
+});
+
+document.querySelectorAll('.day-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.day-tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+  });
+});
+
+function buildMoreMenu(container, items) {
+  items.forEach(([icon, label]) => {
+    const row = document.createElement('div');
+    row.className = 'morerow';
+    row.innerHTML = `<span style="width:20px;height:20px;display:flex;color:var(--color-text-muted)"><i data-lucide="${icon}" style="width:20px;height:20px"></i></span><span style="flex:1;font-size:14px;font-weight:500">${label}</span><i data-lucide="chevron-right" style="width:16px;height:16px;color:var(--color-text-faint)"></i>`;
+    container.appendChild(row);
+  });
+}
+buildMoreMenu(document.getElementById('teacher-more-rows'), [['file-check-2','পরীক্ষা'],['bar-chart-3','নম্বর'],['message-circle','বার্তা'],['bell','নোটিশ'],['settings','সেটিংস'],['log-out','লগ আউট']]);
+buildMoreMenu(document.getElementById('guardian-more-rows'), [['calendar-days','সন্তানের রুটিন'],['bell','নোটিশ'],['settings','সেটিংস'],['log-out','লগ আউট']]);
+
+const routine = [['০৮:০০ AM','বাংলা'],['০৯:০০ AM','গণিত'],['১০:০০ AM','ইংরেজি'],['১১:০০ AM','বিজ্ঞান'],['১২:০০ PM','ইসলাম শিক্ষা']];
+const routineRows = document.getElementById('routine-rows');
+routine.forEach(([time, subj]) => {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--color-border);font-size:14px';
+  row.innerHTML = `<span style="color:var(--color-text-muted);width:100px">${time}</span><span style="flex:1;font-weight:500">${subj}</span>`;
+  routineRows.appendChild(row);
+});
+
+const attHistory = [['১৯ মে, মঙ্গল','present'],['১৮ মে, সোম','present'],['১৭ মে, রবি','absent'],['১৪ মে, বৃহঃ','present'],['১৩ মে, বুধ','late']];
+const guardAttRows = document.getElementById('guardian-att-rows');
+const attLabel = { present: ['✓ উপস্থিত','success'], absent: ['✕ অনুপস্থিত','danger'], late: ['⏱ বিলম্বিত','warning'] };
+attHistory.forEach(([date, status], i) => {
+  const [text, tone] = attLabel[status];
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px 0;' + (i < attHistory.length - 1 ? 'border-bottom:1px solid var(--color-border)' : '');
+  row.innerHTML = `<span style="font-size:13.5px">${date}</span><span class="badge" style="background:var(--color-${tone}-soft);color:var(--color-${tone}-ink)">${text}</span>`;
+  guardAttRows.appendChild(row);
+});
+
+const guardResults = [['বাংলা',79,'A'],['ইংরেজি',76,'A'],['গণিত',82,'A+'],['বিজ্ঞান',88,'A+'],['ইসলাম ধর্ম',85,'A+']];
+const guardResultRows = document.getElementById('guardian-result-rows');
+guardResults.forEach(([subj, mark, grade], i) => {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;justify-content:space-between;padding:10px 0;font-size:13.5px;' + (i < guardResults.length - 1 ? 'border-bottom:1px solid var(--color-border)' : '');
+  row.innerHTML = `<span>${subj}</span><span style="font-weight:600">${mark} · ${grade}</span>`;
+  guardResultRows.appendChild(row);
+});
+
+const guardFees = [['জানুয়ারি','পরিশোধিত','success'],['ফেব্রুয়ারি','পরিশোধিত','success'],['মার্চ','বকেয়া','danger']];
+const guardFeeRows = document.getElementById('guardian-fee-rows');
+guardFees.forEach(([month, status, tone], i) => {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:12px 0;' + (i < guardFees.length - 1 ? 'border-bottom:1px solid var(--color-border)' : '');
+  row.innerHTML = `<span style="font-size:13.5px">${month} মাসের ফি</span><span class="badge" style="background:var(--color-${tone}-soft);color:var(--color-${tone}-ink)">${status}</span>`;
+  guardFeeRows.appendChild(row);
+});
+lucide.createIcons();
+
+document.getElementById('switcher').addEventListener('click', (e) => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  document.querySelectorAll('.switcher button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('s-' + btn.dataset.s).classList.add('active');
+});
+
+document.querySelectorAll('.dnav').forEach(a => {
+  a.innerHTML = '<i data-lucide="' + a.dataset.i + '" style="width:18px;height:18px"></i>' + a.textContent;
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.dnav').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+    document.querySelectorAll('.dpage').forEach(p => p.classList.remove('active'));
+    document.getElementById('dpage-' + a.dataset.page).classList.add('active');
+  });
+});
+lucide.createIcons();
+
+function buildAttendanceRows(container, compact) {
+  const students = [
+    ['১','সাদিয়া ইসলাম','present'], ['২','আরিফ রহমান','present'], ['৩','ফারিয়া আক্তার','absent'],
+    ['৪','মেহেদী হাসান','late'], ['৫','রাকিবুল ইসলাম','present'], ['৬','নুসরাত জাহান','present'],
+  ];
+  students.forEach(([roll, name, status]) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:'+(compact?'10px 0':'11px 18px')+';border-bottom:1px solid var(--color-border)';
+    row.innerHTML = `
+      <div style="width:32px;height:32px;border-radius:50%;background:var(--color-surface-muted);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--color-text-muted);flex:none">${roll}</div>
+      <div style="flex:1;font-size:14px;font-weight:500">${name}</div>
+      <div class="seg" style="display:flex;gap:4px;background:var(--color-surface-muted);padding:3px;border-radius:var(--radius-pill)">
+        <button data-v="present" style="width:32px;height:28px;border:none;border-radius:999px;cursor:pointer;font-size:13px">✓</button>
+        <button data-v="absent" style="width:32px;height:28px;border:none;border-radius:999px;cursor:pointer;font-size:13px">✕</button>
+        <button data-v="late" style="width:40px;height:28px;border:none;border-radius:999px;cursor:pointer;font-size:11px">দেরি</button>
+      </div>`;
+    const seg = row.querySelector('.seg');
+    function paint(v){
+      seg.querySelectorAll('button').forEach(b=>{
+        b.style.background = b.dataset.v===v ? (v==='present'?'#22c55e':v==='absent'?'#dc2626':'#f59e0b') : 'transparent';
+        b.style.color = b.dataset.v===v ? '#fff' : 'var(--color-text-muted)';
+      });
+    }
+    paint(status);
+    seg.addEventListener('click', (e)=>{ const b=e.target.closest('button'); if(b) paint(b.dataset.v); });
+    container.appendChild(row);
+  });
+}
+buildAttendanceRows(document.getElementById('attendance-rows'), false);
+buildAttendanceRows(document.getElementById('desk-attendance-rows'), true);
+
+document.querySelector('#s-attendance .btn-success').addEventListener('click', () => {
+  document.getElementById('attendance-rows').querySelectorAll('.seg').forEach(seg => {
+    seg.querySelectorAll('button').forEach(b=>{
+      b.style.background = b.dataset.v==='present' ? '#22c55e' : 'transparent';
+      b.style.color = b.dataset.v==='present' ? '#fff' : 'var(--color-text-muted)';
+    });
+  });
+});
+document.querySelector('#dpage-attendance .btn-success').addEventListener('click', () => {
+  document.getElementById('desk-attendance-rows').querySelectorAll('.seg').forEach(seg => {
+    seg.querySelectorAll('button').forEach(b=>{
+      b.style.background = b.dataset.v==='present' ? '#22c55e' : 'transparent';
+      b.style.color = b.dataset.v==='present' ? '#fff' : 'var(--color-text-muted)';
+    });
+  });
+});
+
+const studentsFull = [
+  ['সাদিয়া ইসলাম','৮ম শ্রেণি · রোল ১','#e53935'], ['আরিফ রহমান','৮ম শ্রেণি · রোল ২','#3b82f6'],
+  ['ফারিয়া আক্তার','৮ম শ্রেণি · রোল ৩','#22c55e'], ['মেহেদী হাসান','৮ম শ্রেণি · রোল ৪','#f59e0b'],
+  ['রাকিবুল ইসলাম','৮ম শ্রেণি · রোল ৫','#8b5cf6'],
+];
+const stuRows = document.getElementById('students-rows');
+studentsFull.forEach(([name, sub, color]) => {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--color-border)';
+  row.innerHTML = `<div style="width:38px;height:38px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;flex:none">${name.charAt(0)}</div>
+  <div><div style="font-size:14px;font-weight:500">${name}</div><div style="font-size:12px;color:var(--color-text-muted);margin-top:2px">${sub}</div></div>`;
+  stuRows.appendChild(row);
+});
+
+const marks = [['১','সাদিয়া ইসলাম',92,'A+'], ['২','আরিফ রহমান',76,'A'], ['৩','ফারিয়া আক্তার',66,'A-'], ['৪','মেহেদী হাসান',58,'B'], ['৫','রাকিবুল ইসলাম',88,'A+']];
+const marksRows = document.getElementById('marks-rows');
+marks.forEach(([roll,name,mark,grade]) => {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td style="color:var(--color-text-muted)">${roll}</td><td>${name}</td>
+    <td style="text-align:right"><input value="${mark}" style="width:56px;height:34px;text-align:right;border:1px solid var(--color-border-strong);border-radius:8px;font-family:inherit;font-size:13.5px;padding:0 8px"></td>
+    <td style="text-align:right;font-weight:600">${grade}</td>`;
+  marksRows.appendChild(tr);
+});
+</script>
+</body>
+</html>

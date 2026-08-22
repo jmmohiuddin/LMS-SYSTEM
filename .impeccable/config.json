@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-08-22T11:58:44.153Z",
+        "reason": "user confirmed: imported from Ata Ekta LMS design system handoff (tokens/typography.css), Inter is the design's canonical Latin face paired with Hind Siliguri for Bangla"
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+<!-- @dsCard group="Components" viewport="700x300" subtitle="Text field, select, search" name="Inputs" -->
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<div id="root" style="padding:24px;background:var(--color-bg)"></div>
+<script type="text/babel">
+const fieldStyle = { height:48, padding:'0 14px', fontSize:14, fontFamily:'var(--font-bn)', borderRadius:'var(--radius-md)', border:'1px solid var(--color-border-strong)', background:'var(--color-bg)', color:'var(--color-text)', outline:'none' };
+function Demo(){
+  return <div style={{display:'flex',flexDirection:'column',gap:16,maxWidth:340}}>
+    <label style={{display:'flex',flexDirection:'column',gap:6,fontFamily:'var(--font-bn)',fontSize:13}}>ফোন নম্বর<input style={fieldStyle} placeholder="01xxxxxxxxx"/></label>
+    <label style={{display:'flex',flexDirection:'column',gap:6,fontFamily:'var(--font-bn)',fontSize:13}}>সেকশন<select style={fieldStyle}><option>এ</option><option>বি</option></select></label>
+    <div style={{display:'flex',alignItems:'center',gap:8,height:48,padding:'0 14px',borderRadius:'var(--radius-md)',border:'1px solid var(--color-border)',background:'var(--color-surface)'}}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="1.75" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span style={{fontFamily:'var(--font-bn)',fontSize:14,color:'var(--color-text-muted)'}}>শিক্ষার্থী খুঁজুন...</span>
+    </div>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script>

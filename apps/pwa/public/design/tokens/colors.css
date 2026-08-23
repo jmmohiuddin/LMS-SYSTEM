@@ -1,0 +1,62 @@
+/* ShikhonBD — color tokens
+   Two swatches merged, deliberately:
+
+   1. The original brand red returns for the LOGO and PRIMARY ACTIONS —
+      the user judged the red buttons and brand mark right the first
+      time, and a school brand needs one unmistakable action color.
+      (#D23B2E is the same hue as the old #e53935, deepened one step so
+      white button text clears WCAG AA instead of sitting at 3.9:1.)
+
+   2. The "Eliza" swatch (Chambray / Terracotta / Sandstone / Muslin /
+      Clove) supplies everything AROUND the action color: warm muslin
+      ground, clove-brown text, and a set of DISTINCT sector accents so
+      each section of a dashboard or landing page can carry its own
+      identity — blue for info, terracotta for academics, green for
+      pass/paid, amber for pending — without any of them competing
+      with the one red that means "act here".
+
+   Contrast: every text token clears WCAG AA on BOTH white cards and
+   the muslin ground; -ink tokens clear AA on their -soft tints. */
+:root {
+  /* Brand — signal red. Logo mark, primary buttons, active nav. */
+  --color-primary: #D23B2E;
+  --color-primary-hover: #B32E22;
+  --color-primary-soft: #F9E4E0;
+  --color-primary-ink: #8A2318;
+
+  /* Sector accents — one hue per job, all from the swatch family. */
+  --color-success: #557C52;        /* pass · paid · present */
+  --color-success-soft: #E6EEE2;
+  --color-success-ink: #33502F;
+
+  --color-warning: #B08427;        /* pending · due soon */
+  --color-warning-soft: #F5EBD3;
+  --color-warning-ink: #6F5316;
+
+  --color-danger: #B3392C;         /* absent · overdue · failed */
+  --color-danger-soft: #F7E1DD;
+  --color-danger-ink: #7A2418;
+
+  --color-info: #4E7A94;           /* Chambray — schedules, neutral info */
+  --color-info-soft: #E4EEF4;
+  --color-info-ink: #32546A;
+
+  --color-accent-2: #A76A47;       /* Terracotta — academics, AI, extras */
+  --color-accent-2-soft: #F2E4D9;
+  --color-accent-2-ink: #6B4028;
+
+  /* Neutrals / ground — Muslin page, Sandstone hairlines. */
+  --color-bg: #FFFFFF;             /* cards, panels */
+  --color-surface: #F1EFE6;        /* Muslin — page ground */
+  --color-surface-muted: #E9E3D4;  /* chips, tracks, hover fills */
+  --color-border: #E2DACB;         /* hairlines */
+  --color-border-strong: #C8BCA6;  /* inputs, outlined buttons */
+
+  /* Text — Clove. Warm near-brown, not grey.
+     text 8.9:1 white / 7.9:1 muslin · muted 5.6:1 / 5.0:1 ·
+     faint 3.4:1 (decorative + duplicated meta only). */
+  --color-text: #53443D;
+  --color-text-muted: #756256;
+  --color-text-faint: #97867B;
+  --color-text-on-primary: #FFFFFF;
+}

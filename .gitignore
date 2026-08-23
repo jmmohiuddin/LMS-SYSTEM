@@ -77,3 +77,11 @@ Shikhon PRD v2.0*
 Shikhon TRD v2.0*
 Shikhon Wireframe Specification*
 Shikhon Screens*
+
+# The Claude Design mockup export the app/landing pages were built from —
+# same "kept local by choice" reasoning as the spec documents above: it's
+# what the product is built FROM, not the product itself, and the zips are
+# multi-MB. The tokens and markup already derived from it live in
+# apps/pwa/public/design/ and ARE committed.
+Ata Ekta LMS Design System*.zip
+_design_import/

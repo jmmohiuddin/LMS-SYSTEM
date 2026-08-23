@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>ShikhonBD · বাংলাদেশের স্কুল, কলেজ ও মাদ্রাসার জন্য পূর্ণাঙ্গ প্ল্যাটফর্ম</title>
+<meta name="description" content="হাজিরা, রুটিন, নম্বর, ফি সংগ্রহ, অভিভাবক যোগাযোগ, একটি প্ল্যাটফর্মে পুরো প্রতিষ্ঠান। অফলাইনেও কাজ করে।">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Inter:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="/design/tokens/colors.css">
+<link rel="stylesheet" href="/design/tokens/typography.css">
+<link rel="stylesheet" href="/design/tokens/spacing.css">
+<link rel="stylesheet" href="/design/tokens/radius.css">
+<link rel="stylesheet" href="/design/tokens/shadows.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+
+<style>
+  *{box-sizing:border-box}
+  /* Hind Siliguri's Bengali ১ reads as a bare stroke at small sizes —
+     Noto Sans Bengali's digit set is unambiguous at the same size.
+     See apps/pwa/public/design/tokens/typography.css for the full note. */
+  .num{font-family:var(--font-bn-num)}
+  html{scroll-behavior:smooth}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:var(--font-bn);
+    color:var(--color-text);
+    background:var(--color-bg);
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+  a{color:inherit;text-decoration:none}
+  button{font-family:inherit}
+
+  /* Viewport routing · mobile design < 900px, desktop ≥ 900px. One file,
+     two fully separate layouts; each is a purpose-built experience, not a
+     responsive fallback. */
+  @media (min-width: 900px){.landing-mobile{display:none !important}}
+  @media (max-width: 899px){.landing-desktop{display:none !important}}
+
+  .reveal{opacity:0;transform:translateY(20px);transition:opacity 640ms cubic-bezier(.16,1,.3,1),transform 640ms cubic-bezier(.16,1,.3,1)}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){
+    .reveal{opacity:1;transform:none;transition:none}
+    html{scroll-behavior:auto}
+  }
+
+  /* ── Landing motion ─────────────────────────────────────────────
+     Hero children rise in on load with per-element delays (set
+     inline); the floating chips drift on offset loops so they never
+     move in lockstep. All gated to no-preference — reduced-motion
+     users get the finished layout instantly. */
+  @media (prefers-reduced-motion:no-preference){
+    @keyframes rise-in{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+    @keyframes float-a{0%,100%{transform:translateY(0) translateZ(0)}50%{transform:translateY(-9px) translateZ(0)}}
+    @keyframes float-b{0%,100%{transform:translateY(0) translateZ(0)}50%{transform:translateY(8px) translateZ(0)}}
+    .hero-anim{opacity:0;animation:rise-in .7s cubic-bezier(.16,1,.3,1) forwards}
+    .chip-float-a{animation:float-a 5.5s ease-in-out infinite}
+    .chip-float-b{animation:float-b 6.5s ease-in-out infinite}
+    /* Icon drops in first, then its text — replays on every rotation
+       swap because the swap rebuilds these nodes from scratch. */
+    @keyframes chip-icon-in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+    @keyframes chip-text-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+    .chip-ic-anim{animation:chip-icon-in .4s cubic-bezier(.16,1,.3,1) both}
+    .chip-text-anim{animation:chip-text-in .4s cubic-bezier(.16,1,.3,1) both .1s}
+    .btn-primary i,.m-hero-cta-primary i{transition:transform .2s ease}
+    .btn-primary:hover i{transform:translateX(4px)}
+  }
+
+  /* ── Section tints ──────────────────────────────────────────────
+     Each major section carries its own pale wash from the palette —
+     sand for features, sky for onboarding, clay for the guardian
+     story, sage for testimonials — so scrolling reads as moving
+     through distinct rooms rather than one endless white page. */
+  .tint-sand{background:#F3ECDD}
+  .tint-sky{background:#E9F0F5}
+  .tint-clay{background:#F5EBE2}
+  .tint-sage{background:#EBF0E7}
+
+  /* ── Product mockups ────────────────────────────────────────────
+     The visuals are the product itself: a hand-built miniature of the
+     real attendance / guardian UI, not stock photography. A school
+     buyer recognises their own workflow in these; no photo does that. */
+  .mock-stage{position:relative;display:flex;align-items:center;justify-content:center}
+  .mock-blob{position:absolute;width:82%;max-width:400px;aspect-ratio:1;border-radius:50%;z-index:0}
+  /* Fixed height + flex column: the hero phone cycles through several
+     feature screens, and a 5-row attendance list next to a 3-line chat
+     next to a routine table would each want a different intrinsic
+     height — which would make the whole phone visibly grow and shrink
+     on every swap. Fixing the frame and giving the middle section
+     flex:1 keeps the frame itself perfectly still; only its content
+     changes.
+     The frame (border + notch) is now STATIC markup that never gets
+     replaced or faded — only the nested .mock-screen crossfades on
+     rotation, so the phone itself never visibly "changes", only the
+     picture inside it does. */
+  .mock-phone{width:264px;height:404px;display:flex;flex-direction:column;background:var(--color-bg);border:9px solid #3E332C;border-radius:36px;box-shadow:0 26px 60px rgba(62,51,44,.26);overflow:hidden;position:relative;z-index:1}
+  .mock-phone-tilt{transform:rotate(-2deg)}
+  .mock-notch{flex:none;height:22px;display:flex;align-items:center;justify-content:center}
+  .mock-notch::after{content:'';width:56px;height:5px;border-radius:99px;background:var(--color-surface-muted)}
+  /* A forced GPU layer (will-change/backface-visibility/translateZ)
+     was tried here to stop the crossfade from looking soft mid-fade —
+     it backfired: Chrome rasterizes GPU-composited text at a slightly
+     different subpixel snap, so the text came out permanently softer
+     even at rest, not just during the transition. Reverted. The actual
+     fix is a much shorter fade (150ms, was 320ms) — short enough that
+     the low-opacity "hazy" midpoint is barely perceptible, so the swap
+     reads as an immediate, sharp change instead of a visible blur. */
+  .mock-screen{flex:1;display:flex;flex-direction:column;overflow:hidden;transition:opacity .15s ease}
+  .mock-app-head{flex:none;padding:6px 16px 11px;display:flex;align-items:center;gap:9px}
+  .mock-app-title{font-size:15px;font-weight:700}
+  .mock-app-sub{font-size:11.5px;color:var(--color-text-muted);margin-top:2px}
+  .mock-body{flex:1;overflow:hidden;display:flex;flex-direction:column}
+  .mock-row{display:flex;align-items:center;gap:9px;padding:9px 14px;border-top:1px solid var(--color-border)}
+  .mock-roll{width:27px;height:27px;border-radius:50%;background:var(--color-surface-muted);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--color-text-muted);flex:none;font-family:var(--font-bn-num)}
+  .mock-name{flex:1;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mock-seg{display:flex;gap:3px;background:var(--color-surface-muted);border-radius:99px;padding:2px;flex:none}
+  .mock-seg span{min-width:25px;height:20px;padding:0 4px;border-radius:99px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--color-text-faint)}
+  .mock-seg .on-p{background:var(--color-success);color:#fff}
+  .mock-seg .on-a{background:var(--color-danger);color:#fff}
+  .mock-seg .on-l{background:var(--color-warning-ink);color:#fff}
+  .mock-save{flex:none;margin:11px 14px 15px;height:39px;border-radius:11px;background:var(--color-primary);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  /* Rows for the marks / routine / fee screens — reuses the same
+     hairline-divided-row rhythm as .mock-row so every rotation feels
+     like one consistent app, not five different mockup styles. */
+  .mock-line-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--color-border);font-size:12.5px}
+  .mock-line-row:first-child{border-top:0}
+  /* AI chat bubbles — same left/right convention as the real ShikhoAI
+     screen, scaled to fit inside the phone mockup. */
+  .mock-chat{flex:1;overflow:hidden;padding:10px 14px;display:flex;flex-direction:column;gap:8px;justify-content:flex-end}
+  .mock-bubble{max-width:82%;padding:8px 12px;border-radius:13px;font-size:12px;line-height:1.45}
+  .mock-bubble.ai{align-self:flex-start;background:var(--color-surface-muted);color:var(--color-text);border-bottom-left-radius:3px}
+  .mock-bubble.me{align-self:flex-end;background:var(--color-primary);color:#fff;border-bottom-right-radius:3px}
+  /* will-change + a static translateZ(0) in the float keyframes keep
+     these chips on their own GPU layer for the whole animation loop —
+     without it, Chrome/Safari re-rasterize the text on every frame of
+     the translateY drift and it reads as soft/blurry while moving. */
+  .mock-chip{position:absolute;z-index:2;background:rgba(255,255,255,.97);border:1px solid var(--color-border);border-radius:13px;box-shadow:0 12px 30px rgba(62,51,44,.16);padding:10px 13px;display:flex;align-items:center;gap:10px;max-width:230px;will-change:transform;backface-visibility:hidden}
+  .mock-chip-ic{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none}
+  .mock-chip-t{font-size:12.5px;font-weight:700;line-height:1.4}
+  .mock-chip-s{font-size:11px;color:var(--color-text-muted);margin-top:2px}
+  /* ── Hero background scene ──────────────────────────────────────
+     A faint sketch-style layer behind the hero copy — school
+     building, book stack, pencil, graduation cap, a dotted cluster —
+     all drawn in the brand red at very low opacity so it reads as
+     background texture, never competing with the copy or the phone. */
+  .hero-scene{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+  /* object-fit:contain left white bars on the sides wherever the
+     hero's own aspect ratio didn't match the artwork's — cover fills
+     the section edge-to-edge with no gaps, at the cost of cropping
+     into the illustration a little. A lighter blur + reduced
+     saturation/opacity keep it a quiet backdrop either way. */
+  .hero-scene-img{display:block;filter:blur(1.8px) saturate(.76);opacity:.94}
+  /* The artwork (1672×941) is proportionally wider than the hero box
+     at most desktop widths, so cover crops the SIDES, not top/bottom —
+     center-cropping was cutting the school building's flag off the
+     left edge. object-position:left keeps that whole left-side band
+     (flag included) and crops more off the emptier right side instead.
+     Opacity faded a further ~10% past the shared baseline above,
+     desktop only. */
+  .hero-scene-d .hero-scene-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:left top;opacity:.85}
+  /* Mobile gets its own portrait-cut artwork (same illustration set,
+     redrawn tall) instead of stretching/tiling the landscape one — it
+     covers the full hero height in one piece with no seam. */
+  .hero-scene-m .hero-scene-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  /* Hand-drawn-style underline under the headline's key word — an
+     inline squiggle SVG that stretches to the word's width via
+     preserveAspectRatio="none", so it fits regardless of font size
+     across the two independent mobile/desktop headlines. */
+  .hl-word{position:relative;display:inline-block}
+  /* The actual hand-drawn stroke asset, not a redrawn approximation —
+     scaled to the word's own width so it fits regardless of the two
+     headlines' independent font sizes. height:auto (not a fixed
+     height + object-fit:fill) keeps the stroke's own proportions —
+     forcing both axes independently was stretching a 163×12 source
+     ~1.5x taller than wide, which read as blurry/warped. */
+  .hl-underline{position:absolute;left:0;bottom:-.2em;width:100%;height:auto;pointer-events:none}
+  .mock-card{width:100%;max-width:330px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:16px;box-shadow:0 18px 44px rgba(62,51,44,.14);overflow:hidden;position:relative;z-index:1}
+  .mock-card-head{display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid var(--color-border)}
+  .mock-ava{width:30px;height:30px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
+  .mock-line{display:flex;justify-content:space-between;align-items:center;padding:9px 14px;border-top:1px solid var(--color-border);font-size:11.5px}
+  .mock-line:first-of-type{border-top:0}
+  .mock-sms{margin:11px 14px 13px;background:var(--color-info-soft);border-radius:11px 11px 11px 3px;padding:9px 11px;font-size:10.5px;line-height:1.55;color:var(--color-info-ink)}
+  .mock-strip{width:100%;background:var(--color-bg)}
+
+  /* ── Dark footer (Clove) ─────────────────────────────────────────
+     A dark anchor closes the page; the red brand mark pops against
+     it. Values live on the base rules further down (source order —
+     an early override block here kept losing to them); only the
+     brand-name recolor lives here because no base rule carries it. */
+  .d-footer .d-brand,.m-footer .m-brand{color:#F1EFE6}
+  .d-footer-links a:hover{color:#fff}
+
+  /* ══════════════════════════ MOBILE-LANDING styles ══════════════════════════ */
+  .m-nav-wrap{position:sticky;top:0;z-index:40;background:rgba(255,255,255,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--color-border)}
+  .m-nav{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;height:60px}
+  .m-brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;color:#000}
+  .m-brand-mark{width:30px;height:30px;border-radius:9px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .m-hamburger{width:44px;height:44px;border-radius:12px;background:var(--color-surface-muted);border:0;display:flex;align-items:center;justify-content:center;color:var(--color-text);cursor:pointer}
+  .m-menu{position:fixed;inset:0;background:var(--color-bg);z-index:50;transform:translateX(100%);transition:transform .3s cubic-bezier(.16,1,.3,1);display:flex;flex-direction:column;padding:20px}
+  .m-menu.open{transform:none}
+  .m-menu-head{display:flex;justify-content:space-between;align-items:center;height:60px}
+  .m-menu-links{list-style:none;padding:0;margin:24px 0 0;display:flex;flex-direction:column;gap:4px}
+  .m-menu-links a{display:block;padding:16px 12px;font-size:17px;font-weight:700;color:#000;border-radius:12px}
+  .m-menu-links a:active{background:var(--color-surface-muted)}
+  .m-menu-cta{margin-top:auto;padding-bottom:24px}
+
+  .m-hero{padding:28px 20px 24px;position:relative}
+  .m-hero-eyebrow{position:relative;z-index:1;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:var(--color-primary-soft);color:var(--color-primary-ink);font-size:12px;font-weight:600;margin-bottom:16px}
+  .m-hero-eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--color-primary)}
+  .m-hero-title{position:relative;z-index:1;font-size:34px;font-weight:700;line-height:1.15;margin:0 0 16px;letter-spacing:-.005em}
+  .m-hero-sub{position:relative;z-index:1;font-size:15px;line-height:1.6;color:var(--color-text-muted);margin:0 0 22px}
+  .m-hero-cta-primary,.m-hero-cta-secondary{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:52px;border-radius:12px;font-size:15px;font-weight:600;border:1px solid transparent;cursor:pointer;margin-bottom:10px}
+  .m-hero-cta-primary{background:var(--color-primary);color:#fff;box-shadow:var(--shadow-sm)}
+  .m-hero-cta-secondary{background:var(--color-bg);color:var(--color-text);border-color:var(--color-border-strong)}
+
+  /* Extra height beyond the phone's own 404px gives the floating
+     chips real clearance above/below the frame — at the old 430px
+     min-height they landed almost dead-center on the notch/header,
+     covering the screen content instead of hanging off the corner. */
+  .m-hero-media{position:relative;z-index:1;margin:30px 0 4px;display:flex;align-items:center;justify-content:center;min-height:560px}
+  .m-hero-badge{position:absolute;left:12px;right:12px;bottom:12px;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);padding:12px 14px;border-radius:14px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-md)}
+  .m-hero-badge-icon{width:36px;height:36px;border-radius:10px;background:var(--color-success);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+  .m-hero-badge-title{font-size:12.5px;font-weight:600}
+  .m-hero-badge-meta{font-size:11px;color:var(--color-text-muted);margin-top:1px}
+
+  .m-section{padding:44px 20px}
+  .m-section-alt{background:var(--color-surface)}
+  .m-section-title{font-size:26px;font-weight:700;line-height:1.2;margin:0 0 10px;letter-spacing:-.005em}
+  .m-section-lede{font-size:14.5px;line-height:1.6;color:var(--color-text-muted);margin:0 0 28px}
+
+  /* Mobile capability strip — the same five icon+title+subtitle proof
+     points as the desktop hero strip, in a 2-column grid (the 5th
+     item spans both columns so it doesn't sit alone under one side). */
+  .m-capstrip{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .m-capstrip-item{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:14px;min-width:0}
+  .m-capstrip-item:last-child:nth-child(odd){grid-column:1 / -1}
+  .m-capstrip-ic{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none}
+  .m-capstrip-ic svg{width:17px;height:17px}
+  .m-capstrip-title{font-size:12.5px;font-weight:700;color:var(--color-text);line-height:1.3}
+  .m-capstrip-sub{font-size:11px;color:var(--color-text-muted);margin-top:1px}
+
+  /* Mobile bento = vertical stack of feature cards, not a grid.
+     One feature per card, full width, generous padding. */
+  .m-features{display:flex;flex-direction:column;gap:14px}
+  .m-feat-card{background:var(--color-bg);border:1px solid var(--color-border);border-radius:18px;padding:22px}
+  .m-feat-card.large{background:linear-gradient(160deg,var(--color-primary-soft),var(--color-bg) 65%)}
+  .m-feat-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+  .m-feat-title{font-size:18px;font-weight:600;margin:0 0 8px}
+  .m-feat-body{font-size:14px;line-height:1.55;color:var(--color-text-muted);margin:0}
+  .m-feat-media{margin-top:12px;border-radius:12px;overflow:hidden;border:1px solid var(--color-border);background:var(--color-bg)}
+  .m-feat-photo{margin-top:16px;border-radius:12px;overflow:hidden;aspect-ratio:16/10}
+  .m-feat-photo img{width:100%;height:100%;object-fit:cover;display:block}
+
+  /* Mobile steps = vertical timeline with connecting line, big number badges. */
+  .m-steps{display:flex;flex-direction:column;gap:0;position:relative}
+  .m-steps::before{content:"";position:absolute;left:21px;top:22px;bottom:22px;width:2px;background:var(--color-border)}
+  .m-step{display:flex;gap:16px;padding:0 0 28px;position:relative;z-index:1}
+  .m-step:last-child{padding-bottom:0}
+  .m-step-num{
+    flex:none;width:44px;height:44px;border-radius:50%;background:var(--color-primary);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-en);font-weight:700;
+    font-size:17px;box-shadow:0 0 0 4px var(--color-bg);
+  }
+  .m-step-body-wrap{padding-top:4px;flex:1}
+  .m-step-title{font-size:17px;font-weight:600;margin:0 0 6px}
+  .m-step-body{font-size:14px;line-height:1.55;color:var(--color-text-muted);margin:0}
+
+  /* ── Step 1 → 2 → 3, one at a time ─────────────────────────────
+     The generic .reveal fade covers the row (see JS: .m-steps gets a
+     bigger per-child delay than the default cascade), but the number
+     circle gets its OWN scale-in on top of that — so each step visibly
+     "lands" in turn rather than the whole list drifting up together.
+     Ease-out-expo, not a bounce/overshoot curve: a real object settling
+     into place decelerates smoothly, and an elastic wobble on a B2B
+     dashboard's onboarding steps reads as a toy, not as confidence. */
+  @media (prefers-reduced-motion:no-preference){
+    .m-step-num{transform:scale(.55);opacity:0;transition:transform .45s cubic-bezier(.16,1,.3,1),opacity .3s ease}
+    .m-step.in .m-step-num{transform:scale(1);opacity:1;transition-delay:inherit}
+  }
+
+  /* Mobile deep-dive = image on top, copy below, single column. */
+  .m-dive{display:flex;flex-direction:column;gap:24px}
+  .m-dive-visual{border-radius:16px;display:flex;align-items:center;justify-content:center;padding:30px 18px}
+  /* A solid-fill badge, not a soft tint — a pale-on-pale pill (info-soft
+     blue text on a section that's itself near-white/pale-blue) reads
+     as almost invisible; a solid sector color behind white text and a
+     tinted shadow pops against any background the section happens to
+     have, which a tint can't guarantee. */
+  .m-dive-role{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:700;padding:8px 16px 8px 11px;border-radius:999px;margin-bottom:12px}
+  .m-dive-role svg{width:15px;height:15px}
+  .m-dive-title{font-size:24px;font-weight:700;line-height:1.2;margin:0 0 12px}
+  .m-dive-body{font-size:14.5px;color:var(--color-text-muted);line-height:1.55;margin:0 0 18px}
+  .m-dive-checks{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px}
+  .m-dive-check{display:flex;gap:10px;font-size:14px}
+  .m-dive-check-icon{width:20px;height:20px;border-radius:50%;background:var(--color-success);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
+  /* AI points carry the terracotta accent used for ShikhoAI everywhere
+     else on the page, so the AI capability reads as its own thread
+     running through all four audiences rather than one more bullet. */
+  .dive-ai{font-weight:600;color:var(--color-text)}
+  .dive-ai .m-dive-check-icon,.dive-ai .d-dive-check-icon{background:var(--color-accent-2);color:#fff}
+
+  /* Mobile feature grid · 2-column tight grid (fits 6 tiles) */
+  .m-featgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  .m-featgrid-item{padding:18px 16px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:14px}
+  .m-featgrid-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+  .m-featgrid-title{font-size:14px;font-weight:600;margin:0 0 4px;line-height:1.3}
+  .m-featgrid-body{font-size:12px;color:var(--color-text-muted);margin:0;line-height:1.5}
+  .m-featgrid-item.is-ai{grid-column:1 / -1;background:linear-gradient(160deg,var(--color-accent-2-soft),var(--color-bg) 70%);border-color:var(--color-accent-2-soft)}
+
+  /* Mobile testimonials · horizontal snap carousel (mobile-native pattern) */
+  .m-quotes-scroll{display:flex;gap:14px;overflow-x:auto;padding:0 20px 16px;margin:0 -20px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+  .m-quotes-scroll::-webkit-scrollbar{display:none}
+  .m-quotes-scroll{scrollbar-width:none}
+  .m-quote{flex:none;scroll-snap-align:center;width:85%;background:var(--color-bg);border:1px solid var(--color-border);border-radius:18px;padding:22px;display:flex;flex-direction:column;gap:16px}
+  .m-quote-body{font-size:15px;line-height:1.55;font-weight:500;margin:0}
+  .m-quote-cite{display:flex;align-items:center;gap:12px}
+  .m-quote-avatar{width:42px;height:42px;border-radius:50%;object-fit:cover;flex:none}
+  .m-quote-name{font-size:13.5px;font-weight:600}
+  .m-quote-role{font-size:11.5px;color:var(--color-text-muted);margin-top:2px}
+
+  /* Mobile pricing · 3 cards stacked, highlight one */
+  .m-pricing{display:flex;flex-direction:column;gap:14px}
+
+  /* Same idea, rotated 90°: stacked cards have no left/right, so the
+     top card is pulled DOWN toward the middle card's slot and the
+     bottom card is pulled UP toward it, then both slide out to their
+     own position once the middle card has landed. */
+  @media (prefers-reduced-motion:no-preference){
+    .m-pricing .reveal{position:relative;transition:opacity .55s cubic-bezier(.16,1,.3,1),transform .55s cubic-bezier(.16,1,.3,1)}
+    .m-pricing .m-plan.highlight{z-index:3;transform:translateY(14px) scale(.96)}
+    .m-pricing .m-plan.highlight.in{opacity:1;transform:none}
+    .m-pricing .m-plan:not(.highlight){z-index:1}
+    .m-pricing .m-plan:nth-child(1):not(.highlight){transform:translateY(60%) scale(.85)}
+    .m-pricing .m-plan:nth-child(3):not(.highlight){transform:translateY(-60%) scale(.85)}
+    .m-pricing .m-plan.in:not(.highlight){opacity:1;transform:none}
+  }
+  .m-plan{padding:24px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:18px;display:flex;flex-direction:column}
+  .m-plan.highlight{border-color:var(--color-primary);position:relative;box-shadow:0 8px 32px rgba(210,59,46,.12)}
+  .m-plan-badge{position:absolute;top:-10px;left:20px;padding:4px 12px;background:var(--color-primary);color:#fff;font-size:11.5px;font-weight:600;border-radius:999px}
+  .m-plan-name{font-size:14px;font-weight:600;color:var(--color-text-muted);margin:0 0 8px}
+  .m-plan-price{display:flex;align-items:baseline;gap:6px;margin-bottom:4px}
+  .m-plan-price-num{font-size:32px;font-weight:700;line-height:1}
+  .m-plan-price-per{font-size:13px;color:var(--color-text-muted)}
+  .m-plan-note{font-size:12.5px;color:var(--color-text-muted);margin:0 0 20px}
+  .m-plan-list{list-style:none;padding:0;margin:0 0 20px;display:flex;flex-direction:column;gap:10px;flex:1}
+  .m-plan-list li{display:flex;gap:10px;font-size:13.5px}
+  .m-plan-list li::before{content:"";width:18px;height:18px;flex:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");background-size:12px;background-repeat:no-repeat;background-position:center;background-color:var(--color-success-soft);border-radius:50%;margin-top:1px}
+  .m-plan-cta{height:44px;padding:0 18px;border-radius:12px;font-size:14px;font-weight:600;border:1px solid var(--color-border-strong);background:var(--color-bg);color:var(--color-text);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .m-plan.highlight .m-plan-cta{background:var(--color-primary);color:#fff;border-color:transparent}
+
+  .m-finalcta{padding:56px 20px;text-align:center;background:linear-gradient(180deg,var(--color-bg) 0%,var(--color-primary-soft) 100%);border-top:1px solid var(--color-border)}
+  .m-finalcta-title{font-size:28px;font-weight:700;line-height:1.2;margin:0 0 14px}
+  .m-finalcta-sub{font-size:14.5px;color:var(--color-text-muted);margin:0 0 24px}
+  .m-finalcta-btn{display:inline-flex;align-items:center;gap:8px;width:100%;height:52px;padding:0 24px;border-radius:12px;background:var(--color-primary);color:#fff;font-size:15px;font-weight:600;justify-content:center;box-shadow:var(--shadow-sm)}
+  .m-finalcta-phone{display:block;margin-top:12px;font-size:13.5px;color:var(--color-text-muted)}
+
+  .m-footer{background:#473931;border-top:0;padding:40px 20px 24px}
+  .m-footer-brand{margin-bottom:24px}
+  .m-footer-brand p{font-size:13px;color:#CBB9AD;margin:12px 0 0;line-height:1.55}
+  .m-accordion{border-top:1px solid rgba(241,239,230,.15)}
+  .m-acc-item{border-bottom:1px solid rgba(241,239,230,.15)}
+  .m-acc-head{width:100%;background:none;border:0;padding:16px 4px;display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:600;color:#F1EFE6;cursor:pointer;font-family:inherit}
+  .m-acc-body{display:none;padding:0 4px 16px}
+  .m-acc-item.open .m-acc-body{display:block}
+  .m-acc-item.open .m-acc-head svg{transform:rotate(180deg)}
+  .m-acc-head svg{transition:transform .2s ease}
+  .m-acc-links{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+  .m-acc-links a{font-size:13.5px;color:#CBB9AD}
+  .m-footer-bottom{padding-top:20px;margin-top:20px;border-top:1px solid rgba(241,239,230,.18);font-size:12px;color:#B9A697;text-align:center;line-height:1.6}
+
+  /* Sticky bottom CTA · mobile-native pattern, always in thumb reach */
+  .m-stickybar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(255,255,255,.96);backdrop-filter:blur(12px);border-top:1px solid var(--color-border);padding:10px 20px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px}
+  .m-stickybar-cta{flex:1;height:48px;border-radius:12px;background:var(--color-primary);color:#fff;font-size:14.5px;font-weight:600;border:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:var(--shadow-sm)}
+  .m-stickybar-secondary{width:48px;height:48px;border-radius:12px;background:var(--color-bg);border:1px solid var(--color-border-strong);display:inline-flex;align-items:center;justify-content:center}
+  /* The sticky bar's own padding grows with env(safe-area-inset-bottom)
+     on notched/gesture-bar phones, but this clearance was a flat 76px —
+     on those devices the bar ends up taller than the space reserved for
+     it, so it rides up over the last ~env() pixels of content (the
+     maker-plate, being the very last thing before it, is exactly what
+     that overlap swallows). Growing this by the same env() keeps pace. */
+  body.mobile-with-stickybar{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+
+  /* ══════════════════════════ DESKTOP-LANDING styles ══════════════════════════ */
+  .d-container{max-width:1200px;margin:0 auto;padding:0 24px}
+  /* Nav is a floating white card over the hero scene, not a full-bleed
+     bar — the illustrated background runs edge to edge underneath it. */
+  .d-nav-wrap{position:sticky;top:0;z-index:50;padding:18px 0}
+  /* Apple-style glass: low-opacity white + heavy blur + a saturation
+     boost (backdrop-filter's own "vibrancy" trick) so the hero scene
+     behind visibly shows through, plus an inset highlight along the
+     top edge for the glass-pane look. Text stays solid black/bold —
+     legible against the light backdrop is what makes it read as
+     glass rather than just transparent. */
+  .d-nav{display:flex;align-items:center;justify-content:space-between;height:76px;padding:0 14px 0 22px;background:rgba(255,255,255,.58);backdrop-filter:blur(22px) saturate(180%);-webkit-backdrop-filter:blur(22px) saturate(180%);border:1px solid rgba(255,255,255,.6);border-radius:20px;box-shadow:0 10px 34px rgba(62,51,44,.12),inset 0 1px 0 rgba(255,255,255,.7)}
+  .d-brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:20px;color:#000}
+  .d-brand-mark{width:40px;height:40px;border-radius:12px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
+  .d-links{display:flex;gap:38px;font-size:16px;font-weight:700;color:#000}
+  .d-links a{position:relative;padding:6px 0}
+  .d-links a:hover{color:var(--color-primary)}
+  /* Active nav item carries the same red underline vocabulary as the
+     headline's hand-drawn stroke, one step thinner. */
+  .d-links a.is-active{color:var(--color-primary)}
+  .d-links a.is-active::after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:3px;border-radius:99px;background:var(--color-primary)}
+  /* Jumping to #d-teacher etc. used to land with the "শিক্ষকের জন্য"
+     eyebrow tucked behind the sticky nav — the section's own "who is
+     this for" label, the one thing that confirms you've arrived at
+     the right part, was exactly what got hidden. This reserves room
+     for the ~112px sticky nav (18px top pad + 76px bar) plus a little
+     breathing space above the eyebrow. */
+  #d-teacher,#d-student,#d-guardian,#d-institution{scroll-margin-top:128px}
+  .d-cta{display:inline-flex;align-items:center;gap:8px;height:48px;padding:0 22px;border-radius:14px;background:var(--color-primary);color:#fff;font-family:inherit;font-size:15px;font-weight:700;border:none;cursor:pointer;box-shadow:var(--shadow-sm);transition:background .15s ease}
+  .d-cta:hover{background:var(--color-primary-hover)}
+
+  /* The hero owns the full first screen: it starts behind the sticky
+     nav (negative margin + matching padding) so the illustrated scene
+     runs from the very top of the page, and ends with the capability
+     strip pinned to the bottom of that first screen. */
+  .d-hero{position:relative;margin-top:-112px;padding:112px 0 0;min-height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  .d-hero-body{flex:1;display:flex;align-items:center}
+  .d-hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:5fr 7fr;gap:56px;align-items:center;width:100%}
+  /* Capability strip — five icon + title + subtitle proof points,
+     hairline-separated, closing the first screen. */
+  .d-hero-strip{position:relative;z-index:1;border-top:1px solid rgba(210,59,46,.14);padding:24px 0 28px;background:rgba(255,255,255,.55);backdrop-filter:blur(6px)}
+  .d-hero-strip-row{display:flex;align-items:center;justify-content:space-between}
+  .d-hero-strip-item{display:flex;align-items:center;gap:12px;flex:1;padding:0 18px}
+  .d-hero-strip-item:first-child{padding-left:0}
+  .d-hero-strip-item:last-child{padding-right:0}
+  .d-hero-strip-item+.d-hero-strip-item{border-left:1px solid rgba(210,59,46,.14)}
+  .d-hero-strip-ic{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex:none}
+  .d-hero-strip-ic svg{width:20px;height:20px}
+  .d-hero-strip-title{font-size:14.5px;font-weight:700;color:var(--color-text);line-height:1.3}
+  .d-hero-strip-sub{font-size:12.5px;color:var(--color-text-muted);margin-top:2px}
+  .d-hero-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;background:var(--color-primary-soft);color:var(--color-primary-ink);font-size:14px;font-weight:600;margin-bottom:26px}
+  .d-hero-eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-primary)}
+  .d-hero-title{font-size:62px;font-weight:700;line-height:1.12;margin:0 0 26px;letter-spacing:-.02em;color:#151210}
+  .d-hero-sub{font-size:18px;line-height:1.65;color:var(--color-text-muted);margin:0 0 34px;max-width:500px}
+  .d-hero-ctas{display:flex;gap:14px;flex-wrap:wrap}
+  .btn-primary,.btn-secondary{display:inline-flex;align-items:center;gap:8px;height:56px;padding:0 28px;border-radius:14px;font-family:inherit;font-size:16px;font-weight:700;cursor:pointer;transition:all .15s ease;border:1px solid transparent}
+  .btn-primary{background:var(--color-primary);color:#fff;box-shadow:var(--shadow-sm)}
+  .btn-primary:hover{background:var(--color-primary-hover);transform:translateY(-1px)}
+  .btn-secondary{background:var(--color-bg);color:var(--color-text);border-color:var(--color-border-strong)}
+  .btn-secondary:hover{border-color:var(--color-text-muted)}
+  .d-hero-visual{position:relative;min-height:500px;display:flex;align-items:center;justify-content:center;overflow:visible}
+  .d-hero-img{width:100%;height:100%;object-fit:cover;display:block}
+  .d-hero-badge{position:absolute;bottom:20px;left:20px;right:20px;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-radius:16px;padding:16px 18px;box-shadow:var(--shadow-md);display:flex;align-items:center;gap:14px}
+  .d-hero-badge-icon{width:44px;height:44px;border-radius:12px;background:var(--color-success);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+  .d-hero-badge-title{font-size:13.5px;font-weight:600}
+  .d-hero-badge-meta{font-size:12px;color:var(--color-text-muted);margin-top:2px}
+
+  .d-section{padding:88px 0}
+  .d-section-alt{background:var(--color-surface)}
+  .d-section-head{max-width:720px;margin:0 0 56px}
+  /* Same solid-fill badge treatment as .m-dive-role, desktop-sized. */
+  /* Shadows are tinted per-badge (inline, alongside each background
+     color) rather than one flat black shadow here — a generic dark
+     shadow under a warm solid fill reads as a dirty smudge at this
+     size, especially on the larger desktop badge; a shadow tinted to
+     the badge's own hue reads as a soft glow instead. */
+  .d-section-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:14.5px;font-weight:700;padding:9px 18px 9px 13px;border-radius:999px;margin-bottom:16px}
+  .d-section-eyebrow svg{width:16px;height:16px}
+  .d-section-title{font-size:38px;font-weight:700;line-height:1.15;margin:0 0 16px;letter-spacing:-.01em}
+  .d-section-lede{font-size:17px;line-height:1.6;color:var(--color-text-muted);margin:0}
+
+  .d-bento{display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:minmax(220px,auto);gap:16px}
+  .d-bento-cell{position:relative;background:var(--color-bg);border:1px solid var(--color-border);border-radius:20px;padding:28px;overflow:hidden;transition:border-color .2s ease,transform .2s ease}
+  .d-bento-cell:hover{border-color:var(--color-border-strong);transform:translateY(-2px)}
+  .d-bento-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+  .d-bento-title{font-size:19px;font-weight:600;margin:0 0 8px}
+  .d-bento-body{font-size:14px;line-height:1.55;color:var(--color-text-muted);margin:0}
+  .d-bento-large{grid-column:span 2;grid-row:span 2;background:linear-gradient(160deg,var(--color-primary-soft),var(--color-bg) 60%);display:flex;flex-direction:column}
+  .d-bento-large .d-bento-title{font-size:26px;margin-bottom:12px}
+  .d-bento-large .d-bento-body{max-width:52ch}
+  /* Real classroom photo fills the space the copy leaves empty; the
+     product mockup (.d-bento-large-visual) floats over its corner,
+     the same "photo + floating UI chip" composition as the hero. */
+  .d-bento-photo{flex:1;min-height:170px;margin-top:18px;border-radius:14px;overflow:hidden;position:relative}
+  .d-bento-photo img{width:100%;height:100%;object-fit:cover;display:block}
+  .d-bento-photo::after{content:'';position:absolute;inset:0;background:linear-gradient(0deg,rgba(83,68,61,.32),transparent 55%)}
+  .d-bento-large-visual{position:absolute;right:18px;bottom:18px;width:300px;border-radius:14px;background:var(--color-bg);border:1px solid var(--color-border);box-shadow:var(--shadow-md);overflow:hidden;z-index:1}
+  .d-bento-wide{grid-column:span 2}
+
+  .d-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:32px}
+  .d-step-num{width:44px;height:44px;border-radius:12px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--font-en);font-weight:700;font-size:18px;margin-bottom:20px}
+  .d-step-title{font-size:20px;font-weight:600;margin:0 0 10px}
+  .d-step-body{font-size:14.5px;line-height:1.6;color:var(--color-text-muted);margin:0}
+  /* Same serial "১ → ২ → ৩" landing as the mobile steps (see the note
+     by .m-step-num) — desktop gets the identical treatment rather than
+     a plain simultaneous fade, so the story reads the same on both. */
+  @media (prefers-reduced-motion:no-preference){
+    .d-step-num{transform:scale(.55);opacity:0;transition:transform .45s cubic-bezier(.16,1,.3,1),opacity .3s ease}
+    .d-steps .reveal.in .d-step-num{transform:scale(1);opacity:1;transition-delay:inherit}
+  }
+
+  .d-dive{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center}
+  .d-dive-alt .d-dive-copy{order:2}
+  .d-dive-alt .d-dive-visual{order:1}
+  .d-dive-copy .d-section-eyebrow{margin-bottom:14px}
+  .d-dive-copy .d-section-title{font-size:32px;margin-bottom:18px}
+  .d-dive-checks{list-style:none;padding:0;margin:24px 0 0;display:flex;flex-direction:column;gap:14px}
+  .d-dive-check{display:flex;gap:12px;font-size:14.5px}
+  .d-dive-check-icon{width:22px;height:22px;border-radius:50%;background:var(--color-success);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px}
+  .d-dive-visual{border-radius:20px;display:flex;align-items:center;justify-content:center;padding:44px 24px;min-height:400px}
+
+  .d-featgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:32px}
+  .d-feat-icon{width:48px;height:48px;border-radius:12px;background:var(--color-accent-2);color:#fff;display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+  .d-feat-title{font-size:18px;font-weight:600;margin:0 0 8px}
+  .d-feat-body{font-size:14.5px;line-height:1.6;color:var(--color-text-muted);margin:0}
+
+  .d-testimonials{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+  .d-quote{padding:28px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:20px;display:flex;flex-direction:column;gap:18px}
+  .d-quote-body{font-size:15.5px;line-height:1.6;font-weight:500;margin:0}
+  .d-quote-cite{display:flex;align-items:center;gap:12px;margin-top:auto}
+  .d-quote-avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;flex:none}
+  .d-quote-name{font-size:14px;font-weight:600}
+  .d-quote-role{font-size:12px;color:var(--color-text-muted);margin-top:2px}
+
+  .d-pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+
+  /* ── Pricing: middle first, sides emerge from behind it ───────────
+     The "জনপ্রিয়" plan lands on its own (plain fade-up, no shift);
+     the two neighbors start scaled down and pulled IN toward its
+     position with a lower z-index, so visually they read as sliding
+     out from behind the middle card once it has already landed —
+     then they settle into their own grid slots. */
+  @media (prefers-reduced-motion:no-preference){
+    .d-pricing .reveal{position:relative;transition:opacity .55s cubic-bezier(.16,1,.3,1),transform .55s cubic-bezier(.16,1,.3,1)}
+    .d-pricing .d-plan-highlight{z-index:3;transform:translateY(18px) scale(.95)}
+    .d-pricing .d-plan-highlight.in{opacity:1;transform:none}
+    .d-pricing .d-plan:not(.d-plan-highlight){z-index:1}
+    .d-pricing .d-plan:nth-child(1):not(.d-plan-highlight){transform:translateX(68%) scale(.8)}
+    .d-pricing .d-plan:nth-child(3):not(.d-plan-highlight){transform:translateX(-68%) scale(.8)}
+    .d-pricing .d-plan.in:not(.d-plan-highlight){opacity:1;transform:none}
+  }
+  .d-plan{padding:32px 28px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:20px;display:flex;flex-direction:column}
+  .d-plan-highlight{border-color:var(--color-primary);position:relative;box-shadow:0 10px 40px rgba(210,59,46,.12)}
+  .d-plan-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);padding:4px 12px;background:var(--color-primary);color:#fff;font-size:11.5px;font-weight:600;border-radius:999px}
+  .d-plan-name{font-size:15px;font-weight:600;color:var(--color-text-muted);margin:0 0 8px}
+  .d-plan-price{display:flex;align-items:baseline;gap:6px;margin-bottom:6px}
+  .d-plan-price-num{font-size:38px;font-weight:700;line-height:1}
+  .d-plan-price-per{font-size:14px;color:var(--color-text-muted)}
+  .d-plan-note{font-size:13px;color:var(--color-text-muted);margin:0 0 24px}
+  .d-plan-list{list-style:none;padding:0;margin:0 0 28px;display:flex;flex-direction:column;gap:12px;flex:1}
+  .d-plan-list li{display:flex;gap:10px;font-size:14px}
+  .d-plan-list li::before{content:"";width:18px;height:18px;flex:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2322c55e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");background-size:12px;background-repeat:no-repeat;background-position:center;background-color:var(--color-success-soft);border-radius:50%;margin-top:1px}
+  .d-plan-cta{display:inline-flex;align-items:center;justify-content:center;height:44px;padding:0 18px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s ease;border:1px solid transparent;background:var(--color-bg);color:var(--color-text);border-color:var(--color-border-strong)}
+  .d-plan-highlight .d-plan-cta{background:var(--color-primary);color:#fff;border-color:transparent;box-shadow:var(--shadow-sm)}
+
+  .d-finalcta{padding:96px 0;text-align:center;background:linear-gradient(180deg,var(--color-bg) 0%,var(--color-primary-soft) 100%);border-top:1px solid var(--color-border)}
+  .d-finalcta-title{font-size:44px;font-weight:700;line-height:1.15;margin:0 0 20px;letter-spacing:-.01em}
+  .d-finalcta-sub{font-size:17px;color:var(--color-text-muted);margin:0 auto 32px;max-width:520px}
+  .d-finalcta-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+
+  .d-footer{background:#473931;border-top:0;padding:56px 0 32px}
+  .d-footer-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:48px;margin-bottom:40px}
+  .d-footer-brand{max-width:280px}
+  .d-footer-brand p{font-size:13.5px;color:#CBB9AD;margin:12px 0 0;line-height:1.55}
+  .d-footer-col-title{font-size:13px;font-weight:600;margin:0 0 14px;color:#F1EFE6}
+  .d-footer-links{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+  .d-footer-links a{font-size:13.5px;color:#CBB9AD;transition:color .15s ease}
+  .d-footer-links a:hover{color:var(--color-text)}
+  .d-footer-bottom{padding-top:24px;border-top:1px solid rgba(241,239,230,.18);display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:12.5px;color:#B9A697}
+
+  /* ── Maker plate ───────────────────────────────────────────────
+     Deliberately plain: white card, hairline border, no gradient or
+     shadow flourish — an attribution badge should read as a small
+     fact ("who built this"), not compete with the page above it. */
+  .maker-plate{
+    display:flex;width:fit-content;align-items:center;gap:10px;margin-top:20px;padding:10px 16px;
+    background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:999px;
+    text-decoration:none;transition:border-color .15s ease;
+  }
+  .maker-plate:hover{border-color:rgba(0,0,0,.18)}
+  .maker-plate-text{font-family:var(--font-bn);font-size:14.5px;color:#4A4238}
+  .maker-plate-text strong{color:#0b0b0b;font-weight:700;font-size:1.1em}
+  .d-footer .maker-plate{margin-top:0}
+  .m-footer .maker-plate{margin:20px auto 0}
+</style>
+</head>
+<body class="mobile-with-stickybar">
+
+<!-- ════════════════════════════════════════════════════════════════════
+     MOBILE LANDING (< 900px)
+     Thumb-first: hero-image-below-copy, horizontal-scroll trust, vertical
+     bento, timeline steps, image-top deep-dives, scroll-snap testimonials,
+     stacked pricing, sticky bottom CTA bar. Nothing borrowed from desktop.
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="landing-mobile">
+
+  <div class="m-nav-wrap">
+    <div class="m-nav">
+      <a class="m-brand" href="/landing.html"><span class="m-brand-mark">শি</span>ShikhonBD</a>
+      <button class="m-hamburger" id="m-hamburger-open" aria-label="মেনু খুলুন"><i data-lucide="menu" style="width:22px;height:22px"></i></button>
+    </div>
+  </div>
+
+  <div class="m-menu" id="m-menu">
+    <div class="m-menu-head">
+      <a class="m-brand" href="/landing.html"><span class="m-brand-mark">শি</span>ShikhonBD</a>
+      <button class="m-hamburger" id="m-hamburger-close" aria-label="মেনু বন্ধ করুন"><i data-lucide="x" style="width:22px;height:22px"></i></button>
+    </div>
+    <ul class="m-menu-links">
+      <li><a href="#m-features">বৈশিষ্ট্য</a></li>
+      <li><a href="#m-how">কীভাবে কাজ করে</a></li>
+      <li><a href="#m-pricing">মূল্য</a></li>
+      <li><a href="#m-contact">যোগাযোগ</a></li>
+    </ul>
+    <div class="m-menu-cta">
+      <a href="/" class="m-hero-cta-primary">বিনামূল্যে ডেমো</a>
+    </div>
+  </div>
+
+  <section class="m-hero">
+    <div class="hero-scene hero-scene-m" aria-hidden="true">
+      <img class="hero-scene-img" src="/design/assets/hero-bg-mobile.webp" alt="">
+    </div>
+    <span class="m-hero-eyebrow hero-anim" style="animation-delay:.05s">বাংলাদেশের স্কুল, কলেজ ও মাদ্রাসার জন্য</span>
+    <h1 class="m-hero-title hero-anim" style="animation-delay:.12s">একটি প্ল্যাটফর্মে পুরো <span class="hl-word">প্রতিষ্ঠান<img class="hl-underline" src="/design/assets/underline-squiggle.png" alt=""></span>।</h1>
+    <p class="m-hero-sub hero-anim" style="animation-delay:.2s">হাজিরা, রুটিন, নম্বর, ফি সংগ্রহ, অভিভাবক যোগাযোগ। সব একই জায়গায়, ২জি নেটওয়ার্কে অফলাইনেও কাজ করে।</p>
+    <a href="/" class="m-hero-cta-primary hero-anim" style="animation-delay:.28s">বিনামূল্যে ডেমো <i data-lucide="arrow-right" style="width:16px;height:16px"></i></a>
+    <a href="#m-features" class="m-hero-cta-secondary hero-anim" style="animation-delay:.34s">ফিচার দেখুন</a>
+    <div class="m-hero-media mock-stage hero-anim" style="animation-delay:.3s">
+      <div class="mock-blob" style="background:radial-gradient(closest-side,#DDE9F1,transparent 72%)"></div>
+      <div class="mock-phone mock-phone-tilt"><div class="mock-notch"></div><div class="mock-screen" data-mock="phone-att"></div></div>
+      <div class="mock-chip chip-float-a" style="top:1%;right:-2%" data-mock="chip-sms"></div>
+      <div class="mock-chip chip-float-b" style="bottom:2%;left:-2%" data-mock="chip-sync"></div>
+    </div>
+  </section>
+
+  <section class="m-section reveal">
+    <div class="m-capstrip" id="m-capstrip"></div>
+  </section>
+
+  <section class="m-section tint-sand" id="m-features">
+    <div class="reveal">
+      <h2 class="m-section-title">দৈনন্দিন কাজ হবে নিমেষেই, বাংলাদেশের শিক্ষাব্যবস্থার বাস্তবতায়</h2>
+      <p class="m-section-lede">আপনার প্রতিষ্ঠান শহর বা গ্রাম যেখানেই হোক না কেন — ইন্টারনেট কানেকশন ছাড়াই দৈনন্দিন হাজিরা, ফি কালেকশন এবং নতুন কারিকুলামের রেজাল্ট তৈরি এখন একেবারে ঝামেলাবিহীন।</p>
+    </div>
+    <div class="m-features">
+      <div class="m-feat-card large reveal">
+        <div class="m-feat-icon" style="background:var(--color-primary);color:#fff"><i data-lucide="wifi-off"></i></div>
+        <h3 class="m-feat-title">অফলাইন-ফার্স্ট স্মার্ট হাজিরা</h3>
+        <p class="m-feat-body">ইন্টারনেট ছাড়াই মাত্র ৩০ সেকেন্ডে পুরো ক্লাসের হাজিরা শেষ! নেটওয়ার্ক পেলেই ডেটা স্বয়ংক্রিয়ভাবে সিঙ্ক হয়ে যাবে এবং অনুপস্থিত শিক্ষার্থীর অভিভাবকের কাছে সাথে সাথেই পৌঁছে যাবে SMS এলার্ট।</p>
+        <div class="m-feat-photo">
+          <img src="https://images.unsplash.com/photo-1636202339022-7d67f7447e3a?w=700&q=80&auto=format&fit=crop" alt="শ্রেণিকক্ষে শিক্ষার্থীরা ডেস্কে বসে আছে">
+        </div>
+        <div class="m-feat-media" data-mock="att-strip"></div>
+      </div>
+      <div class="m-feat-card reveal">
+        <div class="m-feat-icon" style="background:var(--color-info);color:#fff"><i data-lucide="languages"></i></div>
+        <h3 class="m-feat-title">সবার জন্য সহজ, সম্পূর্ণ বাংলায়</h3>
+        <p class="m-feat-body">টেকনোলজি নিয়ে শিক্ষকদের আর কোনো ভয় নেই! আমাদের অ্যাপটি সম্পূর্ণ বাংলায় এবং এতই সহজে ডিজাইন করা যে, যেকোনো বয়সের শিক্ষক কোনো পূর্ব-অভিজ্ঞতা ছাড়াই স্বাচ্ছন্দ্যে ব্যবহার করতে পারবেন।</p>
+      </div>
+      <div class="m-feat-card reveal">
+        <div class="m-feat-icon" style="background:var(--color-warning-soft);color:var(--color-warning)"><i data-lucide="award"></i></div>
+        <h3 class="m-feat-title">এক ক্লিকেই NCTB-অনুসারী রেজাল্ট</h3>
+        <p class="m-feat-body">নতুন শিক্ষাক্রমের জটিল মূল্যায়ন এখন আর কোনো চিন্তার বিষয় নয়। ৭টি গ্রেড ব্যান্ড, ট্রানস্ক্রিপ্ট তৈরি এবং GPA হিসাব হবে সম্পূর্ণ স্বয়ংক্রিয়ভাবে, যা শিক্ষকদের বাঁচাবে ঘণ্টার পর ঘণ্টা সময়।</p>
+      </div>
+      <div class="m-feat-card reveal">
+        <div class="m-feat-icon" style="background:var(--color-success);color:#fff"><i data-lucide="wallet"></i></div>
+        <h3 class="m-feat-title">বিকাশ, নগদ ও রকেটে ফি কালেকশন</h3>
+        <p class="m-feat-body">অভিভাবকরা ঘরে বসেই যেকোনো মোবাইল ব্যাংকিং দিয়ে বেতন ও ফি পরিশোধ করতে পারবেন। ক্যাশ সামলানোর কোনো ঝুঁকি নেই, আর প্রতিটি লেনদেনের অটোমেটিক ও স্বচ্ছ হিসাব থাকবে আপনার ড্যাশবোর্ডে।</p>
+      </div>
+      <div class="m-feat-card reveal">
+        <div class="m-feat-icon" style="background:var(--color-accent-2);color:#fff"><i data-lucide="sparkles"></i></div>
+        <h3 class="m-feat-title">শিক্ষকদের ব্যক্তিগত 'AI-সহকারী'</h3>
+        <p class="m-feat-body">ক্লাস রুটিন, লেসন প্ল্যান কিংবা NCTB-স্ট্যান্ডার্ড প্রশ্নপত্র তৈরি — সবকিছুতে সাহায্য করবে আমাদের স্মার্ট AI। শিক্ষকদের কাজের চাপ অর্ধেকের বেশি কমে যাবে, ফোকাস থাকবে শুধু পড়ানোতে।</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="m-section tint-sky" id="m-how">
+    <div class="reveal">
+      <h2 class="m-section-title">তিন ধাপে শুরু</h2>
+      <p class="m-section-lede">সেটআপ থেকে প্রথম হাজিরা পর্যন্ত সাধারণত এক সপ্তাহ।</p>
+    </div>
+    <div class="m-steps">
+      <div class="m-step reveal">
+        <div class="m-step-num">১</div>
+        <div class="m-step-body-wrap">
+          <h3 class="m-step-title">প্রতিষ্ঠান নিবন্ধন</h3>
+          <p class="m-step-body">EIIN কোড, শিক্ষাবর্ষ, শ্রেণি-শাখা কনফিগার করুন। বাংলাদেশ বোর্ডের গ্রেড স্কেল স্বয়ংক্রিয়ভাবে যোগ হয়।</p>
+        </div>
+      </div>
+      <div class="m-step reveal">
+        <div class="m-step-num">২</div>
+        <div class="m-step-body-wrap">
+          <h3 class="m-step-title">শিক্ষক ও শিক্ষার্থী যোগ</h3>
+          <p class="m-step-body">CSV ফাইল বা ম্যানুয়ালি যোগ করুন। প্রতিটি ব্যবহারকারী তাৎক্ষণিক অ্যাক্টিভেশন কোড পাবে।</p>
+        </div>
+      </div>
+      <div class="m-step reveal">
+        <div class="m-step-num">৩</div>
+        <div class="m-step-body-wrap">
+          <h3 class="m-step-title">প্রথম দিন থেকেই ব্যবহার</h3>
+          <p class="m-step-body">শিক্ষক ফোনে হাজিরা নেওয়া শুরু করবেন। অভিভাবক অ্যাপ ইনস্টল করে সন্তানের ফলাফল দেখবেন।</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="m-section">
+    <div class="m-dive reveal">
+      <div class="m-dive-visual mock-stage" style="background:#E9F0F5" data-mock-wrap="teacher-card"></div>
+      <div>
+        <span class="m-dive-role" style="background:var(--color-info);color:#fff;box-shadow:0 5px 12px -3px rgba(78,122,148,.5)"><i data-lucide="presentation" style="width:13px;height:13px"></i>শিক্ষকের জন্য</span>
+        <h2 class="m-dive-title">খাতার কাজ কমুক, পড়ানোয় মন থাকুক</h2>
+        <p class="m-dive-body">হাজিরা, নম্বর, রুটিন — সব ফোনেই, কয়েক সেকেন্ডে। আর প্রশ্নপত্র বা পাঠ পরিকল্পনা বানানোর যে কাজটায় সন্ধ্যা পার হয়ে যেত, SikhokAI সেটা মিনিটে করে দেয়।</p>
+        <ul class="m-dive-checks">
+          <li class="m-dive-check dive-ai"><span class="m-dive-check-icon"><i data-lucide="sparkles" style="width:12px;height:12px"></i></span> SikhokAI দিয়ে NCTB-মানের প্রশ্নপত্র মিনিটেই</li>
+          <li class="m-dive-check dive-ai"><span class="m-dive-check-icon"><i data-lucide="sparkles" style="width:12px;height:12px"></i></span> পাঠ পরিকল্পনা ও বাড়ির কাজ AI সাজিয়ে দেয়</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> ৬০ জনের ক্লাসে হাজিরা ৩০ সেকেন্ডে, নেট ছাড়াই</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> নম্বর বসালেই GPA, গ্রেড ও রিপোর্ট তৈরি</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> সাপ্তাহিক রুটিন ও ছুটির বদলি এক জায়গায়</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="m-section tint-sky" id="m-student">
+    <div class="m-dive reveal">
+      <div class="m-dive-visual mock-stage" style="background:#F2E4D9" data-mock-wrap="student-card"></div>
+      <div>
+        <span class="m-dive-role" style="background:var(--color-accent-2);color:#fff;box-shadow:0 5px 12px -3px rgba(167,106,71,.5)"><i data-lucide="graduation-cap" style="width:13px;height:13px"></i>শিক্ষার্থীর জন্য</span>
+        <h2 class="m-dive-title">যেখানেই আটকাও, ShikhoAI পাশে আছে</h2>
+        <p class="m-dive-body">মেধা যাচাইয়ের জন্য একাধিক মডেল টেস্ট। কোনো প্রশ্ন না পারলে ShikhoAI ধাপে ধাপে বাংলায় বুঝিয়ে দেয় — প্রাইভেট টিউটরের মতো, কিন্তু রাত-দিন যখন খুশি।</p>
+        <ul class="m-dive-checks">
+          <li class="m-dive-check dive-ai"><span class="m-dive-check-icon"><i data-lucide="sparkles" style="width:12px;height:12px"></i></span> না পারা প্রশ্ন ShikhoAI বুঝিয়ে দেয়, বাংলায়</li>
+          <li class="m-dive-check dive-ai"><span class="m-dive-check-icon"><i data-lucide="sparkles" style="width:12px;height:12px"></i></span> কোন অধ্যায়ে দুর্বল, AI নিজেই ধরিয়ে দেয়</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> মডেল টেস্ট দিয়ে নিজের প্রস্তুতি যাচাই, বারবার</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> পরীক্ষার পরেই ফলাফল ও ভুলের বিশ্লেষণ</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> রুটিন, বাড়ির কাজ ও নোটিশ এক অ্যাপে</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="m-section tint-clay">
+    <div class="m-dive reveal">
+      <div class="m-dive-visual mock-stage" style="background:rgba(255,255,255,.55)" data-mock-wrap="guardian-card"></div>
+      <div>
+        <span class="m-dive-role" style="background:var(--color-success);color:#fff;box-shadow:0 5px 12px -3px rgba(85,124,82,.5)"><i data-lucide="users" style="width:13px;height:13px"></i>অভিভাবকের জন্য</span>
+        <h2 class="m-dive-title">সন্তান স্কুলে পৌঁছাল কি না, জানতে ফোন করতে হবে না</h2>
+        <p class="m-dive-body">উপস্থিতি, ফলাফল, ফি, নোটিশ — সব সঙ্গে সঙ্গে SMS ও অ্যাপে। স্মার্টফোন বা ইন্টারনেট না থাকলেও SMS-ই যথেষ্ট।</p>
+        <ul class="m-dive-checks">
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> সন্তান পৌঁছালে বা অনুপস্থিত হলে সঙ্গে সঙ্গে SMS</li>
+          <li class="m-dive-check dive-ai"><span class="m-dive-check-icon"><i data-lucide="sparkles" style="width:12px;height:12px"></i></span> কোন বিষয়ে পিছিয়ে পড়ছে, AI আগেভাগেই জানায়</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> প্রতিটি পরীক্ষার বিষয়ভিত্তিক ফলাফল ও অগ্রগতি</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> ঘরে বসেই bKash, Nagad বা Rocket-এ ফি</li>
+          <li class="m-dive-check"><span class="m-dive-check-icon"><i data-lucide="check" style="width:12px;height:12px"></i></span> শিক্ষকের সাথে সরাসরি বার্তা, স্কুলে না গিয়েই</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="m-section">
+    <div class="reveal">
+      <span class="m-dive-role" style="background:var(--color-primary);color:#fff;box-shadow:0 5px 12px -3px rgba(210,59,46,.45)"><i data-lucide="building-2" style="width:13px;height:13px"></i>প্রতিষ্ঠানের জন্য</span>
+      <h2 class="m-section-title">পুরো প্রতিষ্ঠান, এক ড্যাশবোর্ডে</h2>
+      <p class="m-section-lede">কোন ক্লাসে উপস্থিতি কমছে, কোথায় ফি আটকে আছে — রিপোর্টের অপেক্ষা না করে অধ্যক্ষ নিজেই দেখে নেন।</p>
+    </div>
+    <div class="m-featgrid" id="m-featgrid"></div>
+  </section>
+
+  <section class="m-section tint-sage">
+    <div class="reveal">
+      <h2 class="m-section-title">যারা ব্যবহার করছেন</h2>
+      <p class="m-section-lede">পাশে সোয়াইপ করে সবগুলো পড়ুন।</p>
+    </div>
+    <div class="m-quotes-scroll" id="m-quotes-scroll"></div>
+  </section>
+
+  <section class="m-section m-section-alt" id="m-pricing">
+    <div class="reveal">
+      <h2 class="m-section-title">সরল ও স্বচ্ছ মূল্য</h2>
+      <p class="m-section-lede">কোনো সেটআপ ফি নেই, কোনো লুকানো চার্জ নেই।</p>
+    </div>
+    <div class="m-pricing">
+      <div class="m-plan reveal">
+        <div class="m-plan-name">ছোট স্কুল</div>
+        <div class="m-plan-price"><span class="m-plan-price-num">বিনামূল্যে</span></div>
+        <p class="m-plan-note">৫০ জন শিক্ষার্থী পর্যন্ত</p>
+        <ul class="m-plan-list"><li>হাজিরা ও রুটিন</li><li>নম্বর ও ফলাফল</li><li>অভিভাবক অ্যাপ</li><li>বেসিক সাপোর্ট</li></ul>
+        <a class="m-plan-cta" href="/">শুরু করুন</a>
+      </div>
+      <div class="m-plan highlight reveal">
+        <div class="m-plan-badge">জনপ্রিয়</div>
+        <div class="m-plan-name">মধ্যম স্কুল</div>
+        <div class="m-plan-price"><span class="m-plan-price-num">৳ ১০</span><span class="m-plan-price-per">/ শিক্ষার্থী / মাস</span></div>
+        <p class="m-plan-note">১০০০ জন পর্যন্ত</p>
+        <ul class="m-plan-list"><li>ছোট স্কুলের সব ফিচার</li><li>SMS বিজ্ঞপ্তি (মাসে ২ হাজার)</li><li>bKash, Nagad, Rocket সংগ্রহ</li><li>SikhokAI কন্টেন্ট জেনারেটর</li><li>প্রায়োরিটি সাপোর্ট</li></ul>
+        <a class="m-plan-cta" href="/">১৪ দিন বিনামূল্যে</a>
+      </div>
+      <div class="m-plan reveal">
+        <div class="m-plan-name">বড় প্রতিষ্ঠান</div>
+        <div class="m-plan-price"><span class="m-plan-price-num">কাস্টম</span></div>
+        <p class="m-plan-note">১০০০+ শিক্ষার্থী বা মাল্টি-ক্যাম্পাস</p>
+        <ul class="m-plan-list"><li>মধ্যম স্কুলের সব ফিচার</li><li>মাল্টি-ক্যাম্পাস ব্যবস্থাপনা</li><li>অসীম SMS বান্ডল</li><li>ডেডিকেটেড অ্যাকাউন্ট ম্যানেজার</li></ul>
+        <a class="m-plan-cta" href="#m-contact">যোগাযোগ করুন</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="m-finalcta reveal" id="m-contact">
+    <h2 class="m-finalcta-title">আপনার প্রতিষ্ঠানের জন্য আজই শুরু করুন</h2>
+    <p class="m-finalcta-sub">১৫ মিনিটে সেটআপ, এক সপ্তাহে পুরো প্রতিষ্ঠান চালু।</p>
+    <a href="/" class="m-finalcta-btn">বিনামূল্যে ডেমো <i data-lucide="arrow-right" style="width:16px;height:16px"></i></a>
+    <a href="tel:+8801858347965" class="m-finalcta-phone">অথবা ফোন করুন +880 1858-347965</a>
+  </section>
+
+  <footer class="m-footer">
+    <div class="m-footer-brand">
+      <a class="m-brand" href="/landing.html"><span class="m-brand-mark">শি</span>ShikhonBD</a>
+      <p>বাংলাদেশের স্কুল, মাদ্রাসা ও কলেজের জন্য বাংলা-প্রথম, অফলাইন-ফার্স্ট ম্যানেজমেন্ট প্ল্যাটফর্ম।</p>
+    </div>
+    <div class="m-accordion" id="m-accordion">
+      <div class="m-acc-item">
+        <button class="m-acc-head">পণ্য <i data-lucide="chevron-down" style="width:16px;height:16px"></i></button>
+        <div class="m-acc-body"><ul class="m-acc-links"><li><a href="#m-features">বৈশিষ্ট্য</a></li><li><a href="#m-pricing">মূল্য</a></li><li><a href="/">ডেমো</a></li><li><a href="#">নিরাপত্তা</a></li></ul></div>
+      </div>
+      <div class="m-acc-item">
+        <button class="m-acc-head">সহায়তা <i data-lucide="chevron-down" style="width:16px;height:16px"></i></button>
+        <div class="m-acc-body"><ul class="m-acc-links"><li><a href="#">দলিলপত্র</a></li><li><a href="#">সাধারণ প্রশ্ন</a></li><li><a href="#">যোগাযোগ</a></li><li><a href="#">স্ট্যাটাস</a></li></ul></div>
+      </div>
+      <div class="m-acc-item">
+        <button class="m-acc-head">প্রতিষ্ঠান <i data-lucide="chevron-down" style="width:16px;height:16px"></i></button>
+        <div class="m-acc-body"><ul class="m-acc-links"><li><a href="#">গল্প</a></li><li><a href="#">নিয়োগ</a></li><li><a href="#">গোপনীয়তা</a></li><li><a href="#">শর্তাবলী</a></li></ul></div>
+      </div>
+    </div>
+    <div class="m-footer-bottom">© ২০২৬ ShikhonBD · বাংলাদেশে তৈরি<br>info@shikhonbd.com · +880 1858-347965</div>
+
+    <!-- ── "Product of Nimikh" plate ─────────────────────────────────
+         A separate, deliberately plain light card set apart from the
+         dark footer above it — so a visitor reads it as "who built
+         this" attribution, not as another ShikhonBD footer column. -->
+    <a class="maker-plate" href="#" aria-label="Nimikh - Your idea, live in a blink">
+      <svg width="34" height="34" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="4" y="4" width="72" height="72" rx="18" fill="#0b0b0b"/>
+        <path d="M24 60 L24 20 L31 20 L50 50 L50 20 L57 20 L57 60 L50 60 L31 30 L31 60 Z" fill="#ffffff"/>
+        <circle cx="61" cy="16" r="5.5" fill="#D85A30"/>
+      </svg>
+      <span class="maker-plate-text"><strong>Nimikh</strong> এর একটি প্রোডাক্ট</span>
+    </a>
+  </footer>
+
+  <div class="m-stickybar">
+    <a href="/" class="m-stickybar-cta">বিনামূল্যে ডেমো <i data-lucide="arrow-right" style="width:16px;height:16px"></i></a>
+    <a href="tel:+8801858347965" class="m-stickybar-secondary" aria-label="ফোন করুন"><i data-lucide="phone" style="width:20px;height:20px"></i></a>
+  </div>
+
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     DESKTOP LANDING (≥ 900px)
+     Pointer-first: asymmetric split hero, 6-col logo grid, 3×2 asymmetric
+     bento with an image-anchored large cell, 3-col steps, alternating
+     split deep-dives, 3-col feature grid, 3-col testimonial cards,
+     3-col pricing, centered manifesto CTA, 4-col footer.
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="landing-desktop">
+
+  <div class="d-nav-wrap">
+    <div class="d-container">
+      <nav class="d-nav">
+        <a class="d-brand" href="/landing.html"><span class="d-brand-mark">শি</span>ShikhonBD</a>
+        <div class="d-links">
+          <a href="#d-top" class="is-active">হোম</a>
+          <a href="#d-teacher">শিক্ষক</a>
+          <a href="#d-student">শিক্ষার্থী</a>
+          <a href="#d-guardian">অভিভাবক</a>
+          <a href="#d-institution">প্রতিষ্ঠান</a>
+        </div>
+        <a class="d-cta" href="/"><i data-lucide="log-in" style="width:17px;height:17px"></i>লগইন</a>
+      </nav>
+    </div>
+  </div>
+
+  <section class="d-hero" id="d-top">
+    <div class="hero-scene hero-scene-d" aria-hidden="true">
+      <img class="hero-scene-img" src="/design/assets/hero-bg.webp" alt="">
+    </div>
+
+    <div class="d-hero-body">
+      <div class="d-container">
+        <div class="d-hero-grid">
+          <div>
+            <span class="d-hero-eyebrow hero-anim" style="animation-delay:.05s">বাংলাদেশের স্কুল, কলেজ ও মাদ্রাসার জন্য</span>
+            <h1 class="d-hero-title hero-anim" style="animation-delay:.12s">একটি প্ল্যাটফর্মে<br>পুরো <span class="hl-word">প্রতিষ্ঠান<img class="hl-underline" src="/design/assets/underline-squiggle.png" alt=""></span>।</h1>
+            <p class="d-hero-sub hero-anim" style="animation-delay:.2s">হাজিরা, রুটিন, নম্বর, ফি সংগ্রহ, অভিভাবক-শিক্ষক যোগাযোগসহ সব একই জায়গায়, সব নথি ডিজিটাল।</p>
+            <div class="d-hero-ctas hero-anim" style="animation-delay:.28s">
+              <a href="/" class="btn-primary">বিনামূল্যে ডেমো <i data-lucide="arrow-right" style="width:17px;height:17px"></i></a>
+              <a href="#d-features" class="btn-secondary">ফিচার দেখুন</a>
+            </div>
+          </div>
+          <div class="d-hero-visual mock-stage hero-anim" style="animation-delay:.24s">
+            <div class="mock-blob" style="background:radial-gradient(closest-side,rgba(255,255,255,.9),transparent 72%)"></div>
+            <div class="mock-phone mock-phone-tilt"><div class="mock-notch"></div><div class="mock-screen" data-mock="phone-att"></div></div>
+            <div class="mock-chip chip-float-a" style="top:6%;right:-2%" data-mock="chip-routine"></div>
+            <div class="mock-chip chip-float-b" style="bottom:12%;left:-4%" data-mock="chip-result"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-hero-strip">
+      <div class="d-container">
+        <div class="d-hero-strip-row" id="d-hero-strip-row"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-section tint-sand" id="d-features">
+    <div class="d-container">
+      <div class="d-section-head reveal">
+        <h2 class="d-section-title">দৈনন্দিন কাজ হবে নিমেষেই, বাংলাদেশের শিক্ষাব্যবস্থার বাস্তবতায়</h2>
+        <p class="d-section-lede">আপনার প্রতিষ্ঠান শহর বা গ্রাম যেখানেই হোক না কেন — ইন্টারনেট কানেকশন ছাড়াই দৈনন্দিন হাজিরা, ফি কালেকশন এবং নতুন কারিকুলামের রেজাল্ট তৈরি এখন একেবারে ঝামেলাবিহীন।</p>
+      </div>
+      <div class="d-bento">
+        <div class="d-bento-cell d-bento-large reveal">
+          <div class="d-bento-icon" style="background:var(--color-primary);color:#fff"><i data-lucide="wifi-off"></i></div>
+          <h3 class="d-bento-title">অফলাইন-ফার্স্ট স্মার্ট হাজিরা</h3>
+          <p class="d-bento-body">ইন্টারনেট ছাড়াই মাত্র ৩০ সেকেন্ডে পুরো ক্লাসের হাজিরা শেষ! নেটওয়ার্ক পেলেই ডেটা স্বয়ংক্রিয়ভাবে সিঙ্ক হয়ে যাবে এবং অনুপস্থিত শিক্ষার্থীর অভিভাবকের কাছে সাথে সাথেই পৌঁছে যাবে SMS এলার্ট।</p>
+          <div class="d-bento-photo">
+            <img src="https://images.unsplash.com/photo-1636202339022-7d67f7447e3a?w=900&q=80&auto=format&fit=crop" alt="শ্রেণিকক্ষে শিক্ষার্থীরা ডেস্কে বসে আছে">
+          </div>
+          <div class="d-bento-large-visual" data-mock="att-strip"></div>
+        </div>
+        <div class="d-bento-cell reveal">
+          <div class="d-bento-icon" style="background:var(--color-info);color:#fff"><i data-lucide="languages"></i></div>
+          <h3 class="d-bento-title">সবার জন্য সহজ, সম্পূর্ণ বাংলায়</h3>
+          <p class="d-bento-body">টেকনোলজি নিয়ে শিক্ষকদের আর কোনো ভয় নেই! আমাদের অ্যাপটি সম্পূর্ণ বাংলায় এবং এতই সহজে ডিজাইন করা যে, যেকোনো বয়সের শিক্ষক কোনো পূর্ব-অভিজ্ঞতা ছাড়াই স্বাচ্ছন্দ্যে ব্যবহার করতে পারবেন।</p>
+        </div>
+        <div class="d-bento-cell reveal">
+          <div class="d-bento-icon" style="background:var(--color-warning-soft);color:var(--color-warning)"><i data-lucide="award"></i></div>
+          <h3 class="d-bento-title">এক ক্লিকেই NCTB-অনুসারী রেজাল্ট</h3>
+          <p class="d-bento-body">নতুন শিক্ষাক্রমের জটিল মূল্যায়ন এখন আর কোনো চিন্তার বিষয় নয়। ৭টি গ্রেড ব্যান্ড, ট্রানস্ক্রিপ্ট তৈরি এবং GPA হিসাব হবে সম্পূর্ণ স্বয়ংক্রিয়ভাবে, যা শিক্ষকদের বাঁচাবে ঘণ্টার পর ঘণ্টা সময়।</p>
+        </div>
+        <div class="d-bento-cell d-bento-wide reveal">
+          <div class="d-bento-icon" style="background:var(--color-success);color:#fff"><i data-lucide="wallet"></i></div>
+          <h3 class="d-bento-title">বিকাশ, নগদ ও রকেটে ফি কালেকশন</h3>
+          <p class="d-bento-body">অভিভাবকরা ঘরে বসেই যেকোনো মোবাইল ব্যাংকিং দিয়ে বেতন ও ফি পরিশোধ করতে পারবেন। ক্যাশ সামলানোর কোনো ঝুঁকি নেই, আর প্রতিটি লেনদেনের অটোমেটিক ও স্বচ্ছ হিসাব থাকবে আপনার ড্যাশবোর্ডে।</p>
+        </div>
+        <div class="d-bento-cell reveal">
+          <div class="d-bento-icon" style="background:var(--color-accent-2);color:#fff"><i data-lucide="sparkles"></i></div>
+          <h3 class="d-bento-title">শিক্ষকদের ব্যক্তিগত 'AI-সহকারী'</h3>
+          <p class="d-bento-body">ক্লাস রুটিন, লেসন প্ল্যান কিংবা NCTB-স্ট্যান্ডার্ড প্রশ্নপত্র তৈরি — সবকিছুতে সাহায্য করবে আমাদের স্মার্ট AI। শিক্ষকদের কাজের চাপ অর্ধেকের বেশি কমে যাবে, ফোকাস থাকবে শুধু পড়ানোতে।</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-section tint-sky" id="d-how">
+    <div class="d-container">
+      <div class="d-section-head reveal">
+        <h2 class="d-section-title">তিন ধাপে শুরু</h2>
+        <p class="d-section-lede">সেটআপ থেকে প্রথম হাজিরা পর্যন্ত সাধারণত এক সপ্তাহ। আমাদের টিম প্রতিটি ধাপে পাশে থাকবে।</p>
+      </div>
+      <div class="d-steps">
+        <div class="reveal"><div class="d-step-num">১</div><h3 class="d-step-title">প্রতিষ্ঠান নিবন্ধন</h3><p class="d-step-body">EIIN কোড, শিক্ষাবর্ষ, শ্রেণি-শাখা কনফিগার করুন। বাংলাদেশ বোর্ডের গ্রেড স্কেল ও ঘন্টা সূচি স্বয়ংক্রিয়ভাবে যোগ হয়।</p></div>
+        <div class="reveal"><div class="d-step-num">২</div><h3 class="d-step-title">শিক্ষক ও শিক্ষার্থী যোগ</h3><p class="d-step-body">CSV ফাইল বা ম্যানুয়ালি যোগ করুন। প্রতিটি ব্যবহারকারী তাৎক্ষণিক অ্যাক্টিভেশন কোড পাবে, ফোনে SMS ছাড়াই লগইন করা যাবে।</p></div>
+        <div class="reveal"><div class="d-step-num">৩</div><h3 class="d-step-title">প্রথম দিন থেকেই ব্যবহার</h3><p class="d-step-body">শিক্ষক তাদের ফোনে হাজিরা নেওয়া শুরু করবেন। অভিভাবক Play Store থেকে অ্যাপ ইনস্টল করে সন্তানের ফলাফল দেখবেন।</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-section">
+    <div class="d-container">
+      <div class="d-dive reveal" id="d-teacher">
+        <div class="d-dive-visual mock-stage" style="background:#E9F0F5" data-mock-wrap="teacher-card"></div>
+        <div>
+          <span class="d-section-eyebrow" style="background:var(--color-info);color:#fff;box-shadow:0 7px 16px -4px rgba(78,122,148,.5)"><i data-lucide="presentation" style="width:14px;height:14px"></i>শিক্ষকের জন্য</span>
+          <h2 class="d-section-title">খাতার কাজ কমুক, পড়ানোয় মন থাকুক</h2>
+          <p class="d-section-lede">হাজিরা, নম্বর, রুটিন — সব ফোনেই, কয়েক সেকেন্ডে। আর প্রশ্নপত্র বা পাঠ পরিকল্পনা বানানোর যে কাজটায় সন্ধ্যা পার হয়ে যেত, SikhokAI সেটা মিনিটে করে দেয় — আপনি শুধু দেখে নিন।</p>
+          <ul class="d-dive-checks">
+            <li class="d-dive-check dive-ai"><span class="d-dive-check-icon"><i data-lucide="sparkles" style="width:14px;height:14px"></i></span> SikhokAI দিয়ে NCTB-মানের প্রশ্নপত্র মিনিটেই তৈরি</li>
+            <li class="d-dive-check dive-ai"><span class="d-dive-check-icon"><i data-lucide="sparkles" style="width:14px;height:14px"></i></span> পাঠ পরিকল্পনা ও বাড়ির কাজ AI সাজিয়ে দেয়</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> ৬০ জনের ক্লাসে হাজিরা ৩০ সেকেন্ডে, ইন্টারনেট ছাড়াই</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> নম্বর বসালেই GPA, গ্রেড ও প্রগ্রেস রিপোর্ট তৈরি</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> সাপ্তাহিক রুটিন ও সহকর্মীর ছুটির বদলি এক জায়গায়</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-section tint-sky">
+    <div class="d-container">
+      <div class="d-dive reveal" id="d-student">
+        <div class="d-dive-copy">
+          <span class="d-section-eyebrow" style="background:var(--color-accent-2);color:#fff;box-shadow:0 7px 16px -4px rgba(167,106,71,.5)"><i data-lucide="graduation-cap" style="width:14px;height:14px"></i>শিক্ষার্থীর জন্য</span>
+          <h2 class="d-section-title">যেখানেই আটকাও, ShikhoAI পাশে আছে</h2>
+          <p class="d-section-lede">মেধা যাচাইয়ের জন্য একাধিক মডেল টেস্টের আয়োজন। কোনো প্রশ্ন না পারলে ShikhoAI ধাপে ধাপে বাংলায় বুঝিয়ে দেয় — প্রাইভেট টিউটরের মতো, কিন্তু রাত-দিন যখন খুশি, বাড়তি খরচ ছাড়াই।</p>
+          <ul class="d-dive-checks">
+            <li class="d-dive-check dive-ai"><span class="d-dive-check-icon"><i data-lucide="sparkles" style="width:14px;height:14px"></i></span> না পারা প্রশ্ন ShikhoAI ধাপে ধাপে বুঝিয়ে দেয়, বাংলায়</li>
+            <li class="d-dive-check dive-ai"><span class="d-dive-check-icon"><i data-lucide="sparkles" style="width:14px;height:14px"></i></span> কোন অধ্যায়ে দুর্বলতা, AI নিজেই ধরিয়ে দেয়</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> মডেল টেস্ট দিয়ে নিজের প্রস্তুতি যাচাই, যতবার খুশি</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> পরীক্ষা শেষেই ফলাফল ও ভুল প্রশ্নের বিশ্লেষণ</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> রুটিন, বাড়ির কাজ ও নোটিশ এক অ্যাপে</li>
+          </ul>
+        </div>
+        <div class="d-dive-visual mock-stage" style="background:#F2E4D9" data-mock-wrap="student-card"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-section tint-clay">
+    <div class="d-container">
+      <div class="d-dive reveal" id="d-guardian">
+        <div class="d-dive-visual mock-stage" style="background:rgba(255,255,255,.55)" data-mock-wrap="guardian-card"></div>
+        <div class="d-dive-copy">
+          <span class="d-section-eyebrow" style="background:var(--color-success);color:#fff;box-shadow:0 7px 16px -4px rgba(85,124,82,.5)"><i data-lucide="users" style="width:14px;height:14px"></i>অভিভাবকের জন্য</span>
+          <h2 class="d-section-title">সন্তান স্কুলে পৌঁছাল কি না, জানতে ফোন করতে হবে না</h2>
+          <p class="d-section-lede">উপস্থিতি, ফলাফল, ফি, নোটিশ — সব সঙ্গে সঙ্গে SMS ও অ্যাপে। স্মার্টফোন বা ইন্টারনেট না থাকলেও SMS-ই যথেষ্ট, তাই গ্রামের অভিভাবকও কিছু মিস করেন না।</p>
+          <ul class="d-dive-checks">
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> সন্তান পৌঁছালে বা অনুপস্থিত হলে সঙ্গে সঙ্গে SMS</li>
+            <li class="d-dive-check dive-ai"><span class="d-dive-check-icon"><i data-lucide="sparkles" style="width:14px;height:14px"></i></span> কোন বিষয়ে পিছিয়ে পড়ছে, AI আগেভাগেই জানিয়ে দেয়</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> প্রতিটি পরীক্ষার বিষয়ভিত্তিক ফলাফল ও অগ্রগতি</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> ঘরে বসেই bKash, Nagad বা Rocket-এ ফি পরিশোধ</li>
+            <li class="d-dive-check"><span class="d-dive-check-icon"><i data-lucide="check" style="width:14px;height:14px"></i></span> শিক্ষকের সাথে সরাসরি বার্তা, স্কুলে না গিয়েই</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-section" id="d-institution">
+    <div class="d-container">
+      <div class="d-section-head reveal">
+        <span class="d-section-eyebrow" style="background:var(--color-primary);color:#fff;box-shadow:0 7px 16px -4px rgba(210,59,46,.45)"><i data-lucide="building-2" style="width:14px;height:14px"></i>প্রতিষ্ঠানের জন্য</span>
+        <h2 class="d-section-title">পুরো প্রতিষ্ঠানের ছবি, একটি ড্যাশবোর্ডে</h2>
+        <p class="d-section-lede">কোন ক্লাসে উপস্থিতি কমছে, কোথায় ফি আটকে আছে, কোন শিক্ষার্থীর দিকে নজর দেওয়া দরকার — রিপোর্টের জন্য কারও অপেক্ষা না করে অধ্যক্ষ নিজেই দেখে নেন।</p>
+      </div>
+      <div class="d-featgrid" id="d-featgrid"></div>
+    </div>
+  </section>
+
+  <section class="d-section tint-sage">
+    <div class="d-container">
+      <div class="d-section-head reveal">
+        <h2 class="d-section-title">যারা ইতিমধ্যে ব্যবহার করছেন</h2>
+      </div>
+      <div class="d-testimonials" id="d-testimonials"></div>
+    </div>
+  </section>
+
+  <section class="d-section" id="d-pricing">
+    <div class="d-container">
+      <div class="d-section-head reveal">
+        <h2 class="d-section-title">আপনার প্রতিষ্ঠানের আকার অনুযায়ী সরল মূল্য</h2>
+        <p class="d-section-lede">কোনো সেটআপ ফি নেই, কোনো লুকানো চার্জ নেই। বছরে সঞ্চয় করুন ২ মাসের সমতুল্য।</p>
+      </div>
+      <div class="d-pricing">
+        <div class="d-plan reveal">
+          <div class="d-plan-name">ছোট স্কুল</div>
+          <div class="d-plan-price"><span class="d-plan-price-num">বিনামূল্যে</span></div>
+          <p class="d-plan-note">৫০ জন শিক্ষার্থী পর্যন্ত</p>
+          <ul class="d-plan-list"><li>হাজিরা ও রুটিন</li><li>নম্বর ও ফলাফল</li><li>অভিভাবক অ্যাপ</li><li>বেসিক সাপোর্ট</li></ul>
+          <a class="d-plan-cta" href="/">শুরু করুন</a>
+        </div>
+        <div class="d-plan d-plan-highlight reveal">
+          <div class="d-plan-badge">জনপ্রিয়</div>
+          <div class="d-plan-name">মধ্যম স্কুল</div>
+          <div class="d-plan-price"><span class="d-plan-price-num">৳ ১০</span><span class="d-plan-price-per">/ শিক্ষার্থী / মাস</span></div>
+          <p class="d-plan-note">১০০০ জন পর্যন্ত</p>
+          <ul class="d-plan-list"><li>ছোট স্কুলের সব ফিচার</li><li>SMS বিজ্ঞপ্তি (মাসে ২ হাজার)</li><li>bKash, Nagad, Rocket ফি সংগ্রহ</li><li>SikhokAI কন্টেন্ট জেনারেটর</li><li>প্রায়োরিটি সাপোর্ট</li></ul>
+          <a class="d-plan-cta" href="/">১৪ দিন বিনামূল্যে</a>
+        </div>
+        <div class="d-plan reveal">
+          <div class="d-plan-name">বড় প্রতিষ্ঠান</div>
+          <div class="d-plan-price"><span class="d-plan-price-num">কাস্টম</span></div>
+          <p class="d-plan-note">১০০০+ শিক্ষার্থী বা মাল্টি-ক্যাম্পাস</p>
+          <ul class="d-plan-list"><li>মধ্যম স্কুলের সব ফিচার</li><li>মাল্টি-ক্যাম্পাস ব্যবস্থাপনা</li><li>অসীম SMS বান্ডল</li><li>ডেডিকেটেড অ্যাকাউন্ট ম্যানেজার</li><li>API ও ইন্টিগ্রেশন সহায়তা</li></ul>
+          <a class="d-plan-cta" href="#d-contact">যোগাযোগ করুন</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="d-finalcta" id="d-contact">
+    <div class="d-container">
+      <div class="reveal">
+        <h2 class="d-finalcta-title">আপনার প্রতিষ্ঠানের জন্য আজই শুরু করুন</h2>
+        <p class="d-finalcta-sub">১৫ মিনিটে সেটআপ, ১ সপ্তাহে পুরো প্রতিষ্ঠান চালু। আমাদের টিম হাতে ধরে শিখিয়ে দেবে।</p>
+        <div class="d-finalcta-btns">
+          <a href="/" class="btn-primary">বিনামূল্যে ডেমো <i data-lucide="arrow-right" style="width:16px;height:16px"></i></a>
+          <a href="tel:+8801858347965" class="btn-secondary">ফোন করুন +880 1858-347965</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="d-footer">
+    <div class="d-container">
+      <div class="d-footer-grid">
+        <div class="d-footer-brand">
+          <a class="d-brand" href="/landing.html"><span class="d-brand-mark">শি</span>ShikhonBD</a>
+          <p>বাংলাদেশের স্কুল, মাদ্রাসা ও কলেজের জন্য বাংলা-প্রথম, অফলাইন-ফার্স্ট ম্যানেজমেন্ট প্ল্যাটফর্ম।</p>
+        </div>
+        <div><div class="d-footer-col-title">পণ্য</div><ul class="d-footer-links"><li><a href="#d-features">বৈশিষ্ট্য</a></li><li><a href="#d-pricing">মূল্য</a></li><li><a href="/">ডেমো</a></li><li><a href="#">নিরাপত্তা</a></li></ul></div>
+        <div><div class="d-footer-col-title">সহায়তা</div><ul class="d-footer-links"><li><a href="#">দলিলপত্র</a></li><li><a href="#">সাধারণ প্রশ্ন</a></li><li><a href="#">যোগাযোগ</a></li><li><a href="#">স্ট্যাটাস</a></li></ul></div>
+        <div><div class="d-footer-col-title">প্রতিষ্ঠান</div><ul class="d-footer-links"><li><a href="#">গল্প</a></li><li><a href="#">নিয়োগ</a></li><li><a href="#">গোপনীয়তা</a></li><li><a href="#">শর্তাবলী</a></li></ul></div>
+      </div>
+      <div class="d-footer-bottom">
+        <div>© ২০২৬ ShikhonBD · বাংলাদেশে তৈরি</div>
+        <div>info@shikhonbd.com · +880 1858-347965</div>
+      </div>
+
+      <!-- ── "Product of Nimikh" plate ─────────────────────────────
+           Same reasoning as the mobile footer: a separate, plain
+           light card so this reads as maker attribution, not as a
+           fifth ShikhonBD footer column. -->
+      <a class="maker-plate" href="#" aria-label="Nimikh - Your idea, live in a blink">
+        <svg width="36" height="36" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="4" y="4" width="72" height="72" rx="18" fill="#0b0b0b"/>
+          <path d="M24 60 L24 20 L31 20 L50 50 L50 20 L57 20 L57 60 L50 60 L31 30 L31 60 Z" fill="#ffffff"/>
+          <circle cx="61" cy="16" r="5.5" fill="#D85A30"/>
+        </svg>
+        <span class="maker-plate-text"><strong>Nimikh</strong> এর একটি প্রোডাক্ট</span>
+      </a>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  lucide.createIcons();
+
+
+  // Feature grid (principal features) · same 6 items, different layout per viewport
+  const principalFeatures = [
+    ['sparkles', 'AI বিশ্লেষণ ও পূর্বাভাস', 'কোন ক্লাসে উপস্থিতি নামছে, কোন শিক্ষার্থী ঝরে পড়ার ঝুঁকিতে — AI আগেভাগেই ধরিয়ে দেয়, সমস্যা বড় হওয়ার আগেই।', 'accent-2'],
+    ['layout-dashboard', 'রিয়েল-টাইম ড্যাশবোর্ড', 'শিক্ষার্থী সংখ্যা, আজকের উপস্থিতি, নেওয়া ক্লাস, বকেয়া ফি — অফিসে বসেই পুরো প্রতিষ্ঠান এক নজরে।', 'primary'],
+    ['book', 'হিসাবখাতা ও ফাইন্যান্স', 'প্রতিটি লেনদেনের অডিট লগ, মাসিক আয়-ব্যয় বিবরণী, বেতন-শীট এক ক্লিকে প্রস্তুত।', 'info'],
+    ['file-check-2', 'পরীক্ষা ও ফলাফল', 'পরীক্ষা সূচি, নম্বর সংগ্রহ, প্রগ্রেস রিপোর্ট — ফল প্রকাশে আর সপ্তাহ লাগে না।', 'success'],
+    ['calendar-days', 'রুটিন ও ঘন্টা সূচি', 'ক্ল্যাশ-প্রতিরোধী রুটিন নিজে থেকেই তৈরি হয়, শিফট ভিত্তিক ঘন্টা সহ।', 'warning'],
+    ['shield-check', 'PDPA-অনুসারী নিরাপত্তা', 'প্রতিটি প্রতিষ্ঠানের ডেটা আলাদা, বাংলাদেশে সংরক্ষিত, ২০২৬ PDPA কমপ্লায়েন্ট।', 'danger'],
+  ];
+  const dGrid = document.getElementById('d-featgrid');
+  if (dGrid) principalFeatures.forEach(([icon, title, body, tone]) => {
+    const el = document.createElement('div');
+    el.className = 'reveal';
+    el.innerHTML = `<div class="d-feat-icon" style="background:var(--color-${tone}-soft);color:var(--color-${tone})"><i data-lucide="${icon}"></i></div><h3 class="d-feat-title">${title}</h3><p class="d-feat-body">${body}</p>`;
+    dGrid.appendChild(el);
+  });
+  /* Mobile shows titles only — six two-line bodies in a 2-col grid on a
+     390px screen is a wall. The AI item is the exception: it spans both
+     columns and keeps its body, so the one capability worth explaining
+     still gets explained on the smaller screen. */
+  const mGrid = document.getElementById('m-featgrid');
+  if (mGrid) principalFeatures.forEach(([icon, title, body, tone]) => {
+    const isAi = icon === 'sparkles';
+    const el = document.createElement('div');
+    el.className = 'm-featgrid-item' + (isAi ? ' is-ai' : '');
+    el.innerHTML = `<div class="m-featgrid-icon" style="background:var(--color-${tone}-soft);color:var(--color-${tone})"><i data-lucide="${icon}" style="width:18px;height:18px"></i></div>` +
+      `<div class="m-featgrid-title">${title}</div>` + (isAi ? `<p class="m-featgrid-body">${body}</p>` : '');
+    mGrid.appendChild(el);
+  });
+
+  // Testimonials
+  const quotes = [
+    ['আগে হাজিরা নিতে ১৫ মিনিট লাগত, এখন ১ মিনিটে হয়। অভিভাবকরা রেজাল্ট পাওয়ার জন্য অফিসে আসেন না, ফোনেই দেখে ফেলেন।', 'শাকেরা বেগম', 'প্রধান শিক্ষক, আদর্শ বিদ্যাপীঠ', 'quote-shakera-begum'],
+    ['অফলাইনে কাজ করার সুবিধাটা আমাদের গ্রামের স্কুলের জন্য জীবন-রক্ষাকারী। নেটওয়ার্ক না থাকলেও শিক্ষকরা কাজ চালিয়ে যেতে পারেন।', 'আবদুল করিম', 'অধ্যক্ষ, বেঙ্গল স্কুল অ্যান্ড কলেজ', 'quote-abdul-karim'],
+    ['NCTB সিলেবাস অনুযায়ী গ্রেডিং, bKash-এ ফি সংগ্রহ, একসাথে সব পেয়ে গেছি। আলাদা তিনটা সফটওয়্যার আর লাগে না।', 'ফাতিমা আহমেদ', 'সহকারী অধ্যক্ষ, মিরপুর গার্লস কলেজ', 'quote-fatima-ahmed'],
+  ];
+  /* Colored-initial avatars instead of random stock faces: consistent
+     with the monogram language above, and no stranger's photo is ever
+     presented as a named school principal. */
+  const QUOTE_TONES = ['#4E7A94', '#A76A47', '#557C52'];
+  const avatarHTML = (cls, name, tone) =>
+    `<span class="${cls}" style="background:${tone};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px">${name.charAt(0)}</span>`;
+  const dQ = document.getElementById('d-testimonials');
+  if (dQ) quotes.forEach(([body, name, role], qi) => {
+    const el = document.createElement('div');
+    el.className = 'd-quote reveal';
+    el.innerHTML = `<p class="d-quote-body">"${body}"</p><div class="d-quote-cite">${avatarHTML('d-quote-avatar', name, QUOTE_TONES[qi % 3])}<div><div class="d-quote-name">${name}</div><div class="d-quote-role">${role}</div></div></div>`;
+    dQ.appendChild(el);
+  });
+  const mQ = document.getElementById('m-quotes-scroll');
+  if (mQ) quotes.forEach(([body, name, role], qi) => {
+    const el = document.createElement('div');
+    el.className = 'm-quote';
+    el.innerHTML = `<p class="m-quote-body">"${body}"</p><div class="m-quote-cite">${avatarHTML('m-quote-avatar', name, QUOTE_TONES[qi % 3])}<div><div class="m-quote-name">${name}</div><div class="m-quote-role">${role}</div></div></div>`;
+    mQ.appendChild(el);
+  });
+
+  // Mobile hamburger menu open/close
+  const menuEl = document.getElementById('m-menu');
+  document.getElementById('m-hamburger-open')?.addEventListener('click', () => menuEl.classList.add('open'));
+  document.getElementById('m-hamburger-close')?.addEventListener('click', () => menuEl.classList.remove('open'));
+  menuEl?.querySelectorAll('a[href^="#"]').forEach(a => a.addEventListener('click', () => menuEl.classList.remove('open')));
+
+  // Mobile accordion (footer)
+  document.querySelectorAll('#m-accordion .m-acc-head').forEach(h => {
+    h.addEventListener('click', () => h.parentElement.classList.toggle('open'));
+  });
+
+  /* ── Product mockups ──────────────────────────────────────────────
+     One template per visual, injected into every [data-mock] slot so
+     the mobile and desktop copies can never drift apart. These are
+     miniatures of the REAL app screens (attendance grid, guardian
+     view) — the one visual a school buyer actually recognises. */
+  const segHTML = (state) =>
+    `<span class="mock-seg"><span${state === 'p' ? ' class="on-p"' : ''}>✓</span><span${state === 'a' ? ' class="on-a"' : ''}>✕</span><span${state === 'l' ? ' class="on-l"' : ''}>দেরি</span></span>`;
+  const attRow = (roll, name, state) =>
+    `<div class="mock-row"><span class="mock-roll">${roll}</span><span class="mock-name">${name}</span>${segHTML(state)}</div>`;
+  /* Icon animates in first, the text a beat behind it (.09s delay) —
+     the same "icon lands, then its label" sequencing every time a
+     chip's notification content changes on rotation, not just once. */
+  const chipHTML = (icon, tone, title, sub) =>
+    `<span class="mock-chip-ic chip-ic-anim" style="background:var(--color-${tone}-soft);color:var(--color-${tone})"><i data-lucide="${icon}" style="width:15px;height:15px"></i></span>` +
+    `<span class="chip-text-anim"><div class="mock-chip-t">${title}</div><div class="mock-chip-s">${sub}</div></span>`;
+  const phoneHead = (icon, tone, title, sub) =>
+    `<div class="mock-app-head">` +
+    (icon ? `<span style="width:22px;height:22px;border-radius:7px;background:var(--color-${tone}-soft);color:var(--color-${tone});display:flex;align-items:center;justify-content:center;flex:none"><i data-lucide="${icon}" style="width:12px;height:12px"></i></span>` : '') +
+    `<span><div class="mock-app-title">${title}</div><div class="mock-app-sub">${sub}</div></span></div>`;
+  const MOCKS = {
+    /* Attendance — the offline-first flagship, opens the rotation.
+       No outer .mock-phone/.mock-notch here — the phone's border and
+       notch are static markup around .mock-screen (see the hero
+       sections below) so the frame never fades; only this inner
+       screen content crossfades on each rotation swap. */
+    'phone-att':
+      phoneHead(null, '', 'উপস্থিতি নিন', '৬ষ্ঠ শ্রেণি - এ · ২০ মে · ৬০ জন') +
+      `<div class="mock-body">` +
+      attRow('১', 'সাদিয়া ইসলাম', 'p') + attRow('২', 'আরিফ রহমান', 'p') +
+      attRow('৩', 'ফারিয়া আক্তার', 'a') + attRow('৪', 'মেহেদী হাসান', 'l') +
+      attRow('৫', 'রাকিবুল ইসলাম', 'p') +
+      `</div><div class="mock-save">সংরক্ষণ করুন</div>`,
+    /* SikhokAI / ShikhoAI — the feature the brief asked to promote:
+       appears twice in the rotation order below and dwells longest. */
+    'phone-ai':
+      phoneHead('sparkles', 'accent-2', 'ShikhoAI', 'তোমার প্রশ্নের সহজ উত্তর') +
+      `<div class="mock-chat">` +
+      `<div class="mock-bubble ai">আসসালামু আলাইকুম! আজ কী নিয়ে পড়তে চাও?</div>` +
+      `<div class="mock-bubble me">বীজগণিতের অভেদ বুঝিয়ে দাও।</div>` +
+      `<div class="mock-bubble ai">(a+b)² = a² + 2ab + b² — এটাই মূল অভেদ। তুমি বলো, (a-b)² কী হবে?</div>` +
+      `</div><div class="mock-save" style="background:var(--color-accent-2-ink)">প্রশ্ন করো</div>`,
+    /* Marks / results */
+    'phone-marks':
+      phoneHead('bar-chart-3', 'info', 'ফলাফল', 'অর্ধবার্ষিক পরীক্ষা - ২০২৬') +
+      `<div class="mock-body">` +
+      ['বাংলা 79 A','ইংরেজি 76 A','গণিত 82 A+','বিজ্ঞান 88 A+'].map(r => {
+        const [s, m, g] = r.split(' ');
+        return `<div class="mock-line-row"><span>${s}</span><span class="num" style="font-weight:700">${m} · ${g}</span></div>`;
+      }).join('') +
+      `</div><div class="mock-save" style="background:var(--color-info)">সব ফলাফল দেখুন</div>`,
+    /* Weekly routine */
+    'phone-routine':
+      phoneHead('calendar-days', 'warning', 'আজকের রুটিন', 'মঙ্গলবার · ৬ষ্ঠ শ্রেণি - এ') +
+      `<div class="mock-body">` +
+      [['০৮:০০','বাংলা'],['০৯:০০','গণিত'],['১০:০০','ইংরেজি'],['১১:০০','বিজ্ঞান']].map(([t,s]) =>
+        `<div class="mock-line-row"><span class="num" style="color:var(--color-text-muted)">${t}</span><span style="font-weight:600">${s}</span></div>`).join('') +
+      `</div><div class="mock-save" style="background:var(--color-warning-ink)">সপ্তাহের রুটিন</div>`,
+    /* Fee payment */
+    'phone-fee':
+      phoneHead('wallet', 'success', 'ফি পরিশোধ', 'মে মাসের বেতন') +
+      `<div class="mock-body">` +
+      `<div class="mock-line-row"><span>মোট বকেয়া</span><span class="num" style="font-weight:700;color:var(--color-danger)">৳ ৫০০</span></div>` +
+      `<div class="mock-line-row"><span>পরিশোধিত</span><span class="num" style="font-weight:700;color:var(--color-success)">৳ ২,০০০</span></div>` +
+      `<div style="padding:10px 14px;display:flex;gap:6px">` +
+      ['bKash','Nagad','Rocket'].map(m => `<span style="flex:1;text-align:center;padding:6px 0;border:1px solid var(--color-border);border-radius:8px;font-size:10.5px;font-weight:700;color:var(--color-text-muted)">${m}</span>`).join('') +
+      `</div></div><div class="mock-save" style="background:var(--color-success)">এখনই পরিশোধ করুন</div>`,
+    'chip-sms': chipHTML('message-circle', 'success', 'অনুপস্থিতি SMS পাঠানো হয়েছে', '১ জন অভিভাবকের কাছে'),
+    'chip-sync': chipHTML('wifi-off', 'warning', 'অফলাইনে সংরক্ষিত', 'সংযোগ ফিরলে ৪ সেকেন্ডে সিঙ্ক'),
+    'chip-routine': chipHTML('bell', 'success', 'আজকের ক্লাসের রুটিন<br>প্রকাশিত হয়েছে', 'শিক্ষক প্যানেল'),
+    'chip-result': chipHTML('graduation-cap', 'warning', 'নতুন ফলাফল প্রকাশিত', 'অভিভাবক নোটিস'),
+    'att-strip':
+      `<div class="mock-strip">` +
+      attRow('১', 'সাদিয়া ইসলাম', 'p') + attRow('২', 'আরিফ রহমান', 'a') + attRow('৩', 'ফারিয়া আক্তার', 'p') +
+      `</div>`,
+    'teacher-card':
+      `<div class="mock-card">` +
+      `<div class="mock-card-head"><span class="mock-ava" style="background:var(--color-info)"><i data-lucide="calendar-check" style="width:14px;height:14px"></i></span>` +
+      `<span style="flex:1"><span style="display:block;font-size:12.5px;font-weight:700">উপস্থিতি · ৬ষ্ঠ-এ</span><span style="display:block;font-size:10px;color:var(--color-text-muted)">২০ মে · ৩য় পিরিয়ড</span></span>` +
+      `<span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink);font-size:10px;padding:3px 8px;border-radius:99px;font-weight:700">৫৬/৬০</span></div>` +
+      attRow('৭', 'নুসরাত জাহান', 'p') + attRow('২৩', 'তানভীর আহমেদ', 'a') + attRow('৪৪', 'ইমরান হোসেন', 'p') +
+      `<div class="mock-save">উপস্থিতি সংরক্ষণ করুন</div></div>`,
+    'guardian-card':
+      `<div class="mock-card">` +
+      `<div class="mock-card-head"><span class="mock-ava" style="background:var(--color-accent-2)">আ</span>` +
+      `<span style="flex:1"><span style="display:block;font-size:12.5px;font-weight:700">আরাফাত রহমান</span><span style="display:block;font-size:10px;color:var(--color-text-muted)">৮ম শ্রেণি - এ · রোল ১২</span></span>` +
+      `<span class="badge" style="background:var(--color-success-soft);color:var(--color-success-ink);font-size:10px;padding:3px 8px;border-radius:99px;font-weight:700">উপস্থিত ✓</span></div>` +
+      `<div class="mock-line"><span>গণিত</span><span class="num" style="font-weight:700">৮২ · A+</span></div>` +
+      `<div class="mock-line"><span>ইংরেজি</span><span class="num" style="font-weight:700">৭৬ · A</span></div>` +
+      `<div class="mock-line"><span>বিজ্ঞান</span><span class="num" style="font-weight:700">৮৮ · A+</span></div>` +
+      `<div class="mock-sms">📩 আরাফাত আজ সকাল ৮:০২-এ বিদ্যালয়ে উপস্থিত হয়েছে। — ShikhonBD</div></div>`,
+    /* Student — model-test result plus an inline ShikhoAI tip, so the
+       "practice yourself, ask AI when stuck" pitch is one glance, not
+       a paragraph. */
+    'student-card':
+      `<div class="mock-card">` +
+      `<div class="mock-card-head"><span class="mock-ava" style="background:var(--color-accent-2)"><i data-lucide="sparkles" style="width:14px;height:14px"></i></span>` +
+      `<span style="flex:1"><span style="display:block;font-size:12.5px;font-weight:700">মডেল টেস্ট · গণিত</span><span style="display:block;font-size:10px;color:var(--color-text-muted)">অধ্যায় ৩ · বীজগণিত</span></span>` +
+      `<span class="badge" style="background:var(--color-warning-soft);color:var(--color-warning-ink);font-size:10px;padding:3px 8px;border-radius:99px;font-weight:700">১৮/২৫</span></div>` +
+      `<div class="mock-line"><span>সঠিক উত্তর</span><span class="num" style="font-weight:700;color:var(--color-success)">১৮ টি</span></div>` +
+      `<div class="mock-line"><span>ভুল উত্তর</span><span class="num" style="font-weight:700;color:var(--color-danger)">৭ টি</span></div>` +
+      `<div class="mock-sms" style="background:var(--color-accent-2-soft);color:var(--color-accent-2-ink)">✨ ShikhoAI: "৭ নং প্রশ্নে ভুল হয়েছে — দ্বিঘাত সমীকরণের সূত্রটি আবার দেখো। চাইলে ধাপে ধাপে বুঝিয়ে দিতে পারি।"</div></div>`,
+  };
+  document.querySelectorAll('[data-mock]').forEach(el => { el.innerHTML = MOCKS[el.dataset.mock] || ''; });
+  document.querySelectorAll('[data-mock-wrap]').forEach(el => { el.innerHTML = MOCKS[el.dataset.mockWrap] || ''; });
+
+  /* Hero capability strip — five icon + title + subtitle proof points
+     closing the first screen, each in its own sector color. */
+  const HERO_STRIP = [
+    ['graduation-cap', 'primary', 'আধুনিক ও ডিজিটাল',            'সহজ ও ব্যবহারবান্ধব'],
+    ['shield-check',   'success', 'নিরাপদ ও নির্ভরযোগ্য',         'ডেটা সম্পূর্ণ সুরক্ষিত'],
+    ['cloud',          'info',    'যেকোনো সময়, যেকোনো জায়গায়',  'ওয়েব ও মোবাইল ব্যবহারযোগ্য'],
+    ['book-open',      'warning', 'জাতীয় কারিকুলাম সমৃদ্ধ',       'চলমান ও নির্ভুল'],
+    ['bar-chart-3',    'primary', 'রিপোর্ট ও বিশ্লেষণ',           'এক ক্লিকে বিস্তারিত রিপোর্ট'],
+  ];
+  const stripRow = document.getElementById('d-hero-strip-row');
+  if (stripRow) stripRow.innerHTML = HERO_STRIP.map(([icon, tone, title, sub]) =>
+    `<div class="d-hero-strip-item"><span class="d-hero-strip-ic" style="background:var(--color-${tone}-soft);color:var(--color-${tone})"><i data-lucide="${icon}"></i></span>` +
+    `<span><div class="d-hero-strip-title">${title}</div><div class="d-hero-strip-sub">${sub}</div></span></div>`).join('');
+  // Same five proof points, mobile's own 2-column card grid (replaces
+  // the institution trust-wall — the capability strip carries that
+  // credibility job on mobile now instead).
+  const capStrip = document.getElementById('m-capstrip');
+  if (capStrip) capStrip.innerHTML = HERO_STRIP.map(([icon, tone, title, sub]) =>
+    `<div class="m-capstrip-item"><span class="m-capstrip-ic" style="background:var(--color-${tone}-soft);color:var(--color-${tone})"><i data-lucide="${icon}"></i></span>` +
+    `<span><div class="m-capstrip-title">${title}</div><div class="m-capstrip-sub">${sub}</div></span></div>`).join('');
+
+  /* ── Hero phone: cycles through the product's features ───────────
+     One phone, five feature screens on rotation — attendance, AI
+     tutor, results, routine, fees — so the hero communicates "this is
+     everything the system does" instead of just the one attendance
+     screen. ShikhoAI is the feature this brief asked to promote: it
+     appears twice in the loop and dwells longest each time.
+     prefers-reduced-motion: the loop never starts, so a reduced-motion
+     visitor just sees the static attendance screen already rendered
+     by the loop above — never an auto-advancing carousel. */
+  const PHONE_ROTATION = [
+    { key: 'phone-att',     dwell: 3400 },
+    { key: 'phone-ai',      dwell: 4600 },
+    { key: 'phone-marks',   dwell: 3000 },
+    { key: 'phone-ai',      dwell: 4600 },
+    { key: 'phone-routine', dwell: 3000 },
+    { key: 'phone-fee',     dwell: 3000 },
+  ];
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.querySelectorAll('[data-mock="phone-att"]').forEach(el => {
+      let i = 0;
+      const showNext = () => {
+        i = (i + 1) % PHONE_ROTATION.length;
+        el.style.opacity = '0';
+        setTimeout(() => {
+          el.innerHTML = MOCKS[PHONE_ROTATION[i].key];
+          if (window.lucide) lucide.createIcons();
+          el.style.opacity = '1';
+          setTimeout(showNext, PHONE_ROTATION[i].dwell);
+        }, 150);
+      };
+      setTimeout(showNext, PHONE_ROTATION[0].dwell);
+    });
+  }
+
+  /* ── Hero notification chips: each of the two desktop chips cycles
+     between two related notifications instead of each being pinned to
+     one message — the SMS alert and the offline-sync note now live
+     inside the same two chips rather than needing a third one. Every
+     swap rebuilds the icon/text nodes, so the chip-icon-in/chip-text-in
+     entrance above replays each time, not just on first paint. */
+  const CHIP_ROTATION = {
+    a: [
+      { icon: 'bell',            tone: 'success', title: 'আজকের ক্লাসের রুটিন<br>প্রকাশিত হয়েছে', sub: 'শিক্ষক প্যানেল',        dwell: 4200 },
+      { icon: 'message-circle',  tone: 'success', title: 'অনুপস্থিতি SMS<br>পাঠানো হয়েছে',         sub: '১ জন অভিভাবকের কাছে',   dwell: 4200 },
+    ],
+    b: [
+      { icon: 'graduation-cap',  tone: 'warning', title: 'নতুন ফলাফল প্রকাশিত',                    sub: 'অভিভাবক নোটিস',        dwell: 4200 },
+      { icon: 'wifi-off',        tone: 'warning', title: 'অফলাইনে সংরক্ষিত',                       sub: 'সংযোগ ফিরলে ৪ সেকেন্ডে সিঙ্ক', dwell: 4200 },
+    ],
+  };
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const runChipRotation = (el, set) => {
+      let i = 0;
+      const showNext = () => {
+        i = (i + 1) % set.length;
+        const c = set[i];
+        el.innerHTML = chipHTML(c.icon, c.tone, c.title, c.sub);
+        if (window.lucide) lucide.createIcons();
+        setTimeout(showNext, c.dwell);
+      };
+      setTimeout(showNext, set[0].dwell);
+    };
+    document.querySelectorAll('.d-hero-visual [data-mock="chip-routine"]').forEach(el => runChipRotation(el, CHIP_ROTATION.a));
+    document.querySelectorAll('.d-hero-visual [data-mock="chip-result"]').forEach(el => runChipRotation(el, CHIP_ROTATION.b));
+  }
+
+  // Reveal-on-scroll (both landings, viewport gating handled by CSS).
+  // Sibling reveals inherit a small cascading delay so grids assemble
+  // card-by-card instead of arriving as one slab.
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.querySelectorAll('.reveal').forEach(el => {
+      const sibs = Array.from(el.parentElement.children).filter(c => c.classList.contains('reveal'));
+      if (sibs.length <= 1) return;
+      // Pricing: the middle ("জনপ্রিয়") card lands with no delay; the
+      // two side cards wait for it, rather than following the sibling
+      // index order (the middle card is index 1, not 0 — a plain
+      // index*step stagger would have it land SECOND).
+      if (el.closest('.d-pricing, .m-pricing')) {
+        const isMid = el.classList.contains('d-plan-highlight') || el.classList.contains('highlight');
+        el.style.transitionDelay = isMid ? '0ms' : '280ms';
+        return;
+      }
+      // The numbered "১ → ২ → ৩" steps are a deliberately serial story,
+      // not a grid of interchangeable cards — mobile and desktop both
+      // get a slower, clearly-perceptible stagger than the generic
+      // 80ms grid cascade used everywhere else.
+      const step = el.closest('.m-steps, .d-steps') ? 220 : 80;
+      el.style.transitionDelay = (sibs.indexOf(el) * step) + 'ms';
+    });
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  } else {
+    document.querySelectorAll('.reveal').forEach(el => el.classList.add('in'));
+  }
+
+  // Re-render lucide after dynamic injections
+  lucide.createIcons();
+
+  /* Desktop nav scroll-spy — "হোম" was the only link that ever carried
+     .is-active; শিক্ষক/শিক্ষার্থী/অভিভাবক/প্রতিষ্ঠান never lit up no
+     matter which section you scrolled to, so the nav gave no feedback
+     on where you actually were. A ~120px band just under the sticky
+     nav (rootMargin's negative top/bottom) tracks which of the five
+     sections currently sits there and marks that link active instead. */
+  (() => {
+    const navLinks = document.querySelectorAll('.d-links a[href^="#"]');
+    if (!navLinks.length) return;
+    const sections = Array.from(navLinks)
+      .map(a => document.getElementById(a.getAttribute('href').slice(1)))
+      .filter(Boolean);
+    if (!sections.length) return;
+    const setActive = (id) => {
+      navLinks.forEach(a => a.classList.toggle('is-active', a.getAttribute('href') === '#' + id));
+    };
+    const io = new IntersectionObserver((entries) => {
+      const visible = entries.filter(e => e.isIntersecting);
+      if (!visible.length) return;
+      visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      setActive(visible[0].target.id);
+    }, { rootMargin: '-120px 0px -70% 0px', threshold: 0 });
+    sections.forEach(s => io.observe(s));
+  })();
+
+  // Sticky bar only on mobile; remove padding on desktop viewport
+  if (window.matchMedia('(min-width: 900px)').matches) {
+    document.body.classList.remove('mobile-with-stickybar');
+  }
+</script>
+
+</body>
+</html>

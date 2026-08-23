@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-08-22T21:36:33.864Z",
+        "reason": "Inter is inherited from the imported Ata Ekta LMS design system's own typography.css (documented there as the intentional Latin/number typeface); landing.html imports the same font family to stay visually consistent with the app it markets. Not a fresh model default choice."
+      }
+    ]
+  }
+}

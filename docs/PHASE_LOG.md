@@ -25,8 +25,10 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-1-A closed, R-2 not started
-Last Completed Phase: R-1-A — Three surfaces, three addresses (Option B)
+Current Phase:        R-2 — Notices & notification system (starting)
+Last Completed Phase: R-7-DOC — tenant onboarding specified + pilot runbook
+                      (documentation only; R-7 itself is NOT implemented)
+Last Implementation:  R-1-A — Three surfaces, three addresses (Option B)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
                       /design  the Ata Ekta prototype
 Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
@@ -1007,3 +1009,185 @@ None outstanding.
 ### Next recommended step
 
 **R-2 — Notices & notification system.**
+
+---
+
+# 2026-08-29 · R-7-DOC · Tenant onboarding specified, and a manual runbook for the pilot
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-7-DOC (documentation/architecture decision — **not** an implementation phase) |
+| **Phase name** | Tenant onboarding & provisioning specification + pilot runbook |
+| **Status** | ✅ Complete. **R-7 itself remains unimplemented and unscheduled**; R-2 is the current implementation phase. |
+| **Migration number** | none |
+| **Rollback status** | n/a — documentation only |
+| **Git commit** | `git log -1 --format=%H -- docs/PILOT-ONBOARDING-RUNBOOK.md` |
+
+### Objective
+
+The owner asked how a new school or college is entered into the system, and
+whether the master plan covered it. It did not, adequately: R-7 existed as five
+bullet points naming what would be built, with no answer to *who is allowed to
+create a tenant*, *in what order the steps run*, *what happens when a step fails*,
+or *how the first pilot schools get in before the wizard exists at all*.
+
+Two gaps, one documentation task: specify R-7 properly, and write down the manual
+procedure that has to work until R-7 ships.
+
+### What was already existing
+
+Most of the machinery, none of the procedure:
+
+- `app.provision_tenant()` (migration 012) — seeds academic year, terms, grading
+  scale and bands, bell schedules, classes, subjects with NCTB mark
+  distributions, fee heads and chart of accounts. Idempotent. Refuses to run
+  outside the tenant's own context (`42501`).
+- Student CSV import with the dry-run → sha256 digest → commit contract (F-1601),
+  creating guardians and `guardianships` from `guardian_phone`.
+- Activation codes (F-202, migration 037) — HMAC-stored, single-use, 72-hour.
+- R-1's branding editor, and migration 039's seed so an unconfigured school still
+  shows its own name.
+- `tenants.plan_code`, `student_cap`, `trial_ends_on`, `status` columns — present
+  since migration 001, enforced by nothing.
+- `audit.platform_access` — present, unused.
+
+What did not exist: a document tying them into an order, and any statement of the
+authorization chain for creating a tenant.
+
+### What was implemented
+
+Documentation only. No code, no schema, no configuration changed.
+
+1. **`docs/11-MASTER-PLAN.md` §R-7 rewritten** from five bullets into fifteen
+   subsections: R-7.1 authorization chain · R-7.2 institution information ·
+   R-7.3 id and slug generation · R-7.4 branding · R-7.5 academic setup ·
+   R-7.6 teacher import · R-7.7 student import · R-7.8 guardian linking ·
+   R-7.9 principal/IT admin creation · R-7.10 plan, cap, trial ·
+   R-7.11 suspension · R-7.12 login URL and subdomains · R-7.13 security controls ·
+   R-7.14 rollback and failure handling · R-7.15 a nine-screen wizard
+   specification, each screen giving fields, validation, dependencies, success
+   state and error state.
+2. **`docs/PILOT-ONBOARDING-RUNBOOK.md` created** — the manual procedure for the
+   first 3–5 institutions, with the real SQL, the real CSV headers, the real
+   error messages and what each one means, a verification checklist, and a
+   recovery table.
+3. **README** document map gains the runbook.
+
+### Important architectural decisions
+
+1. **Tenant creation is never self-service.** There is no public create endpoint
+   and R-7 does not add one. A tenant is created by the platform operator after a
+   signed agreement, full stop.
+2. **Two credentials for tenant creation, not one.** A platform JWT alone is
+   insufficient; `PLATFORM_API_KEY` is also required. Creating a tenant is the
+   highest-blast-radius operation in the product, and a leaked session token
+   should not be enough to perform it.
+3. **The authorization chain is written down.** The runtime role cannot create or
+   even *enumerate* tenants — `tenant_self` confines it to the one tenant it is
+   already inside. Tenant creation therefore needs a `SECURITY DEFINER` function
+   with a pinned `search_path`, granted to a platform role only, mirroring
+   `app.public_branding()` from migration 039. This also retires the SMS worker's
+   `SMS_WORKER_TENANT_IDS` env-var workaround, which exists today *only* because
+   nothing could legitimately list tenants.
+4. **Audit before the act, in the same transaction.** An action that rolls back
+   leaves no misleading audit row; an audit row that exists means the action
+   committed.
+5. **Suspension is commercial, not destructive.** Login is refused with a specific
+   message naming who to contact; data is untouched; SMS and AI stop so a
+   suspended tenant cannot accrue cost; reactivation is one status change. A
+   suspension that loses data is a suspension nobody dares use.
+6. **The slug is effectively permanent once printed**, because it becomes the
+   subdomain. Collisions resolve with a district suffix, never a number:
+   `monipur-high-2` is not a URL anyone will print on an admission slip. The
+   wizard must say this at the point of choosing, not in a help page.
+7. **Skipping branding is a first-class outcome.** Migration 039's seed means a
+   school that skips it still shows its own name. Blocking activation on a logo
+   the office has not found yet is how onboarding stalls for a week.
+8. **Only two things block activation**: no academic year, and no grading bands.
+   Everything else is a warning. Grading bands are singled out because without
+   them `app.compute_subject_grade()` returns NULL and the first result
+   publication of the year fails — months after onboarding, with no obvious cause.
+   It is the one failure that hides.
+9. **Guardians come from the student import, keyed by phone.** Two students
+   sharing a phone become one guardian with two children. Getting this wrong
+   produces duplicate SMS and a parent who cannot see one of their children.
+10. **The runbook exists to inform R-7, not merely to survive until it.** Its
+    closing section asks the operator to record which fields the office could not
+    supply, which errors were misread, and which steps were done out of order.
+    That list is R-7's real requirements document.
+
+### Database changes / API changes / UI changes
+
+None / none / none.
+
+### Files created
+
+```text
+docs/PILOT-ONBOARDING-RUNBOOK.md
+```
+
+### Files modified
+
+```text
+docs/11-MASTER-PLAN.md    §R-7 replaced with the full specification (R-7.1 … R-7.15)
+README.md                 document map gains the runbook
+docs/PHASE_LOG.md         this entry
+```
+
+### Files removed
+
+None.
+
+### Tests added / executed / results
+
+None added — nothing executable changed. The suite was re-run to confirm the
+documentation commit is inert: **432 passing, 0 failing.**
+
+### Build / typecheck results
+
+`npm run build` ok · `tsc --noEmit` ×3 exit 0 · working tree clean after rebuild.
+
+### Security validation
+
+No enforcement changed. The entry *specifies* controls that do not exist yet
+(platform role, `PLATFORM_API_KEY`, `app.create_tenant`) — they are R-7's work and
+are recorded here as design, not as fact. The D11 brand guard still passes in both
+directions.
+
+### Tenant-isolation validation
+
+Unchanged. §R-7.13 documents the existing controls it will build on; it introduces
+no new data path.
+
+### Known limitations
+
+- **This is a specification, not an implementation.** `platform-svc`,
+  `app.create_tenant`, the wizard and subdomain provisioning do not exist. Any
+  reader must not mistake R-7.1–R-7.15 for a description of running code.
+- **Steps 2 and 4 of the runbook need an owner-role connection.** Until
+  `platform-svc` exists there is no non-SQL way to create a tenant or the first
+  user, which is precisely why R-7 is scheduled.
+- **Teacher→section assignment has no UI** (R-3). The runbook works around it with
+  a direct `UPDATE sections SET class_teacher_id`, which is enough for a pilot
+  school to take attendance but is not the assignment model the product will use.
+- The runbook's SQL has **not been executed end to end** against a live database —
+  no PostgreSQL was reachable while writing it. It is derived from the migrations
+  and handlers, and the first pilot onboarding is its first real test. Expect to
+  correct it then, and record what changed.
+- Carried forward: DB-backed branding suites still unexecuted; migration 038 still
+  has no probe.
+
+### Unresolved bugs / issues
+
+None.
+
+### Decisions that require owner input
+
+None now. Two arrive with R-7: the plan/pricing model behind `plan_code`, and
+whether custom domains (`portal.school.edu.bd`) are offered at all.
+
+### Next recommended step
+
+**R-2 — Notices & notification system.** R-7 stays unscheduled; this entry
+changed only what is written down about it.

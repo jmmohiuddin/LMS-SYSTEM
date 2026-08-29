@@ -442,31 +442,407 @@ appears in under a second.
 
 **Goal:** নতুন স্কুল যোগ করা = ঘণ্টার কাজ, দিনের না।
 
-- **Platform service (new, small):** `platform-svc` — the SaaS operator's surface.
-  Uses a `SECURITY DEFINER` tenant-enumeration function (the runtime role deliberately
-  cannot list tenants; the SMS worker's env-var workaround gets retired here).
-  Endpoints: create/suspend/activate tenant, list tenants with usage (students, SMS
-  spend from `sms_outbox.cost_bdt`, AI tokens), manage `plan_code`/`student_cap`/
-  `trial_ends_on`. Gated by a platform role + service key; every access audited
-  (`audit.platform_access` exists).
-- **Per-tenant subdomains (D12, §1b):** `monipur.shikhonbd.com` — tenant resolved
-  from the hostname (the slug already exists and is unique), wildcard DNS + cert at
-  the edge, `?tid=` links unchanged and still honoured. Custom domains
-  (`portal.school.edu.bd`) become a paid option later, not part of this phase's
-  exit criteria.
-- **Setup wizard UI** over `app.provision_tenant()`: institution type
-  (school/college/madrasa — maps to existing `stream`/`level`/`weekend_days`), branding
-  (R-1 editor reused), academic year, classes/groups/sections, then straight into the
-  existing teacher/student CSV import wizard. The §68 flow of the PRD, on top of SQL
-  that already exists.
-- **Plan enforcement (light):** `student_cap` checked at import/enrolment; `status=
-  suspended` blocks login with a clear message; `trial_ends_on` banner. Billing/invoicing
-  the schools themselves = out of scope (manual for now).
-- **Tests:** provisioning end-to-end (new tenant → login → take attendance in <1 hour of
-  wall-clock steps); suspension actually locks out; cap enforcement.
+> **Full specification below.** Until R-7 ships, the first pilot institutions are
+> onboarded by hand using the same steps in the same order — see
+> [PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md). The runbook is the
+> manual rehearsal of this wizard; if a step is awkward there, it will be awkward
+> here, and that is the point of doing it manually first.
+
+#### R-7.1 Who creates a tenant, and the authorization chain
+
+A tenant is created by the **platform operator** (us), never by a school and never
+by a self-service signup form. There is no "create your school" button, and R-7
+does not add one.
+
+```text
+Signed commercial agreement
+        │
+        ▼
+Platform operator  ──authenticated as──▶  platform role (`super_admin`)
+        │                                  + PLATFORM_API_KEY (second factor)
+        ▼
+platform-svc  ──SECURITY DEFINER──▶  app.create_tenant(...)
+        │                             (the runtime role CANNOT do this,
+        │                              and cannot even list tenants)
+        ▼
+audit.platform_access  ← every call, before and after, with the actor
+```
+
+Four properties this chain has to keep:
+
+1. **The runtime role cannot create or enumerate tenants.** `shikhon_app` is
+   confined by `tenant_self` (`id = app.current_tenant()`), so it can only ever see
+   the one tenant it is already inside. Tenant creation therefore needs a
+   `SECURITY DEFINER` function with a pinned `search_path`, granted to a platform
+   role only — the same shape as `app.public_branding()` in migration 039.
+2. **Two credentials, not one.** A platform JWT alone is not enough; the endpoint
+   also requires `PLATFORM_API_KEY` from the environment. Creating a tenant is the
+   single highest-blast-radius operation in the product, and a leaked session
+   token should not be sufficient to perform it.
+3. **Every call is audited before it acts.** `audit.platform_access` already
+   exists (migration 001) for exactly this. The write goes in the same transaction,
+   so an action that rolls back leaves no misleading audit row, and an audit row
+   that exists means the action committed.
+4. **Nobody inside a school can reach it.** `principal`, `school_owner` and
+   `it_admin` are tenant-scoped roles; the platform console is a different service
+   with a different role and a different key. A school compromised end to end still
+   cannot create, read, or suspend another school.
+
+This also retires the SMS worker's `SMS_WORKER_TENANT_IDS` env-var workaround,
+which exists today only because no component could legitimately list tenants.
+
+#### R-7.2 Institution information collected
+
+| Field | Column | Required | Notes |
+|---|---|---|---|
+| Bangla name | `tenants.name_bn` | ✅ | Primary name everywhere in the UI |
+| English name | `tenants.name_en` | ✅ | Printed documents, `en` locale |
+| Slug | `tenants.slug` | ✅ | Generated, see R-7.3 |
+| Institution type | `tenants.stream` | ✅ | `bangla_medium` · `english_version` · `english_medium` · `madrasah` · `technical` |
+| Level | `tenants.level` | ✅ | `primary` · `junior_secondary` · `secondary` · `higher_secondary` · `combined` |
+| EIIN | `tenants.eiin` | ○ | 8 chars, **globally unique** — a typo here collides with a real school |
+| MPO code | `tenants.mpo_code` | ○ | |
+| Board | `tenants.board_code` | ○ | dhaka / rajshahi / madrasah / technical … |
+| District, upazila | `tenants.district`, `.upazila` | ○ | |
+| Address (Bangla) | `tenants.address_bn` | ○ | Seeds the branding letterhead |
+| Weekend days | `tenants.weekend_days` | ✅ | Default `{5,6}` (Fri+Sat); **madrasahs are commonly `{5}`** |
+| Shifts | `tenants.shifts` | ✅ | `{single}` default; `{morning,day}` etc. |
+| Timezone / locale | `.timezone`, `.default_locale` | ✅ | Defaults `Asia/Dhaka`, `bn` |
+| Plan, cap, trial end | `.plan_code`, `.student_cap`, `.trial_ends_on` | ✅ | See R-7.10 |
+
+Institution type is **configuration, not a code path** (D4/D9): it selects
+defaults for terminology, the academic template and the weekend, and nothing
+branches on it.
+
+#### R-7.3 Tenant id and slug generation
+
+- **Tenant id** — `gen_random_uuid()`, database-assigned, never chosen by a human.
+  It is the key the install link carries (`/app?tid=…`) and it is permanent.
+- **Slug** — proposed by the wizard from the English name, then confirmed by the
+  operator. Must satisfy the existing CHECK: `^[a-z0-9][a-z0-9-]{2,62}$`, and is
+  `citext UNIQUE`.
+  - Transliterate/lowercase, replace runs of non-alphanumerics with `-`, trim.
+  - `Monipur High School` → `monipur-high-school`.
+  - On collision, the wizard suggests a district suffix (`monipur-high-dhaka`)
+    rather than a number: a school's slug becomes its subdomain (R-7.12), and
+    `monipur-high-2` is a URL nobody will print on an admission slip.
+  - **The slug is effectively permanent once printed.** Changing it later breaks
+    every install link and QR code in circulation. The wizard says so at the point
+    of choosing, not in a help page.
+
+#### R-7.4 Branding setup
+
+Reuses the **R-1 branding editor** unchanged (`#/branding`, `PUT /ops/branding`).
+The wizard embeds it as a step rather than re-implementing it.
+
+- Migration 039 already seeds `settings->'branding'` from `name_bn`, `name_en` and
+  `address_bn`, so a school that skips this step still shows its own name, never
+  the platform's.
+- Uploading a logo is **optional** at onboarding and can be done later by the
+  school's own IT admin — blocking activation on an asset the office has not found
+  yet is how onboarding stalls for a week.
+- The contrast warning from R-1 applies here too: a brand colour that cannot carry
+  white text degrades every primary button at once.
+
+#### R-7.5 Academic setup
+
+One call, already built: `app.provision_tenant(tenant, year_label, year_start,
+year_end, min_level, max_level)` (migration 012). It **must run inside the
+tenant's own context** — it raises `42501` otherwise, which is the guard that
+stops a mis-scoped session provisioning the wrong school.
+
+It seeds, idempotently: academic year (marked current) → terms → **grading scale
+and bands** → bell schedule per shift → classes for the level range → subjects and
+`class_subjects` from the NCTB catalogue with mark distributions → fee heads →
+chart of accounts.
+
+> **The grading scale is not optional.** Without its bands,
+> `app.compute_subject_grade` returns NULL and the first result publication of the
+> year fails — months after onboarding, with no obvious cause. This is why
+> academic setup is a wizard step and not a "you can do this later" link.
+
+Sections are created after this step (the wizard offers "N sections per class",
+or they arrive implicitly through the student import, which resolves a section by
+name).
+
+#### R-7.6 Teacher import
+
+- CSV, same dry-run → digest → commit contract as students (R-7.7).
+- Creates `users` rows (tenant-scoped) + `staff_profiles` with `employee_code`.
+- Assigns the `subject_teacher` or `class_teacher` role.
+- **Section and subject assignment is R-3's screen**, not the import: a teacher
+  exists first, is assigned second, and the assignment is a dated record that can
+  be ended and replaced without deleting history (master plan §2).
+- A teacher with no phone number can still be imported; they activate by code
+  (R-7.9).
+
+#### R-7.7 Student import
+
+Built and tested (F-1601): `POST /api/v1/academics/import`, roles
+`principal` · `school_owner` · `academic_coordinator`.
+
+**Contract:** validate → the server returns a `sha256` digest of the parsed rows →
+commit re-sends the same file with that digest. A different file on the second
+call is refused with `digest_mismatch`. Validation is stateless; there is no
+staging table holding student PII between the two calls.
+
+**Required columns** (aliases accepted, Bangla headers included):
+
+| Field | Accepted headers |
+|---|---|
+| Roll | `roll_no` · `roll` · `রোল` |
+| Name (Bangla) | `name_bn` · `name` · `নাম` |
+| Class | `class` · `class_level` · `শ্রেণি` |
+| Section | `section` · `শাখা` |
+| Guardian phone | `guardian_phone` · `phone` · `মোবাইল` |
+
+**Optional:** `name_en`, `gender`, `dob`, `birth_reg_no`, `religion`,
+`optional_subject` (fourth subject), `guardian_name`, `relation`.
+
+Partial import is permitted but the skipped count is stated on the button itself
+("৭৬৮টি ঠিক সারি আমদানি করুন, ১৬টি বাদ") and recorded in `import_batches` — never
+silent truncation.
+
+#### R-7.8 Guardian linking
+
+Guardians are created **from the student import**, not separately:
+
+- `guardian_phone` is the identity. Two students sharing a phone become **one
+  guardian with two children** — a `guardianships` row each. That is the common
+  case (siblings) and getting it wrong produces duplicate SMS and a parent who
+  cannot see one of their children.
+- `is_primary` is set on the first link; `receives_sms` and `can_pay_fees` default
+  on and are editable later.
+- A guardian account is dormant until first login (OTP or activation code); the
+  link exists from import.
+
+#### R-7.9 Principal / IT admin creation
+
+The **first account is the one the wizard must create**, because everything else
+in the school is created by it.
+
+- The operator supplies the head teacher's name and phone; the wizard creates the
+  `users` row and grants `principal`.
+- Login on day one is by **activation code**, not OTP: `POST /auth/activate`
+  `{action:'issue'}`, issuable by `principal` · `school_owner` ·
+  `academic_coordinator` · `class_teacher`. Single-use, 72-hour expiry, revocable,
+  and the code itself is never stored — only an HMAC under `ACTIVATION_PEPPER`.
+- This is what makes onboarding independent of the SMS aggregator contract (R-8).
+  The school itself is the identity authority, face to face, which is the one
+  thing a school is genuinely better at than a gateway.
+- An `it_admin` account is optional and created the same way; in a small school
+  the principal is both.
+
+#### R-7.10 Plan, student cap, trial
+
+| Column | Behaviour |
+|---|---|
+| `plan_code` | Label only in R-7. No feature gating — `features jsonb` exists for that later. |
+| `student_cap` | Checked at **enrolment and import**. Over-cap import is refused with the numbers stated ("cap 500, this file would make 540"), never truncated. |
+| `trial_ends_on` | Banner in the app from 14 days out. Expiry does **not** delete or hide data; it moves the tenant to `suspended`. |
+| `status` | `trial` → `active` → `suspended` → `archived` |
+
+Billing the schools is **out of scope** for R-7 — invoicing is manual, and a
+payments integration for our own subscriptions is a separate decision from the
+MFS integration schools use for tuition.
+
+#### R-7.11 Suspension behaviour
+
+Suspension is a commercial state, not a data operation. It must be reversible with
+no loss, or it will not be used when it should be.
+
+- **Login is refused** with a specific, non-alarming message naming the office to
+  contact — never a generic auth error, which sends teachers to reset passwords
+  that are not broken.
+- **Data is untouched.** No deletion, no anonymisation, no export restriction.
+- **Background work stops**: SMS dispatch and AI calls skip suspended tenants, so a
+  suspended school cannot accrue cost.
+- **`app.public_branding()` already excludes `archived`** — a school that has left
+  stops appearing on any login screen. Suspended tenants still resolve, because
+  they are expected to return.
+- **Reactivation is a single status change** and needs no re-provisioning.
+
+#### R-7.12 Tenant login URL and future subdomain provisioning
+
+**Today (and after R-7):** the school's door is `/app?tid=<tenant-id>` — printed on
+admission slips, sent in the school's own SMS, a QR on the office wall. The device
+remembers it; the PWA install bakes it into `start_url`. The wizard's final screen
+produces this link, a QR image, and a short Bangla instruction sheet the office can
+print.
+
+**Subdomain provisioning (R-7 scope):**
+
+```text
+monipur-high-school.shikhonbd.com
+        │
+        ├── wildcard DNS  *.shikhonbd.com
+        ├── wildcard TLS certificate
+        └── edge resolves hostname → slug → tenant
+              (the slug is already unique; no new identifier)
+```
+
+`?tid=` links keep working unchanged — the two resolvers agree because they resolve
+to the same tenant, and D12 forbids adding a third mechanism. Custom domains
+(`portal.school.edu.bd`) are a later paid option, explicitly **not** an R-7 exit
+criterion.
+
+#### R-7.13 Security controls
+
+| Control | Where |
+|---|---|
+| Tenant creation needs platform role **+** `PLATFORM_API_KEY` | platform-svc |
+| `SECURITY DEFINER` with pinned `search_path` | `app.create_tenant`, mirroring migration 039 |
+| Runtime role cannot list or create tenants | `tenant_self` policy, unchanged |
+| Every platform action audited in the same transaction | `audit.platform_access` |
+| Per-tenant PII key generated at creation | `tenants.dek_wrapped`, `blind_index_pepper` |
+| Rate limiting on the console | existing `enforceRateLimit`, `service` class |
+| Slug/EIIN uniqueness enforced by the database | `citext UNIQUE`, `varchar(8) UNIQUE` |
+| Activation codes: HMAC-stored, single-use, 72 h | migration 037 |
+| No self-service signup | by design — there is no public create endpoint |
+
+#### R-7.14 Rollback and failure handling
+
+Onboarding is a sequence of steps against a live database, so each step states
+what happens when it fails:
+
+| Step | Fails how | Recovery |
+|---|---|---|
+| Create tenant | Slug/EIIN collision | Wizard suggests an alternative; nothing was written (single transaction) |
+| `provision_tenant` | Raises `42501` (wrong context) or partial | **Idempotent** — fix the context and re-run; `ON CONFLICT DO NOTHING` throughout |
+| Branding | Validation error | Field-level message; the tenant is already usable unbranded |
+| Teacher/student import | Row errors | Dry-run lists them with line numbers; downloadable error CSV; nothing written |
+| Import commits wrong file | `digest_mismatch` | Refused before any write |
+| Over cap | Refused with counts | Raise the cap or trim the file |
+| Principal account | Phone already used in this tenant | Wizard offers to grant the role to the existing user instead of creating a duplicate |
+| **Abandoned mid-way** | Tenant exists, half-configured | Set `status='archived'` — it disappears from login screens and can be deleted later under retention policy. **Never hard-delete a tenant with student rows** except through the PDPA erasure path |
+
+A tenant created and abandoned is **not** an error state that needs cleanup
+urgency: it is invisible to everyone but the operator.
+
+#### R-7.15 Wizard specification, screen by screen
+
+Nine screens. Each one states its fields, validation, what it depends on, and both
+outcomes. The wizard is **resumable** — every step commits, so an operator can
+stop after step 4 and finish tomorrow, and a browser crash loses nothing.
+
+---
+
+**Screen 1 — Institution identity**
+
+| | |
+|---|---|
+| **Fields** | Bangla name*, English name*, institution type*, level*, EIIN, MPO code, board, district, upazila, address |
+| **Validation** | Names non-empty, ≤120 chars. EIIN exactly 8 chars and globally unique — checked live, because the collision message must arrive before the operator moves on. Type and level from the enums. |
+| **Depends on** | Nothing. First screen. |
+| **Success** | Draft held client-side; nothing written yet. → Screen 2 |
+| **Error** | Field-level messages. EIIN collision names the conflict as "already registered" **without naming the other school** — that would leak one customer to another. |
+
+---
+
+**Screen 2 — Slug and access**
+
+| | |
+|---|---|
+| **Fields** | Slug (pre-filled from the English name, editable), weekend days*, shifts*, timezone, locale |
+| **Validation** | Slug matches `^[a-z0-9][a-z0-9-]{2,62}$` and is free — live check. Weekend is a subset of 0–6; **the madrasah default is `{5}`, not `{5,6}`**, and the wizard pre-selects by institution type. At least one shift. |
+| **Depends on** | Screen 1 (name seeds the slug; type seeds the weekend). |
+| **Success** | → Screen 3 |
+| **Error** | Taken slug offers a district-suffixed alternative, never a numeric one. A permanent, quiet warning sits under the field: *this becomes the school's web address and cannot be changed once printed.* |
+
+---
+
+**Screen 3 — Plan**
+
+| | |
+|---|---|
+| **Fields** | `plan_code`, `student_cap`, `trial_ends_on`, initial `status` (`trial` \| `active`) |
+| **Validation** | Cap > 0. Trial end in the future if status is `trial`. |
+| **Depends on** | Screen 1–2. |
+| **Success** | **The tenant row is written here** — one transaction, with the per-tenant PII key and blind-index pepper generated, and an `audit.platform_access` row. Everything after this point is resumable. → Screen 4 |
+| **Error** | Any collision missed by the live checks surfaces here as a clean refusal; nothing partial is left. |
+
+---
+
+**Screen 4 — Branding** *(skippable)*
+
+| | |
+|---|---|
+| **Fields** | The R-1 editor, unchanged: names, short name, logo, favicon, colours, address, phone, email, website, head teacher, signature, watermark |
+| **Validation** | R-1's `parseBranding` — hex colours only, raster assets only, per-field byte caps. Contrast warning when white button text would fail AA. |
+| **Depends on** | Screen 3 (a tenant must exist to own branding). |
+| **Success** | Saved; live preview shows the shell and the printed letterhead. → Screen 5 |
+| **Error** | Field-level. **Skipping is a first-class outcome**: migration 039's seed means the school already shows its own name. |
+
+---
+
+**Screen 5 — Academic year and structure**
+
+| | |
+|---|---|
+| **Fields** | Year label (default: current year), start date*, end date*, lowest class*, highest class*, sections per class |
+| **Validation** | End after start. Class range 1–12 and coherent with the level chosen on screen 1 — a `primary` institution asking for class 10 is queried, not silently accepted. |
+| **Depends on** | Screen 3. |
+| **Success** | Runs `app.provision_tenant()` **inside the tenant's context** and shows its returned table verbatim — *academic_year 1, terms 3, grading_bands 7, period_templates 2, classes 6, class_subject_mappings 54, fee_heads 5*. Seeing the counts is how an operator knows the grading scale exists. → Screen 6 |
+| **Error** | `42501` means the session context was wrong — a bug, reported as such, not as user error. The function is idempotent, so retry is always safe. |
+
+---
+
+**Screen 6 — Head teacher account**
+
+| | |
+|---|---|
+| **Fields** | Name (Bangla)*, name (English), phone (`+8801…`)*, email, role (`principal` default, `school_owner` optional) |
+| **Validation** | BD phone format. Unique within this tenant — the same phone may legitimately exist in another school. |
+| **Depends on** | Screen 3. |
+| **Success** | User created, role granted, **an activation code issued and displayed once** with its 72-hour expiry. → Screen 7 |
+| **Error** | Phone already in this tenant → offer to grant the role to the existing user rather than create a duplicate person. |
+
+---
+
+**Screen 7 — Teacher import** *(skippable)*
+
+| | |
+|---|---|
+| **Fields** | CSV upload |
+| **Validation** | Dry-run: required columns, phone format, duplicate employee codes. |
+| **Depends on** | Screen 5 (classes must exist). |
+| **Success** | Row counts, digest, commit. Section/subject assignment is deferred to R-3's screen and the wizard says so. → Screen 8 |
+| **Error** | Per-row errors with line numbers; downloadable error CSV; the school fixes its spreadsheet and re-uploads. Nothing is written until commit. |
+
+---
+
+**Screen 8 — Student import** *(skippable)*
+
+| | |
+|---|---|
+| **Fields** | CSV upload, target academic year (pre-filled) |
+| **Validation** | The F-1601 contract: required columns present, roll unique per section, class/section resolvable, guardian phone valid. **Student cap checked against the whole file, not row by row.** |
+| **Depends on** | Screen 5 (classes and sections must exist). |
+| **Success** | Preview states imported and skipped counts on the button itself; guardians created and linked, siblings collapsed onto one guardian. → Screen 9 |
+| **Error** | Per-row list + error CSV. `digest_mismatch` if a different file is committed. Over-cap refusal states both numbers. |
+
+---
+
+**Screen 9 — Review and activate**
+
+| | |
+|---|---|
+| **Fields** | Read-only summary: institution, slug, plan, counts (classes, sections, teachers, students, guardians), branding preview, head teacher + activation code. Action: **Activate** (`status` → `active`). |
+| **Validation** | Blocks activation only on the two things that break silently later: **no academic year** and **no grading bands**. Everything else (no logo, no students yet) is a warning, not a gate. |
+| **Depends on** | All previous. |
+| **Success** | Status `active`; produces the **login link** `/app?tid=…`, a QR code, and a printable Bangla instruction sheet for the office. Audited. |
+| **Error** | A blocked gate links back to the screen that fixes it. The tenant stays `trial` and is fully usable by the operator meanwhile. |
+
+---
+
+**Tests (R-7):** provisioning end to end (new tenant → activation code → login →
+take attendance, timed); suspension actually refuses login and stops SMS/AI;
+`student_cap` refuses an over-cap import with both numbers; slug and EIIN
+collisions refuse without leaking the other tenant; `provision_tenant` re-run is a
+no-op; a tenant created and abandoned is invisible to every other tenant.
 
 **Exit:** operator onboards a brand-new madrasa — different weekend, own branding —
-without touching SQL.
+without touching SQL, and the school's head teacher logs in from a printed code.
 
 ### R-8 — Go-live unlocks (credentials & production posture)
 

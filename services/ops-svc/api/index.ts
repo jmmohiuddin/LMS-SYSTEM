@@ -15,10 +15,14 @@ import events from './events.ts';
 import branding from './branding.ts';
 import brand from './brand.ts';
 import manifest from './manifest.ts';
+import notices from './notices.ts';
+import inbox from './inbox.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-const ROUTES: Record<string, Handler> = { maintenance, events, branding, brand, manifest };
+const ROUTES: Record<string, Handler> = {
+  maintenance, events, branding, brand, manifest, notices, inbox,
+};
 
 /**
  * Routes reachable without a session (R-1). Both answer only the seven
@@ -42,7 +46,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // pre-auth identity read is a read, and events is a mutation from
   // ordinary users.
   if (req.method !== 'OPTIONS' && sub !== 'maintenance') {
-    const bucket = sub === 'events' || (sub === 'branding' && req.method === 'PUT')
+    // Publishing a notice fans out to hundreds of receipt rows and can queue
+    // SMS, so it is the heaviest mutation on this dispatcher. Marking one read
+    // is a mutation too — cheap, but a write.
+    const isWrite = req.method === 'POST' || req.method === 'PUT';
+    const bucket = (sub === 'events' || sub === 'notices' || sub === 'inbox'
+      || sub === 'branding') && isWrite
       ? 'mutation'
       : 'read';
     if (!(await enforceRateLimit(req, res, corsHeaders(), bucket))) return;

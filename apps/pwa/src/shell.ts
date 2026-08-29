@@ -12,6 +12,7 @@
  * simplest thing that survives a reload and works fully offline.
  */
 import { iconSvg } from './icon.ts';
+import { formatCount } from '../../../packages/ui-core/src/format.ts';
 
 export interface ShellRoute {
   path: string;       // hash fragment without '#/', e.g. 'attendance'
@@ -44,11 +45,20 @@ export interface ShellOptions {
    * yet still gets a working shell.
    */
   institution?: { name: string; logoUrl?: string };
+  /**
+   * R-2. The notification bell. Present for every role, because every role
+   * has an inbox — what differs is what is in it, and that was decided when
+   * the notice was published. Omitted only in demo/preview contexts that have
+   * no inbox to open.
+   */
+  bell?: { onOpen: () => void };
 }
 
 export class Shell {
   private readonly o: ShellOptions;
   private viewEl!: HTMLElement;
+  private bellEl: HTMLButtonElement | null = null;
+  private bellBadgeEl: HTMLElement | null = null;
   private tabEls = new Map<string, HTMLButtonElement>();
   private currentRoute: ShellRoute | null = null;
   private readonly onHashChange = () => { void this.renderRoute(); };
@@ -99,6 +109,21 @@ export class Shell {
     } else {
       existing?.remove();
     }
+  }
+
+  /**
+   * Set the unread count on the bell.
+   *
+   * A badge showing "0" is noise, so zero hides it entirely. Above 9 it reads
+   * "৯+": the exact number stops being actionable there, and three digits do
+   * not fit a 20px badge at 360px.
+   */
+  setUnread(count: number): void {
+    if (!this.bellBadgeEl || !this.bellEl) return;
+    const n = Math.max(0, Math.floor(count));
+    this.bellBadgeEl.hidden = n === 0;
+    this.bellBadgeEl.textContent = n > 9 ? '৯+' : formatCount(n, 'bn');
+    this.bellEl.setAttribute('aria-label', n === 0 ? 'নোটিশ' : `নোটিশ — ${n}টি পড়া হয়নি`);
   }
 
   /** Call when the shell itself is being torn down (e.g. on logout). */
@@ -152,6 +177,27 @@ export class Shell {
     const who = d.createElement('span');
     who.className = 'shell-who';
     who.textContent = this.o.displayName;
+    // R-2: the bell sits before logout, because it is pressed daily and
+    // logout is pressed almost never.
+    if (this.o.bell) {
+      const bell = d.createElement('button');
+      bell.type = 'button';
+      bell.className = 'shell-bell';
+      bell.setAttribute('aria-label', 'নোটিশ');
+      const glyph = d.createElement('span');
+      glyph.className = 'shell-bell-glyph';
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.innerHTML = iconSvg('bell');
+      const badge = d.createElement('span');
+      badge.className = 'shell-bell-badge';
+      badge.hidden = true;
+      bell.append(glyph, badge);
+      bell.addEventListener('click', () => this.o.bell?.onOpen());
+      this.bellEl = bell;
+      this.bellBadgeEl = badge;
+      topbar.append(bell);
+    }
+
     const logout = d.createElement('button');
     logout.type = 'button';
     logout.className = 'shell-logout';

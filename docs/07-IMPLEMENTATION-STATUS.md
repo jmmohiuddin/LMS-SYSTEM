@@ -15,10 +15,11 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **432 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 85, `services/academics-svc` 19, `services/ops-svc` 5, `services/rms-svc` 15, `apps/pwa` 179, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 17 SQL assertion suites |
-| Schema | 39 migrations (38 rollback files), verified by applying the full chain to an empty database in CI, then 17 SQL assertion suites |
+| Tests | **477 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 108, `services/academics-svc` 19, `services/ops-svc` 5, `services/rms-svc` 15, `apps/pwa` 201, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 18 SQL assertion suites |
+| Schema | 40 migrations (39 rollback files), verified by applying the full chain to an empty database in CI, then 18 SQL assertion suites |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
+| Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
 | Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
 
 What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their
@@ -478,6 +479,89 @@ encoding the old `/`-based contract were updated with the reason recorded inline
 **Remaining limitation:** the prototype at `/design` is still built from static
 sample data and is not covered by any behavioural test — it is kept as a design
 reference, and whether it earns its place is a later question.
+
+---
+
+## 9d. R-2 — notices and in-app notifications (closed)
+
+Before this, the product had no way to tell anybody anything.
+`academics-svc/api/ward.ts` said so outright, refusing to stub the notices card
+§9.1 draws because "this schema has no notices table".
+
+**Migration 040** adds `notices` (what the author wrote) and `notice_receipts`
+(one row per person per notice). Receipts are **materialised at publish**, not
+resolved at read: a notice's audience is a question about the past — who was in
+Class 9 Science F on the day it went out — and a live query answers it about the
+present. A student who transfers in next week must not retroactively acquire
+last week's notices.
+
+**Audience resolution** is `app.resolve_notice_audience()`, `SECURITY DEFINER`
+with a pinned `search_path` and an explicit tenant assertion. It returns
+`(user_id, about_student_id)`; a guardian appears **once per child in scope**,
+which is what lets the ward view file a notice under the child it concerns —
+and is why a guardian of two children gets two receipts for a school-wide
+notice and one for a section notice.
+
+**The client never sends a recipient list.** It sends intent
+(`{type:'section', ids:[…]}`). A client-supplied roster would be the
+confused-deputy shape R-1 removed from branding, and worse here: the wrong
+roster does not show a school the wrong logo, it tells 900 guardians something
+meant for the staff.
+
+**What stops a student reading a teachers-only notice** is neither the category
+nor the UI: it is the absence of a receipt. `notice_read_scope` (RESTRICTIVE)
+admits a notice only to management, its author, or someone holding a receipt.
+
+**SMS reuses the attendance pipeline entirely.** Publishing emits
+`notice.published.v1` into `event_outbox`; `sms-svc` stage 1 grew a second
+consumer sharing **one** daily cap, **one** weekend/holiday suppression and
+**one** dedupe index. There is no second SMS path — SMS is ~80% of the
+infrastructure bill (docs/05 §5) and a second path is a second place for it to
+double. Emergencies deliberately bypass weekend/holiday suppression: "school is
+closed today" is exactly the message a parent needs on a day it is closed.
+
+**A D11 violation was found and fixed here.** The attendance SMS templates
+ended `— ShikhonBD`. An SMS to a guardian is a tenant operational surface; a
+parent should be told by the school their child attends, not by a company they
+have never heard of. Templates now take the institution's name, read from
+`settings->'branding'`. R-1's CI guard did not catch it because that guard only
+reads `apps/pwa`.
+
+**Notice SMS is capped at 180 characters** (`NOTICE_SMS_MAX_BODY`) — headline
+plus a lead, pointing at the app. A 4000-character notice is 58 UCS-2 segments
+per guardian; to 900 guardians that is over ৳20,000 for one message. The
+composer shows the per-recipient segment count as the body is typed.
+
+**UI:** a bell with an unread badge in every role's top bar; an inbox where
+opening a notice is what marks it read; a composer whose audience is restated
+in plain Bangla immediately above the send button. Notices are
+stale-while-revalidate in the service worker, so the bell works offline.
+
+**45 new tests** (477 total): `packages/ui-core/test/notice.test.ts` (23 — the
+audience refusals, and that Bangla costs 70 characters per segment),
+`apps/pwa/test/notices-ui.test.ts` (22 — bell, inbox, composer), and
+`db/tests/notices.sql` wired into `database.yml`, asserting that a staff notice
+reaches no student, a section notice reaches that section's guardians and
+nobody else's, a sibling guardian gets one receipt per child, re-publishing is
+free, and a student cannot read a notice by id.
+
+**Known limitations:**
+
+- **Scheduling is a column, not a feature.** `publish_at` exists; nothing polls
+  it. A notice with a future `publish_at` is a draft with a date.
+- **No real-time delivery.** The badge refreshes on boot and after publishing;
+  a notice arriving while the app is open appears on the next navigation. A
+  timer polling on 2G would cost more than the freshness is worth; WebSocket
+  delivery is a later phase.
+- **The auto-notice emitters are not built** — exam-routine-published,
+  result-published and invoice-generated do not yet create notices. The
+  machinery is in place; they are three small emitters at existing publish
+  points, deferred so R-2 shipped the surface first.
+- **Editing a published notice is not supported.** Re-publishing after widening
+  the audience reaches the new people only, which is correct, but there is no
+  UI for it.
+- SMS send remains stubbed until an aggregator contract (R-8), so notice SMS
+  queues and is visible in `sms_outbox` but nothing leaves the building.
 
 ---
 

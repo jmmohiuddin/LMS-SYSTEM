@@ -96,6 +96,18 @@ export function route(request: { url: string; method: string; mode?: string }): 
     return { strategy: 'network-only', reason: 'money is never served from cache' };
   }
 
+  // R-2. The inbox is reference data in the same sense the roster is: a
+  // teacher opening the bell on a dead link should see the notices they
+  // already received, not a spinner. Writes (marking read, publishing) are
+  // network-only — the method check above already sent them there.
+  if (path.startsWith('/api/v1/ops/inbox') || path.startsWith('/api/v1/ops/notices')) {
+    return {
+      strategy: 'stale-while-revalidate',
+      cache: CACHE_DATA,
+      reason: 'notices — readable offline once delivered',
+    };
+  }
+
   // R-1. The institution's identity is the most cacheable thing in the
   // product — it changes when a school rebrands, which is roughly never —
   // and it is needed at the very first paint, before login, on whatever

@@ -1800,9 +1800,344 @@ async function handler5(req, res) {
   res.end(body);
 }
 
-// services/ops-svc/api/index.ts
-var ROUTES = { maintenance: handler, events: handler2, branding: handler3, brand: handler4, manifest: handler5 };
+// packages/ui-core/src/notice.ts
+var NOTICE_CATEGORIES = [
+  "general",
+  "teacher",
+  "student",
+  "guardian",
+  "class",
+  "section",
+  "exam",
+  "fee",
+  "attendance",
+  "emergency"
+];
+var AUDIENCE_TYPES = [
+  "all",
+  "staff",
+  "students",
+  "guardians",
+  "class",
+  "section",
+  "users"
+];
+var NEEDS_IDS = /* @__PURE__ */ new Set(["class", "section", "users"]);
+var NOTICE_LIMITS = Object.freeze({
+  title: 200,
+  body: 4e3,
+  /**
+   * A single notice may not name more than this many classes, sections or
+   * users. Not a performance limit — an author selecting 400 sections has
+   * almost certainly meant "everyone", and the composer should say so rather
+   * than fan out to a list nobody checked.
+   */
+  ids: 200
+});
+var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var NoticeError = class extends Error {
+  field;
+  constructor(field, message2) {
+    super(message2);
+    this.field = field;
+  }
+};
+function parseAudience(input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new NoticeError("audience", "audience must be an object");
+  }
+  const a = input;
+  const type = a.type;
+  if (typeof type !== "string" || !AUDIENCE_TYPES.includes(type)) {
+    throw new NoticeError(
+      "audience",
+      `audience.type must be one of: ${AUDIENCE_TYPES.join(", ")}`
+    );
+  }
+  const t = type;
+  if (!NEEDS_IDS.has(t)) {
+    if (a.ids !== void 0 && Array.isArray(a.ids) && a.ids.length > 0) {
+      throw new NoticeError(
+        "audience",
+        `audience type "${t}" reaches everyone in that group and cannot also name ids`
+      );
+    }
+    return { type: t };
+  }
+  if (!Array.isArray(a.ids) || a.ids.length === 0) {
+    throw new NoticeError(
+      "audience",
+      `audience type "${t}" needs at least one selection`
+    );
+  }
+  if (a.ids.length > NOTICE_LIMITS.ids) {
+    throw new NoticeError(
+      "audience",
+      `at most ${NOTICE_LIMITS.ids} selections \u2014 did you mean everyone?`
+    );
+  }
+  const ids = [];
+  for (const raw of a.ids) {
+    if (typeof raw !== "string" || !UUID_RE2.test(raw)) {
+      throw new NoticeError("audience", "every selection must be an id");
+    }
+    if (!ids.includes(raw)) ids.push(raw);
+  }
+  return { type: t, ids };
+}
+function parseNotice(input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new NoticeError("notice", "notice must be an object");
+  }
+  const i = input;
+  const text2 = (field, max) => {
+    const v = i[field];
+    if (typeof v !== "string") throw new NoticeError(field, `${field} is required`);
+    const clean = v.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+    if (clean.length === 0) throw new NoticeError(field, `${field} cannot be empty`);
+    if (clean.length > max) {
+      throw new NoticeError(field, `${field} must be ${max} characters or fewer`);
+    }
+    return clean;
+  };
+  const category = i.category === void 0 ? "general" : i.category;
+  if (typeof category !== "string" || !NOTICE_CATEGORIES.includes(category)) {
+    throw new NoticeError(
+      "category",
+      `category must be one of: ${NOTICE_CATEGORIES.join(", ")}`
+    );
+  }
+  return {
+    title: text2("title", NOTICE_LIMITS.title),
+    body: text2("body", NOTICE_LIMITS.body),
+    category,
+    audience: parseAudience(i.audience ?? { type: "all" }),
+    sendSms: i.sendSms === true
+  };
+}
+
+// services/ops-svc/api/notices.ts
+var AUTHOR_ROLES = ["principal", "school_owner", "academic_coordinator", "class_teacher"];
+var SCHOOL_WIDE_ROLES = /* @__PURE__ */ new Set(["principal", "school_owner", "academic_coordinator"]);
+async function assertAudienceAllowed(client, role, draft) {
+  if (SCHOOL_WIDE_ROLES.has(role)) return;
+  if (draft.audience.type !== "section") {
+    throw new HttpError(
+      403,
+      "a class teacher may publish to their own sections only",
+      "audience_not_permitted",
+      { field: "audience" }
+    );
+  }
+  const ids = draft.audience.ids ?? [];
+  const { rows } = await client.query(
+    `SELECT ($1::uuid[] <@ app.my_section_ids()) AS ok`,
+    [ids]
+  );
+  if (!rows[0]?.ok) {
+    throw new HttpError(
+      403,
+      "one or more of those sections is not yours",
+      "audience_not_permitted",
+      { field: "audience" }
+    );
+  }
+}
 async function handler6(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const limit = Math.min(100, Math.max(1, Number(query(req).get("limit") ?? 50)));
+      const notices = await db.withTenant(ctx, async (c) => {
+        const { rows } = await c.query(
+          `SELECT id, title, body, category, audience, send_sms, status,
+                  published_at, recipient_count, created_at
+             FROM notices
+            ORDER BY COALESCE(published_at, created_at) DESC
+            LIMIT $1`,
+          [limit]
+        );
+        return rows;
+      });
+      json(res, 200, { notices }, cors);
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    requireRole(claims, AUTHOR_ROLES);
+    const body = await readJson(req);
+    let draft;
+    try {
+      draft = parseNotice(body.notice);
+    } catch (err) {
+      if (err instanceof NoticeError) {
+        throw new HttpError(400, err.message, "invalid_notice", { field: err.field });
+      }
+      throw err;
+    }
+    const result = await db.withTenant(ctx, async (c) => {
+      await assertAudienceAllowed(c, claims.role, draft);
+      const inserted = await c.query(
+        `INSERT INTO notices
+           (tenant_id, title, body, category, audience, send_sms, created_by)
+         VALUES (app.current_tenant(), $1, $2, $3::notice_category, $4::jsonb, $5, $6)
+         RETURNING id`,
+        [
+          draft.title,
+          draft.body,
+          draft.category,
+          JSON.stringify(draft.audience),
+          draft.sendSms,
+          claims.sub
+        ]
+      );
+      const noticeId = inserted.rows[0].id;
+      if (body.publish === false) {
+        return { noticeId, status: "draft", recipients: 0, smsQueued: false };
+      }
+      const pub = await c.query(
+        `SELECT recipients, sms_event FROM app.publish_notice($1::uuid)`,
+        [noticeId]
+      );
+      return {
+        noticeId,
+        status: "published",
+        recipients: pub.rows[0]?.recipients ?? 0,
+        // The event is queued; sms-svc decides per recipient whether it
+        // survives the cap, the weekend, the holiday and consent.
+        smsQueued: pub.rows[0]?.sms_event ?? false
+      };
+    });
+    json(res, 201, result, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(
+        res,
+        err.status,
+        { error: err.code ?? "error", message: err.message, ...err.detail ?? {} },
+        cors
+      );
+      return;
+    }
+    const code = err.code;
+    if (code === "22023") {
+      json(res, 400, { error: "invalid_audience", message: "that audience selects nobody" }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
+// services/ops-svc/api/inbox.ts
+var UUID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function handler7(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const limit = Math.min(100, Math.max(1, Number(query(req).get("limit") ?? 30)));
+      const unreadOnly = query(req).get("unread") === "1";
+      const out = await db.withTenant(ctx, async (c) => {
+        const { rows } = await c.query(
+          `SELECT r.id            AS receipt_id,
+                  n.id            AS notice_id,
+                  n.title, n.body, n.category,
+                  r.delivered_at, r.read_at,
+                  r.about_student_id,
+                  s.full_name_bn  AS about_student_name
+             FROM notice_receipts r
+             JOIN notices n ON n.id = r.notice_id
+             LEFT JOIN users s ON s.id = r.about_student_id
+            WHERE r.user_id = app.current_user_id()
+              AND ($1::boolean = false OR r.read_at IS NULL)
+            ORDER BY r.delivered_at DESC
+            LIMIT $2`,
+          [unreadOnly, limit]
+        );
+        const count = await c.query(
+          `SELECT count(*) AS unread FROM notice_receipts
+            WHERE user_id = app.current_user_id() AND read_at IS NULL`
+        );
+        return { rows, unread: Number(count.rows[0]?.unread ?? 0) };
+      });
+      json(res, 200, {
+        unread: out.unread,
+        notices: out.rows.map((r) => ({
+          receiptId: r.receipt_id,
+          noticeId: r.notice_id,
+          title: r.title,
+          body: r.body,
+          category: r.category,
+          deliveredAt: r.delivered_at,
+          readAt: r.read_at,
+          // Present only on a guardian's receipt: which child this is about.
+          aboutStudent: r.about_student_id ? { id: r.about_student_id, nameBn: r.about_student_name } : null
+        }))
+      }, cors);
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    const body = await readJson(req);
+    if (!body.all && !UUID_RE3.test(body.noticeId ?? "")) {
+      throw new HttpError(400, "send a noticeId, or all:true", "invalid_request");
+    }
+    const marked = await db.withTenant(ctx, async (c) => {
+      const { rowCount } = await c.query(
+        `UPDATE notice_receipts
+            SET read_at = now()
+          WHERE user_id = app.current_user_id()
+            AND read_at IS NULL
+            AND ($1::boolean = true OR notice_id = $2::uuid)`,
+        [body.all === true, body.noticeId ?? null]
+      );
+      return rowCount ?? 0;
+    });
+    json(res, 200, { marked }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(
+        res,
+        err.status,
+        { error: err.code ?? "error", message: err.message, ...err.detail ?? {} },
+        cors
+      );
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
+// services/ops-svc/api/index.ts
+var ROUTES = {
+  maintenance: handler,
+  events: handler2,
+  branding: handler3,
+  brand: handler4,
+  manifest: handler5,
+  notices: handler6,
+  inbox: handler7
+};
+async function handler8(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -1811,11 +2146,12 @@ async function handler6(req, res) {
     return;
   }
   if (req.method !== "OPTIONS" && sub !== "maintenance") {
-    const bucket = sub === "events" || sub === "branding" && req.method === "PUT" ? "mutation" : "read";
+    const isWrite = req.method === "POST" || req.method === "PUT";
+    const bucket = (sub === "events" || sub === "notices" || sub === "inbox" || sub === "branding") && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
   }
   return route(req, res);
 }
 export {
-  handler6 as default
+  handler8 as default
 };

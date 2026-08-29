@@ -2123,3 +2123,93 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 .brand-preview-sig img { max-height: 34px; max-width: 130px; object-fit: contain; }
 .brand-preview-signame { font-size: 9.5px; color: #4b5563; border-top: 1px solid #374151;
                          display: inline-block; padding-top: 3px; min-width: 110px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   R-2 — notices and the notification bell
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── The bell ──────────────────────────────────────────────────────── */
+.shell-bell { position: relative; display: flex; align-items: center;
+              justify-content: center; min-width: var(--tap-min);
+              min-height: var(--tap-min); padding: 0 var(--s-1);
+              background: none; border: 0; color: var(--c-ink);
+              cursor: pointer; flex: none; }
+.shell-bell-glyph { display: flex; width: 20px; height: 20px; }
+/* The badge is a count, not a dot: "how many" is the question a teacher
+   returning from leave is actually asking. */
+.shell-bell-badge { position: absolute; top: 4px; right: 0;
+                    min-width: 17px; height: 17px; padding: 0 4px;
+                    border-radius: 9px; background: var(--c-primary);
+                    color: #fff; font-size: var(--text-3xs); font-weight: 700;
+                    line-height: 17px; text-align: center;
+                    border: 2px solid var(--c-surface); box-sizing: content-box; }
+
+/* ── Inbox ─────────────────────────────────────────────────────────── */
+.notice-list { display: flex; flex-direction: column; gap: var(--s-2);
+               padding: var(--s-3) var(--s-4) var(--s-6); }
+.notice-card { background: var(--color-bg); border: 1px solid var(--c-line);
+               border-radius: var(--radius-lg); overflow: hidden; }
+/* Unread carries a left rule and a heavier title, not only a tint — a pale
+   background difference is the first thing to vanish in daylight on the
+   2 GB reference phone. */
+.notice-card.unread { border-left: 3px solid var(--c-primary); }
+.notice-card.urgent { border-color: var(--c-danger, var(--c-primary)); }
+.notice-head { display: flex; align-items: flex-start; gap: var(--s-3);
+               width: 100%; min-height: var(--tap-min);
+               padding: var(--s-3); background: none; border: 0;
+               text-align: start; cursor: pointer; font-family: inherit;
+               color: var(--c-ink); }
+.notice-glyph { display: flex; width: 20px; height: 20px; flex: none;
+                margin-top: 2px; color: var(--c-ink-2, var(--color-text-muted)); }
+.notice-card.urgent .notice-glyph { color: var(--c-danger, var(--c-primary)); }
+.notice-main { display: flex; flex-direction: column; gap: 2px;
+               flex: 1; min-width: 0; }
+.notice-title { font-size: var(--text-sm); font-weight: 500; color: var(--c-ink);
+                overflow-wrap: anywhere; }
+.notice-card.unread .notice-title { font-weight: 700; }
+.notice-meta { font-size: var(--text-2xs); color: var(--c-ink-2, var(--color-text-muted)); }
+.notice-dot { width: 8px; height: 8px; border-radius: 50%; flex: none;
+              margin-top: 6px; background: var(--c-primary); }
+.notice-body { margin: 0; padding: 0 var(--s-3) var(--s-3) calc(var(--s-3) + 32px);
+               font-size: var(--text-sm); line-height: 1.65;
+               color: var(--c-ink-1, var(--color-text)); white-space: pre-wrap;
+               overflow-wrap: anywhere; }
+
+/* ── Composer ──────────────────────────────────────────────────────── */
+.audience-chips { display: flex; flex-wrap: wrap; gap: var(--s-2);
+                  margin-top: var(--s-2); }
+.audience-chip { min-height: var(--tap-min); padding: 0 var(--s-3);
+                 border-radius: var(--radius-md); border: 1px solid var(--c-line);
+                 background: var(--c-surface); color: var(--c-ink);
+                 font-family: inherit; font-size: var(--text-2xs); cursor: pointer; }
+.audience-chip[aria-pressed='true'] { background: var(--c-primary);
+                                      border-color: var(--c-primary);
+                                      color: #fff; font-weight: 600; }
+.audience-sections { display: flex; flex-direction: column;
+                     margin-top: var(--s-3); max-height: 240px; overflow-y: auto;
+                     border: 1px solid var(--c-line); border-radius: var(--radius-md); }
+.audience-section { display: flex; align-items: center; gap: var(--s-2);
+                    min-height: var(--tap-min); padding: 0 var(--s-3);
+                    font-size: var(--text-2xs); cursor: pointer;
+                    border-bottom: 1px solid var(--c-line); }
+.audience-section:last-child { border-bottom: 0; }
+
+.sms-toggle { display: flex; align-items: center; gap: var(--s-2);
+              min-height: var(--tap-min); margin-top: var(--s-2);
+              font-size: var(--text-sm); cursor: pointer; }
+/* The cost sits with the toggle that causes it, and updates as the body is
+   typed — SMS is ~80% of the infrastructure bill and the moment to learn
+   that a notice is five segments is while writing it. */
+.sms-cost { margin: var(--s-1) 0 0; font-size: var(--text-2xs);
+            font-weight: 600; color: var(--c-warn); }
+
+/* The audience restated in words, immediately above the send button: the
+   last thing read before an irreversible action. */
+.notice-confirm { display: flex; flex-wrap: wrap; align-items: baseline;
+                  gap: var(--s-2); margin-top: var(--s-4); padding: var(--s-3);
+                  border: 1px solid var(--c-line); border-radius: var(--radius-md);
+                  background: var(--c-surface); }
+.notice-confirm-label { font-size: var(--text-2xs); font-weight: 700;
+                        color: var(--c-ink-2, var(--color-text-muted)); }
+.notice-confirm-line { margin: 0; font-size: var(--text-sm); font-weight: 600;
+                       color: var(--c-ink); flex: 1; min-width: 0; }

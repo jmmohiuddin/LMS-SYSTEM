@@ -66,6 +66,11 @@ jobs:
       - name: Tenant branding isolation
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
 
+      # ── 3c. R-2: a notice reaches exactly who it was addressed to, and
+      #        a re-published notice costs nothing.
+      - name: Notice audience and isolation
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -77,6 +82,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

@@ -78,6 +78,7 @@ const SENTINELS = [
   ['036_product_events',              'table',      'public.product_event_rollups'],
   ['037_activation_codes',            'table',      'public.activation_codes'],
   ['039_tenant_branding',             'function',   'app.public_branding'],
+  ['040_notices',                     'table',      'public.notice_receipts'],
 ];
 
 /**
@@ -123,6 +124,7 @@ const MEANING = {
   '036_product_events':              'F-1503 — the pilot produces data; PII cannot enter it',
   '037_activation_codes':            'F-202 — first login without the SMS aggregator',
   '039_tenant_branding':             'R-1 — a school sees its own name on its own login screen',
+  '040_notices':                     'R-2 — the school can finally tell anybody anything',
 };
 
 const QUERIES = {

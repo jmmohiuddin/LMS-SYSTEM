@@ -47,6 +47,16 @@ export interface DispatchOptions {
   now?: () => number;
 }
 
+/** One run's SMS budget and identity, shared by both stage-1 senders. */
+interface TenantSmsBudget {
+  weekendDays: Set<number>;
+  dailyCap: number;
+  /** Mutated as each sender spends it, so one run cannot double-spend. */
+  capUsed: number;
+  /** The name the school signs its messages with — never the platform's. */
+  orgName: string;
+}
+
 export interface DispatchResult {
   tenantId: string;
   eventsConsidered: number;
@@ -55,10 +65,44 @@ export interface DispatchResult {
   dispatched: number;
 }
 
-const TEMPLATES: Record<string, (studentName: string, takenOn: string) => string> = {
-  'attendance.absent.v2': (name, day) => `আপনার সন্তান ${name} আজ (${day}) বিদ্যালয়ে অনুপস্থিত ছিল। — ShikhonBD`,
-  'attendance.late.v1': (name, day) => `আপনার সন্তান ${name} আজ (${day}) বিদ্যালয়ে দেরিতে উপস্থিত হয়েছে। — ShikhonBD`,
+/**
+ * Message bodies. The signature carries the INSTITUTION's name, not the
+ * platform's.
+ *
+ * These templates used to end "— ShikhonBD". That is a D11 violation of the
+ * plainest kind: an SMS to a guardian is a tenant operational surface, and the
+ * name at the end of it should be the school the child attends. A parent who
+ * gets "your child was absent — ShikhonBD" has been told by a company they
+ * have never heard of. R-1's CI guard did not catch this because it only reads
+ * apps/pwa; R-2 found it while adding the second sender.
+ */
+const TEMPLATES: Record<string, (studentName: string, takenOn: string, org: string) => string> = {
+  'attendance.absent.v2': (name, day, org) =>
+    `আপনার সন্তান ${name} আজ (${day}) বিদ্যালয়ে অনুপস্থিত ছিল। — ${org}`,
+  'attendance.late.v1': (name, day, org) =>
+    `আপনার সন্তান ${name} আজ (${day}) বিদ্যালয়ে দেরিতে উপস্থিত হয়েছে। — ${org}`,
 };
+
+/**
+ * A notice SMS is the notice's own title and body, signed by the school.
+ *
+ * Not the full body: a 4000-character notice is 58 SMS segments per guardian,
+ * and at ~৳0.40 a segment one long notice to 900 guardians is over ৳20,000.
+ * The SMS carries the headline and points at the app, which is where the whole
+ * text already is. docs/05 §5 makes this the single most expensive decision in
+ * the product; it is not left to whoever writes the notice.
+ */
+export const NOTICE_SMS_MAX_BODY = 180;
+
+export function noticeSmsBody(title: string, body: string, org: string): string {
+  const head = title.trim();
+  const rest = body.trim().replace(/\s+/g, ' ');
+  const room = NOTICE_SMS_MAX_BODY - head.length - org.length - 6;
+  const tail = room > 20 && rest.length > 0
+    ? (rest.length <= room ? rest : `${rest.slice(0, room - 1)}…`)
+    : '';
+  return tail ? `${head}: ${tail} — ${org}` : `${head} — ${org}`;
+}
 
 export class SmsDispatchWorker {
   private readonly db: Db;
@@ -78,32 +122,77 @@ export class SmsDispatchWorker {
   async run(tenantId: string): Promise<DispatchResult> {
     const ctx: TenantContext = { tenantId, userId: '', role: 'system_ingest' };
     return this.db.withTenant(ctx, async (client) => {
-      const enqueueResult = await this.enqueue(client, tenantId);
+      // One shared budget for the whole run. Attendance and notices are two
+      // senders drawing on ONE daily cap — reading it twice would let a busy
+      // notice day and a busy absence day each spend the whole allowance.
+      const budget = await this.loadTenantBudget(client, tenantId);
+
+      const attendance = await this.enqueue(client, tenantId, budget);
+      const notices = await this.enqueueNotices(client, tenantId, budget);
+
+      const suppressed = { ...attendance.suppressed };
+      for (const [k, v] of Object.entries(notices.suppressed)) {
+        suppressed[k] = (suppressed[k] ?? 0) + v;
+      }
+
       const dispatched = await this.dispatch(client, tenantId);
-      return { tenantId, ...enqueueResult, dispatched };
+      return {
+        tenantId,
+        eventsConsidered: attendance.eventsConsidered + notices.eventsConsidered,
+        smsQueued: attendance.smsQueued + notices.smsQueued,
+        suppressed,
+        dispatched,
+      };
     });
+  }
+
+  /**
+   * Weekend, cap, cap already spent today, and the name the school signs its
+   * messages with. Read once per run and shared by both senders.
+   */
+  private async loadTenantBudget(
+    client: pg.PoolClient,
+    tenantId: string,
+  ): Promise<TenantSmsBudget> {
+    const res = await client.query<{
+      weekend_days: number[];
+      sms_daily_cap: number;
+      org_name: string | null;
+    }>(
+      `SELECT weekend_days, sms_daily_cap,
+              COALESCE(NULLIF(settings->'branding'->>'shortName', ''),
+                       NULLIF(settings->'branding'->>'nameBn', ''),
+                       name_bn) AS org_name
+         FROM tenants WHERE id = $1`,
+      [tenantId],
+    );
+    const row = res.rows[0];
+
+    const used = await client.query<{ count: string }>(
+      `SELECT count(*) FROM sms_outbox
+        WHERE tenant_id = $1 AND created_on = CURRENT_DATE AND status <> 'suppressed'`,
+      [tenantId],
+    );
+
+    return {
+      weekendDays: new Set(row?.weekend_days ?? [5, 6]),
+      dailyCap: row?.sms_daily_cap ?? 2000,
+      capUsed: Number(used.rows[0].count),
+      // Falls back to a neutral word, never to the platform's name.
+      orgName: row?.org_name ?? 'বিদ্যালয়',
+    };
   }
 
   private async enqueue(
     client: pg.PoolClient,
     tenantId: string,
+    budget: TenantSmsBudget,
   ): Promise<{ eventsConsidered: number; smsQueued: number; suppressed: Record<string, number> }> {
     const suppressed: Record<string, number> = {};
     let smsQueued = 0;
 
-    const tenantRes = await client.query<{ weekend_days: number[]; sms_daily_cap: number }>(
-      `SELECT weekend_days, sms_daily_cap FROM tenants WHERE id = $1`,
-      [tenantId],
-    );
-    const tenant = tenantRes.rows[0];
-    const weekendDays = new Set(tenant?.weekend_days ?? [5, 6]);
-    const dailyCap = tenant?.sms_daily_cap ?? 2000;
-
-    const capUsedRes = await client.query<{ count: string }>(
-      `SELECT count(*) FROM sms_outbox WHERE tenant_id = $1 AND created_on = CURRENT_DATE AND status <> 'suppressed'`,
-      [tenantId],
-    );
-    let capUsed = Number(capUsedRes.rows[0].count);
+    const { weekendDays, dailyCap } = budget;
+    let capUsed = budget.capUsed;
 
     const events = await client.query<{ id: string; payload: AttendanceMarkedPayload; occurred_at: string }>(
       `SELECT id, payload, occurred_at FROM event_outbox
@@ -143,7 +232,7 @@ export class SmsDispatchWorker {
       );
       const studentName = studentRes.rows[0]?.full_name_bn ?? studentRes.rows[0]?.full_name_en ?? 'শিক্ষার্থী';
       const templateCode = payload.status === 'late' ? 'attendance.late.v1' : 'attendance.absent.v2';
-      const body = TEMPLATES[templateCode](studentName, payload.takenOn);
+      const body = TEMPLATES[templateCode](studentName, payload.takenOn, budget.orgName);
       const segments = Math.max(1, Math.ceil(body.length / 70));
 
       let anyQueued = false;
@@ -179,6 +268,126 @@ export class SmsDispatchWorker {
       await this.markPublished(client, ev.id);
     }
 
+    // Hand the spend back so the notice sender starts where this one stopped.
+    budget.capUsed = capUsed;
+    return { eventsConsidered: events.rows.length, smsQueued, suppressed };
+  }
+
+  /**
+   * Stage 1, second consumer: notice.published.v1 (R-2).
+   *
+   * Deliberately the SAME stage as attendance rather than a second pipeline.
+   * SMS is roughly 80% of the infrastructure bill (docs/05 §5), and a second
+   * path would be a second place for the daily cap to be miscounted, the
+   * weekend to be forgotten, and a parent to be texted twice.
+   *
+   * What differs from attendance: there is no grace window (a notice is
+   * published deliberately, not accumulated), and the recipients come from
+   * notice_receipts — already resolved and frozen at publish time — rather
+   * than from a live guardianship lookup.
+   */
+  private async enqueueNotices(
+    client: pg.PoolClient,
+    tenantId: string,
+    budget: TenantSmsBudget,
+  ): Promise<{ eventsConsidered: number; smsQueued: number; suppressed: Record<string, number> }> {
+    const suppressed: Record<string, number> = {};
+    let smsQueued = 0;
+    let capUsed = budget.capUsed;
+
+    const events = await client.query<{ id: string; payload: { noticeId: string } }>(
+      `SELECT id, payload FROM event_outbox
+        WHERE tenant_id = $1 AND event_type = 'notice.published.v1' AND published_at IS NULL
+        ORDER BY id ASC LIMIT $2`,
+      [tenantId, this.enqueueBatchSize],
+    );
+
+    for (const ev of events.rows) {
+      const noticeId = ev.payload?.noticeId;
+      if (!noticeId) { await this.markPublished(client, ev.id); continue; }
+
+      const noticeRes = await client.query<{
+        title: string; body: string; category: string; send_sms: boolean;
+      }>(
+        `SELECT title, body, category, send_sms FROM notices WHERE id = $1`,
+        [noticeId],
+      );
+      const notice = noticeRes.rows[0];
+      if (!notice || !notice.send_sms) {
+        await this.markPublished(client, ev.id);
+        continue;
+      }
+
+      // Weekend and holiday suppression applies to ordinary notices but NOT
+      // to an emergency: "school is closed today" is precisely the message a
+      // parent needs on a day the school is closed.
+      if (notice.category !== 'emergency') {
+        const today = new Date(this.now()).toISOString().slice(0, 10);
+        const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
+        if (budget.weekendDays.has(dow)) {
+          suppressed.weekend = (suppressed.weekend ?? 0) + 1;
+          await this.markPublished(client, ev.id);
+          continue;
+        }
+        const holiday = await client.query(
+          `SELECT 1 FROM calendar_days WHERE tenant_id = $1 AND day = $2 AND kind = 'holiday' LIMIT 1`,
+          [tenantId, today],
+        );
+        if ((holiday.rowCount ?? 0) > 0) {
+          suppressed.holiday = (suppressed.holiday ?? 0) + 1;
+          await this.markPublished(client, ev.id);
+          continue;
+        }
+      }
+
+      // Only recipients who can actually receive an SMS: a phone on file, and
+      // — for guardians — consent. Staff and students with a phone are
+      // included; the audience already decided who belongs here.
+      const recipients = await client.query<{ user_id: string; phone_e164: string | null }>(
+        `SELECT DISTINCT r.user_id, u.phone_e164
+           FROM notice_receipts r
+           JOIN users u ON u.id = r.user_id
+          WHERE r.tenant_id = $1 AND r.notice_id = $2
+            AND u.status = 'active' AND u.phone_e164 IS NOT NULL
+            AND (NOT EXISTS (SELECT 1 FROM guardianships g
+                              WHERE g.tenant_id = $1 AND g.guardian_id = u.id)
+                 OR EXISTS (SELECT 1 FROM guardianships g
+                             WHERE g.tenant_id = $1 AND g.guardian_id = u.id
+                               AND g.receives_sms = true))`,
+        [tenantId, noticeId],
+      );
+
+      const body = noticeSmsBody(notice.title, notice.body, budget.orgName);
+      const segments = Math.max(1, Math.ceil(body.length / 70));
+
+      for (const r of recipients.rows) {
+        if (!r.phone_e164) continue;
+        if (capUsed >= budget.dailyCap) {
+          suppressed.daily_cap_exceeded = (suppressed.daily_cap_exceeded ?? 0) + 1;
+          continue;
+        }
+        // One SMS per person per notice, forever — the unique index makes a
+        // re-published notice free rather than a second charge and a second
+        // buzz on a parent's phone.
+        const inserted = await client.query(
+          `INSERT INTO sms_outbox
+             (tenant_id, recipient_id, msisdn, template_code, locale, body, encoding, segments, dedupe_key, context)
+           VALUES ($1, $2, $3, 'notice.published.v1', 'bn', $4, 'unicode', $5, $6, $7)
+           ON CONFLICT (tenant_id, created_on, dedupe_key) DO NOTHING
+           RETURNING id`,
+          [
+            tenantId, r.user_id, r.phone_e164, body, segments,
+            `notice:${noticeId}:${r.user_id}`,
+            JSON.stringify({ noticeId, category: notice.category }),
+          ],
+        );
+        if (inserted.rowCount && inserted.rowCount > 0) { smsQueued++; capUsed++; }
+      }
+
+      await this.markPublished(client, ev.id);
+    }
+
+    budget.capUsed = capUsed;
     return { eventsConsidered: events.rows.length, smsQueued, suppressed };
   }
 

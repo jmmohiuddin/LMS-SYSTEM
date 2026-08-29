@@ -189,9 +189,17 @@ function randomOpaqueToken(bytes = 32) {
 
 // services/sms-svc/src/dispatch.ts
 var TEMPLATES = {
-  "attendance.absent.v2": (name, day) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u0985\u09A8\u09C1\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u099B\u09BF\u09B2\u0964 \u2014 ShikhonBD`,
-  "attendance.late.v1": (name, day) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u09A6\u09C7\u09B0\u09BF\u09A4\u09C7 \u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964 \u2014 ShikhonBD`
+  "attendance.absent.v2": (name, day, org) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u0985\u09A8\u09C1\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u099B\u09BF\u09B2\u0964 \u2014 ${org}`,
+  "attendance.late.v1": (name, day, org) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u09A6\u09C7\u09B0\u09BF\u09A4\u09C7 \u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964 \u2014 ${org}`
 };
+var NOTICE_SMS_MAX_BODY = 180;
+function noticeSmsBody(title, body, org) {
+  const head = title.trim();
+  const rest = body.trim().replace(/\s+/g, " ");
+  const room = NOTICE_SMS_MAX_BODY - head.length - org.length - 6;
+  const tail = room > 20 && rest.length > 0 ? rest.length <= room ? rest : `${rest.slice(0, room - 1)}\u2026` : "";
+  return tail ? `${head}: ${tail} \u2014 ${org}` : `${head} \u2014 ${org}`;
+}
 var SmsDispatchWorker = class {
   db;
   graceMinutes;
@@ -208,26 +216,55 @@ var SmsDispatchWorker = class {
   async run(tenantId) {
     const ctx = { tenantId, userId: "", role: "system_ingest" };
     return this.db.withTenant(ctx, async (client) => {
-      const enqueueResult = await this.enqueue(client, tenantId);
+      const budget = await this.loadTenantBudget(client, tenantId);
+      const attendance = await this.enqueue(client, tenantId, budget);
+      const notices = await this.enqueueNotices(client, tenantId, budget);
+      const suppressed = { ...attendance.suppressed };
+      for (const [k, v] of Object.entries(notices.suppressed)) {
+        suppressed[k] = (suppressed[k] ?? 0) + v;
+      }
       const dispatched = await this.dispatch(client, tenantId);
-      return { tenantId, ...enqueueResult, dispatched };
+      return {
+        tenantId,
+        eventsConsidered: attendance.eventsConsidered + notices.eventsConsidered,
+        smsQueued: attendance.smsQueued + notices.smsQueued,
+        suppressed,
+        dispatched
+      };
     });
   }
-  async enqueue(client, tenantId) {
+  /**
+   * Weekend, cap, cap already spent today, and the name the school signs its
+   * messages with. Read once per run and shared by both senders.
+   */
+  async loadTenantBudget(client, tenantId) {
+    const res = await client.query(
+      `SELECT weekend_days, sms_daily_cap,
+              COALESCE(NULLIF(settings->'branding'->>'shortName', ''),
+                       NULLIF(settings->'branding'->>'nameBn', ''),
+                       name_bn) AS org_name
+         FROM tenants WHERE id = $1`,
+      [tenantId]
+    );
+    const row = res.rows[0];
+    const used = await client.query(
+      `SELECT count(*) FROM sms_outbox
+        WHERE tenant_id = $1 AND created_on = CURRENT_DATE AND status <> 'suppressed'`,
+      [tenantId]
+    );
+    return {
+      weekendDays: new Set(row?.weekend_days ?? [5, 6]),
+      dailyCap: row?.sms_daily_cap ?? 2e3,
+      capUsed: Number(used.rows[0].count),
+      // Falls back to a neutral word, never to the platform's name.
+      orgName: row?.org_name ?? "\u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC"
+    };
+  }
+  async enqueue(client, tenantId, budget) {
     const suppressed = {};
     let smsQueued = 0;
-    const tenantRes = await client.query(
-      `SELECT weekend_days, sms_daily_cap FROM tenants WHERE id = $1`,
-      [tenantId]
-    );
-    const tenant = tenantRes.rows[0];
-    const weekendDays = new Set(tenant?.weekend_days ?? [5, 6]);
-    const dailyCap = tenant?.sms_daily_cap ?? 2e3;
-    const capUsedRes = await client.query(
-      `SELECT count(*) FROM sms_outbox WHERE tenant_id = $1 AND created_on = CURRENT_DATE AND status <> 'suppressed'`,
-      [tenantId]
-    );
-    let capUsed = Number(capUsedRes.rows[0].count);
+    const { weekendDays, dailyCap } = budget;
+    let capUsed = budget.capUsed;
     const events = await client.query(
       `SELECT id, payload, occurred_at FROM event_outbox
         WHERE tenant_id = $1 AND event_type = 'attendance.marked.v1' AND published_at IS NULL
@@ -262,7 +299,7 @@ var SmsDispatchWorker = class {
       );
       const studentName = studentRes.rows[0]?.full_name_bn ?? studentRes.rows[0]?.full_name_en ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0";
       const templateCode = payload.status === "late" ? "attendance.late.v1" : "attendance.absent.v2";
-      const body = TEMPLATES[templateCode](studentName, payload.takenOn);
+      const body = TEMPLATES[templateCode](studentName, payload.takenOn, budget.orgName);
       const segments = Math.max(1, Math.ceil(body.length / 70));
       let anyQueued = false;
       for (const g of guardians.rows) {
@@ -295,6 +332,110 @@ var SmsDispatchWorker = class {
       if (!anyQueued) suppressed.daily_cap_exceeded = (suppressed.daily_cap_exceeded ?? 0) + 1;
       await this.markPublished(client, ev.id);
     }
+    budget.capUsed = capUsed;
+    return { eventsConsidered: events.rows.length, smsQueued, suppressed };
+  }
+  /**
+   * Stage 1, second consumer: notice.published.v1 (R-2).
+   *
+   * Deliberately the SAME stage as attendance rather than a second pipeline.
+   * SMS is roughly 80% of the infrastructure bill (docs/05 §5), and a second
+   * path would be a second place for the daily cap to be miscounted, the
+   * weekend to be forgotten, and a parent to be texted twice.
+   *
+   * What differs from attendance: there is no grace window (a notice is
+   * published deliberately, not accumulated), and the recipients come from
+   * notice_receipts — already resolved and frozen at publish time — rather
+   * than from a live guardianship lookup.
+   */
+  async enqueueNotices(client, tenantId, budget) {
+    const suppressed = {};
+    let smsQueued = 0;
+    let capUsed = budget.capUsed;
+    const events = await client.query(
+      `SELECT id, payload FROM event_outbox
+        WHERE tenant_id = $1 AND event_type = 'notice.published.v1' AND published_at IS NULL
+        ORDER BY id ASC LIMIT $2`,
+      [tenantId, this.enqueueBatchSize]
+    );
+    for (const ev of events.rows) {
+      const noticeId = ev.payload?.noticeId;
+      if (!noticeId) {
+        await this.markPublished(client, ev.id);
+        continue;
+      }
+      const noticeRes = await client.query(
+        `SELECT title, body, category, send_sms FROM notices WHERE id = $1`,
+        [noticeId]
+      );
+      const notice = noticeRes.rows[0];
+      if (!notice || !notice.send_sms) {
+        await this.markPublished(client, ev.id);
+        continue;
+      }
+      if (notice.category !== "emergency") {
+        const today = new Date(this.now()).toISOString().slice(0, 10);
+        const dow = (/* @__PURE__ */ new Date(`${today}T00:00:00Z`)).getUTCDay();
+        if (budget.weekendDays.has(dow)) {
+          suppressed.weekend = (suppressed.weekend ?? 0) + 1;
+          await this.markPublished(client, ev.id);
+          continue;
+        }
+        const holiday = await client.query(
+          `SELECT 1 FROM calendar_days WHERE tenant_id = $1 AND day = $2 AND kind = 'holiday' LIMIT 1`,
+          [tenantId, today]
+        );
+        if ((holiday.rowCount ?? 0) > 0) {
+          suppressed.holiday = (suppressed.holiday ?? 0) + 1;
+          await this.markPublished(client, ev.id);
+          continue;
+        }
+      }
+      const recipients = await client.query(
+        `SELECT DISTINCT r.user_id, u.phone_e164
+           FROM notice_receipts r
+           JOIN users u ON u.id = r.user_id
+          WHERE r.tenant_id = $1 AND r.notice_id = $2
+            AND u.status = 'active' AND u.phone_e164 IS NOT NULL
+            AND (NOT EXISTS (SELECT 1 FROM guardianships g
+                              WHERE g.tenant_id = $1 AND g.guardian_id = u.id)
+                 OR EXISTS (SELECT 1 FROM guardianships g
+                             WHERE g.tenant_id = $1 AND g.guardian_id = u.id
+                               AND g.receives_sms = true))`,
+        [tenantId, noticeId]
+      );
+      const body = noticeSmsBody(notice.title, notice.body, budget.orgName);
+      const segments = Math.max(1, Math.ceil(body.length / 70));
+      for (const r of recipients.rows) {
+        if (!r.phone_e164) continue;
+        if (capUsed >= budget.dailyCap) {
+          suppressed.daily_cap_exceeded = (suppressed.daily_cap_exceeded ?? 0) + 1;
+          continue;
+        }
+        const inserted = await client.query(
+          `INSERT INTO sms_outbox
+             (tenant_id, recipient_id, msisdn, template_code, locale, body, encoding, segments, dedupe_key, context)
+           VALUES ($1, $2, $3, 'notice.published.v1', 'bn', $4, 'unicode', $5, $6, $7)
+           ON CONFLICT (tenant_id, created_on, dedupe_key) DO NOTHING
+           RETURNING id`,
+          [
+            tenantId,
+            r.user_id,
+            r.phone_e164,
+            body,
+            segments,
+            `notice:${noticeId}:${r.user_id}`,
+            JSON.stringify({ noticeId, category: notice.category })
+          ]
+        );
+        if (inserted.rowCount && inserted.rowCount > 0) {
+          smsQueued++;
+          capUsed++;
+        }
+      }
+      await this.markPublished(client, ev.id);
+    }
+    budget.capUsed = capUsed;
     return { eventsConsidered: events.rows.length, smsQueued, suppressed };
   }
   async suppressionReason(client, tenantId, payload, weekendDays, capUsed, dailyCap) {

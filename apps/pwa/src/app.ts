@@ -32,6 +32,8 @@ import { ImportView } from './import-view.ts';
 import { GenerationView } from './generation-view.ts';
 import { GuardianView } from './guardian-view.ts';
 import { BrandingView } from './branding-view.ts';
+import { InboxView } from './inbox-view.ts';
+import { NoticeComposeView } from './notice-compose-view.ts';
 import {
   applyBranding,
   cachedBranding,
@@ -124,6 +126,10 @@ const CARD = {
   // first thing a school configures and the last thing it thinks to look
   // for in a menu.
   branding:   { path: 'branding',   glyph: 'star',         titleBn: 'প্রতিষ্ঠানের পরিচয়',  subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজ' },
+  // R-2. Reading notices is universal; sending them is not, so the two are
+  // different cards and only management/teachers see the sender.
+  inbox:      { path: 'inbox',      glyph: 'bell',         titleBn: 'নোটিশ',              subtitleBn: 'বিদ্যালয়ের সব ঘোষণা' },
+  compose:    { path: 'compose',    glyph: 'edit',         titleBn: 'নোটিশ পাঠান',        subtitleBn: 'কারা পাবে তা বেছে নিন' },
   // The guardian's own home (F-203, §9.1). It was reachable only from the
   // More menu — the persona least able to hunt for it. It now leads the
   // guardian dashboard; the glyph matches its More entry so the one control
@@ -146,7 +152,7 @@ function dashboardFor(role: string): DashCards {
       // one thing a student arrives worried about.
       return {
         primary: [CARD.subjects, CARD.homework],
-        secondary: [CARD.results, CARD.myAtt, CARD.shikho, CARD.feesStu],
+        secondary: [CARD.results, CARD.myAtt, CARD.inbox, CARD.shikho],
       };
     case 'guardian':
       // The ward home leads — it is the guardian's whole reason for opening
@@ -154,18 +160,18 @@ function dashboardFor(role: string): DashCards {
       // payment one tap from home.
       return {
         primary: [CARD.wardHome, CARD.feesStu],
-        secondary: [CARD.results, CARD.routineStu, CARD.myAtt],
+        secondary: [CARD.results, CARD.inbox, CARD.routineStu, CARD.myAtt],
       };
     case 'accountant':
       return {
         primary: [CARD.fees, CARD.ledger],
-        secondary: [CARD.roster, CARD.system],
+        secondary: [CARD.roster, CARD.inbox, CARD.system],
       };
     case 'principal':
     case 'school_owner':
       return {
-        primary: [CARD.routine, CARD.ledger],
-        secondary: [CARD.roster, CARD.marks, CARD.fees, CARD.branding],
+        primary: [CARD.routine, CARD.compose],
+        secondary: [CARD.roster, CARD.inbox, CARD.ledger, CARD.branding],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -174,7 +180,7 @@ function dashboardFor(role: string): DashCards {
       // is one tap away in More.
       return {
         primary: [CARD.attendance, CARD.routine],
-        secondary: [CARD.homeworkT, CARD.marks, CARD.scripts, CARD.substitute],
+        secondary: [CARD.homeworkT, CARD.marks, CARD.inbox, CARD.substitute],
       };
   }
 }
@@ -407,6 +413,8 @@ async function main() {
               { path: 'shikho', glyph: 'message', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
               { path: 'roles', glyph: 'lock', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
               { path: 'ledger', glyph: 'book', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
+              { path: 'inbox', glyph: 'bell', titleBn: 'নোটিশ', subtitleBn: 'বিদ্যালয়ের ঘোষণা ও বার্তা' },
+              { path: 'compose', glyph: 'edit', titleBn: 'নোটিশ পাঠান', subtitleBn: 'শিক্ষক, শিক্ষার্থী বা অভিভাবক — কারা পাবে বেছে নিন' },
               { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
               { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
@@ -563,6 +571,35 @@ async function main() {
         mount: (container) => { new SystemView({ root: container, doc: document, auth }); },
       },
       {
+        // R-2. Every role's inbox. Hidden from the bar — the bell in the top
+        // bar is its entry point, on every screen, which is better than a tab.
+        path: 'inbox',
+        labelBn: 'নোটিশ',
+        glyph: 'bell',
+        hidden: true,
+        mount: (container) => {
+          new InboxView({
+            root: container, doc: document, auth,
+            onUnreadChange: (n) => shell?.setUnread(n),
+          });
+        },
+      },
+      {
+        // R-2. The composer. Registered for every role because the endpoint
+        // decides who may publish; a teacher reaching it sees only their own
+        // sections and a 403 if they try anything wider.
+        path: 'compose',
+        labelBn: 'নোটিশ পাঠান',
+        glyph: 'edit',
+        hidden: true,
+        mount: (container) => {
+          new NoticeComposeView({
+            root: container, doc: document, auth,
+            onPublished: () => { void refreshUnread(); },
+          });
+        },
+      },
+      {
         // R-1. The screen that makes one deployment serve many schools.
         // Registered for every role and hidden from the bar: the endpoint
         // decides who may WRITE (a 403 renders the screen read-only), and
@@ -586,6 +623,8 @@ async function main() {
       displayName: auth.displayName,
       // R-1: whose school this is, on every screen.
       institution: { name: brandName(brand), logoUrl: brand.logoUrl },
+      // R-2: the bell, on every screen, for every role.
+      bell: { onOpen: () => { location.hash = '/inbox'; } },
       onLogout: () => { void doLogout(); },
       roleSwitcher: demoMode
         ? {
@@ -603,6 +642,24 @@ async function main() {
   }
 
   let shell: Shell | null = null;
+
+  /**
+   * Pull the unread count and paint the badge.
+   *
+   * Called on boot and after publishing. There is no polling: a notice that
+   * arrives while the app is open shows up on the next navigation or launch,
+   * and a timer firing every minute on a 2G connection would cost more than
+   * the freshness is worth. Real-time delivery is the WebSocket work in a
+   * later phase.
+   */
+  async function refreshUnread(): Promise<void> {
+    try {
+      const res = await auth.authedFetch('/api/v1/ops/inbox?limit=1');
+      if (!res.ok) return;
+      const body = (await res.json()) as { unread?: number };
+      shell?.setUnread(body.unread ?? 0);
+    } catch { /* offline: the badge keeps its last value */ }
+  }
 
   // The shell is built from the CACHED branding so it paints without
   // waiting; when the server's answer lands, repaint the document and
@@ -638,6 +695,7 @@ async function main() {
 
   if (auth.isLoggedIn()) {
     shell = startShell();
+    void refreshUnread();
   } else {
     showLogin();
   }

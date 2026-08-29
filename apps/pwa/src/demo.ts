@@ -556,6 +556,58 @@ export const DEMO_TENANTS: Record<string, { id: string; branding: Record<string,
   },
 };
 
+/**
+ * Sample notices for the demo inbox, tagged with the roles that would hold a
+ * receipt. The teacher-only notice is here specifically so a previewer can
+ * switch to the student role and watch it disappear.
+ */
+const DEMO_NOTICES: {
+  noticeId: string; title: string; body: string; category: string;
+  deliveredAt: string; roles: string[];
+  aboutStudent?: { id: string; nameBn: string };
+}[] = [
+  {
+    noticeId: 'n-1', category: 'emergency',
+    title: 'আগামীকাল বিদ্যালয় বন্ধ',
+    body: 'আবহাওয়ার কারণে আগামীকাল সকল ক্লাস বন্ধ থাকবে। পরবর্তী নির্দেশনা এসএমএসে জানানো হবে।',
+    deliveredAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
+    roles: ['class_teacher', 'student', 'guardian', 'principal', 'accountant'],
+  },
+  {
+    noticeId: 'n-2', category: 'teacher',
+    title: 'শিক্ষক সভা — বৃহস্পতিবার ৩টা',
+    body: 'সকল শিক্ষককে শিক্ষক মিলনায়তনে উপস্থিত থাকার জন্য অনুরোধ করা হলো।',
+    deliveredAt: new Date(Date.now() - 26 * 3600_000).toISOString(),
+    roles: ['class_teacher', 'principal'],
+  },
+  {
+    noticeId: 'n-3', category: 'exam',
+    title: 'অর্ধবার্ষিক পরীক্ষার সূচি প্রকাশিত',
+    body: 'সূচি অ্যাপের পরীক্ষার রুটিন অংশে দেখা যাবে।',
+    deliveredAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    roles: ['student', 'guardian', 'class_teacher', 'principal'],
+  },
+  {
+    noticeId: 'n-4', category: 'fee',
+    title: 'সেপ্টেম্বরের বেতন পরিশোধের শেষ তারিখ ১০ তারিখ',
+    body: 'নির্ধারিত তারিখের পর বিলম্ব ফি যুক্ত হবে।',
+    deliveredAt: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+    roles: ['guardian', 'accountant', 'principal'],
+    aboutStudent: { id: 'demo-s1', nameBn: 'রাফির হাসান' },
+  },
+];
+
+/** Read state for the demo inbox — per session, never persisted. */
+const demoRead = new Set<string>();
+
+/** The role this preview is showing, read the same way DemoAuth reads it. */
+function demoRole(): string {
+  const fromUrl = new URLSearchParams(location.search).get('role');
+  if (fromUrl) return fromUrl;
+  try { return localStorage.getItem('shikhon_demo_role') || 'class_teacher'; }
+  catch { return 'class_teacher'; }
+}
+
 /** Which demo institution this preview is showing. Defaults to A. */
 export function demoTenantKey(search = location.search): 'a' | 'b' {
   const t = new URLSearchParams(search).get('tenant');
@@ -625,6 +677,35 @@ export class DemoAuth extends Auth {
       case '/api/v1/ops/branding':
       case '/api/v1/ops/brand':
         return ok({ branding: DEMO_TENANTS[demoTenantKey()].branding });
+
+      // R-2. The inbox differs by ROLE, because that is the whole point: a
+      // student must not see the staff-only notice. In the real product the
+      // difference comes from which receipts exist; here it is filtered by
+      // the same rule so the demo does not teach a falsehood.
+      case '/api/v1/ops/inbox': {
+        const mine = DEMO_NOTICES.filter((n) => n.roles.includes(demoRole()));
+        if (url.searchParams.get('limit') === '1') {
+          return ok({ unread: mine.filter((n) => !demoRead.has(n.noticeId)).length, notices: [] });
+        }
+        return ok({
+          unread: mine.filter((n) => !demoRead.has(n.noticeId)).length,
+          notices: mine.map((n) => ({
+            receiptId: `r-${n.noticeId}`,
+            noticeId: n.noticeId,
+            title: n.title,
+            body: n.body,
+            category: n.category,
+            deliveredAt: n.deliveredAt,
+            readAt: demoRead.has(n.noticeId) ? new Date().toISOString() : null,
+            aboutStudent: n.aboutStudent ?? null,
+          })),
+        });
+      }
+
+      case '/api/v1/ops/notices':
+        // Publishing in demo mode reports a plausible reach and changes
+        // nothing — no request leaves the device, so nothing can.
+        return ok({ noticeId: 'demo-new', status: 'published', recipients: 42, smsQueued: false });
 
       case '/api/v1/academics/sections':
         return ok({ sections: SECTIONS });

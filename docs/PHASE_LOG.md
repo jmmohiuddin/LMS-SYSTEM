@@ -25,10 +25,10 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        R-2 — Notices & notification system (starting)
-Last Completed Phase: R-7-DOC — tenant onboarding specified + pilot runbook
+Current Phase:        none in progress — R-2 closed, R-3 not started
+Last Completed Phase: R-2 — Notices & in-app notification system
+Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
-Last Implementation:  R-1-A — Three surfaces, three addresses (Option B)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
                       /design  the Ata Ekta prototype
 Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
@@ -36,16 +36,18 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                432 unit passing, 0 failing (node --test, verified 2026-08-29)
+Tests:                477 unit passing, 0 failing (node --test, verified 2026-08-29)
                       + DB-backed suites that self-skip without DATABASE_URL — NOT YET RUN
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 74 KB gz / 180 KB budget
-Known Blockers:       1. DB-backed branding tests never executed — first CI run is their first run
+Known Blockers:       1. DB-backed suites for R-1 AND R-2 never executed — CI is their first run
+                         (oldest open item in this log, and now spanning two phases)
                       2. Migration 038 has no probe in migration-status.mjs
+                      3. R-2 auto-notice emitters not built (exam/result/invoice)
                       RESOLVED since the last update:
                         · two front doors — closed by R-1-A
                         · service-worker deploy staleness — closed by R-1-A
-Next Step:            R-2 — Notices & notification system (docs/11-MASTER-PLAN.md)
-                      No owner decision outstanding.
+Next Step:            R-3 — Principal & IT admin portals (docs/11-MASTER-PLAN.md)
+                      Owner input wanted on the 180-char notice-SMS cap (see R-2).
 ```
 
 ---
@@ -1191,3 +1193,270 @@ whether custom domains (`portal.school.edu.bd`) are offered at all.
 
 **R-2 — Notices & notification system.** R-7 stays unscheduled; this entry
 changed only what is written down about it.
+
+---
+
+# 2026-08-29 · R-2 · Notices & in-app notification system
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-2 |
+| **Phase name** | Notices & notification system (owner priority #2) |
+| **Status** | ✅ Complete — DB-backed suites written and wired into CI, not yet executed locally (see Known limitations) |
+| **Migration number** | **040** — `db/migrations/040_notices.sql` |
+| **Rollback status** | ✅ `db/rollback/040_notices.down.sql`. **Unlike 039's, this one destroys data** — notices live only in these tables. Correct for pre-production; once schools are publishing, rolling back means losing the record of what a school told its guardians, and would need an export first. Stated in the file. |
+| **Git commit** | `git log -1 --format=%H -- db/migrations/040_notices.sql` |
+
+### Objective
+
+প্রধান শিক্ষক একটা নোটিশ দিলে টার্গেট অনুযায়ী সবার নোটিফিকেশন বেলে পৌঁছাবে — এবং
+চাইলে গার্ডিয়ানের ফোনে SMS। The owner's stated priority #2.
+
+### What was already existing
+
+- The SMS pipeline, complete and suppression-aware: `event_outbox` →
+  `sms-svc` stage 1 (grace window, weekend, holiday, tenant daily cap,
+  guardian consent) → `sms_outbox` with dedupe/segments/cost → stage 2 drain.
+  Send stubbed pending an aggregator.
+- `guardianships` (M:N, `receives_sms`), `enrolments`, `user_roles` with
+  `roles.is_staff` — everything an audience resolver needs.
+- **No notices anywhere.** `academics-svc/api/ward.ts` refused to stub §9.1's
+  notices card, saying in a comment that the schema has no notices table.
+
+### What was implemented
+
+- **Migration 040** — `notices`, `notice_receipts`, two enums,
+  `app.resolve_notice_audience()`, `app.publish_notice()`, RLS for both tables.
+- **`packages/ui-core/src/notice.ts`** — the shared contract: categories,
+  audience types, validation, Bangla labels, SMS segment maths.
+- **`services/ops-svc/api/notices.ts`** — create + publish, role-gated, class
+  teachers narrowed to their own sections.
+- **`services/ops-svc/api/inbox.ts`** — the bell's data and marking read.
+- **`services/sms-svc/src/dispatch.ts`** — a second stage-1 consumer for
+  `notice.published.v1`, sharing the existing cap and suppression.
+- **PWA** — bell + badge in `shell.ts`, `inbox-view.ts`, `notice-compose-view.ts`,
+  routes and dashboard cards for all five roles, service-worker caching.
+
+### Important architectural decisions
+
+1. **Receipts are materialised at publish, not resolved at read.** A notice's
+   audience is a question about the past — who was in Class 9 Science F on the
+   day it went out. A live query answers it about the present: a student who
+   transfers in next week would retroactively acquire last week's notices, and
+   one who leaves would lose the record that they were told. Resolving once
+   makes the receipt a fact rather than a re-derivation. It also makes the read
+   path one indexed lookup and the RLS policy `user_id = current_user` instead
+   of a re-implementation of the targeting rules in SQL.
+2. **Intent is stored separately from consequence.** `notices.audience` keeps
+   what the author wrote; `notice_receipts` keeps what was delivered. Both are
+   needed — intent is what an author edits, consequence is what was sent.
+3. **The client sends intent, never a recipient list.** A client-supplied
+   roster is the confused-deputy shape R-1 removed from branding, and worse
+   here: the wrong roster does not show a school the wrong logo, it tells 900
+   guardians something meant for the staff.
+4. **Category is not audience.** They are separate fields and separate ideas.
+   A fee notice addressed to `all` reaches teachers too, and should — a teacher
+   with a child at the school is a guardian. If category silently narrowed the
+   audience, that parent would never be told their own child's fees were due
+   and nothing would report it.
+5. **A guardian gets one receipt per child in scope.** Two children, two pieces
+   of news. This is what lets the ward view file a notice under the child it
+   concerns, and it is why `uq_notice_receipt` uses `NULLS NOT DISTINCT` — the
+   default NULL-distinct behaviour would let a re-publish duplicate every staff
+   receipt.
+6. **SMS reuses the attendance pipeline entirely.** One daily cap, one weekend
+   and holiday suppression, one dedupe index, one drain. SMS is ~80% of the
+   infrastructure bill (docs/05 §5) and a second path is a second place for it
+   to double. The two senders share a mutable budget object so one run cannot
+   double-spend the cap.
+7. **Emergencies bypass weekend and holiday suppression.** "School is closed
+   today" is precisely the message a parent needs on a day the school is closed.
+8. **Notice SMS is capped at 180 characters.** A 4000-character notice is 58
+   UCS-2 segments per guardian; to 900 guardians that is over ৳20,000 for one
+   message. The SMS carries the headline and points at the app, where the whole
+   text already is. Not left to whoever writes the notice.
+9. **Class teachers are narrowed in the endpoint, not the policy.** Expressing
+   "every id in this jsonb is a section you teach" as an RLS predicate would be
+   a second implementation of `app.my_section_ids()`, and the two would
+   eventually disagree in whichever direction is more permissive.
+10. **The composer restates the audience in words above the send button.** Not
+    as a form value set six fields ago, but as a sentence read at the moment of
+    committing. A section audience says "শিক্ষার্থী ও অভিভাবক" explicitly,
+    because "শাখা ৯-ক" reads like students only and it is not.
+
+### Database changes
+
+Migration **040**: two enums (`notice_category`, `notice_status`), two tables
+with `enforce_tenant()` triggers and RLS (PERMISSIVE tenant isolation +
+RESTRICTIVE read/write scopes), `app.resolve_notice_audience()` (SECURITY
+DEFINER, pinned search_path, tenant assertion), `app.publish_notice()`
+(SECURITY INVOKER — the caller's RLS decides whether they may publish).
+
+### API changes
+
+| Route | Auth |
+|---|---|
+| `GET /api/v1/ops/notices` | JWT; RLS decides visibility |
+| `POST /api/v1/ops/notices` | JWT + principal / school_owner / academic_coordinator / class_teacher |
+| `GET /api/v1/ops/inbox` | JWT, **every role** |
+| `POST /api/v1/ops/inbox` | JWT, every role — marks own receipts read |
+
+### UI changes
+
+- Bell with unread badge in every role's top bar (`Shell.setUnread()`); badge
+  hides at zero, caps at ৯+, and announces the count to screen readers.
+- Inbox: unread carries a left rule and a heavier title, not only a tint —
+  a pale background difference is the first thing to vanish in daylight on the
+  2 GB reference phone. Opening a notice marks it read; "সব পড়া হয়েছে" exists
+  for a backlog.
+- Composer: category, audience chips, per-section checkboxes, SMS toggle with a
+  live segment count, and the restated audience above Send.
+- Notice cards on all five role dashboards; a compose card for principals.
+
+### Files created
+
+```text
+db/migrations/040_notices.sql
+db/rollback/040_notices.down.sql
+db/tests/notices.sql
+packages/ui-core/src/notice.ts
+packages/ui-core/test/notice.test.ts
+services/ops-svc/api/notices.ts
+services/ops-svc/api/inbox.ts
+apps/pwa/src/inbox-view.ts
+apps/pwa/src/notice-compose-view.ts
+apps/pwa/test/notices-ui.test.ts
+```
+
+### Files modified
+
+```text
+services/sms-svc/src/dispatch.ts     second stage-1 consumer; shared budget; tenant-signed templates
+services/ops-svc/api/index.ts        two routes + mutation rate-limit buckets
+packages/ui-core/src/index.ts        re-export
+apps/pwa/src/shell.ts                bell, badge, setUnread()
+apps/pwa/src/app.ts                  routes, dashboard cards, More entries, refreshUnread()
+apps/pwa/src/sw-router.ts            notices/inbox → stale-while-revalidate
+apps/pwa/src/demo.ts                 role-filtered demo inbox
+apps/pwa/public/app.css              bell, inbox, composer
+scripts/migration-status.mjs         probe for 040
+.github/workflows/database.yml       notices.sql, first pass + idempotency re-run
+docs/07-IMPLEMENTATION-STATUS.md     §9d, counts, API rows
+docs/PHASE_LOG.md                    this entry
+api/v1/ops/[action].js               regenerated bundle
+```
+
+### Files removed
+
+None.
+
+### Tests added
+
+**45.**
+
+- `packages/ui-core/test/notice.test.ts` — 23. Mostly refusals: a broadcast
+  audience that also names ids (the composer left checkboxes ticked), targeted
+  types with no selection, non-uuid ids, and the assertion that Bangla costs 70
+  characters per segment while ASCII gets 160 — and that one Bangla word in an
+  English notice doubles the cost.
+- `apps/pwa/test/notices-ui.test.ts` — 22. Badge truthfulness and the ৯+ cap,
+  opening-is-reading, a guardian seeing which child a notice is about, the body
+  inserted as text rather than markup, a class teacher offered sections only,
+  and the restated audience following the chips.
+- `db/tests/notices.sql` — the audience matrix and isolation: a staff notice
+  reaching no student, a section notice reaching that section's guardians and
+  nobody else's, a sibling guardian getting one receipt per child, re-publish
+  being free, a student unable to read a staff notice by id, and tenant B
+  seeing none of tenant A's notices.
+
+### Tests executed
+
+Full suite, plus a browser walkthrough across four roles with the origin server
+stopped for the offline check.
+
+### Test results
+
+**477 unit tests, 0 failures** (432 → +45):
+offline 46 · server-core 75 · **ui-core 108** · academics-svc 19 · ops-svc 5 ·
+rms-svc 15 · **pwa 201** · netlify 8.
+
+Browser walkthrough, one tenant, four roles:
+
+| Role | Inbox | Notes |
+|---|---|---|
+| class_teacher | 3 notices, badge ৩ | sees "শিক্ষক সভা" |
+| student | 2 notices, badge ২ | **does not** see "শিক্ষক সভা" |
+| guardian | 3 notices | fee notice labelled "রাফির হাসান" |
+| principal | badge ৪, composer | 5 audience chips; teacher sees 1 |
+
+Composer: emergency turns SMS on by default; 150 Bangla characters reported as
+"প্রতি জনে ৩টি এসএমএস"; narrowing to staff updated the restated line; publish
+reported "৪২ জনের কাছে পৌঁছেছে" and cleared the form.
+
+**Offline:** with the origin server stopped, the guardian's inbox rendered all
+three notices from the service-worker cache.
+
+### Build / typecheck results
+
+`tsc --noEmit` ×3 exit 0 · `npm run build` ok · bundle within the 180 KB gz
+budget · working tree clean after rebuild.
+
+### Security validation
+
+- The read path interprets no audience: it selects the caller's own receipts,
+  confined by `receipt_read_scope`.
+- `notice_read_scope` (RESTRICTIVE) is what stops a student reading a
+  teachers-only notice — not the category, not the UI.
+- `app.resolve_notice_audience()` asserts the session tenant, so definer rights
+  cannot cross tenants (asserted in `db/tests/notices.sql` §7).
+- Notice bodies are rendered with `textContent`, never `innerHTML`; tested with
+  an `<img onerror>` payload.
+- Audience ids must be uuids, so a SQL fragment is refused as malformed input
+  before it reaches the database.
+- **D11 fix:** attendance SMS templates no longer sign "— ShikhonBD"; they now
+  carry the institution's own name.
+
+### Tenant-isolation validation
+
+Designed and asserted; **the SQL suite has not been executed** — still no
+PostgreSQL reachable on this machine. `db/tests/notices.sql` is wired into
+`database.yml` (both the first pass and the idempotency re-run), so the first
+CI run is its first execution.
+
+### Known limitations
+
+1. **The DB-backed suites for R-1 and R-2 have still never run.** Two phases now
+   depend on CI for their first execution. This is the oldest open item in this
+   log and it is growing: R-2's isolation guarantee is code-complete and
+   CI-pending, exactly as R-1's was.
+2. **Scheduling is a column, not a feature.** `publish_at` exists; nothing polls
+   it.
+3. **No real-time delivery.** The badge refreshes on boot and after publishing.
+   A polling timer on 2G would cost more than the freshness is worth.
+4. **Auto-notices are not built** — exam-routine-published, result-published and
+   invoice-generated do not yet emit notices. Three small emitters at existing
+   publish points; deferred so the surface shipped first.
+5. **No editing of a published notice**, and no UI for re-publishing after
+   widening an audience (the function supports it).
+6. **SMS send is still stubbed** (R-8). Notice SMS queues into `sms_outbox` and
+   nothing leaves the building.
+7. Migration 038 still has no probe.
+
+### Unresolved bugs / issues
+
+None open. One pre-existing defect was found and fixed: the attendance SMS
+templates carried the platform brand into a tenant surface (D11).
+
+### Decisions that require owner input
+
+- **Notice SMS length.** 180 characters is a cost decision, not a technical
+  limit. If the school wants full notices by SMS, the bill scales with the body
+  and the cap should be raised deliberately, per tenant.
+
+### Next recommended step
+
+**R-3 — Principal & IT admin portals**, per the master plan: the hierarchy
+drill-down, teacher assignment and replacement UI, user management, and the
+rollover screen. R-2's auto-notice emitters are a natural half-day inside it,
+since R-3 touches the publish points they hook into.

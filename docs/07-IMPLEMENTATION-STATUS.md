@@ -20,6 +20,7 @@ security block (§9a).
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
+| Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. Four capabilities are currently **Backend complete — UI pending**: notice-SMS cap, publish results, generate invoices, routine solver — see PHASE_LOG D13 |
 | Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
 
 What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their

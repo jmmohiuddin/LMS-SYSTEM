@@ -44,7 +44,10 @@ Tests:                661 passing, 0 failing (node --test, verified 2026-08-29)
                       + up → down → up clean, 0 objects left, lint 0 advisories
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 78 KB gz / 180 KB budget
 Migrations:           40 applied, 40/40 probed by scripts/migration-status.mjs
-Known Blockers:       none open.
+Known Blockers:       none open in R-2's own scope. But D13 (2026-08-29) re-tests every
+                      completed phase against the UI layer, and four capabilities are
+                      "Backend complete — UI pending" — see the D13 entry at the end of
+                      this file. None of them regressed; they were never surfaced.
                       CLOSED in R-2-FINAL:
                         · DB-backed suites never executed — run, and they found 5 real bugs
                         · migration 038 had no probe — probed; 40/40, none unprobed
@@ -58,7 +61,10 @@ Deferred, not blocking:
                       · SMS send is stubbed until an aggregator contract (R-8)
                       · no real-time push; the bell refreshes on navigation
                       · scripts/test-all.mjs cannot run on Windows (pre-existing)
-Next Step:            R-3 — Principal & IT admin portals (docs/11-MASTER-PLAN.md)
+Next Step:            R-3 — Principal & IT admin portals (docs/11-MASTER-PLAN.md).
+                      R-3 is where three of the four D13 gaps belong (publish results,
+                      generate invoices, SMS settings), so they are folded into it
+                      rather than logged and forgotten.
 ```
 
 ---
@@ -1755,3 +1761,104 @@ codebase has to make on a school's behalf.
 ### Next recommended step
 
 **R-3 — Principal & IT admin portals.** Not started.
+
+
+---
+
+# 2026-08-29 · D13 · A feature is not implemented until a person can use it
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | D13 |
+| **Phase name** | UI/UX completeness made a permanent condition of "done" |
+| **Status** | ✅ Recorded and applied retroactively to R-1 and R-2 |
+| **Migration number** | none — a process decision |
+| **Rollback status** | n/a |
+| **Git commit** | `git log -1 --format=%H -- docs/11-MASTER-PLAN.md` |
+
+### Objective
+
+The owner set a permanent rule: no phase may be called complete on the strength of
+its database, service and API alone. Every applicable layer — through the screen a
+person actually touches, and the loading, empty, error and success states that make
+that screen usable — must be done and verified, or the phase is reported as
+**"Backend complete — UI pending."**
+
+Recorded as **D13** in [11-MASTER-PLAN.md](11-MASTER-PLAN.md) §1 with the full
+18-layer checklist, the UI-first requirement table, the three acceptance-test
+templates (end-to-end, two-tenant, offline cycle) and the phase reporting format in
+the new **§1c**. The roadmap's definition of done now names it alongside D10 and
+D11.
+
+### Why this rule earned its place
+
+It is not a general principle borrowed from somewhere; it names a failure that had
+just happened in this repository. R-2 finalisation made the notice-SMS cap
+tenant-configurable, wrote six tests for it, and documented it in three files —
+and left no way to set it except writing SQL by hand against production. A setting
+only a developer can reach is a setting the school does not have.
+
+That shape recurs whenever a phase is judged by its migration count and its test
+count, because those are the parts that are easy to count. A school does not
+experience a table or an endpoint. It experiences a screen — and a screen with no
+empty state is broken on its first day, which is precisely the day every table is
+empty.
+
+### Audit of the completed phases against D13
+
+Applied the rule to R-1 and R-2 rather than only to future work, since a rule that
+starts tomorrow exempts exactly the work that motivated it.
+
+**Passing all applicable layers:**
+
+| Feature | Where |
+|---|---|
+| Branding editor (R-1) | `branding-view.ts` — live preview, per-field errors, contrast warning, save/cancel, two-tenant browser acceptance test |
+| Notice inbox + bell (R-2) | `inbox-view.ts`, `shell.ts` — loading, empty, error states; offline-cached; browser-verified with the origin stopped |
+| Notice composer (R-2) | `notice-compose-view.ts` — audience picker, scheduling control, live SMS segment count, field errors |
+
+**Backend complete — UI pending (4 found):**
+
+| Capability | Backend | UI | Consequence |
+|---|---|---|---|
+| **Notice SMS cap** `settings->'sms'->>'noticeMaxChars'` | ✅ read, clamped, 6 tests | ❌ no API write path, no screen | Only settable by hand-written SQL. Introduced yesterday by R-2 finalisation — the case that produced this rule |
+| **Publish results** `POST /api/v1/academics/publish` | ✅ full result flow, RLS-gated | ❌ no caller in the PWA | `results-view.ts` reads published results; nothing in the app publishes them. **The results auto-notice emitter cannot fire from the UI**, because nothing in the UI reaches the endpoint it hangs off |
+| **Generate invoices** `POST /api/v1/finance/generate` | ✅ monthly batch, idempotent per student+period | ❌ no caller in the PWA | Same shape: `fees-view.ts` reads invoices; nothing creates them. The invoice auto-notice has the same problem |
+| **Routine solver** `POST /api/v1/rms/solve` | ✅ | ❌ `generation-view.ts` calls `/rms/generation`, a different endpoint | The solver is reachable only over the API |
+
+One further observation, recorded rather than classified: **`GET /api/v1/sync/pull`
+has no client caller anywhere.** `packages/offline/src/sync-engine.ts` only pushes.
+The delta-pull half of the sync protocol is implemented, tested and documented on
+the server, and unused by the app. Whether that is a deferral or an oversight needs
+a decision, not an assumption, so it is written down here and left open.
+
+### What this changes about R-2's status
+
+R-2 remains complete **in its own scope** — the notice system it set out to build
+is usable end to end by all five roles. But two of its three auto-notice emitters
+hang off endpoints the UI cannot reach, so in practice they fire only from an API
+client. The R-2-FINAL entry above tested them at the database level and by script,
+and both passes were honest about being scripted rather than driven through a
+screen. Under D13 that distinction is now load-bearing, so it is stated plainly
+here rather than left as an implication.
+
+This does **not** retract the R-2-FINAL entry. It adds the layer that entry did not
+examine, which is the point of the rule.
+
+### Files modified
+
+- `docs/11-MASTER-PLAN.md` — D13 row, new §1c, definition-of-done bullet
+- `docs/PHASE_LOG.md` — this entry, and the status block
+
+### Known limitations
+
+The four gaps above are open. Three of them (publish results, generate invoices,
+SMS settings) are principal- and IT-admin-facing, which is exactly R-3's scope, so
+they are folded into R-3 rather than logged and forgotten. The routine solver's
+screen belongs with the RMS work.
+
+### Next recommended step
+
+**R-3 — Principal & IT admin portals**, now carrying the three admin-facing D13
+gaps as part of its scope. Not started.

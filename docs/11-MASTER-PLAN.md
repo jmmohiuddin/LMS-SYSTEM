@@ -57,6 +57,7 @@ are folded into the phases below.
 | D10 | **[`docs/PHASE_LOG.md`](PHASE_LOG.md) is the canonical chronological implementation history.** It is updated *before* a phase may be marked complete, and after every meaningful change: a phase, a bug fix, an architectural decision, a migration, a test milestone, a deployment change, an important discovery. History is append-only — a decision that supersedes an earlier one gets a NEW entry saying what changed, why, and what replaced it; the old entry stays. | A new agent (or a new engineer) must be able to read one file and know what has happened here from the beginning, without any chat history. Chat context is lost; a file in the repository is not. Silently editing away an old decision destroys the reasoning that a future reader needs most — the reason something was tried and abandoned. |
 | D11 | **`shikhonBD` is the permanent platform and marketing brand. White-labelling applies ONLY to a tenant's operational application and the documents it produces.** The public marketing site, platform documentation, and any future platform Super Admin console stay branded shikhonBD / eShikhon. A school's login, shell, PWA identity, notices, receipts and reports carry the school's identity. Enforced in both directions by the `Brand boundary (D11)` job in `.github/workflows/frontend.yml`. | R-1 removed the platform brand from tenant screens, which was correct — and created the opposite risk, because "remove ShikhonBD" reads like a rule that applies everywhere. It does not. The landing page is *our* shopfront; un-branding it would be a marketing loss nothing else would catch. The one-line statement of the rule is: **the platform is branded, the tenant application is white-labelled.** |
 | D12 | **Tenant resolution: each institution gets its own entry link — never a school-picker.** Today that is the install link (`/?tid=<tenant-id>`, or the slug typed once on the login screen); the device remembers it, the PWA install bakes it into `start_url`, and the login screen renders that school's identity before anyone signs in. At R-7 each tenant additionally gets a subdomain (`monipur.shikhonbd.com`) resolved from the hostname, with custom domains as a later option. A "choose your school" dropdown is forbidden at every stage. See §1b for the full mechanism. | One deployment must serve many institutions without ever showing one school's users another school's door. A picker would enumerate our customer list to anyone who loads the login page — the same reason `app.public_branding()` answers only exact keys and returns 200-with-defaults for unknown ones. The link a school hands out is the same channel it already uses for everything else it tells its guardians. |
+| D13 | **A feature is not implemented until a person can use it.** Every phase is verified across all 18 layers of §1c — database, service, API, authorization, UI, workflow, and the loading / empty / error / success states that make a screen usable, plus responsive, offline, real-time, notification, audit, test, browser-acceptance and PHASE_LOG coverage where each applies. Any Master Plan requirement describing something a principal, teacher, student, guardian or IT admin is expected to *use* must have a usable UI unless it is explicitly marked backend-only. Where a capability exists but its screen does not, it is reported as **"Backend complete — UI pending"** — never as complete. | The failure this prevents is specific and had already happened here: R-2 finalisation made the notice-SMS cap tenant-configurable, tested it, documented it — and left no way to configure it except writing SQL by hand. A setting only a developer can reach is a setting a school does not have. The same shape recurs whenever a phase is judged by its migration and its test count, because those are the parts that are easy to count. A school does not experience a table or an endpoint; it experiences a screen, and a screen that has no empty state is broken on its first day, when everything is empty. |
 
 ---
 
@@ -186,6 +187,114 @@ test fails CI if one ships without RLS.
 
 ---
 
+## 1c. Definition of done, layer by layer (D13)
+
+A phase is complete when every applicable layer below is done **and verified**, not
+when the migration applies and the tests are green. Layers that genuinely do not
+apply are marked *n/a with a reason* — "n/a" alone is not an answer.
+
+| # | Layer | What "done" means |
+|---|---|---|
+| 1 | Database / migration | Forward + rollback, RLS, `tenant_id`, probe in `migration-status.mjs` (D8) |
+| 2 | Backend / service logic | The rule lives in one place, not copied per caller |
+| 3 | API | Routed, role-gated, shaped for the screen that consumes it |
+| 4 | Authorization / tenant isolation | Enforced server-side and by RLS — never by hiding a button |
+| 5 | **Frontend UI** | A real screen a real person reaches by navigating, not by typing a URL |
+| 6 | User workflow / UX | The whole path end to end, including how someone backs out of it |
+| 7 | Loading state | What the screen shows on a 2G connection before the data lands |
+| 8 | Empty state | **What it shows on day one, when the school has no data at all** |
+| 9 | Error state | What it shows when the request fails, in Bangla, saying what to do |
+| 10 | Success state | Visible confirmation that the thing happened |
+| 11 | Responsive behaviour | Usable on the ৳8,000 Android phone most teachers actually carry |
+| 12 | Offline behaviour | Where promised: works offline, queues, and *says* it queued |
+| 13 | Real-time behaviour | Where promised — and where not promised, the UI must not imply it |
+| 14 | Notifications | Where the workflow should tell somebody something happened |
+| 15 | Audit / history | Where a school may later need to prove what was done, by whom |
+| 16 | Tests | Backend **and** UI, in the same commit as the feature |
+| 17 | Browser acceptance test | For every important workflow, driven through the real UI |
+| 18 | Documentation / PHASE_LOG | Written *before* the phase is called complete (D10) |
+
+### The UI-first rule
+
+If the Master Plan describes something a school administrator, principal, teacher,
+student or guardian is expected to use, it needs a usable screen. Not an endpoint
+plus an intention.
+
+| Requirement | The screen it owes |
+|---|---|
+| Teacher assignment | assignment UI |
+| Teacher replacement | replacement UI |
+| Student promotion | promotion workflow UI |
+| Notice targeting | audience picker UI |
+| Notification | bell / inbox UI |
+| SMS settings | admin settings UI, wherever configuration is expected |
+| Branding | branding editor |
+| Calendar | calendar UI |
+| Search / history | search + student history UI |
+| School onboarding | complete setup wizard |
+| Reports | report UI with an export / print workflow |
+| Fees | fee, payment and receipt UI |
+
+The only exception is a requirement explicitly marked **backend-only** or
+**infrastructure-only** in this plan. Marking one that way is a decision that gets
+written down with its reason, not a default.
+
+### No backend-only claim
+
+Where the capability exists and the workflow does not, the phase report says:
+
+> **Backend complete — UI pending.**
+
+It does not say complete, done, or shipped. This is not pessimism about the work;
+it is an accurate statement of what a school can currently do with it.
+
+### Acceptance criteria
+
+Every major feature is exercised end to end, through the interface a person uses:
+
+```text
+User → UI → API → Authorization → Database → Result → UI feedback
+```
+
+Multi-tenant features are additionally proven from both sides of the wall:
+
+```text
+Tenant A                    → correct UI and data
+Tenant B                    → different UI and data
+Tenant A reaching for B     → blocked
+```
+
+Offline-capable features are proven through the whole cycle, including what the
+screen tells the user at each stage:
+
+```text
+Online      → action
+Offline     → the action still works where we promised it would
+Reconnect   → it syncs
+UI          → shows the correct sync status throughout
+```
+
+### Phase reporting format
+
+Every phase report separates the layers, so that a gap is visible rather than
+averaged away by the ones that went well:
+
+```text
+Backend implemented        …
+API implemented            …
+UI implemented             …
+UX tested                  …
+Security tested            …
+Tenant isolation tested    …
+Offline tested             …
+Real-time tested           …
+Browser acceptance tested  …
+```
+
+If any applicable layer is missing, the phase is not described as fully complete.
+
+---
+
 ## 2. What already exists (do NOT rebuild)
 
 Verified against the repo 2026-08-29 (full audit in §6 of the audit report; summary here so
@@ -273,6 +382,9 @@ docs/07 status update — plus two additions that are not optional:
   (D10). Not after, and not "when there's time": the entry is part of the work.
 - **The `Brand boundary (D11)` CI job green in both directions** — no platform brand on
   tenant surfaces, and the platform brand still present on the marketing site.
+- **Every applicable layer of §1c green (D13)** — including the UI, its empty state, and
+  a browser acceptance test for each important workflow. A phase with a working endpoint
+  and no screen is reported as *Backend complete — UI pending*, not as done.
 
 ### R-0 — Hygiene (½ day, do first)
 

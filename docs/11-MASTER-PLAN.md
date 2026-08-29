@@ -18,7 +18,8 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৪৩২ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত)। **নতুন করে ভিত্তি
+এবং টেস্টেড (**৬৬১ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-2 শেষে; এর সাথে
+১৮টি SQL সুইট যা এবার সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
 যা নেই, সেটাই এই প্ল্যান — অগ্রাধিকার অনুযায়ী:
@@ -245,8 +246,8 @@ no phase accidentally re-implements these):
 | ছাত্রের আপডেট গার্ডিয়ান+শিক্ষক+প্রধান শিক্ষক সবাই দেখবে (sync) | **Exists** (one DB + RLS + sync pull) | — |
 | গার্ডিয়ান শুধু নিজের সন্তান দেখবে | **Exists** (RLS `guardianships` scoping) | — |
 | ছাত্র শুধু নিজেরটা দেখবে | **Exists** (RLS self-scoping) | — |
-| নোটিশ বোর্ড + টার্গেটেড নোটিশ (শিক্ষক/ছাত্র/গার্ডিয়ান আলাদা) | **Missing** | **R-2** |
-| নোটিফিকেশন বেল — সবার ড্যাশবোর্ডে পৌঁছাবে | **Missing** | **R-2** |
+| নোটিশ বোর্ড + টার্গেটেড নোটিশ (শিক্ষক/ছাত্র/গার্ডিয়ান আলাদা) | **Done (R-2)** | — |
+| নোটিফিকেশন বেল — সবার ড্যাশবোর্ডে পৌঁছাবে | **Done (R-2)** | — |
 | গার্ডিয়ানের ফোনে সরাসরি SMS | Pipeline built, provider stubbed | R-2 (wire-up) + R-8 (credentials) |
 | এক্সাম রুটিন আপডেট | **Exists** | — (R-2 adds its notifications) |
 | ক্যালেন্ডার — ছুটি/ইভেন্ট, স্কুল-অনুযায়ী | Table exists; **API+UI missing** | R-4 |
@@ -343,15 +344,35 @@ shell, and a sample printed page — same deployment, same code.
   inbox view; notice composer for principal/IT (audience picker: everyone / teachers /
   students / guardians / class → group → section drill-down); notice card on the
   guardian ward view (the card `ward.ts` explicitly notes as "not built").
-- **Auto-notices (same machinery, no new UI):** exam routine published → students+
-  guardians of affected sections; results published → same; invoice generated → guardians
-  with `can_pay_fees`. These are 3 small emitters at existing publish points.
+- **Auto-notices (same machinery, no new UI) — BUILT:** all three go through one
+  `app.emit_auto_notice()`, idempotent on a partial unique index over
+  `(tenant_id, source_kind, source_ref)`, in the same transaction as the event they
+  announce. Exam routine published → students + guardians of the sections with a paper
+  in it (`exam_routine`/examId); results published → the same people, **no marks in the
+  notice** (`result`/examId); invoices generated → the new `guardians_payers` audience,
+  which honours `can_pay_fees` (`invoice`/md5(period)).
 - **Tests:** audience-resolution unit tests (the matrix: all/staff/class/section/
   student→their guardians); RLS test that a student never sees a teachers-only notice;
   fan-out idempotency (re-publish doesn't duplicate receipts or SMS).
 
+- **Scheduling:** `scheduled` is a real `notice_status`, not a draft with a date.
+  `app.publish_due_notices()` is swept by the **existing** ops/maintenance cron —
+  no scheduler, no queue, no new process — with `FOR UPDATE SKIP LOCKED` so two
+  overlapping runs cannot double-emit the SMS event. The granularity is the cron's,
+  and the composer says so instead of implying a precision it does not have.
+- **SMS length:** 180 characters is the default and the recommendation, **not** a
+  technical limit. A tenant may set `settings->'sms'->>'noticeMaxChars'` between 70
+  (one Bangla segment) and a 480 hard ceiling; the composer shows the live
+  per-recipient segment count before publishing. SMS stays a short alert — the full
+  notice lives in the app — and every message is signed with the institution's name,
+  never the platform's (D11).
+
 **Exit:** principal publishes "শুধু শিক্ষকদের জন্য" notice → every teacher's bell rings,
 no student sees it; absence + notice SMS rows queue correctly (send still stubbed until R-8).
+
+**Status: DONE** (2026-08-29). 661 tests, 0 failing; `db/tests/notices.sql` 13/13 and
+every other SQL suite executed against a real PostgreSQL 16. See `docs/PHASE_LOG.md`
+entries R-2 and R-2-FINAL.
 
 ### R-3 — Principal & IT admin portals completed
 
@@ -876,18 +897,18 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 
 ## 5. Sequence & effort at a glance
 
-| Phase | What | Relative size | Depends on |
-|---|---|---|---|
-| R-0 | Hygiene | XS | — |
-| R-1 | White-label branding | M | — |
-| R-2 | Notices + notifications | M–L | R-1 (branded shell) |
-| R-3 | Principal + IT portals | L | R-2 (dashboard cards) |
-| R-4 | Calendar UI | S | R-2 (notify hooks) |
-| R-5 | Branded print engine | M | R-1 |
-| R-6 | Search + history | S–M | — |
-| R-7 | Onboarding + platform console | M | R-1 |
-| R-8 | Go-live unlocks | external-blocked | any |
-| R-9 | Add-ons | — | pilot |
+| Phase | What | Relative size | Depends on | Status |
+|---|---|---|---|---|
+| R-0 | Hygiene | XS | — | **done** |
+| R-1 | White-label branding | M | — | **done** (+ R-1-A surfaces) |
+| R-2 | Notices + notifications | M–L | R-1 (branded shell) | **done 2026-08-29** |
+| R-3 | Principal + IT portals | L | R-2 (dashboard cards) | next |
+| R-4 | Calendar UI | S | R-2 (notify hooks) | planned |
+| R-5 | Branded print engine | M | R-1 | planned |
+| R-6 | Search + history | S–M | — | planned |
+| R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |
+| R-8 | Go-live unlocks | external-blocked | any | blocked externally |
+| R-9 | Add-ons | — | pilot | — |
 
 Recommended execution order: **R-0 → R-1 → R-2 → R-3 → R-4 → R-5 → R-6 → R-7**, with
 R-8 items flipped as credentials arrive. Each phase ends with a commit-tested,

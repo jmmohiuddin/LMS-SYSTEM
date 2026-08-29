@@ -213,6 +213,33 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         try {
           await client.query(`UPDATE exams SET status = 'published' WHERE id = $1`, [examId]);
           exam.rows[0].status = 'published';
+
+          // R-2. Tell the students sitting it, and their guardians — in this
+          // same transaction, so a routine that fails to publish announces
+          // nothing. Idempotent on (tenant, 'exam_routine', examId), which is
+          // what makes a corrected-and-republished routine safe.
+          //
+          // The audience is the sections that actually have a paper in this
+          // exam, not the whole school: a Class 9 exam is not news in Class 6.
+          const sections = await client.query<{ ids: string[] }>(
+            `SELECT COALESCE(array_agg(DISTINCT section_id), '{}') AS ids
+               FROM exam_subjects WHERE exam_id = $1`,
+            [examId],
+          );
+          const sectionIds = sections.rows[0]?.ids ?? [];
+          if (sectionIds.length > 0) {
+            await client.query(
+              `SELECT * FROM app.emit_auto_notice(
+                 'exam_routine', $1::uuid, $2, $3, 'exam'::notice_category,
+                 jsonb_build_object('type','section','ids', to_jsonb($4::uuid[])), false)`,
+              [
+                examId,
+                `${exam.rows[0].name_bn} — পরীক্ষার সূচি প্রকাশিত`,
+                'পরীক্ষার সময়সূচি অ্যাপে দেখা যাচ্ছে। তারিখ ও সময় মিলিয়ে নিন।',
+                sectionIds,
+              ],
+            );
+          }
         } catch (err) {
           // The trigger raises check_violation. Anything else is a real
           // failure and must not be dressed up as a routine conflict.

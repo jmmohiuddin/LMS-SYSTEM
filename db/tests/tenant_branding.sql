@@ -56,7 +56,7 @@ SET LOCAL app.user_id   = '7bd00000-0000-4000-8000-0000000000b1';
 
 INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, settings)
 VALUES (:B, 'r1-brand-b', 'নর্থ সিটি মহিলা কলেজ', 'North City College',
-        'bangla_medium', 'college',
+        'bangla_medium', 'higher_secondary',
         jsonb_build_object('branding', jsonb_build_object(
           'nameBn', 'নর্থ সিটি মহিলা কলেজ',
           'shortName', 'নর্থ সিটি',

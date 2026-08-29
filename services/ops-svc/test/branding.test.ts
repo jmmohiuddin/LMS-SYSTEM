@@ -162,7 +162,7 @@ describe('tenant branding endpoint (R-1)', { skip }, () => {
     await db.withTenant(asB, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
-         VALUES ($1,'r1-college-b','নর্থ সিটি','North City','bangla_medium','college')`, [T_B]);
+         VALUES ($1,'r1-college-b','নর্থ সিটি','North City','bangla_medium','higher_secondary')`, [T_B]);
       await c.query(
         `INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status)
          VALUES ($1,$2,'অধ্যক্ষ খ','Head B','+8801799600002','active')`, [HEAD_B, T_B]);

@@ -2501,6 +2501,25 @@ async function handler4(req, res) {
         try {
           await client.query(`UPDATE exams SET status = 'published' WHERE id = $1`, [examId]);
           exam.rows[0].status = "published";
+          const sections = await client.query(
+            `SELECT COALESCE(array_agg(DISTINCT section_id), '{}') AS ids
+               FROM exam_subjects WHERE exam_id = $1`,
+            [examId]
+          );
+          const sectionIds = sections.rows[0]?.ids ?? [];
+          if (sectionIds.length > 0) {
+            await client.query(
+              `SELECT * FROM app.emit_auto_notice(
+                 'exam_routine', $1::uuid, $2, $3, 'exam'::notice_category,
+                 jsonb_build_object('type','section','ids', to_jsonb($4::uuid[])), false)`,
+              [
+                examId,
+                `${exam.rows[0].name_bn} \u2014 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09B8\u09C2\u099A\u09BF \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4`,
+                "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09B8\u09AE\u09AF\u09BC\u09B8\u09C2\u099A\u09BF \u0985\u09CD\u09AF\u09BE\u09AA\u09C7 \u09A6\u09C7\u0996\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7\u0964 \u09A4\u09BE\u09B0\u09BF\u0996 \u0993 \u09B8\u09AE\u09AF\u09BC \u09AE\u09BF\u09B2\u09BF\u09AF\u09BC\u09C7 \u09A8\u09BF\u09A8\u0964",
+                sectionIds
+              ]
+            );
+          }
         } catch (err) {
           const code = err.code;
           if (code !== "23514") throw err;

@@ -15,8 +15,8 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **477 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 108, `services/academics-svc` 19, `services/ops-svc` 5, `services/rms-svc` 15, `apps/pwa` 201, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 18 SQL assertion suites |
-| Schema | 40 migrations (39 rollback files), verified by applying the full chain to an empty database in CI, then 18 SQL assertion suites |
+| Tests | **661 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 86 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · **sms-svc 13** (new workspace) · sync-svc 23 · pwa 201 · netlify 8. Plus 18 SQL assertion suites, all green, all idempotent |
+| Schema | 40 migrations (39 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 40/40 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
@@ -545,23 +545,78 @@ reaches no student, a section notice reaches that section's guardians and
 nobody else's, a sibling guardian gets one receipt per child, re-publishing is
 free, and a student cannot read a notice by id.
 
-**Known limitations:**
+### R-2 finalisation (2026-08-29)
 
-- **Scheduling is a column, not a feature.** `publish_at` exists; nothing polls
-  it. A notice with a future `publish_at` is a draft with a date.
-- **No real-time delivery.** The badge refreshes on boot and after publishing;
-  a notice arriving while the app is open appears on the next navigation. A
-  timer polling on 2G would cost more than the freshness is worth; WebSocket
-  delivery is a later phase.
-- **The auto-notice emitters are not built** — exam-routine-published,
-  result-published and invoice-generated do not yet create notices. The
-  machinery is in place; they are three small emitters at existing publish
-  points, deferred so R-2 shipped the surface first.
+Four gaps from R-2's own report were closed before the phase was called done.
+
+**1 · The DB-backed suites were executed.** A PostgreSQL 16 (pgvector) container
+matching CI ran the full chain: 40 migrations silently, schema lint, invariants,
+tenant_branding, notices, e2e_academic_cycle, an idempotency re-run leaving zero
+rows, a descending rollback leaving **zero objects**, and a clean re-apply.
+Running them found five real defects that had been sitting in committed code:
+an invalid `institution_level` enum value in R-1's suite, `user_roles.role_id`
+(the column is `role_code`), `sections.class_offering_id` (it is `class_id`;
+`class_offerings` does not exist in this schema), `ON CONFLICT ON CONSTRAINT`
+against a **partial unique index** (which needs the column list plus its
+predicate), and a rollback that left two functions behind so `DROP TYPE` was
+refused and up → down → up failed.
+
+**2 · The three auto-emitters are built.** `app.emit_auto_notice()` is the single
+entry point — three copies of "insert a notice and publish it" would be three
+places to get the idempotency wrong. Idempotency is a partial unique index on
+`(tenant_id, source_kind, source_ref)`, so a corrected-and-republished exam
+routine or a re-run invoice batch announces nothing twice. Each runs in the same
+transaction as the event it announces, so a rolled-back publish takes its notice
+with it.
+
+| Event | Audience | Key |
+|---|---|---|
+| Exam routine published | students + guardians of the sections with a paper in it | `('exam_routine', examId)` |
+| Results published | the same people; the notice carries **no marks** | `('result', examId)` |
+| Invoices generated | `guardians_payers` — a new audience type honouring `can_pay_fees` | `('invoice', md5(period))` |
+
+A payment reminder to someone with no authority to pay is noise that costs an
+SMS, which is why `guardians_payers` is a distinct audience rather than reusing
+`guardians`. The result notice deliberately says results are available and
+nothing more: a grade is not something to put in a notification a sibling might
+read over a shoulder.
+
+**3 · `publish_at` is now real.** `scheduled` became a status — a draft is
+unfinished, a scheduled notice is finished and waiting, and the sweeper must
+publish one and never the other. `app.publish_due_notices()` runs from the
+**existing** nightly ops/maintenance cron; no scheduler, no queue, no new
+process. `FOR UPDATE SKIP LOCKED` stops two overlapping runs double-emitting the
+SMS event. The cost is granularity — a notice set for 09:00 goes out on the next
+maintenance run — and the composer says exactly that where the time is chosen
+rather than implying precision it cannot deliver.
+
+**4 · SMS length is a default, not a limit.** 180 characters stays the
+recommendation; a school may set `tenants.settings->'sms'->>'noticeMaxChars'`
+anywhere from 70 (one Bangla segment) to a 480 hard ceiling. Past that an SMS
+has stopped being an alert and the honest answer is a shorter notice, not a
+bigger budget. The composer states the policy — *"এসএমএসে সংক্ষিপ্ত বার্তা যাবে;
+পুরো নোটিশ অ্যাপে থাকবে"* — and shows the live per-recipient segment count.
+Every SMS carries the institution's name.
+
+`sms-svc` gained a test workspace in the process; the most cost-sensitive code
+in the product had none. Its 13 tests found a real robustness bug:
+`Number([])` is 0 and `Number(true)` is 1, both finite, so junk in the settings
+blob would have clamped every alert to one segment instead of falling back.
+
+**Known limitations that remain:**
+
+- **No real-time delivery.** The badge refreshes on boot and after publishing; a
+  notice arriving while the app is open appears on the next navigation. A timer
+  polling on 2G would cost more than the freshness is worth; WebSocket delivery
+  is a later phase.
+- **Scheduling granularity is the cron's**, not the minute. Stated in the UI.
 - **Editing a published notice is not supported.** Re-publishing after widening
-  the audience reaches the new people only, which is correct, but there is no
-  UI for it.
-- SMS send remains stubbed until an aggregator contract (R-8), so notice SMS
-  queues and is visible in `sms_outbox` but nothing leaves the building.
+  an audience reaches only the new people, which is correct, but there is no UI.
+- SMS send remains stubbed until an aggregator contract (R-8): notice SMS queues
+  into `sms_outbox` and nothing leaves the building.
+- The emitters are wired at the three publish points but their **endpoint-level**
+  behaviour is covered by the SQL suite and a scripted end-to-end check, not by
+  an HTTP integration test.
 
 ---
 

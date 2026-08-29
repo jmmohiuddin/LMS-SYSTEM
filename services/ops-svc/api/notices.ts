@@ -127,7 +127,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // ── Create (+ publish) ────────────────────────────────────────────
     requireRole(claims, AUTHOR_ROLES);
 
-    const body = await readJson<{ notice?: unknown; publish?: boolean }>(req);
+    const body = await readJson<{
+      notice?: unknown; publish?: boolean; publishAt?: string | null;
+    }>(req);
     let draft: NoticeDraft;
     try {
       draft = parseNotice(body.notice);
@@ -156,6 +158,23 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // author who pressed "send" meant.
       if (body.publish === false) {
         return { noticeId, status: 'draft', recipients: 0, smsQueued: false };
+      }
+
+      // Scheduled: finished, waiting. app.publish_due_notices() — driven by
+      // the existing ops/maintenance cron — is what turns it into receipts.
+      // A time in the past is treated as "now" rather than refused: an author
+      // who picked 09:00 and pressed send at 09:01 meant send it.
+      const at = body.publishAt ? Date.parse(body.publishAt) : NaN;
+      if (Number.isFinite(at) && at > Date.now()) {
+        await c.query(
+          `UPDATE notices SET status = 'scheduled', publish_at = $2, updated_at = now()
+            WHERE id = $1`,
+          [noticeId, new Date(at).toISOString()],
+        );
+        return {
+          noticeId, status: 'scheduled', recipients: 0, smsQueued: false,
+          publishAt: new Date(at).toISOString(),
+        };
       }
 
       const pub = await c.query<{ recipients: number; sms_event: boolean }>(

@@ -192,11 +192,21 @@ var TEMPLATES = {
   "attendance.absent.v2": (name, day, org) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u0985\u09A8\u09C1\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u099B\u09BF\u09B2\u0964 \u2014 ${org}`,
   "attendance.late.v1": (name, day, org) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u09A6\u09C7\u09B0\u09BF\u09A4\u09C7 \u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964 \u2014 ${org}`
 };
-var NOTICE_SMS_MAX_BODY = 180;
-function noticeSmsBody(title, body, org) {
+var NOTICE_SMS_DEFAULT_MAX = 180;
+var NOTICE_SMS_HARD_CEILING = 480;
+function noticeSmsMaxChars(settings) {
+  const raw = settings?.sms?.noticeMaxChars;
+  let n;
+  if (typeof raw === "number") n = raw;
+  else if (typeof raw === "string" && raw.trim() !== "") n = Number(raw);
+  else return NOTICE_SMS_DEFAULT_MAX;
+  if (!Number.isFinite(n)) return NOTICE_SMS_DEFAULT_MAX;
+  return Math.max(70, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
+}
+function noticeSmsBody(title, body, org, maxChars = NOTICE_SMS_DEFAULT_MAX) {
   const head = title.trim();
   const rest = body.trim().replace(/\s+/g, " ");
-  const room = NOTICE_SMS_MAX_BODY - head.length - org.length - 6;
+  const room = maxChars - head.length - org.length - 6;
   const tail = room > 20 && rest.length > 0 ? rest.length <= room ? rest : `${rest.slice(0, room - 1)}\u2026` : "";
   return tail ? `${head}: ${tail} \u2014 ${org}` : `${head} \u2014 ${org}`;
 }
@@ -239,7 +249,7 @@ var SmsDispatchWorker = class {
    */
   async loadTenantBudget(client, tenantId) {
     const res = await client.query(
-      `SELECT weekend_days, sms_daily_cap,
+      `SELECT weekend_days, sms_daily_cap, settings,
               COALESCE(NULLIF(settings->'branding'->>'shortName', ''),
                        NULLIF(settings->'branding'->>'nameBn', ''),
                        name_bn) AS org_name
@@ -257,7 +267,8 @@ var SmsDispatchWorker = class {
       dailyCap: row?.sms_daily_cap ?? 2e3,
       capUsed: Number(used.rows[0].count),
       // Falls back to a neutral word, never to the platform's name.
-      orgName: row?.org_name ?? "\u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC"
+      orgName: row?.org_name ?? "\u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC",
+      noticeMaxChars: noticeSmsMaxChars(row?.settings)
     };
   }
   async enqueue(client, tenantId, budget) {
@@ -404,7 +415,12 @@ var SmsDispatchWorker = class {
                                AND g.receives_sms = true))`,
         [tenantId, noticeId]
       );
-      const body = noticeSmsBody(notice.title, notice.body, budget.orgName);
+      const body = noticeSmsBody(
+        notice.title,
+        notice.body,
+        budget.orgName,
+        budget.noticeMaxChars
+      );
       const segments = Math.max(1, Math.ceil(body.length / 70));
       for (const r of recipients.rows) {
         if (!r.phone_e164) continue;

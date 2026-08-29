@@ -49,25 +49,25 @@ INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status
 
 -- Staff roles. Students and guardians deliberately get none: is_staff on the
 -- role is what app.resolve_notice_audience uses to classify them.
-INSERT INTO user_roles (tenant_id, user_id, role_id, scope_type)
-SELECT :T, :HEAD, id, 'tenant' FROM roles WHERE code = 'principal';
-INSERT INTO user_roles (tenant_id, user_id, role_id, scope_type)
-SELECT :T, :TEACHER, id, 'tenant' FROM roles WHERE code = 'class_teacher';
+INSERT INTO user_roles (tenant_id, user_id, role_code, scope_type)
+VALUES (:T, :HEAD, 'principal', 'tenant');
+INSERT INTO user_roles (tenant_id, user_id, role_code, scope_type)
+VALUES (:T, :TEACHER, 'class_teacher', 'tenant');
 
 SELECT app.provision_tenant(:T::uuid, '2026', '2026-01-01'::date, '2026-12-31'::date,
                             9::smallint, 9::smallint);
 
 -- Two sections of class 9, and the two students split across them.
-INSERT INTO sections (id, tenant_id, class_offering_id, academic_year_id, name, shift)
-SELECT '7be00000-0000-4000-8000-00000000ec01', :T, co.id, ay.id, 'ক', 'morning'
-  FROM class_offerings co
+INSERT INTO sections (id, tenant_id, class_id, academic_year_id, name, shift)
+SELECT '7be00000-0000-4000-8000-00000000ec01', :T, c.id, ay.id, 'ক', 'morning'
+  FROM classes c
   JOIN academic_years ay ON ay.tenant_id = :T AND ay.is_current
- WHERE co.tenant_id = :T LIMIT 1;
-INSERT INTO sections (id, tenant_id, class_offering_id, academic_year_id, name, shift)
-SELECT '7be00000-0000-4000-8000-00000000ec02', :T, co.id, ay.id, 'খ', 'morning'
-  FROM class_offerings co
+ WHERE c.tenant_id = :T LIMIT 1;
+INSERT INTO sections (id, tenant_id, class_id, academic_year_id, name, shift)
+SELECT '7be00000-0000-4000-8000-00000000ec02', :T, c.id, ay.id, 'খ', 'morning'
+  FROM classes c
   JOIN academic_years ay ON ay.tenant_id = :T AND ay.is_current
- WHERE co.tenant_id = :T LIMIT 1;
+ WHERE c.tenant_id = :T LIMIT 1;
 
 INSERT INTO enrolments (tenant_id, student_id, section_id, academic_year_id, roll_no, status)
 SELECT :T, :STU_A, '7be00000-0000-4000-8000-00000000ec01', ay.id, 1, 'active'
@@ -297,6 +297,162 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN
     RAISE NOTICE 'PASS the resolver refuses a foreign tenant';
   END;
+END $$;
+COMMIT;
+
+-- ---------------------------------------------------------------------
+-- 8. Auto-notices: idempotent by construction.
+--    The invoice batch is explicitly re-runnable, so its announcement has
+--    to be too — a second run must not buzz every parent again.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7be00000-0000-4000-8000-00000000000a';
+SET LOCAL app.role      = 'principal';
+SET LOCAL app.user_id   = '7be00000-0000-4000-8000-0000000000f1';
+
+DO $$
+DECLARE first_id uuid; first_n integer; again_id uuid; again_n integer; sent boolean;
+BEGIN
+  SELECT notice_id, recipients INTO first_id, first_n
+    FROM app.emit_auto_notice('invoice', md5('invoice:2026-09')::uuid,
+      'সেপ্টেম্বরের বেতন', 'অ্যাপে দেখুন।', 'fee'::notice_category,
+      '{"type":"guardians_payers"}'::jsonb, false);
+  IF first_id IS NULL THEN RAISE EXCEPTION 'FAIL: auto-notice created nothing'; END IF;
+  IF first_n < 1 THEN RAISE EXCEPTION 'FAIL: invoice notice reached nobody'; END IF;
+
+  SELECT notice_id, recipients, already_sent INTO again_id, again_n, sent
+    FROM app.emit_auto_notice('invoice', md5('invoice:2026-09')::uuid,
+      'সেপ্টেম্বরের বেতন', 'অ্যাপে দেখুন।', 'fee'::notice_category,
+      '{"type":"guardians_payers"}'::jsonb, false);
+  IF again_id <> first_id THEN RAISE EXCEPTION 'FAIL: re-emit created a SECOND notice'; END IF;
+  IF again_n <> 0 OR NOT sent THEN
+    RAISE EXCEPTION 'FAIL: re-emit announced again (recipients=%, already_sent=%)', again_n, sent;
+  END IF;
+  RAISE NOTICE 'PASS auto-notice is idempotent on (kind, ref)';
+END $$;
+
+-- guardians_payers must exclude a guardian who may not pay.
+DO $$
+DECLARE n integer;
+BEGIN
+  UPDATE guardianships SET can_pay_fees = false
+   WHERE guardian_id = '7be00000-0000-4000-8000-0000000000c1';
+
+  PERFORM app.emit_auto_notice('invoice', md5('invoice:2026-10')::uuid,
+    'অক্টোবরের বেতন', 'অ্যাপে দেখুন।', 'fee'::notice_category,
+    '{"type":"guardians_payers"}'::jsonb, false);
+
+  SELECT count(*) INTO n FROM notice_receipts r
+    JOIN notices nt ON nt.id = r.notice_id
+   WHERE nt.source_ref = md5('invoice:2026-10')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FAIL: a guardian without can_pay_fees got % fee receipt(s)', n;
+  END IF;
+
+  UPDATE guardianships SET can_pay_fees = true
+   WHERE guardian_id = '7be00000-0000-4000-8000-0000000000c1';
+  RAISE NOTICE 'PASS guardians_payers respects can_pay_fees';
+END $$;
+COMMIT;
+
+-- ---------------------------------------------------------------------
+-- 9. Scheduled publishing: the sweeper takes what is due and nothing else.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7be00000-0000-4000-8000-00000000000a';
+SET LOCAL app.role      = 'principal';
+SET LOCAL app.user_id   = '7be00000-0000-4000-8000-0000000000f1';
+
+INSERT INTO notices (id, tenant_id, title, body, category, audience, created_by,
+                     status, publish_at)
+VALUES ('7be00000-0000-4000-8000-00000000ff10', :T, 'অতীতে নির্ধারিত', 'এখন যাবে।',
+        'general', '{"type":"staff"}'::jsonb, :HEAD, 'scheduled', now() - interval '1 hour'),
+       ('7be00000-0000-4000-8000-00000000ff11', :T, 'ভবিষ্যতে নির্ধারিত', 'পরে যাবে।',
+        'general', '{"type":"staff"}'::jsonb, :HEAD, 'scheduled', now() + interval '2 days'),
+       ('7be00000-0000-4000-8000-00000000ff12', :T, 'খসড়া', 'কখনো যাবে না।',
+        'general', '{"type":"staff"}'::jsonb, :HEAD, 'draft', NULL);
+
+DO $$
+DECLARE n integer; st notice_status;
+BEGIN
+  SELECT count(*) INTO n FROM app.publish_due_notices(
+    '7be00000-0000-4000-8000-00000000000a'::uuid, 100);
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: sweeper published % notices, expected 1', n; END IF;
+
+  SELECT status INTO st FROM notices WHERE id = '7be00000-0000-4000-8000-00000000ff10';
+  IF st <> 'published' THEN RAISE EXCEPTION 'FAIL: due notice is %', st; END IF;
+
+  SELECT status INTO st FROM notices WHERE id = '7be00000-0000-4000-8000-00000000ff11';
+  IF st <> 'scheduled' THEN RAISE EXCEPTION 'FAIL: a future notice was published early'; END IF;
+
+  -- A draft is unfinished. The sweeper must never mistake one for a
+  -- scheduled notice, which is why 'scheduled' is a status and not a
+  -- draft-with-a-date.
+  SELECT status INTO st FROM notices WHERE id = '7be00000-0000-4000-8000-00000000ff12';
+  IF st <> 'draft' THEN RAISE EXCEPTION 'FAIL: the sweeper published a DRAFT'; END IF;
+
+  RAISE NOTICE 'PASS the sweeper publishes what is due, and only that';
+END $$;
+
+-- Running it again publishes nothing more.
+DO $$
+DECLARE n integer;
+BEGIN
+  SELECT count(*) INTO n FROM app.publish_due_notices(
+    '7be00000-0000-4000-8000-00000000000a'::uuid, 100);
+  IF n <> 0 THEN RAISE EXCEPTION 'FAIL: a second sweep published % again', n; END IF;
+  RAISE NOTICE 'PASS a second sweep is a no-op';
+END $$;
+COMMIT;
+
+-- ---------------------------------------------------------------------
+-- 10. SMS integration: a send_sms notice queues exactly one event, and a
+--     re-publish that reaches nobody new queues none.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7be00000-0000-4000-8000-00000000000a';
+SET LOCAL app.role      = 'principal';
+SET LOCAL app.user_id   = '7be00000-0000-4000-8000-0000000000f1';
+
+INSERT INTO notices (id, tenant_id, title, body, category, audience, send_sms, created_by)
+VALUES ('7be00000-0000-4000-8000-00000000ff20', :T, 'জরুরি', 'আগামীকাল বন্ধ।',
+        'emergency', '{"type":"all"}'::jsonb, true, :HEAD);
+
+DO $$
+DECLARE n integer; emitted boolean;
+BEGIN
+  SELECT sms_event INTO emitted
+    FROM app.publish_notice('7be00000-0000-4000-8000-00000000ff20');
+  IF NOT emitted THEN RAISE EXCEPTION 'FAIL: send_sms notice emitted no SMS event'; END IF;
+
+  SELECT count(*) INTO n FROM event_outbox
+   WHERE event_type = 'notice.published.v1'
+     AND aggregate_id = '7be00000-0000-4000-8000-00000000ff20';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: % SMS events for one notice, expected 1', n; END IF;
+
+  -- Re-publishing reaches nobody new, so it must queue nothing new. This is
+  -- the guarantee that stops a retry costing a second SMS to every parent.
+  PERFORM app.publish_notice('7be00000-0000-4000-8000-00000000ff20');
+  SELECT count(*) INTO n FROM event_outbox
+   WHERE event_type = 'notice.published.v1'
+     AND aggregate_id = '7be00000-0000-4000-8000-00000000ff20';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: re-publish queued a SECOND SMS event'; END IF;
+  RAISE NOTICE 'PASS one SMS event per notice, re-publish is free';
+END $$;
+
+-- An in-app-only notice queues no SMS at all.
+INSERT INTO notices (id, tenant_id, title, body, category, audience, send_sms, created_by)
+VALUES ('7be00000-0000-4000-8000-00000000ff21', :T, 'শুধু অ্যাপে', 'এসএমএস নয়।',
+        'general', '{"type":"all"}'::jsonb, false, :HEAD);
+DO $$
+DECLARE n integer;
+BEGIN
+  PERFORM app.publish_notice('7be00000-0000-4000-8000-00000000ff21');
+  SELECT count(*) INTO n FROM event_outbox
+   WHERE event_type = 'notice.published.v1'
+     AND aggregate_id = '7be00000-0000-4000-8000-00000000ff21';
+  IF n <> 0 THEN RAISE EXCEPTION 'FAIL: an in-app notice queued % SMS event(s)', n; END IF;
+  RAISE NOTICE 'PASS send_sms=false queues nothing';
 END $$;
 COMMIT;
 

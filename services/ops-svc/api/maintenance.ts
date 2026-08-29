@@ -90,6 +90,51 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         results[name] = { ok: false, ms: Date.now() - started, error: String((err as Error).message).slice(0, 300) };
       }
     }
+    // ── R-2: publish notices whose scheduled time has passed ──────────
+    //
+    // This is the whole scheduler. No new process, no queue, no
+    // minute-resolution timer — the constraint was to use what already runs,
+    // and a nightly job is what already runs. The cost is granularity, and the
+    // composer says so where the time is chosen rather than implying
+    // precision this cannot deliver.
+    //
+    // Per tenant, because publish_due_notices() is confined to one tenant by
+    // design (the same assertion app.resolve_notice_audience uses). The owner
+    // connection can enumerate tenants; the runtime role deliberately cannot,
+    // which is the gap R-7's platform service closes.
+    const scheduled: { tenantId: string; published: number }[] = [];
+    try {
+      const tenants = await client.query<{ id: string }>(
+        `SELECT id FROM tenants WHERE status IN ('trial','active') AND deleted_at IS NULL`,
+      );
+      for (const t of tenants.rows) {
+        // One transaction per tenant: a failure in one school's notices must
+        // not roll back another's, and SET LOCAL needs a transaction anyway.
+        try {
+          await client.query('BEGIN');
+          await client.query(
+            `SELECT set_config('app.tenant_id', $1, true),
+                    set_config('app.role', 'system_ingest', true)`,
+            [t.id],
+          );
+          const due = await client.query<{ notice_id: string }>(
+            `SELECT notice_id FROM app.publish_due_notices($1::uuid, 100)`,
+            [t.id],
+          );
+          await client.query('COMMIT');
+          if (due.rowCount) scheduled.push({ tenantId: t.id, published: due.rowCount });
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          console.error('[ops/maintenance] scheduled notices failed for', t.id, err);
+        }
+      }
+      results.publish_due_notices = { ok: true, ms: 0 };
+    } catch (err) {
+      results.publish_due_notices = {
+        ok: false, ms: 0, error: String((err as Error).message).slice(0, 300),
+      };
+    }
+
     // The canary docs/06 tells operators to watch — surfaced on every run.
     const leak = await client.query<{ relname: string; n: string }>(
       `SELECT relname, n_live_tup::text AS n
@@ -100,6 +145,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     json(res, allOk ? 200 : 500, {
       ok: allOk,
       results,
+      scheduledNoticesPublished: scheduled,
       defaultPartitionLeakage: leak.rows,
     }, cors);
   } catch (err) {

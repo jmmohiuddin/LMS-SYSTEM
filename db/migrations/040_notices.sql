@@ -59,7 +59,9 @@ CREATE TYPE notice_category AS ENUM (
   'emergency'   -- bypasses quiet hours if those are ever added; SMS by default
 );
 
-CREATE TYPE notice_status AS ENUM ('draft', 'published', 'archived');
+-- 'scheduled' sits between draft and published: finished, waiting for its
+-- time. A sweeper publishes these and never touches a draft.
+CREATE TYPE notice_status AS ENUM ('draft', 'scheduled', 'published', 'archived');
 
 -- ---------------------------------------------------------------------
 -- notices — what the author wrote
@@ -77,14 +79,16 @@ CREATE TABLE notices (
   -- branding. SQL enforces only the shape, which is what SQL is good at.
   --   {"type":"all"}
   --   {"type":"staff"} | {"type":"students"} | {"type":"guardians"}
-  --   {"type":"class",   "ids":["<class_offering uuid>", …]}
+  --   {"type":"guardians_payers"}   -- only those with can_pay_fees
+  --   {"type":"class",   "ids":["<class uuid>", …]}
   --   {"type":"section", "ids":["<section uuid>", …]}
   --   {"type":"users",   "ids":["<user uuid>", …]}
   audience       jsonb NOT NULL DEFAULT '{"type":"all"}'::jsonb
                    CHECK (jsonb_typeof(audience) = 'object'
                           AND audience ? 'type'
                           AND audience->>'type' IN
-                              ('all','staff','students','guardians','class','section','users')),
+                              ('all','staff','students','guardians','guardians_payers',
+                               'class','section','users')),
 
   -- Channels the author chose. In-app is always on: a notice nobody can read
   -- in the product is not a notice. SMS costs money and is opt-in per notice.
@@ -92,16 +96,35 @@ CREATE TABLE notices (
   send_sms       boolean NOT NULL DEFAULT false,
 
   status         notice_status NOT NULL DEFAULT 'draft',
-  -- Scheduling: a notice may be written now and published later. The publish
-  -- endpoint refuses to fan out before this time; nothing polls it in R-2, so
-  -- a future publish_at is a draft with a date, not a scheduled job yet.
+  -- Scheduling. A notice written on Thursday for Sunday morning.
+  --
+  -- `scheduled` is a real status, not a draft with a date: a draft is
+  -- unfinished, a scheduled notice is finished and waiting. The distinction
+  -- matters because the sweeper publishes one of them and must never publish
+  -- the other. app.publish_due_notices() (below) is driven by the existing
+  -- ops/maintenance cron — no new infrastructure, per the R-2 constraint.
   publish_at     timestamptz,
+  CONSTRAINT notices_scheduled_has_a_time CHECK (
+    status <> 'scheduled' OR publish_at IS NOT NULL
+  ),
   published_at   timestamptz,
   published_by   uuid REFERENCES users(id),
 
   -- Denormalised so the inbox can show "12 people" without counting receipts,
   -- and so the number survives a later enrolment change.
   recipient_count integer NOT NULL DEFAULT 0 CHECK (recipient_count >= 0),
+
+  -- Provenance for a notice the SYSTEM raised rather than a person wrote:
+  -- ('exam_routine'|'result'|'invoice', the id of the thing that happened).
+  -- The partial unique index below is what makes those emitters idempotent —
+  -- republishing an exam routine, or re-running the monthly invoice batch,
+  -- must not announce it twice. NULL for a human-authored notice.
+  source_kind    text CHECK (source_kind IS NULL
+                             OR source_kind IN ('exam_routine','result','invoice')),
+  source_ref     uuid,
+  CONSTRAINT notices_source_is_paired CHECK (
+    (source_kind IS NULL) = (source_ref IS NULL)
+  ),
 
   created_by     uuid NOT NULL REFERENCES users(id),
   created_at     timestamptz NOT NULL DEFAULT now(),
@@ -117,6 +140,12 @@ CREATE TABLE notices (
 CREATE INDEX ix_notices_tenant_status ON notices (tenant_id, status, published_at DESC);
 CREATE INDEX ix_notices_category ON notices (tenant_id, category, published_at DESC)
   WHERE status = 'published';
+
+-- One system notice per event, forever. This single index is the whole
+-- idempotency guarantee for the three auto-emitters: a second publish of the
+-- same exam routine finds the row already there and announces nothing.
+CREATE UNIQUE INDEX uq_notice_source ON notices (tenant_id, source_kind, source_ref)
+  WHERE source_kind IS NOT NULL;
 
 CREATE TRIGGER trg_notices_tenant BEFORE INSERT OR UPDATE ON notices
   FOR EACH ROW EXECUTE FUNCTION app.enforce_tenant();
@@ -143,7 +172,13 @@ CREATE TABLE notice_receipts (
   -- staff/student case (about_student_id IS NULL) also collapses on re-publish
   -- — the default NULL-distinct behaviour would let a re-publish duplicate
   -- every staff receipt, which is exactly the idempotency bug this prevents.
-  CONSTRAINT uq_notice_receipt UNIQUE NULLS NOT DISTINCT (notice_id, user_id, about_student_id)
+  --
+  -- tenant_id leads, though notice_id already implies it: RLS injects
+  -- `tenant_id = …` into every plan, so a leading match turns a filter into a
+  -- seek (db/tests/schema_lint.sql L7). The extra column changes no semantics
+  -- — a notice belongs to exactly one tenant — and costs one uuid per row.
+  CONSTRAINT uq_notice_receipt
+    UNIQUE NULLS NOT DISTINCT (tenant_id, notice_id, user_id, about_student_id)
 );
 
 -- The bell's query: unread count for one person. Partial index so it stays
@@ -214,9 +249,9 @@ BEGIN
    WHERE v_type IN ('all','staff')
      AND u.tenant_id = p_tenant AND u.status = 'active'
      AND EXISTS (
-       SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+       SELECT 1 FROM user_roles ur JOIN roles r ON r.code = ur.role_code
         WHERE ur.tenant_id = p_tenant AND ur.user_id = u.id AND r.is_staff
-          AND (ur.valid_until IS NULL OR ur.valid_until > now()))
+          AND (ur.valid_until IS NULL OR ur.valid_until > CURRENT_DATE))
 
   UNION
   -- ── Students: enrolled this year, optionally narrowed ───────────────
@@ -228,7 +263,21 @@ BEGIN
      AND e.tenant_id = p_tenant AND e.status = 'active'
      AND (v_type NOT IN ('class','section') OR (
            (v_type = 'section' AND e.section_id = ANY(v_ids))
-        OR (v_type = 'class'   AND s.class_offering_id = ANY(v_ids))))
+        OR (v_type = 'class'   AND s.class_id = ANY(v_ids))))
+
+  UNION
+  -- ── Guardians authorised to pay ────────────────────────────────────
+  -- A separate audience from 'guardians', because a fee notice addressed to
+  -- everyone who is merely RELATED to a student reaches people who cannot
+  -- act on it — and a payment reminder to someone with no authority to pay
+  -- is noise that costs an SMS.
+  SELECT g.guardian_id, g.student_id
+    FROM guardianships g
+    JOIN enrolments e ON e.student_id = g.student_id AND e.tenant_id = g.tenant_id
+                     AND e.status = 'active'
+    JOIN academic_years ay ON ay.id = e.academic_year_id AND ay.is_current
+   WHERE v_type = 'guardians_payers'
+     AND g.tenant_id = p_tenant AND g.can_pay_fees = true
 
   UNION
   -- ── Guardians: once per child in scope ─────────────────────────────
@@ -242,7 +291,7 @@ BEGIN
      AND g.tenant_id = p_tenant
      AND (v_type NOT IN ('class','section') OR (
            (v_type = 'section' AND e.section_id = ANY(v_ids))
-        OR (v_type = 'class'   AND s.class_offering_id = ANY(v_ids))));
+        OR (v_type = 'class'   AND s.class_id = ANY(v_ids))));
 END $$;
 
 COMMENT ON FUNCTION app.resolve_notice_audience(uuid, jsonb) IS
@@ -319,6 +368,152 @@ COMMENT ON FUNCTION app.publish_notice(uuid) IS
   'for the SMS worker — one transaction, idempotent on re-publish.';
 
 GRANT EXECUTE ON FUNCTION app.publish_notice(uuid) TO shikhon_app;
+
+-- ---------------------------------------------------------------------
+-- Auto-notices: the three events that announce themselves.
+--
+--   exam routine published  → the students sitting it, and their guardians
+--   results published       → the same people
+--   invoices generated      → the guardians authorised to pay
+--
+-- ONE entry point for all three, because three copies of "insert a notice and
+-- publish it" would be three places for the idempotency to be got wrong. The
+-- caller supplies what happened; this decides nothing about audience beyond
+-- what it is handed.
+--
+-- Idempotent by construction: uq_notice_source means a second call for the
+-- same (kind, ref) inserts nothing and publishes nothing. That matters most
+-- for invoices, where the monthly batch is explicitly re-runnable, and for an
+-- exam routine that is corrected and re-published.
+--
+-- SECURITY INVOKER: the caller's RLS decides. These run inside the same
+-- transaction as the event they announce, so a rolled-back publish takes its
+-- notice with it — "results published" is never announced for results that
+-- did not land.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.emit_auto_notice(
+  p_kind      text,
+  p_ref       uuid,
+  p_title     text,
+  p_body      text,
+  p_category  notice_category,
+  p_audience  jsonb,
+  p_send_sms  boolean DEFAULT false
+)
+RETURNS TABLE (notice_id uuid, recipients integer, already_sent boolean)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, app
+AS $$
+DECLARE
+  v_id     uuid;
+  v_actor  uuid := app.current_user_id();
+  v_count  integer := 0;
+BEGIN
+  -- An auto-notice has no human author, but created_by is NOT NULL: the
+  -- person whose action triggered it is the honest answer, and it is who an
+  -- audit would want. A system path with no user context finds any staff
+  -- member of the tenant rather than inventing one.
+  IF v_actor IS NULL THEN
+    SELECT u.id INTO v_actor
+      FROM users u
+      JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+      JOIN roles r ON r.code = ur.role_code AND r.is_staff
+     WHERE u.tenant_id = app.current_tenant() AND u.status = 'active'
+     ORDER BY r.rank DESC
+     LIMIT 1;
+  END IF;
+  IF v_actor IS NULL THEN
+    -- No staff to attribute it to means the tenant is not set up; announcing
+    -- nothing is better than failing the event that triggered this.
+    notice_id := NULL; recipients := 0; already_sent := true; RETURN NEXT; RETURN;
+  END IF;
+
+  INSERT INTO notices (tenant_id, title, body, category, audience,
+                       send_sms, source_kind, source_ref, created_by)
+  VALUES (app.current_tenant(), p_title, p_body, p_category, p_audience,
+          p_send_sms, p_kind, p_ref, v_actor)
+  -- Partial unique INDEX, so the arbiter is the column list plus its
+  -- predicate — ON CONFLICT ON CONSTRAINT only accepts a real constraint.
+  ON CONFLICT (tenant_id, source_kind, source_ref) WHERE source_kind IS NOT NULL
+  DO NOTHING
+  RETURNING id INTO v_id;
+
+  IF v_id IS NULL THEN
+    -- Already announced. Report it rather than silently returning zero, so a
+    -- caller can tell "nobody to tell" from "already told".
+    SELECT id INTO v_id FROM notices
+     WHERE source_kind = p_kind AND source_ref = p_ref;
+    notice_id := v_id; recipients := 0; already_sent := true; RETURN NEXT; RETURN;
+  END IF;
+
+  SELECT p.recipients INTO v_count FROM app.publish_notice(v_id) AS p;
+
+  notice_id := v_id; recipients := v_count; already_sent := false;
+  RETURN NEXT;
+END $$;
+
+COMMENT ON FUNCTION app.emit_auto_notice(text, uuid, text, text, notice_category, jsonb, boolean) IS
+  'R-2: the single entry point for system-raised notices (exam routine, '
+  'results, invoices). Idempotent on (tenant, source_kind, source_ref) via '
+  'uq_notice_source, and transactional with the event it announces.';
+
+GRANT EXECUTE ON FUNCTION
+  app.emit_auto_notice(text, uuid, text, text, notice_category, jsonb, boolean)
+  TO shikhon_app;
+
+-- ---------------------------------------------------------------------
+-- Scheduled publishing.
+--
+-- Driven by the EXISTING nightly ops/maintenance cron (vercel.json,
+-- netlify.toml) — R-2 adds no scheduler, no queue and no new process, which
+-- was the constraint. The cost is granularity: a notice scheduled for 09:00
+-- goes out on the next maintenance run, not at 09:00. That is the honest
+-- trade for not standing up a minute-resolution scheduler, and the composer
+-- says so where the time is chosen.
+--
+-- FOR UPDATE SKIP LOCKED so two overlapping cron runs cannot publish the same
+-- notice twice. Publishing is idempotent anyway (uq_notice_receipt), but a
+-- double run would emit two SMS events, and SMS is the expensive half.
+--
+-- SECURITY DEFINER: the maintenance job has no user session. It is confined
+-- to ONE tenant per call by the p_tenant argument and the session assertion,
+-- exactly as app.resolve_notice_audience() is.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.publish_due_notices(p_tenant uuid, p_limit integer DEFAULT 100)
+RETURNS TABLE (notice_id uuid, recipients integer)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, app
+AS $$
+DECLARE r record;
+BEGIN
+  IF app.current_tenant() IS DISTINCT FROM p_tenant THEN
+    RAISE EXCEPTION 'publish_due_notices must run inside the tenant''s own context'
+      USING ERRCODE = '42501';
+  END IF;
+
+  FOR r IN
+    SELECT id FROM notices
+     WHERE tenant_id = p_tenant
+       AND status = 'scheduled'
+       AND publish_at IS NOT NULL
+       AND publish_at <= now()
+     ORDER BY publish_at
+     LIMIT p_limit
+     FOR UPDATE SKIP LOCKED
+  LOOP
+    notice_id := r.id;
+    SELECT p.recipients INTO recipients FROM app.publish_notice(r.id) AS p;
+    RETURN NEXT;
+  END LOOP;
+END $$;
+
+COMMENT ON FUNCTION app.publish_due_notices(uuid, integer) IS
+  'R-2: publish notices whose publish_at has passed. Driven by the existing '
+  'ops/maintenance cron; granularity is that cron''s interval, not the minute.';
+
+GRANT EXECUTE ON FUNCTION app.publish_due_notices(uuid, integer) TO shikhon_app;
 
 -- ---------------------------------------------------------------------
 -- Row-level security

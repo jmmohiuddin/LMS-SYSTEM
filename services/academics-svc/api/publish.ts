@@ -166,7 +166,43 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           [examId, claims.sub],
         );
 
-        return { marksGraded: graded.rowCount ?? 0, resultsPublished: results.rowCount ?? 0 };
+        // R-2. A result is the one thing a guardian is waiting for, so it
+        // announces itself — to the sections that sat the exam and their
+        // guardians, in this same transaction. Idempotent on
+        // (tenant, 'result', examId); the endpoint already refuses a second
+        // publish, and this would refuse it again if it did not.
+        //
+        // The notice says results are available; it carries no marks. A grade
+        // is not something to put in a notification a sibling might read over
+        // a shoulder — the app is where it belongs, behind that student's own
+        // login.
+        const resultSections = await client.query<{ ids: string[] }>(
+          `SELECT COALESCE(array_agg(DISTINCT section_id), '{}') AS ids
+             FROM exam_subjects WHERE exam_id = $1`,
+          [examId],
+        );
+        const secIds = resultSections.rows[0]?.ids ?? [];
+        let notified = 0;
+        if (secIds.length > 0) {
+          const emitted = await client.query<{ recipients: number }>(
+            `SELECT recipients FROM app.emit_auto_notice(
+               'result', $1::uuid, $2, $3, 'exam'::notice_category,
+               jsonb_build_object('type','section','ids', to_jsonb($4::uuid[])), false)`,
+            [
+              examId,
+              'পরীক্ষার ফলাফল প্রকাশিত হয়েছে',
+              'অ্যাপের ফলাফল অংশে নিজের ফলাফল দেখা যাবে।',
+              secIds,
+            ],
+          );
+          notified = emitted.rows[0]?.recipients ?? 0;
+        }
+
+        return {
+          marksGraded: graded.rowCount ?? 0,
+          resultsPublished: results.rowCount ?? 0,
+          notified,
+        };
       },
     );
 

@@ -77,6 +77,9 @@ const SENTINELS = [
   ['035_double_periods',              'function',   'app.assert_double_period_coherent'],
   ['036_product_events',              'table',      'public.product_event_rollups'],
   ['037_activation_codes',            'table',      'public.activation_codes'],
+  // 038 only ALTERs columns, so it is probed by the last CHECK constraint it
+  // adds — the 'constraint' kind already existed; nothing needed inventing.
+  ['038_submission_media',            'constraint', 'ck_submission_photo_has_no_duration'],
   ['039_tenant_branding',             'function',   'app.public_branding'],
   ['040_notices',                     'table',      'public.notice_receipts'],
 ];
@@ -123,6 +126,7 @@ const MEANING = {
   '035_double_periods':              'F-504 — a double period is two CONTIGUOUS halves, or it is a lie',
   '036_product_events':              'F-1503 — the pilot produces data; PII cannot enter it',
   '037_activation_codes':            'F-202 — first login without the SMS aggregator',
+  '038_submission_media':            'F-902 — a photo or voice answer, with the guard that a photo has no duration',
   '039_tenant_branding':             'R-1 — a school sees its own name on its own login screen',
   '040_notices':                     'R-2 — the school can finally tell anybody anything',
 };

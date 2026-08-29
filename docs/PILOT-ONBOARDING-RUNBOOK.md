@@ -156,9 +156,8 @@ VALUES (app.current_tenant(), 'মোঃ আব্দুল কাদের', 'M
         '+8801711000001', 'active')
 RETURNING id;
 
-INSERT INTO user_roles (tenant_id, user_id, role_id, scope_type)
-SELECT app.current_tenant(), '<user-id>', id, 'tenant'
-  FROM roles WHERE code = 'principal';
+INSERT INTO user_roles (tenant_id, user_id, role_code, scope_type)
+VALUES (app.current_tenant(), '<user-id>', 'principal', 'tenant');
 COMMIT;
 ```
 

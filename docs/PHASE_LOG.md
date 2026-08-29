@@ -25,8 +25,8 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-2 closed, R-3 not started
-Last Completed Phase: R-2 — Notices & in-app notification system
+Current Phase:        none in progress — R-2 FINAL, R-3 not started
+Last Completed Phase: R-2 — Notices & in-app notification system (finalised R-2-FINAL)
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -36,18 +36,29 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                477 unit passing, 0 failing (node --test, verified 2026-08-29)
-                      + DB-backed suites that self-skip without DATABASE_URL — NOT YET RUN
+Tests:                661 passing, 0 failing (node --test, verified 2026-08-29)
+                      offline 46 · server-core 86 · ui-core 108 · academics-svc 78
+                      identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13
+                      sync-svc 23 · pwa 201 · netlify 8
+                      + 18 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      + up → down → up clean, 0 objects left, lint 0 advisories
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 74 KB gz / 180 KB budget
-Known Blockers:       1. DB-backed suites for R-1 AND R-2 never executed — CI is their first run
-                         (oldest open item in this log, and now spanning two phases)
-                      2. Migration 038 has no probe in migration-status.mjs
-                      3. R-2 auto-notice emitters not built (exam/result/invoice)
-                      RESOLVED since the last update:
-                        · two front doors — closed by R-1-A
-                        · service-worker deploy staleness — closed by R-1-A
+Migrations:           40 applied, 40/40 probed by scripts/migration-status.mjs
+Known Blockers:       none open.
+                      CLOSED in R-2-FINAL:
+                        · DB-backed suites never executed — run, and they found 5 real bugs
+                        · migration 038 had no probe — probed; 40/40, none unprobed
+                        · auto-notice emitters not built — all three built and verified
+                        · publish_at was a column nothing polled — now a real status
+                          swept by the existing ops cron
+                      CLOSED earlier:
+                        · two front doors — R-1-A
+                        · service-worker deploy staleness — R-1-A
+Deferred, not blocking:
+                      · SMS send is stubbed until an aggregator contract (R-8)
+                      · no real-time push; the bell refreshes on navigation
+                      · scripts/test-all.mjs cannot run on Windows (pre-existing)
 Next Step:            R-3 — Principal & IT admin portals (docs/11-MASTER-PLAN.md)
-                      Owner input wanted on the 180-char notice-SMS cap (see R-2).
 ```
 
 ---
@@ -1203,7 +1214,7 @@ changed only what is written down about it.
 | **Date** | 2026-08-29 |
 | **Phase ID** | R-2 |
 | **Phase name** | Notices & notification system (owner priority #2) |
-| **Status** | ✅ Complete — DB-backed suites written and wired into CI, not yet executed locally (see Known limitations) |
+| **Status** | ✅ Complete — **finalised by the R-2-FINAL entry at the end of this file** (2026-08-29): the DB-backed suites were executed for the first time, the three auto-notice emitters were built, and `publish_at` became a real scheduled status. The limitations listed below are superseded there; this entry is left exactly as it was written. |
 | **Migration number** | **040** — `db/migrations/040_notices.sql` |
 | **Rollback status** | ✅ `db/rollback/040_notices.down.sql`. **Unlike 039's, this one destroys data** — notices live only in these tables. Correct for pre-production; once schools are publishing, rolling back means losing the record of what a school told its guardians, and would need an export first. Stated in the file. |
 | **Git commit** | `git log -1 --format=%H -- db/migrations/040_notices.sql` |
@@ -1460,3 +1471,285 @@ templates carried the platform brand into a tenant surface (D11).
 drill-down, teacher assignment and replacement UI, user management, and the
 rollover screen. R-2's auto-notice emitters are a natural half-day inside it,
 since R-3 touches the publish points they hook into.
+
+
+---
+
+# 2026-08-29 · R-2-FINAL · The DB suites were actually run, and four gaps closed
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-2-FINAL |
+| **Phase name** | R-2 finalisation — real database verification, auto-notices, scheduling, SMS policy |
+| **Status** | ✅ Complete. R-2 is now final. |
+| **Migration number** | **040 amended** — `db/migrations/040_notices.sql` (never applied to any production database, so amending in place is honest; see "Important architectural decisions" #1) |
+| **Rollback status** | ✅ `db/rollback/040_notices.down.sql` — corrected. It previously left `app.emit_auto_notice()` and `app.publish_due_notices()` behind, so `DROP TYPE notice_category` was refused and up → down → up failed. Now verified end to end: descending rollback leaves **zero objects** in `public`. |
+| **Git commit** | `git log -1 --format=%H -- docs/PHASE_LOG.md` |
+
+### Objective
+
+R-2 was reported complete with four gaps named in its own entry. Close them
+before starting R-3, and above all **stop claiming a database is correct on the
+strength of SQL nobody has run.**
+
+### What was already existing
+
+- R-2's full surface: migration 040, the audience resolver, notices/inbox APIs,
+  the bell, the composer, the SMS stage-1 consumer.
+- 18 SQL assertion suites and a rollback chain, all written, all wired into
+  `.github/workflows/database.yml`, **none of which had ever executed** — the
+  oldest open item in this log, by then spanning two phases.
+- `services/sms-svc` with no test workspace at all.
+
+### What was implemented
+
+**1 · The DB-backed suites were executed.** A `pgvector/pgvector:pg16` container
+on port 55432, configured like CI, ran the whole chain: 40 migrations applied
+silently, `schema_lint.sql`, `invariants.sql`, `tenant_branding.sql` (10/10),
+`notices.sql` (13/13), an idempotency re-run leaving zero rows behind, a
+descending rollback, and a clean re-apply.
+
+**2 · Three auto-notice emitters**, all through one `app.emit_auto_notice()`:
+
+| Event | Where | Audience | Idempotency key |
+|---|---|---|---|
+| Exam routine published | `services/rms-svc/api/examroutine.ts` | students + guardians of the sections with a paper in it | `('exam_routine', examId)` |
+| Results published | `services/academics-svc/api/publish.ts` | the same people; **no marks in the body** | `('result', examId)` |
+| Invoices generated | `services/finance-svc/api/index.ts` | `guardians_payers` — a new audience type honouring `can_pay_fees` | `('invoice', md5('invoice:' \|\| period))` |
+
+**3 · `publish_at` made real.** `notice_status` gained `'scheduled'`;
+`app.publish_due_notices(tenant, limit)` is swept by the **existing**
+ops/maintenance cron.
+
+**4 · SMS length made a policy, not a constant.** `NOTICE_SMS_DEFAULT_MAX = 180`,
+`NOTICE_SMS_HARD_CEILING = 480`, tenant override at
+`tenants.settings->'sms'->>'noticeMaxChars'`, clamped to [70, 480].
+
+### Important architectural decisions
+
+1. **Migration 040 was amended in place rather than superseded by a 041.** It has
+   never been applied to any live database — the only copies are in this repo and
+   in throwaway CI containers. A 041 that patches a 040 nobody ever ran would be
+   a permanent piece of archaeology explaining a mistake with no victims. Once a
+   school's data is behind these tables this option disappears, and every later
+   change is additive. The distinction worth keeping is between *unreleased* and
+   *deployed*, not between *written* and *not written*.
+
+2. **One emitter function, not three.** Three copies of "insert a notice, resolve
+   its audience, publish it" would be three places to get the idempotency subtly
+   wrong, and the third would be written months after the first by someone who
+   had not read the first two.
+
+3. **Idempotency is a database constraint, not application logic.** A partial
+   unique index on `(tenant_id, source_kind, source_ref)` plus
+   `ON CONFLICT … DO NOTHING`. A teacher correcting a routine and re-publishing
+   it must not send 900 guardians a second SMS, and the guarantee should not
+   depend on every future caller remembering to check first.
+
+4. **The emitters run inside the transaction of the event they announce.** A
+   result publish that rolls back takes its notice with it. The alternative —
+   announcing results that were then not published — is the kind of error a
+   school cannot retract.
+
+5. **`guardians_payers` is a distinct audience, not a filter on `guardians`.**
+   `guardianships.can_pay_fees` already records who is authorised to pay. A fee
+   reminder to a guardian with no such authority is noise that costs money to
+   send, and in a family where one parent handles school money and the other does
+   not, it is also a small breach of an arrangement the family chose.
+
+6. **The result notice carries no marks.** It says results are available. A grade
+   is not something to put in a notification that a sibling, a classmate, or
+   anyone holding the phone may read over a shoulder — and an SMS is stored in
+   plaintext on a device the student often shares.
+
+7. **`scheduled` is a status, not a draft with a date.** A draft is unfinished; a
+   scheduled notice is finished and waiting. The sweeper must publish the second
+   and never the first, and encoding that in a status makes it impossible to
+   confuse — a nullable timestamp on a draft cannot.
+
+8. **The scheduler is the cron we already have.** `publish_due_notices()` is a
+   query with `FOR UPDATE SKIP LOCKED`, run by the existing ops/maintenance
+   route. No queue, no worker, no new process to monitor. The cost is honest:
+   granularity is the cron's, so the composer says *"নির্ধারিত সময়ের পর পরবর্তী
+   রক্ষণাবেক্ষণ চক্রে পাঠানো হবে"* rather than implying a precision it does not
+   have. A UI that promises 09:00 and delivers at midnight is worse than one that
+   promises less.
+
+9. **180 characters is a default, not a limit.** Bangla forces UCS-2, so a segment
+   is 70 characters, and SMS is around 80% of the infrastructure bill. But that is
+   a *cost* fact, and a cost decision belongs to the school paying it — hence the
+   per-tenant override, with a live per-recipient segment count shown in the
+   composer before publishing. The 480 hard ceiling stays because past ~7 segments
+   the message has stopped being an alert, and the honest fix is a shorter notice
+   rather than a bigger bill. The full notice always remains in the app.
+
+### Database changes
+
+- `notice_status` enum: `+ 'scheduled'`.
+- `notices`: `+ source_kind`, `+ source_ref`, `CHECK notices_source_is_paired`
+  (both or neither), `CHECK notices_scheduled_has_a_time`.
+- `CREATE UNIQUE INDEX uq_notice_source ON notices (tenant_id, source_kind, source_ref) WHERE source_kind IS NOT NULL`.
+- `notice_receipts.uq_notice_receipt` reordered to lead with `tenant_id`
+  (schema-lint L7: a tenant-scoped index must be usable by the tenant predicate).
+- `app.resolve_notice_audience()`: `+ guardians_payers` branch.
+- `app.emit_auto_notice(...)` and `app.publish_due_notices(...)` added.
+- Rollback drops both new functions **before** the types they depend on.
+
+### API changes
+
+- `POST /api/v1/rms/examroutine` (publish) → emits `exam_routine` notice.
+- `POST /api/v1/academics/publish` → emits `result` notice; response gains
+  `notified`.
+- `POST /api/v1/finance/generate` → emits `invoice` notice, skipped entirely when
+  the batch produced no invoices.
+- `POST /api/v1/ops/notices` accepts `status: 'scheduled'` with `publishAt`.
+
+### UI changes
+
+- Composer: scheduling control with the honest granularity hint; live
+  per-recipient SMS segment count; the policy line *"এসএমএসে সংক্ষিপ্ত বার্তা
+  যাবে; পুরো নোটিশ অ্যাপে থাকবে"*.
+
+### Files created
+
+- `services/sms-svc/package.json`, `services/sms-svc/test/notice-sms.test.ts`
+
+### Files modified
+
+- `db/migrations/040_notices.sql`, `db/rollback/040_notices.down.sql`,
+  `db/tests/notices.sql`, `db/tests/tenant_branding.sql`
+- `packages/ui-core/src/notice.ts`
+- `services/sms-svc/src/dispatch.ts`, `services/rms-svc/api/examroutine.ts`,
+  `services/academics-svc/api/publish.ts`, `services/finance-svc/api/index.ts`,
+  `services/ops-svc/api/notices.ts`
+- `apps/pwa/src/notice-compose-view.ts`
+- `scripts/migration-status.mjs` (probe for 038)
+- `.github/workflows/frontend.yml` (sms-svc step)
+- `docs/07-IMPLEMENTATION-STATUS.md`, `docs/11-MASTER-PLAN.md`, this file
+- `api/v1/*.js` (rebuilt bundles)
+
+### Files removed
+
+None.
+
+### Tests added
+
+- `services/sms-svc/test/notice-sms.test.ts` — **13 tests**, the first this
+  service has ever had. Covers the tenant-configurable cap, its clamps, junk in
+  the settings blob, truncation being visible, and the one that matters: an SMS
+  is signed by the school, never by the platform.
+- `db/tests/notices.sql` grew to **13 assertions**, including the four new ones:
+  auto-notice emission is idempotent; `guardians_payers` respects
+  `can_pay_fees`; the sweeper publishes what is due and never a draft; a second
+  sweep is a no-op.
+
+### Tests executed
+
+Everything, against a real database — the point of the phase.
+
+```
+node --test  (11 workspaces)              661 passing, 0 failing
+db/tests/schema_lint.sql                  PASS · 0 advisories
+db/tests/invariants.sql                   PASS
+db/tests/tenant_branding.sql              10/10 PASS
+db/tests/notices.sql                      13/13 PASS
+db/tests/e2e_academic_cycle.sql           PASS
+migrations, second application            0 errors, 0 rows added (idempotent)
+rollback, descending                      0 objects left in schema public
+up → down → up                            clean
+RLS coverage guard                        0 violations
+scripts/migration-status.mjs              40/40 applied, 0 unprobed
+tsc --noEmit ×3                           exit 0
+npm run build                             ok · app.js 74 KB gz / 180 KB
+```
+
+Auto-emitters, verified end to end against the same database:
+
+```
+PASS  exam routine  → student + guardian (2 recipients)
+PASS  results       → student + guardian, no marks in the body (2)
+PASS  invoice       → the authorised guardian only
+```
+
+### Test results
+
+**661 passing, 0 failing.** offline 46 · server-core 86 · ui-core 108 ·
+academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · **sms-svc 13** ·
+sync-svc 23 · pwa 201 · netlify 8.
+
+Running the SQL suites for the first time found **five real defects in committed
+code**, which is the entire argument for having done it:
+
+1. `db/tests/tenant_branding.sql` (R-1) used `'college'`, which is not a value
+   of `institution_level`. R-1's suite would have failed on its first CI run.
+2. Migration 040 joined `user_roles.role_id`. The column is `role_code` — a
+   text FK to `roles.code`.
+3. Migration 040's resolver used `sections.class_offering_id` and a
+   `class_offerings` table. Neither exists; sections hang off `classes` via
+   `class_id`. **The audience resolver could not have run at all.**
+4. `ON CONFLICT ON CONSTRAINT uq_notice_source` is invalid against a *partial*
+   unique index; PostgreSQL needs the column list and the predicate. Every
+   auto-notice would have raised instead of silently doing nothing — inside the
+   transaction publishing exam results.
+5. The rollback left two functions behind, so `DROP TYPE notice_category` was
+   refused and up → down → up failed.
+
+Plus four found by the new sms-svc tests and the lint: `Number([]) === 0` and
+`Number(true) === 1` are both finite, so junk in a tenant's settings blob would
+have clamped every alert to one segment rather than falling back to the default;
+and `uq_notice_receipt` did not lead with `tenant_id`.
+
+### Build / typecheck results
+
+`npm run build` ok; `tsc --noEmit` clean in all three configurations;
+`app.js` 74 KB gzipped against the 180 KB budget; `git status` clean after a
+rebuild, so the committed `api/` bundles match their sources.
+
+### Security validation
+
+- Both new functions are `SECURITY DEFINER` with a pinned `search_path` and an
+  explicit assertion that the tenant they were handed is
+  `app.current_tenant()` — a definer function without that assertion is a
+  cross-tenant read waiting to be called with someone else's UUID.
+- `db/tests/notices.sql` asserts the resolver **refuses** a foreign tenant id
+  rather than returning an empty set, so a bug can never look like an empty
+  audience.
+- The result notice contains no marks; the invoice notice contains no amount.
+
+### Tenant-isolation validation
+
+Executed, not asserted on paper: cross-tenant reads return zero rows; the
+resolver raises on a foreign tenant; the RLS coverage guard reports 0 tables
+without a policy; `schema_lint.sql` reports 0 advisories. Every SMS built by
+`noticeSmsBody()` carries the institution's own name — the D11 regression that
+R-2 fixed now has a test that fails if it returns.
+
+### Known limitations
+
+1. **SMS send is still stubbed** (R-8, external). Notice SMS queues into
+   `sms_outbox`; nothing leaves the building.
+2. **No real-time delivery.** The bell refreshes on boot and on navigation.
+3. **Scheduling granularity is the maintenance cron's**, not the minute. Stated
+   in the UI rather than hidden.
+4. **No editing of a published notice**, and no UI for re-publishing after
+   widening an audience (the function supports it).
+5. The emitters are covered by the SQL suite and a scripted end-to-end check
+   against a real database, **not** by an HTTP-level integration test.
+6. `scripts/test-all.mjs` still cannot run on Windows (pre-existing:
+   `execFileSync('npm')` and an unexpanded quoted glob). Workspaces were run
+   individually.
+
+### Unresolved bugs / issues
+
+None open.
+
+### Decisions that require owner input
+
+None outstanding. The notice-SMS cap that R-2 raised is now a per-tenant
+setting, so it is an operational choice at onboarding rather than a decision the
+codebase has to make on a school's behalf.
+
+### Next recommended step
+
+**R-3 — Principal & IT admin portals.** Not started.

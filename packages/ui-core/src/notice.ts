@@ -36,7 +36,8 @@ export const NOTICE_CATEGORIES = [
 export type NoticeCategory = (typeof NOTICE_CATEGORIES)[number];
 
 export const AUDIENCE_TYPES = [
-  'all', 'staff', 'students', 'guardians', 'class', 'section', 'users',
+  'all', 'staff', 'students', 'guardians', 'guardians_payers',
+  'class', 'section', 'users',
 ] as const;
 
 export type AudienceType = (typeof AUDIENCE_TYPES)[number];
@@ -99,6 +100,9 @@ export const AUDIENCE_LABELS_BN: Record<AudienceType, string> = {
   staff: 'শুধু শিক্ষক ও কর্মকর্তা',
   students: 'সব শিক্ষার্থী',
   guardians: 'সব অভিভাবক',
+  // System-raised fee notices only — a payment reminder to someone with no
+  // authority to pay is noise that costs an SMS. Not offered in the composer.
+  guardians_payers: 'ফি পরিশোধে অনুমোদিত অভিভাবক',
   class: 'নির্দিষ্ট শ্রেণি',
   section: 'নির্দিষ্ট শাখা',
   users: 'নির্দিষ্ট ব্যক্তি',

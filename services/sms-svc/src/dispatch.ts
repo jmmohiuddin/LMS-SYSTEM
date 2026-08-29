@@ -55,6 +55,8 @@ interface TenantSmsBudget {
   capUsed: number;
   /** The name the school signs its messages with — never the platform's. */
   orgName: string;
+  /** Tenant-configured alert length; NOTICE_SMS_DEFAULT_MAX unless set. */
+  noticeMaxChars: number;
 }
 
 export interface DispatchResult {
@@ -86,18 +88,52 @@ const TEMPLATES: Record<string, (studentName: string, takenOn: string, org: stri
 /**
  * A notice SMS is the notice's own title and body, signed by the school.
  *
- * Not the full body: a 4000-character notice is 58 SMS segments per guardian,
- * and at ~৳0.40 a segment one long notice to 900 guardians is over ৳20,000.
- * The SMS carries the headline and points at the app, which is where the whole
- * text already is. docs/05 §5 makes this the single most expensive decision in
- * the product; it is not left to whoever writes the notice.
+ * SMS is an ALERT channel, not a delivery channel: the full notice always
+ * lives in the app and this is the nudge that gets someone to open it. A
+ * 4000-character notice is 58 UCS-2 segments per guardian, and at ~৳0.40 a
+ * segment one long notice to 900 guardians costs over ৳20,000 — docs/05 §5
+ * makes SMS roughly 80% of the infrastructure bill.
  */
-export const NOTICE_SMS_MAX_BODY = 180;
+export const NOTICE_SMS_DEFAULT_MAX = 180;
+export const NOTICE_SMS_HARD_CEILING = 480;
 
-export function noticeSmsBody(title: string, body: string, org: string): string {
+/**
+ * Resolve a tenant's configured alert length, bounded and defaulted.
+ *
+ * 180 is the DEFAULT, not a hard limit: a school that wants longer alerts sets
+ * `tenants.settings->'sms'->>'noticeMaxChars'`. The ceiling on the ceiling is
+ * 480 — about seven Bangla segments — because past that an SMS has stopped
+ * being an alert and the honest answer is a shorter notice, not a bigger bill.
+ *
+ * A tenant may also go BELOW the default: 70 characters is exactly one
+ * segment, and a school on a tight SMS budget is a real case.
+ */
+export function noticeSmsMaxChars(settings: unknown): number {
+  const raw = (settings as { sms?: { noticeMaxChars?: unknown } } | null)
+    ?.sms?.noticeMaxChars;
+
+  // Only a number, or a string that is entirely a number. NOT `Number(raw)`
+  // on anything: Number([]) is 0 and Number(true) is 1, both finite, so a
+  // stray array or boolean in the settings blob would silently clamp every
+  // alert to one segment instead of falling back to the default.
+  let n: number;
+  if (typeof raw === 'number') n = raw;
+  else if (typeof raw === 'string' && raw.trim() !== '') n = Number(raw);
+  else return NOTICE_SMS_DEFAULT_MAX;
+
+  if (!Number.isFinite(n)) return NOTICE_SMS_DEFAULT_MAX;
+  return Math.max(70, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
+}
+
+export function noticeSmsBody(
+  title: string,
+  body: string,
+  org: string,
+  maxChars: number = NOTICE_SMS_DEFAULT_MAX,
+): string {
   const head = title.trim();
   const rest = body.trim().replace(/\s+/g, ' ');
-  const room = NOTICE_SMS_MAX_BODY - head.length - org.length - 6;
+  const room = maxChars - head.length - org.length - 6;
   const tail = room > 20 && rest.length > 0
     ? (rest.length <= room ? rest : `${rest.slice(0, room - 1)}…`)
     : '';
@@ -158,8 +194,9 @@ export class SmsDispatchWorker {
       weekend_days: number[];
       sms_daily_cap: number;
       org_name: string | null;
+      settings: unknown;
     }>(
-      `SELECT weekend_days, sms_daily_cap,
+      `SELECT weekend_days, sms_daily_cap, settings,
               COALESCE(NULLIF(settings->'branding'->>'shortName', ''),
                        NULLIF(settings->'branding'->>'nameBn', ''),
                        name_bn) AS org_name
@@ -180,6 +217,7 @@ export class SmsDispatchWorker {
       capUsed: Number(used.rows[0].count),
       // Falls back to a neutral word, never to the platform's name.
       orgName: row?.org_name ?? 'বিদ্যালয়',
+      noticeMaxChars: noticeSmsMaxChars(row?.settings),
     };
   }
 
@@ -357,7 +395,8 @@ export class SmsDispatchWorker {
         [tenantId, noticeId],
       );
 
-      const body = noticeSmsBody(notice.title, notice.body, budget.orgName);
+      const body = noticeSmsBody(
+        notice.title, notice.body, budget.orgName, budget.noticeMaxChars);
       const segments = Math.max(1, Math.ceil(body.length / 70));
 
       for (const r of recipients.rows) {

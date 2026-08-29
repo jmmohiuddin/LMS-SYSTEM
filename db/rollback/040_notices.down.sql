@@ -13,6 +13,12 @@
 -- consumer.
 BEGIN;
 
+-- Functions first, and ALL of them. app.emit_auto_notice takes a
+-- notice_category parameter, so a DROP TYPE below would be refused while it
+-- still exists — the failure mode that made the first up→down→up cycle fail.
+DROP FUNCTION IF EXISTS
+  app.emit_auto_notice(text, uuid, text, text, notice_category, jsonb, boolean);
+DROP FUNCTION IF EXISTS app.publish_due_notices(uuid, integer);
 DROP FUNCTION IF EXISTS app.publish_notice(uuid);
 DROP FUNCTION IF EXISTS app.resolve_notice_audience(uuid, jsonb);
 

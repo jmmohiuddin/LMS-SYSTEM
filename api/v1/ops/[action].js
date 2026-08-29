@@ -273,6 +273,39 @@ async function handler(req, res) {
         results[name] = { ok: false, ms: Date.now() - started, error: String(err.message).slice(0, 300) };
       }
     }
+    const scheduled = [];
+    try {
+      const tenants = await client.query(
+        `SELECT id FROM tenants WHERE status IN ('trial','active') AND deleted_at IS NULL`
+      );
+      for (const t of tenants.rows) {
+        try {
+          await client.query("BEGIN");
+          await client.query(
+            `SELECT set_config('app.tenant_id', $1, true),
+                    set_config('app.role', 'system_ingest', true)`,
+            [t.id]
+          );
+          const due = await client.query(
+            `SELECT notice_id FROM app.publish_due_notices($1::uuid, 100)`,
+            [t.id]
+          );
+          await client.query("COMMIT");
+          if (due.rowCount) scheduled.push({ tenantId: t.id, published: due.rowCount });
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => {
+          });
+          console.error("[ops/maintenance] scheduled notices failed for", t.id, err);
+        }
+      }
+      results.publish_due_notices = { ok: true, ms: 0 };
+    } catch (err) {
+      results.publish_due_notices = {
+        ok: false,
+        ms: 0,
+        error: String(err.message).slice(0, 300)
+      };
+    }
     const leak = await client.query(
       `SELECT relname, n_live_tup::text AS n
          FROM pg_stat_user_tables
@@ -282,6 +315,7 @@ async function handler(req, res) {
     json(res, allOk ? 200 : 500, {
       ok: allOk,
       results,
+      scheduledNoticesPublished: scheduled,
       defaultPartitionLeakage: leak.rows
     }, cors);
   } catch (err) {
@@ -1818,6 +1852,7 @@ var AUDIENCE_TYPES = [
   "staff",
   "students",
   "guardians",
+  "guardians_payers",
   "class",
   "section",
   "users"
@@ -2004,6 +2039,21 @@ async function handler6(req, res) {
       const noticeId = inserted.rows[0].id;
       if (body.publish === false) {
         return { noticeId, status: "draft", recipients: 0, smsQueued: false };
+      }
+      const at = body.publishAt ? Date.parse(body.publishAt) : NaN;
+      if (Number.isFinite(at) && at > Date.now()) {
+        await c.query(
+          `UPDATE notices SET status = 'scheduled', publish_at = $2, updated_at = now()
+            WHERE id = $1`,
+          [noticeId, new Date(at).toISOString()]
+        );
+        return {
+          noticeId,
+          status: "scheduled",
+          recipients: 0,
+          smsQueued: false,
+          publishAt: new Date(at).toISOString()
+        };
       }
       const pub = await c.query(
         `SELECT recipients, sms_event FROM app.publish_notice($1::uuid)`,

@@ -1700,7 +1700,32 @@ async function handler5(req, res) {
             WHERE id = $1`,
           [examId, claims.sub]
         );
-        return { marksGraded: graded.rowCount ?? 0, resultsPublished: results.rowCount ?? 0 };
+        const resultSections = await client.query(
+          `SELECT COALESCE(array_agg(DISTINCT section_id), '{}') AS ids
+             FROM exam_subjects WHERE exam_id = $1`,
+          [examId]
+        );
+        const secIds = resultSections.rows[0]?.ids ?? [];
+        let notified = 0;
+        if (secIds.length > 0) {
+          const emitted = await client.query(
+            `SELECT recipients FROM app.emit_auto_notice(
+               'result', $1::uuid, $2, $3, 'exam'::notice_category,
+               jsonb_build_object('type','section','ids', to_jsonb($4::uuid[])), false)`,
+            [
+              examId,
+              "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09AB\u09B2\u09BE\u09AB\u09B2 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7",
+              "\u0985\u09CD\u09AF\u09BE\u09AA\u09C7\u09B0 \u09AB\u09B2\u09BE\u09AB\u09B2 \u0985\u0982\u09B6\u09C7 \u09A8\u09BF\u099C\u09C7\u09B0 \u09AB\u09B2\u09BE\u09AB\u09B2 \u09A6\u09C7\u0996\u09BE \u09AF\u09BE\u09AC\u09C7\u0964",
+              secIds
+            ]
+          );
+          notified = emitted.rows[0]?.recipients ?? 0;
+        }
+        return {
+          marksGraded: graded.rowCount ?? 0,
+          resultsPublished: results.rowCount ?? 0,
+          notified
+        };
       }
     );
     json(res, 200, { ok: true, examId, ...result }, cors);

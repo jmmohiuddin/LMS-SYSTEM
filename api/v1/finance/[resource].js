@@ -1515,7 +1515,21 @@ async function generate(req, res, cors) {
         [yearId, period, periodStart]
       );
       const invoiceCount = new Set(lines.rows.map((r) => r.invoice_id)).size;
-      return { invoicesCreated: invoiceCount, linesCreated: lines.rowCount ?? 0 };
+      let notified = 0;
+      if (invoiceCount > 0) {
+        const emitted = await client.query(
+          `SELECT recipients FROM app.emit_auto_notice(
+             'invoice', md5('invoice:' || $1::text)::uuid, $2, $3,
+             'fee'::notice_category, '{"type":"guardians_payers"}'::jsonb, false)`,
+          [
+            period,
+            `${period} \u09AE\u09BE\u09B8\u09C7\u09B0 \u09AC\u09C7\u09A4\u09A8 \u0993 \u09AB\u09BF \u09AA\u09CD\u09B0\u09B8\u09CD\u09A4\u09C1\u09A4`,
+            "\u0985\u09CD\u09AF\u09BE\u09AA\u09C7\u09B0 \u09AC\u09C7\u09A4\u09A8 \u0993 \u09AB\u09BF \u0985\u0982\u09B6\u09C7 \u0987\u09A8\u09AD\u09AF\u09BC\u09C7\u09B8 \u0993 \u09AA\u09B0\u09BF\u09B6\u09CB\u09A7\u09C7\u09B0 \u09B6\u09C7\u09B7 \u09A4\u09BE\u09B0\u09BF\u0996 \u09A6\u09C7\u0996\u09BE \u09AF\u09BE\u09AC\u09C7\u0964"
+          ]
+        );
+        notified = emitted.rows[0]?.recipients ?? 0;
+      }
+      return { invoicesCreated: invoiceCount, linesCreated: lines.rowCount ?? 0, notified };
     }
   );
   json(res, 200, { ok: true, billingPeriod: period, ...result }, cors);

@@ -23,6 +23,11 @@ jobs:
       - name: pwa
         run: cd apps/pwa && npm install --no-audit --no-fund && npm test
 
+      # R-2 finalisation: sms-svc gained a test workspace. The SMS worker is
+      # the most cost-sensitive code in the product and had none.
+      - name: sms-svc
+        run: cd services/sms-svc && npm install --no-audit --no-fund && npm test
+
       # Node's type-stripping cannot compile parameter properties, and the
       # failure is a confusing runtime SyntaxError rather than a type error.
       - name: Guard against TS parameter properties

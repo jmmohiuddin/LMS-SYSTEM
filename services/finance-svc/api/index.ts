@@ -297,7 +297,35 @@ async function generate(req: IncomingMessage, res: ServerResponse, cors: Record<
       );
 
       const invoiceCount = new Set(lines.rows.map((r) => r.invoice_id)).size;
-      return { invoicesCreated: invoiceCount, linesCreated: lines.rowCount ?? 0 };
+
+      // R-2. Tell the guardians who can actually pay — 'guardians_payers',
+      // not 'guardians': a payment reminder to someone with no authority to
+      // pay is noise that costs an SMS.
+      //
+      // Idempotent on (tenant, 'invoice', md5(period)). The batch is
+      // explicitly re-runnable (it is idempotent per student+period), so the
+      // announcement has to be too, or a second run buzzes every parent
+      // again. A uuid derived from the billing period is the natural key: one
+      // announcement per month, whatever happens to the batch.
+      //
+      // Nothing is announced when the batch created no invoices — "your fees
+      // are ready" about nothing is worse than silence.
+      let notified = 0;
+      if (invoiceCount > 0) {
+        const emitted = await client.query<{ recipients: number }>(
+          `SELECT recipients FROM app.emit_auto_notice(
+             'invoice', md5('invoice:' || $1::text)::uuid, $2, $3,
+             'fee'::notice_category, '{"type":"guardians_payers"}'::jsonb, false)`,
+          [
+            period,
+            `${period} মাসের বেতন ও ফি প্রস্তুত`,
+            'অ্যাপের বেতন ও ফি অংশে ইনভয়েস ও পরিশোধের শেষ তারিখ দেখা যাবে।',
+          ],
+        );
+        notified = emitted.rows[0]?.recipients ?? 0;
+      }
+
+      return { invoicesCreated: invoiceCount, linesCreated: lines.rowCount ?? 0, notified };
     },
   );
 

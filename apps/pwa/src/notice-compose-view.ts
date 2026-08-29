@@ -60,6 +60,8 @@ export class NoticeComposeView {
   private audienceType: AudienceType = 'all';
   private selectedSections = new Set<string>();
   private sendSms = false;
+  /** ISO local datetime, or '' for "send now". */
+  private publishAt = '';
   /** Set once by the category picker; after that the author owns the toggle. */
   private smsTouched = false;
   private sections: SectionOption[] = [];
@@ -112,6 +114,13 @@ export class NoticeComposeView {
     };
   }
 
+  /** '' when sending now; otherwise the chosen local time as an ISO string. */
+  private scheduleIso(): string | null {
+    if (!this.publishAt) return null;
+    const t = Date.parse(this.publishAt);
+    return Number.isNaN(t) ? null : new Date(t).toISOString();
+  }
+
   /** The audience, as a sentence, for the confirmation line above Send. */
   private audienceSentence(): string {
     if (this.audienceType !== 'section') {
@@ -149,10 +158,15 @@ export class NoticeComposeView {
       const res = await this.o.auth.authedFetch('/api/v1/ops/notices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notice: this.draft(), publish: true }),
+        body: JSON.stringify({
+          notice: this.draft(),
+          publish: true,
+          publishAt: this.scheduleIso(),
+        }),
       });
       const body = (await res.json().catch(() => ({}))) as {
-        recipients?: number; smsQueued?: boolean; message?: string; field?: string;
+        recipients?: number; smsQueued?: boolean; status?: string;
+        message?: string; field?: string;
       };
       if (!res.ok) {
         if (body.field) this.fieldError = { field: body.field, message: body.message ?? 'ভুল আছে।' };
@@ -163,12 +177,19 @@ export class NoticeComposeView {
         return;
       }
       const n = body.recipients ?? 0;
-      this.notice = body.smsQueued
-        ? `${bn(n)} জনের কাছে পৌঁছেছে · এসএমএস সারিতে দেওয়া হয়েছে`
-        : `${bn(n)} জনের কাছে পৌঁছেছে`;
+      if (body.status === 'scheduled') {
+        // A scheduled notice has reached nobody yet, and saying "0 জনের কাছে
+        // পৌঁছেছে" would read as a failure. Say what actually happened.
+        this.notice = 'নির্ধারিত সময়ে পাঠানো হবে।';
+      } else {
+        this.notice = body.smsQueued
+          ? `${bn(n)} জনের কাছে পৌঁছেছে · এসএমএস সারিতে দেওয়া হয়েছে`
+          : `${bn(n)} জনের কাছে পৌঁছেছে`;
+      }
       this.noticeKind = 'ok';
       this.title = '';
       this.body = '';
+      this.publishAt = '';
       this.selectedSections.clear();
       this.smsTouched = false;
       this.sendSms = smsDefaultFor(this.category);
@@ -391,9 +412,36 @@ export class NoticeComposeView {
       how.append(cost);
       const warn = d.createElement('p');
       warn.className = 'att-sub';
-      warn.textContent = 'বাংলা লেখায় প্রতি ৭০ অক্ষরে একটি এসএমএস গণনা হয়।';
+      // SMS is an alert, not the notice. Saying so here is what stops someone
+      // pasting four paragraphs in and wondering why the bill grew.
+      warn.textContent =
+        'এসএমএসে সংক্ষিপ্ত বার্তা যাবে; পুরো নোটিশ অ্যাপে থাকবে। '
+        + 'বাংলা লেখায় প্রতি ৭০ অক্ষরে একটি এসএমএস গণনা হয়।';
       how.append(warn);
     }
+
+    // ── When ────────────────────────────────────────────────────────
+    const when = d.createElement('label');
+    when.className = 'login-label brand-field';
+    const whenSpan = d.createElement('span');
+    whenSpan.textContent = 'কখন পাঠানো হবে';
+    when.append(whenSpan);
+    const at = d.createElement('input');
+    at.type = 'datetime-local';
+    at.className = 'login-input';
+    at.value = this.publishAt;
+    at.addEventListener('change', () => { this.publishAt = at.value; this.render(); });
+    when.append(at);
+    const whenHint = d.createElement('p');
+    whenHint.className = 'att-sub';
+    // Honest about the granularity rather than implying minute precision the
+    // nightly sweeper cannot deliver.
+    whenHint.textContent = this.publishAt
+      ? 'নির্ধারিত সময়ের পর পরবর্তী রক্ষণাবেক্ষণ চক্রে পাঠানো হবে।'
+      : 'খালি রাখলে এখনই পাঠানো হবে।';
+    when.append(whenHint);
+    how.append(when);
+
     form.append(how);
 
     // ── Confirm ─────────────────────────────────────────────────────
@@ -414,7 +462,9 @@ export class NoticeComposeView {
     send.type = 'button';
     send.className = 'btn-primary';
     send.setAttribute('data-send', '');
-    send.textContent = this.busy ? 'পাঠানো হচ্ছে…' : 'পাঠান';
+    send.textContent = this.busy
+      ? 'পাঠানো হচ্ছে…'
+      : this.publishAt ? 'নির্ধারিত সময়ে পাঠান' : 'পাঠান';
     send.disabled = this.busy || !this.title.trim() || !this.body.trim();
     send.addEventListener('click', () => { void this.send(); });
     actions.append(send);

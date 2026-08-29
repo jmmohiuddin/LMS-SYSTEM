@@ -100,6 +100,10 @@ const SENTINELS = [
   // one an outside party reaches. Absent, delivery reports 500 and the
   // product is back to not knowing whether a parent was ever texted.
   ['046_go_live_unlocks',              'function',   'app.record_sms_delivery'],
+  // 047's one new table. Absent, `/ops/push` 500s and the notification
+  // pipeline quietly falls back to SMS for everybody — which is safe, and
+  // invisible, which is why it is probed.
+  ['047_web_push',                     'table',      'public.push_subscriptions'],
 ];
 
 /**
@@ -153,6 +157,7 @@ const MEANING = {
   '044_student_history_index':       'R-6 — a student enrolment timeline becomes a seek, not a scan',
   '045_platform_console':            'R-7 — the platform can create a school, and only the platform can',
   '046_go_live_unlocks':             'R-8 — a delivery report can be recorded, and the AI budget is spent before it is billed',
+  '047_web_push':                    'R-9 — a notice can reach a parent over the internet instead of over SMS',
 };
 
 const QUERIES = {

@@ -118,11 +118,32 @@ describe('R-8 — the readiness report', () => {
     assert.equal(r.filter((c) => c.severity === 'blocking' && !c.ready).length, 0);
   });
 
+  test('R-9 — push reports its three states distinctly', () => {
+    const find = (env: Record<string, string>) =>
+      goLiveChecks(env).find((c) => c.key === 'web_push');
+
+    // Off is a decision; a half-set pair is a mistake; they need different
+    // actions, so they read differently.
+    assert.match(find({})?.detailBn ?? '', /generate-vapid-keys/);
+    assert.equal(find({ VAPID_PUBLIC_KEY: 'x' })?.ready, false);
+    assert.match(find({ VAPID_PUBLIC_KEY: 'x' })?.detailBn ?? '', /অসম্পূর্ণ/);
+    assert.equal(find({ VAPID_PUBLIC_KEY: 'x', VAPID_PRIVATE_KEY: 'y' })?.ready, true);
+  });
+
+  test('R-9 — push is advisory, because SMS still carries everything', () => {
+    // If it were blocking, a deployment with no VAPID keys would report itself
+    // not ready to take real students — which is false. Nothing is undelivered
+    // without push; it is only more expensive.
+    const c = goLiveChecks({}).find((x) => x.key === 'web_push');
+    assert.equal(c?.severity, 'advisory');
+  });
+
   test('no secret VALUE ever appears in the report', () => {
     const secret = 'sk-super-secret-value-9999';
     const r = goLiveChecks({
       ANTHROPIC_API_KEY: secret, PII_MASTER_KEY_V1: secret,
       PLATFORM_API_KEY: secret, SMS_API_TOKEN: secret, SMS_DLR_SECRET: secret,
+      VAPID_PRIVATE_KEY: secret, VAPID_PUBLIC_KEY: secret,
       DATABASE_MAINTENANCE_URL: `postgres://user:${secret}@host/db`,
     });
     // §24: no platform secret in browser code — and none in a browser

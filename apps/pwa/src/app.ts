@@ -21,6 +21,7 @@ import { RoutineView } from './routine-view.ts';
 import { MarksView } from './marks-view.ts';
 import { FeesView } from './fees-view.ts';
 import { MoreView } from './more-view.ts';
+import { NotificationsView } from './notifications-view.ts';
 import { SikhokView } from './sikhok-view.ts';
 import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
@@ -545,6 +546,7 @@ async function main() {
               { path: 'roles', glyph: 'lock', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
               { path: 'ledger', glyph: 'book', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
               { path: 'inbox', glyph: 'bell', titleBn: 'নোটিশ', subtitleBn: 'বিদ্যালয়ের ঘোষণা ও বার্তা' },
+              { path: 'notifications', glyph: 'bell', titleBn: 'নোটিফিকেশন', subtitleBn: 'এই যন্ত্রে বার্তা পান — এসএমএস খরচ কমে' },
               { path: 'compose', glyph: 'edit', titleBn: 'নোটিশ পাঠান', subtitleBn: 'শিক্ষক, শিক্ষার্থী বা অভিভাবক — কারা পাবে বেছে নিন' },
               { path: 'institution', glyph: 'trending-up', titleBn: 'প্রতিষ্ঠান', subtitleBn: 'আজকের হাজিরা, অনুপস্থিত ও অপেক্ষমাণ কাজ' },
               { path: 'academic', glyph: 'layers', titleBn: 'একাডেমিক কাঠামো', subtitleBn: 'শ্রেণি → বিভাগ → সেকশন → শিক্ষার্থী ও শিক্ষক' },
@@ -561,6 +563,19 @@ async function main() {
               { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
           });
+        },
+      },
+      {
+        // R-9. Every role gets this: a guardian receives their child's
+        // absence, a teacher the staff notice, a student the exam routine.
+        // Registered right beside its more-menu entry, because the one bug
+        // this route table has produced was a nav item with no route.
+        path: 'notifications',
+        labelBn: 'নোটিফিকেশন',
+        glyph: 'bell',
+        hidden: true,
+        mount: (container) => {
+          new NotificationsView({ root: container, doc: document, auth });
         },
       },
       {

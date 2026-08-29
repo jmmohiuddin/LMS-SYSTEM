@@ -11,6 +11,7 @@
 /// <reference lib="webworker" />
 import {
   route, stalecaches, PRECACHE, CACHE_SHELL, APP_SHELL_URL, type RouteDecision,
+  notificationFor,
 } from './sw-router.ts';
 
 declare const self: ServiceWorkerGlobalScope;
@@ -125,3 +126,52 @@ async function flushOutbox(): Promise<void> {
 }
 
 export {};
+
+/**
+ * ── R-9: web push ────────────────────────────────────────────────────────
+ *
+ * `notificationFor` in sw-router.ts holds every decision and is unit-tested;
+ * this is the wiring, which cannot be.
+ *
+ * `event.waitUntil` is not optional here. A service worker is terminated the
+ * moment its handler returns, and `showNotification` is asynchronous — without
+ * the promise held, the worker is killed mid-call and the parent sees nothing.
+ */
+self.addEventListener('push', (event: PushEvent) => {
+  const n = notificationFor(event.data?.text());
+  event.waitUntil(self.registration.showNotification(n.title, {
+    body: n.body,
+    tag: n.tag,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    data: { url: n.url },
+    // A school notice is not urgent enough to override a silenced phone, and
+    // absence messages arrive during the school day when a parent may be at
+    // work. The OS default respects Do Not Disturb; renotify would not.
+    renotify: false,
+  }));
+});
+
+/**
+ * Clicking the notification should land on the thing it was about, in a tab
+ * that is already open if there is one — opening a second copy of the app
+ * loses whatever the person had half-finished in the first.
+ */
+self.addEventListener('notificationclick', (event: NotificationEvent) => {
+  event.notification.close();
+  const url = (event.notification.data as { url?: string } | null)?.url ?? '#/inbox';
+  event.waitUntil((async () => {
+    const clients = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+    for (const c of clients) {
+      if (c.url.includes(APP_SHELL_URL)) {
+        await c.focus();
+        // Navigating an existing tab by postMessage rather than `c.navigate`:
+        // the app is a hash router, and a same-document hash change is what it
+        // listens for. `navigate` would reload and lose unsaved work.
+        c.postMessage({ type: 'push-navigate', url });
+        return;
+      }
+    }
+    await self.clients.openWindow?.(`${APP_SHELL_URL}${url}`);
+  })());
+});

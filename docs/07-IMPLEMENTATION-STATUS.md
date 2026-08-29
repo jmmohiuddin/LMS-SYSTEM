@@ -152,7 +152,8 @@ a parent.
 | MFS payment initiation | `MFS_PAYMENTS_ENABLED` | No live merchant credentials | Wire gateway calls + credentials, then set it to `true` |
 | AI engines | `ANTHROPIC_API_KEY` (presence) | No API key configured | Set the key. Per-tenant budget enforcement (R-8) is live and applies immediately |
 | Real SMS sending | `SMS_PROVIDER` + `SMS_ENDPOINT` + `SMS_API_TOKEN` + `SMS_SENDER_ID` | No aggregator contract | Set all four. Naming a provider **without** the other three throws at startup rather than silently reverting to the stub |
-| Delivery reports | `SMS_DLR_SECRET` | No aggregator to send them | Set it and give the aggregator the value. Unset, `POST /api/v1/sms/dlr` answers **503**, not 401 |
+| Delivery reports | `SMS_DLR_SECRET` | No aggregator to send them | Set it and give the aggregator the value. Unset, `POST /api/v1/sms/dlr` answers **503**, not 401 |
+| Web push (R-9) | `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | Not generated | Run `node scripts/generate-vapid-keys.mjs`. **No vendor** — the keys are self-issued. Unset, every message still goes by SMS |
 
 The login switch is now one-sided. `apps/pwa/src/login-view.ts` reads
 `isLoginDisabled()`, which reads a value cached from the server's `otpLogin` — so
@@ -1252,6 +1253,100 @@ this product.
 
 ---
 
+## 9l. R-9 — web push notifications (one of seven R-9 items)
+
+R-9 in the master plan is a list of seven post-pilot add-ons. One was built:
+web push, the only one the plan gives a business reason for ("cuts SMS cost —
+the biggest infra line") and the only one with **no external dependency**.
+VAPID keys are self-issued; there is no vendor, contract or account.
+
+The others are recorded as open in `docs/11-MASTER-PLAN.md` §R-9, with which
+are externally blocked (NCTB corpus, photo/voice, native wrappers) and which
+are merely unbuilt (content authoring F-403, trend charts F-1505, section chat,
+library/transport/hostel/payroll).
+
+### As built
+
+| Piece | Where |
+|---|---|
+| RFC 8291 encryption + RFC 8292 VAPID, in `node:crypto`, no dependency | `packages/server-core/src/web-push.ts` |
+| `push_subscriptions` + `app.claim_push_subscription()` | `db/migrations/047_web_push.sql` |
+| Subscribe / list / unsubscribe | `services/ops-svc/api/push.ts` (`/api/v1/ops/push`) |
+| The push stage of the pipeline | `services/sms-svc/src/push-send.ts` |
+| Service-worker `push` + `notificationclick` | `apps/pwa/src/sw.ts`, policy in `sw-router.ts` |
+| The person's screen (`#/notifications`, every role) | `apps/pwa/src/notifications-view.ts` |
+| The school's opt-in | `apps/pwa/src/admin-settings-view.ts` → `ops/settings` |
+| Key generation | `scripts/generate-vapid-keys.mjs` |
+
+No new Vercel function: `push` mounts on ops-svc's dispatcher, so the Hobby
+plan's one spare slot (11 of 12 used) is still spare.
+
+### Three decisions worth knowing
+
+**The endpoint is globally unique across tenants, and that is a security
+property.** A push endpoint identifies a *browser*, not a person: two users at
+two schools sharing one device and origin get the same one. Two coexisting rows
+would put school A's notices on school B's parent's lock screen. Claiming an
+endpoint deletes the previous owner's row — necessarily cross-tenant, which is
+the entire reason `app.claim_push_subscription()` is SECURITY DEFINER. It takes
+no tenant or user argument; both come from the session.
+
+**Not even the principal can read a subscription.** A deliberate departure from
+every other table: management can see who received a notice, but an endpoint is
+a *capability* — whoever holds it can put a notification on that phone — and no
+question the office answers needs it. The API returns a 12-character
+fingerprint, never the endpoint.
+
+**Push is tried first and the SMS cancelled second.** A failed push therefore
+costs milliseconds and the SMS still goes; the reverse order loses the message
+whenever push fails. Suppression is opt-in per school
+(`settings.push.replacesSms`, default off), and an emergency notice or a login
+code is never suppressed at all.
+
+### Verified
+
+RFC 8291 §5's published vector matches byte for byte. End to end against a real
+HTTP push service, the notice was encrypted, signed with a real VAPID header,
+received and **decrypted back to `{"title":"নথি বিদ্যালয়","body":"আগামীকাল
+বিদ্যালয় বন্ধ থাকবে।"}`** — with the SMS row marked `suppressed` /
+`delivered_by_push` and no other tenant able to see the subscription.
+
+### Two defects found, one older than the phase
+
+- **`navigator.serviceWorker.ready` never settles when registration fails**, so
+  the notification screen loaded forever on any browser that blocks service
+  workers. Fixed with `getRegistration()` on the read path and a bounded race
+  on the subscribe path.
+- **`jsonb_set(settings, '{sms,noticeMaxChars}', …, true)` was a silent no-op
+  when the parent key was absent** — a pre-existing R-3 bug. On every freshly
+  provisioned school the settings PUT returned 200, the screen said সংরক্ষিত,
+  and nothing was written. Fixed with a `||` merge; `ops-svc/test/settings.test.ts`
+  is the endpoint's first test file.
+
+### Known limitations
+
+- **Never handshaken with a real push service.** FCM/Mozilla/Apple have not
+  seen a message from this code; verification is the RFC vectors plus a fake
+  service. First-contact risk is concentrated in the `applicationServerKey`
+  encoding.
+- **A real `pushManager.subscribe()` was not exercised** — the automation
+  browser denies notification permission by policy and blocks SW registration.
+  The browser's half was stood in for by a script using the same P-256
+  handshake.
+- **No retry for a transient push failure.** A 5xx leaves the row queued and the
+  SMS goes, which is safe and also means a momentary outage costs an SMS.
+  `failure_count` is stored and unread.
+- **`last_success_at` means a push service accepted it**, not that anyone saw
+  it — the same distinction R-8 drew for SMS.
+- **No per-notice channel choice**: a school opts in for everything or nothing.
+- **iOS requires the app on the Home Screen** before Safari allows web push. The
+  screen reports `unsupported`, which is accurate but does not explain the step.
+- **DNS rebinding is not defended against.** The SSRF guard refuses IP literals,
+  non-https, URL credentials and internal-looking names; a public hostname
+  resolving to a private address would still be fetched.
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The
@@ -1271,5 +1366,9 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 | CP-SAT solver upgrade; coordinator routine-editing UI (substitution finder ships now) | 02 §3 | 3 |
 | `ANTHROPIC_API_KEY` + NCTB corpus ingestion + embedding service → upgrades AI from disabled/lexical to grounded hybrid RAG (gateway ships now) | 01 §6 | 3 |
 | ANS: register real endpoints (`ans_endpoints`), KMS for per-endpoint signing secrets (batch pull, dispatcher, inbound staging ship now) | 03 §4 | 4 |
-| Answer-script photo pipeline | 01 §2.7 | 2–3 |
+| Answer-script photo pipeline | 01 §2.7 | 2–3 |
+| ~~Web push to cut SMS cost~~ — **closed by R-9** (§9l): a delivered push can cancel the same message's SMS, opt-in per school | 05 R-9 | done |
+| Content authoring workspace (F-403) — **the last open P0**, code-only. Every consumer of content is built; the producer is not | 09 audit | R-9 remainder |
+| Report trend charts (F-1505) — code-only, unbuilt | 09 audit | R-9 remainder |
+| Section chat — optional per the master plan; a child-safety design problem first | 11 §R-9 | R-9 remainder |
 | ~~AI per-tenant token budgets (`ai_budget_periods` enforcement)~~ — **closed by R-8** (§9k): reserved before the call, 402 on refusal. Answer-leak detector still needs embeddings | 01 §6.3 | 3 |

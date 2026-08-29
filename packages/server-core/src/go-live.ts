@@ -170,6 +170,22 @@ export function goLiveChecks(env: NodeJS.ProcessEnv = process.env): GoLiveCheck[
       severity: 'advisory',
     },
     {
+      // R-9. Advisory, deliberately: with no VAPID keys every message still
+      // goes out by SMS, which is exactly what happened before R-9. What is
+      // lost is the saving, not the delivery — so this belongs beside "online
+      // fees are off", not beside "nothing is being sent".
+      key: 'web_push',
+      labelBn: 'পুশ নোটিফিকেশন',
+      ready: Boolean((env.VAPID_PUBLIC_KEY ?? '').trim())
+        && Boolean((env.VAPID_PRIVATE_KEY ?? '').trim()),
+      detailBn: (env.VAPID_PUBLIC_KEY ?? '').trim() && (env.VAPID_PRIVATE_KEY ?? '').trim()
+        ? 'অ্যাপে বার্তা যাবে — এসএমএস খরচ কমানো যাবে'
+        : (env.VAPID_PUBLIC_KEY ?? '').trim() || (env.VAPID_PRIVATE_KEY ?? '').trim()
+          ? 'কী জোড়া অসম্পূর্ণ — VAPID_PUBLIC_KEY ও VAPID_PRIVATE_KEY দুটোই লাগবে'
+          : 'বন্ধ — scripts/generate-vapid-keys.mjs চালিয়ে কী তৈরি করুন',
+      severity: 'advisory',
+    },
+    {
       key: 'maintenance_cron',
       labelBn: 'রাত্রিকালীন রক্ষণাবেক্ষণ',
       ready: !!env.DATABASE_MAINTENANCE_URL,

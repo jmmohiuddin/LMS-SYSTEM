@@ -2410,6 +2410,17 @@ function goLiveChecks(env = process.env) {
       severity: "advisory"
     },
     {
+      // R-9. Advisory, deliberately: with no VAPID keys every message still
+      // goes out by SMS, which is exactly what happened before R-9. What is
+      // lost is the saving, not the delivery — so this belongs beside "online
+      // fees are off", not beside "nothing is being sent".
+      key: "web_push",
+      labelBn: "\u09AA\u09C1\u09B6 \u09A8\u09CB\u099F\u09BF\u09AB\u09BF\u0995\u09C7\u09B6\u09A8",
+      ready: Boolean((env.VAPID_PUBLIC_KEY ?? "").trim()) && Boolean((env.VAPID_PRIVATE_KEY ?? "").trim()),
+      detailBn: (env.VAPID_PUBLIC_KEY ?? "").trim() && (env.VAPID_PRIVATE_KEY ?? "").trim() ? "\u0985\u09CD\u09AF\u09BE\u09AA\u09C7 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AF\u09BE\u09AC\u09C7 \u2014 \u098F\u09B8\u098F\u09AE\u098F\u09B8 \u0996\u09B0\u099A \u0995\u09AE\u09BE\u09A8\u09CB \u09AF\u09BE\u09AC\u09C7" : (env.VAPID_PUBLIC_KEY ?? "").trim() || (env.VAPID_PRIVATE_KEY ?? "").trim() ? "\u0995\u09C0 \u099C\u09CB\u09A1\u09BC\u09BE \u0985\u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 VAPID_PUBLIC_KEY \u0993 VAPID_PRIVATE_KEY \u09A6\u09C1\u099F\u09CB\u0987 \u09B2\u09BE\u0997\u09AC\u09C7" : "\u09AC\u09A8\u09CD\u09A7 \u2014 scripts/generate-vapid-keys.mjs \u099A\u09BE\u09B2\u09BF\u09AF\u09BC\u09C7 \u0995\u09C0 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8",
+      severity: "advisory"
+    },
+    {
       key: "maintenance_cron",
       labelBn: "\u09B0\u09BE\u09A4\u09CD\u09B0\u09BF\u0995\u09BE\u09B2\u09C0\u09A8 \u09B0\u0995\u09CD\u09B7\u09A3\u09BE\u09AC\u09C7\u0995\u09CD\u09B7\u09A3",
       ready: !!env.DATABASE_MAINTENANCE_URL,

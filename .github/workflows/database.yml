@@ -107,6 +107,11 @@ jobs:
       - name: Go-live unlocks — delivery reports and the AI budget
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/go_live.sql
 
+      # ── 3k. R-9: a push endpoint reaches one person. Not the other school,
+      #        and not the principal — it is a capability, not a record.
+      - name: Web push — one browser, one owner
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/web_push.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -126,6 +131,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/go_live.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/web_push.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

@@ -34,13 +34,15 @@ import audit from './audit.ts';
 import calendar from './calendar.ts';
 // R-5 — the printable documents, on R-1's letterhead.
 import document from './document.ts';
+// R-9 — web push subscriptions, the cheap transport beside SMS.
+import push from './push.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
   dashboard, assign, enrol, rollover, settings, users,
-  structure, guardians, audit, calendar, document,
+  structure, guardians, audit, calendar, document, push,
 };
 
 /**
@@ -75,7 +77,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // school. They belong in the mutation bucket without exception.
     const WRITE_ROUTES = new Set(['events', 'notices', 'inbox', 'branding',
       'assign', 'enrol', 'rollover', 'settings', 'users',
-      'structure', 'guardians', 'calendar']);
+      'structure', 'guardians', 'calendar', 'push']);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? 'mutation' : 'read';
     if (!(await enforceRateLimit(req, res, corsHeaders(), bucket))) return;
   }

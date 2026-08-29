@@ -103,6 +103,16 @@ const SECRETS = [
       + 'the widest key in the product, and the only one that is not scoped to one tenant',
     rotate: 'generate 32 random bytes, update the console deployment; operators re-authenticate',
   },
+  // ── R-9: the one secret web push needs, and it is self-issued ────
+  {
+    name: 'VAPID_PRIVATE_KEY',
+    required: false,          // absent = push is off; SMS still carries all
+    kind: 'base64-32',
+    blastRadius: 'lets a holder put a notification on any subscribed phone, '
+      + 'carrying a school name. Grants no access to any of our data',
+    rotate: 'scripts/generate-vapid-keys.mjs — but EVERY existing subscription '
+      + 'stops working and each device must re-register; rotate only on compromise',
+  },
   // ── R-8: the two secrets a live SMS aggregator needs ─────────────
   {
     name: 'SMS_API_TOKEN',

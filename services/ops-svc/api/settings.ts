@@ -43,6 +43,8 @@ import {
   NOTICE_SMS_HARD_CEILING,
   NOTICE_SMS_MIN,
 } from '../../sms-svc/src/dispatch.ts';
+import { pushReplacesSms } from '../../sms-svc/src/push-send.ts';
+import { vapidFromEnv } from '../../../packages/server-core/src/web-push.ts';
 
 /** Same four roles that own branding — these are structural settings. */
 const SETTINGS_ROLES = ['principal', 'school_owner', 'it_admin', 'academic_coordinator'];
@@ -73,24 +75,55 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (req.method !== 'PUT') { json(res, 405, { error: 'method_not_allowed' }, cors); return; }
 
     requireRole(claims, SETTINGS_ROLES);
-    const patch = await readJson<{ sms?: { noticeMaxChars?: unknown } }>(req);
+    const patch = await readJson<{
+      sms?: { noticeMaxChars?: unknown };
+      push?: { replacesSms?: unknown };
+    }>(req);
 
     const raw = patch.sms?.noticeMaxChars;
-    if (raw === undefined) {
+    const rawPush = patch.push?.replacesSms;
+    if (raw === undefined && rawPush === undefined) {
       throw new HttpError(400, 'কিছু পরিবর্তন করা হয়নি', 'nothing_to_update');
+    }
+
+    // R-9. A boolean, and strictly a boolean. This setting decides whether a
+    // guardian stops receiving an SMS, so "truthy" is not good enough — a
+    // stray string from a form that forgot to parse its checkbox must not
+    // silently switch a school's safety net off.
+    if (rawPush !== undefined && typeof rawPush !== 'boolean') {
+      throw new HttpError(400, 'হ্যাঁ বা না নির্বাচন করুন', 'bad_boolean',
+        { field: 'replacesSms' });
+    }
+    if (rawPush === true && vapidFromEnv() === null) {
+      // Refusing is kinder than accepting. A school that switched this on
+      // would believe push was carrying its messages, and instead nothing
+      // would carry them: the setting only suppresses SMS for a push that was
+      // ACCEPTED, so no push service means no suppression — but the principal
+      // has no way to know that, and would stop watching.
+      throw new HttpError(409,
+        'এই সার্ভারে পুশ নোটিফিকেশন চালু নেই — আগে সেটি চালু করতে হবে',
+        'push_not_configured');
     }
 
     // Reject rather than silently clamp. A principal who typed 900 and was
     // shown 480 without being told would believe the school sends 900.
-    const n = typeof raw === 'number' ? raw
-      : (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN);
-    if (!Number.isFinite(n) || !Number.isInteger(n)) {
-      throw new HttpError(400, 'সংখ্যা লিখুন', 'bad_number', { field: 'noticeMaxChars' });
-    }
-    if (n < NOTICE_SMS_MIN || n > NOTICE_SMS_HARD_CEILING) {
-      throw new HttpError(400,
-        `${NOTICE_SMS_MIN} থেকে ${NOTICE_SMS_HARD_CEILING} অক্ষরের মধ্যে দিন`,
-        'out_of_range', { field: 'noticeMaxChars', min: NOTICE_SMS_MIN, max: NOTICE_SMS_HARD_CEILING });
+    //
+    // R-9 made both keys independently optional — the SMS screen and the push
+    // screen save separately — so this only runs when a length was actually
+    // sent. Validating an absent field would make changing the push toggle
+    // impossible without also restating the SMS length.
+    let n = NaN;
+    if (raw !== undefined) {
+      n = typeof raw === 'number' ? raw
+        : (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN);
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        throw new HttpError(400, 'সংখ্যা লিখুন', 'bad_number', { field: 'noticeMaxChars' });
+      }
+      if (n < NOTICE_SMS_MIN || n > NOTICE_SMS_HARD_CEILING) {
+        throw new HttpError(400,
+          `${NOTICE_SMS_MIN} থেকে ${NOTICE_SMS_HARD_CEILING} অক্ষরের মধ্যে দিন`,
+          'out_of_range', { field: 'noticeMaxChars', min: NOTICE_SMS_MIN, max: NOTICE_SMS_HARD_CEILING });
+      }
     }
 
     const body = await db.withTenant(ctx, async (c) => {
@@ -98,18 +131,48 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         `SELECT COALESCE(settings, '{}'::jsonb) AS settings FROM tenants`,
       );
       const previous = noticeSmsMaxChars(before[0]?.settings ?? null);
+      const previousPush = pushReplacesSms(before[0]?.settings ?? null);
 
+      // ── Merge, and NOT jsonb_set ──────────────────────────────────
+      //
+      // This used `jsonb_set(settings, '{sms,noticeMaxChars}', …, true)`, and
+      // that is a silent no-op whenever the PARENT key is absent:
+      //
+      //   jsonb_set('{}', '{sms,noticeMaxChars}', '180', true)  →  {}
+      //
+      // `create_missing` creates the LAST element of the path, not the object
+      // that would contain it. So on a school whose `settings` had never held
+      // an `sms` object — every freshly provisioned school — this endpoint
+      // returned 200, the screen said সংরক্ষিত, and nothing was written. The
+      // value read back as the default on the next visit, which reads like the
+      // school changing its mind rather than like a bug.
+      //
+      // Found in R-9's browser acceptance, because `push` is a key that never
+      // pre-exists, so it failed on the FIRST save every time rather than only
+      // on schools with empty settings.
+      //
+      // `||` merges and creates. Applied at both levels so the branding object
+      // beside these keys survives, and so does the other key inside the same
+      // sub-object.
+      const sets: string[] = [];
+      const args: unknown[] = [];
+      if (raw !== undefined) {
+        args.push(n);
+        sets.push(`jsonb_build_object('sms',
+          COALESCE(settings->'sms', '{}'::jsonb)
+          || jsonb_build_object('noticeMaxChars', to_jsonb($${args.length}::int)))`);
+      }
+      if (rawPush !== undefined) {
+        args.push(rawPush);
+        sets.push(`jsonb_build_object('push',
+          COALESCE(settings->'push', '{}'::jsonb)
+          || jsonb_build_object('replacesSms', to_jsonb($${args.length}::boolean)))`);
+      }
       const { rows } = await c.query<{ settings: unknown }>(
-        // jsonb_set with create_missing, on the one key this screen owns.
-        // The branding object beside it is untouched.
         `UPDATE tenants
-            SET settings = jsonb_set(
-                  COALESCE(settings, '{}'::jsonb),
-                  '{sms,noticeMaxChars}',
-                  to_jsonb($1::int),
-                  true)
+            SET settings = COALESCE(settings, '{}'::jsonb) || ${sets.join(' || ')}
           RETURNING settings`,
-        [n],
+        args,
       );
       if (rows.length === 0) {
         // RLS refused: the caller's tenant row is not writable by them.
@@ -120,8 +183,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         action: 'ops.settings.update',
         entityType: 'tenant',
         entityId: ctx.tenantId,
-        before: { noticeMaxChars: previous },
-        after: { noticeMaxChars: n },
+        // Both keys are recorded whether or not they changed: an audit row
+        // reading "replacesSms: false → false" is how someone later proves a
+        // school's SMS was NOT silently switched off in this edit.
+        before: { noticeMaxChars: previous, pushReplacesSms: previousPush },
+        after: {
+          noticeMaxChars: raw === undefined ? previous : n,
+          pushReplacesSms: rawPush === undefined ? previousPush : rawPush,
+        },
       });
 
       return settingsPayload(rows[0].settings);
@@ -153,6 +222,15 @@ function settingsPayload(settings: unknown) {
       // The screen needs this to show a cost, and it is not a number the
       // frontend should be carrying its own copy of.
       charsPerSegment: NOTICE_SMS_MIN,
+    },
+    push: {
+      // Whether this school has opted into letting a delivered push cancel
+      // the SMS…
+      replacesSms: pushReplacesSms(settings),
+      // …and whether the DEPLOYMENT can push at all. The screen needs both:
+      // the toggle is meaningless without VAPID keys, and saying so is more
+      // useful than a switch that appears to work and changes nothing.
+      available: vapidFromEnv() !== null,
     },
   };
 }

@@ -32,6 +32,9 @@ import type pg from 'pg';
 import type { Db, TenantContext } from '../../../packages/server-core/src/db.ts';
 import { randomOpaqueToken } from '../../../packages/server-core/src/crypto.ts';
 import { resolveProvider, type SmsProvider } from './provider.ts';
+// R-9 — the cheaper transport, tried before the paid one.
+import { PushSender, pushReplacesSms, EMPTY_PUSH_RESULT, type PushStageResult } from './push-send.ts';
+import { vapidFromEnv, type VapidKeys } from '../../../packages/server-core/src/web-push.ts';
 
 interface AttendanceMarkedPayload {
   studentId: string;
@@ -52,6 +55,14 @@ export interface DispatchOptions {
    * every deployment until an aggregator contract lands.
    */
   provider?: SmsProvider;
+  /**
+   * R-9. The deployment's VAPID keypair. Absent, the environment decides, and
+   * with no VAPID keys set push is simply not part of this deployment — every
+   * message still goes, by SMS, exactly as before R-9.
+   */
+  vapid?: VapidKeys | null;
+  /** Injected for tests, so a push service can be stood in for. */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -127,6 +138,12 @@ interface TenantSmsBudget {
   orgName: string;
   /** Tenant-configured alert length; NOTICE_SMS_DEFAULT_MAX unless set. */
   noticeMaxChars: number;
+  /**
+   * R-9. Has this school opted into letting a delivered push cancel the SMS?
+   * Default false: until a school says otherwise, push is additive and costs
+   * them nothing but also saves them nothing.
+   */
+  pushReplacesSms: boolean;
 }
 
 export interface DispatchResult {
@@ -135,6 +152,12 @@ export interface DispatchResult {
   smsQueued: number;
   suppressed: Record<string, number>;
   dispatched: number;
+  /**
+   * R-9. What web push did on this run — how many messages it carried, and how
+   * many SMS that saved. `couldHaveSuppressed` is what the saving WOULD be if
+   * the school opted in, which is the number that makes the case for opting in.
+   */
+  push: PushStageResult;
 }
 
 /**
@@ -227,6 +250,7 @@ export class SmsDispatchWorker {
   private readonly dispatchBatchSize: number;
   private readonly now: () => number;
   private readonly provider: SmsProvider;
+  private readonly pushSender: PushSender | null;
 
   constructor(db: Db, opts: DispatchOptions = {}) {
     this.db = db;
@@ -235,6 +259,13 @@ export class SmsDispatchWorker {
     this.dispatchBatchSize = opts.dispatchBatchSize ?? 200;
     this.now = opts.now ?? Date.now;
     this.provider = opts.provider ?? resolveProvider();
+    // No VAPID keys means push is simply not part of this deployment. Unlike a
+    // half-configured SMS provider, that is not an error worth throwing over:
+    // the pipeline is complete without it and every message still goes.
+    const vapid = opts.vapid ?? vapidFromEnv();
+    this.pushSender = vapid
+      ? new PushSender(vapid, { fetchImpl: opts.fetchImpl })
+      : null;
   }
 
   async run(tenantId: string): Promise<DispatchResult> {
@@ -253,6 +284,17 @@ export class SmsDispatchWorker {
         suppressed[k] = (suppressed[k] ?? 0) + v;
       }
 
+      // R-9. Between enqueueing and sending: try the free transport, and
+      // cancel the paid one only for messages a push service has accepted.
+      // Deliberately after BOTH enqueue stages, so one query covers attendance
+      // and notices together, and before dispatch, so a suppressed row is
+      // never handed to the SMS provider.
+      const push = this.pushSender
+        ? await this.pushSender.run(client, tenantId, {
+            replacesSms: budget.pushReplacesSms, orgName: budget.orgName,
+          })
+        : { ...EMPTY_PUSH_RESULT };
+
       const dispatched = await this.dispatch(client, tenantId);
       return {
         tenantId,
@@ -260,6 +302,7 @@ export class SmsDispatchWorker {
         smsQueued: attendance.smsQueued + notices.smsQueued,
         suppressed,
         dispatched,
+        push,
       };
     });
   }
@@ -300,6 +343,7 @@ export class SmsDispatchWorker {
       // Falls back to a neutral word, never to the platform's name.
       orgName: row?.org_name ?? 'বিদ্যালয়',
       noticeMaxChars: noticeSmsMaxChars(row?.settings),
+      pushReplacesSms: pushReplacesSms(row?.settings),
     };
   }
 

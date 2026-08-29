@@ -1198,8 +1198,8 @@ var day = hour * 24;
 var week = day * 7;
 var year = day * 365.25;
 var REGEX = /^(\+|\-)? ?(\d+|\d+\.\d+) ?(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)(?: (ago|from now))?$/i;
-var secs_default = (str) => {
-  const matched = REGEX.exec(str);
+var secs_default = (str2) => {
+  const matched = REGEX.exec(str2);
   if (!matched || matched[4] && matched[1]) {
     throw new TypeError("Invalid time period format");
   }
@@ -2925,6 +2925,44 @@ async function commit(db, ctx, rolloverId) {
   });
 }
 
+// packages/server-core/src/web-push.ts
+import {
+  createECDH,
+  createCipheriv,
+  hkdfSync,
+  randomBytes,
+  createHash,
+  createPrivateKey as createPrivateKey3,
+  createPublicKey as createPublicKey3,
+  sign as signSync
+} from "node:crypto";
+function unb64url(s) {
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+function vapidFromEnv(env = process.env) {
+  const publicKey2 = (env.VAPID_PUBLIC_KEY ?? "").trim();
+  const privateKey = (env.VAPID_PRIVATE_KEY ?? "").trim();
+  if (!publicKey2 || !privateKey) return null;
+  if (unb64url(publicKey2).length !== 65) {
+    throw new Error("VAPID_PUBLIC_KEY must be a 65-byte uncompressed P-256 point");
+  }
+  if (unb64url(privateKey).length !== 32) {
+    throw new Error("VAPID_PRIVATE_KEY must be a 32-byte P-256 scalar");
+  }
+  return { publicKey: publicKey2, privateKey };
+}
+function endpointFingerprint(endpoint) {
+  return createHash("sha256").update(endpoint).digest("hex").slice(0, 12);
+}
+
+// services/sms-svc/src/push-send.ts
+function pushReplacesSms(settings) {
+  if (!settings || typeof settings !== "object") return false;
+  const push = settings.push;
+  if (!push || typeof push !== "object") return false;
+  return push.replacesSms === true;
+}
+
 // services/sms-svc/src/dispatch.ts
 var NOTICE_SMS_DEFAULT_MAX = 180;
 var NOTICE_SMS_HARD_CEILING = 480;
@@ -2969,37 +3007,65 @@ async function handler12(req, res) {
     requireRole(claims, SETTINGS_ROLES);
     const patch = await readJson(req);
     const raw = patch.sms?.noticeMaxChars;
-    if (raw === void 0) {
+    const rawPush = patch.push?.replacesSms;
+    if (raw === void 0 && rawPush === void 0) {
       throw new HttpError(400, "\u0995\u09BF\u099B\u09C1 \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF", "nothing_to_update");
     }
-    const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
-    if (!Number.isFinite(n) || !Number.isInteger(n)) {
-      throw new HttpError(400, "\u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_number", { field: "noticeMaxChars" });
-    }
-    if (n < NOTICE_SMS_MIN || n > NOTICE_SMS_HARD_CEILING) {
+    if (rawPush !== void 0 && typeof rawPush !== "boolean") {
       throw new HttpError(
         400,
-        `${NOTICE_SMS_MIN} \u09A5\u09C7\u0995\u09C7 ${NOTICE_SMS_HARD_CEILING} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8`,
-        "out_of_range",
-        { field: "noticeMaxChars", min: NOTICE_SMS_MIN, max: NOTICE_SMS_HARD_CEILING }
+        "\u09B9\u09CD\u09AF\u09BE\u0981 \u09AC\u09BE \u09A8\u09BE \u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09A8 \u0995\u09B0\u09C1\u09A8",
+        "bad_boolean",
+        { field: "replacesSms" }
       );
+    }
+    if (rawPush === true && vapidFromEnv() === null) {
+      throw new HttpError(
+        409,
+        "\u098F\u0987 \u09B8\u09BE\u09B0\u09CD\u09AD\u09BE\u09B0\u09C7 \u09AA\u09C1\u09B6 \u09A8\u09CB\u099F\u09BF\u09AB\u09BF\u0995\u09C7\u09B6\u09A8 \u099A\u09BE\u09B2\u09C1 \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u09B8\u09C7\u099F\u09BF \u099A\u09BE\u09B2\u09C1 \u0995\u09B0\u09A4\u09C7 \u09B9\u09AC\u09C7",
+        "push_not_configured"
+      );
+    }
+    let n = NaN;
+    if (raw !== void 0) {
+      n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        throw new HttpError(400, "\u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_number", { field: "noticeMaxChars" });
+      }
+      if (n < NOTICE_SMS_MIN || n > NOTICE_SMS_HARD_CEILING) {
+        throw new HttpError(
+          400,
+          `${NOTICE_SMS_MIN} \u09A5\u09C7\u0995\u09C7 ${NOTICE_SMS_HARD_CEILING} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8`,
+          "out_of_range",
+          { field: "noticeMaxChars", min: NOTICE_SMS_MIN, max: NOTICE_SMS_HARD_CEILING }
+        );
+      }
     }
     const body = await db.withTenant(ctx, async (c) => {
       const { rows: before } = await c.query(
         `SELECT COALESCE(settings, '{}'::jsonb) AS settings FROM tenants`
       );
       const previous = noticeSmsMaxChars(before[0]?.settings ?? null);
+      const previousPush = pushReplacesSms(before[0]?.settings ?? null);
+      const sets = [];
+      const args = [];
+      if (raw !== void 0) {
+        args.push(n);
+        sets.push(`jsonb_build_object('sms',
+          COALESCE(settings->'sms', '{}'::jsonb)
+          || jsonb_build_object('noticeMaxChars', to_jsonb($${args.length}::int)))`);
+      }
+      if (rawPush !== void 0) {
+        args.push(rawPush);
+        sets.push(`jsonb_build_object('push',
+          COALESCE(settings->'push', '{}'::jsonb)
+          || jsonb_build_object('replacesSms', to_jsonb($${args.length}::boolean)))`);
+      }
       const { rows } = await c.query(
-        // jsonb_set with create_missing, on the one key this screen owns.
-        // The branding object beside it is untouched.
         `UPDATE tenants
-            SET settings = jsonb_set(
-                  COALESCE(settings, '{}'::jsonb),
-                  '{sms,noticeMaxChars}',
-                  to_jsonb($1::int),
-                  true)
+            SET settings = COALESCE(settings, '{}'::jsonb) || ${sets.join(" || ")}
           RETURNING settings`,
-        [n]
+        args
       );
       if (rows.length === 0) {
         throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
@@ -3008,8 +3074,14 @@ async function handler12(req, res) {
         action: "ops.settings.update",
         entityType: "tenant",
         entityId: ctx.tenantId,
-        before: { noticeMaxChars: previous },
-        after: { noticeMaxChars: n }
+        // Both keys are recorded whether or not they changed: an audit row
+        // reading "replacesSms: false → false" is how someone later proves a
+        // school's SMS was NOT silently switched off in this edit.
+        before: { noticeMaxChars: previous, pushReplacesSms: previousPush },
+        after: {
+          noticeMaxChars: raw === void 0 ? previous : n,
+          pushReplacesSms: rawPush === void 0 ? previousPush : rawPush
+        }
       });
       return settingsPayload(rows[0].settings);
     });
@@ -3033,6 +3105,15 @@ function settingsPayload(settings) {
       // The screen needs this to show a cost, and it is not a number the
       // frontend should be carrying its own copy of.
       charsPerSegment: NOTICE_SMS_MIN
+    },
+    push: {
+      // Whether this school has opted into letting a delivered push cancel
+      // the SMS…
+      replacesSms: pushReplacesSms(settings),
+      // …and whether the DEPLOYMENT can push at all. The screen needs both:
+      // the toggle is meaningless without VAPID keys, and saying so is more
+      // useful than a switch that appears to work and changes nothing.
+      available: vapidFromEnv() !== null
     }
   };
 }
@@ -5129,6 +5210,150 @@ async function attendanceSheet(c, q) {
   })];
 }
 
+// services/ops-svc/api/push.ts
+var PRIVATE_SUFFIXES = [".local", ".internal", ".localdomain", ".home.arpa"];
+var PRIVATE_NAMES = /* @__PURE__ */ new Set(["localhost", "metadata.google.internal"]);
+function assertSafePushEndpoint(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new HttpError(400, "endpoint must be a URL", "bad_endpoint");
+  }
+  if (url.protocol !== "https:") {
+    throw new HttpError(400, "endpoint must be https", "bad_endpoint");
+  }
+  if (url.username || url.password) {
+    throw new HttpError(400, "endpoint must not carry credentials", "bad_endpoint");
+  }
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (PRIVATE_NAMES.has(host) || PRIVATE_SUFFIXES.some((s) => host.endsWith(s))) {
+    throw new HttpError(400, "endpoint host is not routable", "bad_endpoint");
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith("[") || /^\d+$/.test(host)) {
+    throw new HttpError(400, "endpoint host is not routable", "bad_endpoint");
+  }
+  if (raw.length > 2048) {
+    throw new HttpError(400, "endpoint is too long", "bad_endpoint");
+  }
+  return url;
+}
+function assertUsableKeys(p256dh, auth) {
+  let pub;
+  let secret;
+  try {
+    pub = unb64url(p256dh);
+    secret = unb64url(auth);
+  } catch {
+    throw new HttpError(400, "keys must be base64url", "bad_keys");
+  }
+  if (pub.length !== 65 || pub[0] !== 4) {
+    throw new HttpError(400, "p256dh must be a 65-byte uncompressed P-256 point", "bad_keys");
+  }
+  if (secret.length !== 16) {
+    throw new HttpError(400, "auth must be a 16-byte secret", "bad_keys");
+  }
+}
+var str = (v) => typeof v === "string" ? v.trim() : "";
+async function handler19(req, res) {
+  const cors = corsHeaders([], "GET, POST, DELETE, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const vapid = vapidFromEnv();
+    if (req.method === "GET") {
+      const devices = await db.withTenant(ctx, async (c) => {
+        const { rows } = await c.query(
+          `SELECT id, device_label, created_at, last_success_at, endpoint
+             FROM push_subscriptions
+            WHERE user_id = $1
+            ORDER BY created_at DESC`,
+          [claims.sub]
+        );
+        return rows;
+      });
+      json(res, 200, {
+        // Absent VAPID keys mean the deployment has not enabled push. The UI
+        // says so rather than offering a button that cannot work.
+        enabled: vapid !== null,
+        publicKey: vapid?.publicKey ?? null,
+        devices: devices.map((d) => ({
+          id: d.id,
+          label: d.device_label,
+          createdAt: d.created_at,
+          lastSuccessAt: d.last_success_at,
+          // The endpoint itself is never returned — it is a capability, and
+          // the UI only ever needs to identify a row to delete it.
+          fingerprint: endpointFingerprint(d.endpoint)
+        }))
+      }, cors);
+      return;
+    }
+    if (req.method === "POST") {
+      if (!vapid) {
+        throw new HttpError(
+          503,
+          "push notifications are not enabled on this deployment (VAPID_PUBLIC_KEY)",
+          "push_not_configured"
+        );
+      }
+      const body = await readJson(req);
+      const endpoint = str(body.endpoint);
+      const p256dh = str(body.keys?.p256dh);
+      const auth = str(body.keys?.auth);
+      if (!endpoint || !p256dh || !auth) {
+        throw new HttpError(400, "endpoint and keys are required", "missing_fields");
+      }
+      assertSafePushEndpoint(endpoint);
+      assertUsableKeys(p256dh, auth);
+      const label = str(body.deviceLabel).slice(0, 80);
+      const id = await db.withTenant(ctx, async (c) => {
+        const { rows } = await c.query(
+          `SELECT app.claim_push_subscription($1, $2, $3, $4)`,
+          [endpoint, p256dh, auth, label || null]
+        );
+        return rows[0]?.claim_push_subscription ?? null;
+      });
+      json(res, 200, { ok: true, id, fingerprint: endpointFingerprint(endpoint) }, cors);
+      return;
+    }
+    if (req.method === "DELETE") {
+      const body = await readJson(req);
+      const endpoint = str(body.endpoint);
+      const id = str(body.id);
+      if (!endpoint && !id) {
+        throw new HttpError(400, "endpoint or id is required", "missing_fields");
+      }
+      const removed = await db.withTenant(ctx, async (c) => {
+        const { rowCount } = endpoint ? await c.query(
+          `DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2`,
+          [claims.sub, endpoint]
+        ) : await c.query(
+          `DELETE FROM push_subscriptions WHERE user_id = $1 AND id = $2`,
+          [claims.sub, id]
+        );
+        return rowCount ?? 0;
+      });
+      json(res, 200, { ok: true, removed }, cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message }, cors);
+      return;
+    }
+    console.error("[ops/push]", err);
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -5148,9 +5373,10 @@ var ROUTES = {
   guardians: handler15,
   audit: handler16,
   calendar: handler17,
-  document: handler18
+  document: handler18,
+  push: handler19
 };
-async function handler19(req, res) {
+async function handler20(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -5172,7 +5398,8 @@ async function handler19(req, res) {
       "users",
       "structure",
       "guardians",
-      "calendar"
+      "calendar",
+      "push"
     ]);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
@@ -5180,5 +5407,5 @@ async function handler19(req, res) {
   return route(req, res);
 }
 export {
-  handler19 as default
+  handler20 as default
 };

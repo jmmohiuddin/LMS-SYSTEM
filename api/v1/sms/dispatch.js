@@ -256,6 +256,285 @@ function resolveProvider(env = process.env) {
   throw new Error(`unknown SMS_PROVIDER "${name}" \u2014 expected 'stub' or 'ssl_wireless'`);
 }
 
+// packages/server-core/src/web-push.ts
+import {
+  createECDH,
+  createCipheriv,
+  hkdfSync,
+  randomBytes,
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as signSync
+} from "node:crypto";
+function b64url(buf) {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function unb64url(s) {
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+function encryptPayload(payload, keys, opts = {}) {
+  const plaintext = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+  const clientPublic = unb64url(keys.p256dh);
+  const authSecret = unb64url(keys.auth);
+  if (clientPublic.length !== 65 || clientPublic[0] !== 4) {
+    throw new Error("p256dh must be a 65-byte uncompressed P-256 point");
+  }
+  if (authSecret.length !== 16) {
+    throw new Error("auth secret must be 16 bytes");
+  }
+  const salt = opts.salt ?? randomBytes(16);
+  const ecdh = createECDH("prime256v1");
+  if (opts.senderPrivateKey) ecdh.setPrivateKey(opts.senderPrivateKey);
+  else ecdh.generateKeys();
+  const senderPublic = ecdh.getPublicKey();
+  const sharedSecret = ecdh.computeSecret(clientPublic);
+  const prkInfo = Buffer.concat([
+    Buffer.from("WebPush: info\0", "utf8"),
+    clientPublic,
+    senderPublic
+  ]);
+  const ikm = Buffer.from(hkdfSync("sha256", sharedSecret, authSecret, prkInfo, 32));
+  const cek = Buffer.from(hkdfSync(
+    "sha256",
+    ikm,
+    salt,
+    Buffer.from("Content-Encoding: aes128gcm\0", "utf8"),
+    16
+  ));
+  const nonce = Buffer.from(hkdfSync(
+    "sha256",
+    ikm,
+    salt,
+    Buffer.from("Content-Encoding: nonce\0", "utf8"),
+    12
+  ));
+  const padded = Buffer.concat([plaintext, Buffer.from([2])]);
+  const cipher = createCipheriv("aes-128-gcm", cek, nonce);
+  const ciphertext = Buffer.concat([cipher.update(padded), cipher.final(), cipher.getAuthTag()]);
+  const header2 = Buffer.alloc(21);
+  salt.copy(header2, 0);
+  header2.writeUInt32BE(4096, 16);
+  header2.writeUInt8(senderPublic.length, 20);
+  return Buffer.concat([header2, senderPublic, ciphertext]);
+}
+function privateKeyObject(rawPrivate) {
+  if (rawPrivate.length !== 32) throw new Error("VAPID private key must be 32 bytes");
+  const pkcs8 = Buffer.concat([
+    Buffer.from("308141020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420", "hex"),
+    rawPrivate
+  ]);
+  return createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
+}
+function vapidHeader(endpoint, keys, opts = {}) {
+  const aud = new URL(endpoint).origin;
+  const now = opts.nowSeconds ?? Math.floor(Date.now() / 1e3);
+  const exp = now + (opts.ttlSeconds ?? 12 * 60 * 60);
+  const header2 = b64url(Buffer.from(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const claims = { aud, exp, sub: opts.subject ?? "mailto:ops@shikhonbd.com" };
+  const body = b64url(Buffer.from(JSON.stringify(claims)));
+  const signingInput = `${header2}.${body}`;
+  const signature = signSync("sha256", Buffer.from(signingInput, "utf8"), {
+    key: privateKeyObject(unb64url(keys.privateKey)),
+    dsaEncoding: "ieee-p1363"
+  });
+  return `vapid t=${signingInput}.${b64url(signature)}, k=${keys.publicKey}`;
+}
+function vapidFromEnv(env = process.env) {
+  const publicKey = (env.VAPID_PUBLIC_KEY ?? "").trim();
+  const privateKey = (env.VAPID_PRIVATE_KEY ?? "").trim();
+  if (!publicKey || !privateKey) return null;
+  if (unb64url(publicKey).length !== 65) {
+    throw new Error("VAPID_PUBLIC_KEY must be a 65-byte uncompressed P-256 point");
+  }
+  if (unb64url(privateKey).length !== 32) {
+    throw new Error("VAPID_PRIVATE_KEY must be a 32-byte P-256 scalar");
+  }
+  return { publicKey, privateKey };
+}
+var MAX_PAYLOAD_BYTES = 3800;
+async function sendPush(target, payload, keys, opts = {}) {
+  const bytes = Buffer.byteLength(payload, "utf8");
+  if (bytes > MAX_PAYLOAD_BYTES) {
+    return {
+      ok: false,
+      gone: false,
+      status: 0,
+      error: `payload ${bytes}B exceeds ${MAX_PAYLOAD_BYTES}B`
+    };
+  }
+  let body;
+  try {
+    body = encryptPayload(payload, target);
+  } catch (err) {
+    return { ok: false, gone: false, status: 0, error: err.message };
+  }
+  const doFetch = opts.fetchImpl ?? fetch;
+  try {
+    const res = await doFetch(target.endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": vapidHeader(target.endpoint, keys, { subject: opts.subject }),
+        "Content-Encoding": "aes128gcm",
+        "Content-Type": "application/octet-stream",
+        // A notice is worth delivering late; 12 hours lets a phone that is off
+        // overnight still get it. Longer would deliver yesterday's news.
+        "TTL": String(opts.ttlSeconds ?? 12 * 60 * 60),
+        "Urgency": opts.urgency ?? "normal"
+      },
+      body
+    });
+    if (res.status === 404 || res.status === 410) {
+      return { ok: false, gone: true, status: res.status };
+    }
+    if (res.status >= 200 && res.status < 300) {
+      return { ok: true, status: res.status };
+    }
+    return {
+      ok: false,
+      gone: false,
+      status: res.status,
+      error: `push service returned ${res.status}`
+    };
+  } catch (err) {
+    return { ok: false, gone: false, status: 0, error: err.message };
+  }
+}
+function endpointFingerprint(endpoint) {
+  return createHash("sha256").update(endpoint).digest("hex").slice(0, 12);
+}
+
+// services/sms-svc/src/push-send.ts
+var EMPTY_PUSH_RESULT = {
+  attempted: 0,
+  accepted: 0,
+  smsSuppressed: 0,
+  pruned: 0,
+  couldHaveSuppressed: 0
+};
+function pushReplacesSms(settings) {
+  if (!settings || typeof settings !== "object") return false;
+  const push = settings.push;
+  if (!push || typeof push !== "object") return false;
+  return push.replacesSms === true;
+}
+function pushPayloadFor(smsBody, orgName, url, tag) {
+  const signature = ` \u2014 ${orgName}`;
+  const body = smsBody.endsWith(signature) ? smsBody.slice(0, -signature.length) : smsBody;
+  return JSON.stringify({ title: orgName, body, url, tag });
+}
+var PushSender = class {
+  vapid;
+  fetchImpl;
+  maxDevices;
+  constructor(vapid, opts = {}) {
+    this.vapid = vapid;
+    this.fetchImpl = opts.fetchImpl;
+    this.maxDevices = opts.maxDevices ?? 500;
+  }
+  async run(client, tenantId, opts) {
+    const result = { ...EMPTY_PUSH_RESULT };
+    const { rows: queued } = await client.query(
+      `SELECT o.id, o.created_on, o.recipient_id, o.body, o.dedupe_key,
+              o.template_code,
+              o.context->>'category'  AS category,
+              o.context->>'noticeId'  AS notice_id
+         FROM sms_outbox o
+        WHERE o.tenant_id = $1
+          AND o.status = 'queued'
+          AND o.recipient_id IS NOT NULL
+          AND o.template_code NOT LIKE 'auth.%'
+          AND EXISTS (SELECT 1 FROM push_subscriptions s
+                       WHERE s.tenant_id = o.tenant_id
+                         AND s.user_id = o.recipient_id)
+        ORDER BY o.priority, o.queued_at
+        LIMIT $2`,
+      [tenantId, this.maxDevices]
+    );
+    if (queued.length === 0) return result;
+    const recipientIds = [...new Set(queued.map((q) => q.recipient_id))];
+    const { rows: devices } = await client.query(
+      `SELECT id, user_id, endpoint, p256dh, auth
+         FROM push_subscriptions
+        WHERE tenant_id = $1 AND user_id = ANY($2::uuid[])`,
+      [tenantId, recipientIds]
+    );
+    const byUser = /* @__PURE__ */ new Map();
+    for (const d of devices) {
+      const list = byUser.get(d.user_id);
+      if (list) list.push(d);
+      else byUser.set(d.user_id, [d]);
+    }
+    const gone = [];
+    const succeeded = [];
+    for (const msg of queued) {
+      const targets = byUser.get(msg.recipient_id) ?? [];
+      if (targets.length === 0) continue;
+      result.attempted += 1;
+      const url = msg.notice_id ? "#/inbox" : "#/home";
+      const payload = pushPayloadFor(msg.body, opts.orgName, url, msg.dedupe_key);
+      let anyAccepted = false;
+      for (const t of targets) {
+        const target = {
+          endpoint: t.endpoint,
+          p256dh: t.p256dh,
+          auth: t.auth
+        };
+        const outcome = await sendPush(target, payload, this.vapid, {
+          fetchImpl: this.fetchImpl,
+          // An absence notice matters this morning, not this evening, but it
+          // is still worth delivering to a phone that was off for an hour.
+          urgency: msg.category === "emergency" ? "high" : "normal"
+        });
+        if (outcome.ok) {
+          anyAccepted = true;
+          result.accepted += 1;
+          succeeded.push(t.id);
+        } else if (outcome.gone) {
+          gone.push(t.id);
+        } else {
+          console.warn(
+            "[push] %s failed: %s",
+            endpointFingerprint(t.endpoint),
+            outcome.error
+          );
+        }
+      }
+      if (!anyAccepted) continue;
+      const suppressible = msg.category !== "emergency";
+      if (!suppressible) continue;
+      if (!opts.replacesSms) {
+        result.couldHaveSuppressed += 1;
+        continue;
+      }
+      const { rowCount } = await client.query(
+        `UPDATE sms_outbox
+            SET status = 'suppressed', error_code = 'delivered_by_push'
+          WHERE tenant_id = $1 AND created_on = $2 AND id = $3
+            AND status = 'queued'`,
+        [tenantId, msg.created_on, msg.id]
+      );
+      if (rowCount) result.smsSuppressed += 1;
+    }
+    if (succeeded.length > 0) {
+      await client.query(
+        `UPDATE push_subscriptions
+            SET last_success_at = now(), failure_count = 0
+          WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+        [tenantId, succeeded]
+      );
+    }
+    if (gone.length > 0) {
+      const { rowCount } = await client.query(
+        `DELETE FROM push_subscriptions WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+        [tenantId, gone]
+      );
+      result.pruned = rowCount ?? 0;
+    }
+    return result;
+  }
+};
+
 // services/sms-svc/src/dispatch.ts
 function nonWorkingReasonFor(isoDay, weekendDays, overrides) {
   if (overrides.has("holiday")) return "holiday";
@@ -294,6 +573,7 @@ var SmsDispatchWorker = class {
   dispatchBatchSize;
   now;
   provider;
+  pushSender;
   constructor(db, opts = {}) {
     this.db = db;
     this.graceMinutes = opts.graceMinutes ?? 20;
@@ -301,6 +581,8 @@ var SmsDispatchWorker = class {
     this.dispatchBatchSize = opts.dispatchBatchSize ?? 200;
     this.now = opts.now ?? Date.now;
     this.provider = opts.provider ?? resolveProvider();
+    const vapid = opts.vapid ?? vapidFromEnv();
+    this.pushSender = vapid ? new PushSender(vapid, { fetchImpl: opts.fetchImpl }) : null;
   }
   async run(tenantId) {
     const ctx = { tenantId, userId: "", role: "system_ingest" };
@@ -312,13 +594,18 @@ var SmsDispatchWorker = class {
       for (const [k, v] of Object.entries(notices.suppressed)) {
         suppressed[k] = (suppressed[k] ?? 0) + v;
       }
+      const push = this.pushSender ? await this.pushSender.run(client, tenantId, {
+        replacesSms: budget.pushReplacesSms,
+        orgName: budget.orgName
+      }) : { ...EMPTY_PUSH_RESULT };
       const dispatched = await this.dispatch(client, tenantId);
       return {
         tenantId,
         eventsConsidered: attendance.eventsConsidered + notices.eventsConsidered,
         smsQueued: attendance.smsQueued + notices.smsQueued,
         suppressed,
-        dispatched
+        dispatched,
+        push
       };
     });
   }
@@ -347,7 +634,8 @@ var SmsDispatchWorker = class {
       capUsed: Number(used.rows[0].count),
       // Falls back to a neutral word, never to the platform's name.
       orgName: row?.org_name ?? "\u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC",
-      noticeMaxChars: noticeSmsMaxChars(row?.settings)
+      noticeMaxChars: noticeSmsMaxChars(row?.settings),
+      pushReplacesSms: pushReplacesSms(row?.settings)
     };
   }
   async enqueue(client, tenantId, budget) {

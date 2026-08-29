@@ -32,6 +32,13 @@ interface SmsSettings {
   charsPerSegment: number;
 }
 
+/** R-9. Whether a delivered push may cancel the SMS for the same message. */
+interface PushSettings {
+  replacesSms: boolean;
+  /** Does the DEPLOYMENT have VAPID keys? The toggle is inert without them. */
+  available: boolean;
+}
+
 export interface AdminSettingsViewOptions {
   root: HTMLElement;
   doc: Document;
@@ -43,6 +50,7 @@ export interface AdminSettingsViewOptions {
 export class AdminSettingsView {
   private readonly o: AdminSettingsViewOptions;
   private sms: SmsSettings | null = null;
+  private push: PushSettings | null = null;
   private draft = 0;
   private loading = true;
   private error = '';
@@ -60,8 +68,9 @@ export class AdminSettingsView {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/ops/settings');
       if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as { sms: SmsSettings };
+      const body = (await res.json()) as { sms: SmsSettings; push?: PushSettings };
       this.sms = body.sms;
+      this.push = body.push ?? null;
       this.draft = body.sms.noticeMaxChars;
     } catch {
       this.error = 'সেটিংস আনা যায়নি — সংযোগ পেলে আবার দেখা যাবে।';
@@ -78,9 +87,10 @@ export class AdminSettingsView {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sms: { noticeMaxChars: this.draft } }),
       });
-      const body = await res.json() as { sms?: SmsSettings; message?: string };
+      const body = await res.json() as { sms?: SmsSettings; push?: PushSettings; message?: string };
       if (!res.ok) { this.error = body.message ?? 'সংরক্ষণ করা যায়নি।'; return; }
       this.sms = body.sms ?? this.sms;
+      this.push = body.push ?? this.push;
       if (body.sms) this.draft = body.sms.noticeMaxChars;
       this.notice = `সংরক্ষিত — নোটিশ এসএমএস সর্বোচ্চ ${bnNum(this.draft)} অক্ষর।`;
     } catch {
@@ -220,5 +230,105 @@ export class AdminSettingsView {
     card.addEventListener('submit', (e) => { e.preventDefault(); void this.save(); });
     root.append(card);
     syncCost();
+
+    this.renderPushCard(root);
+  }
+
+  /**
+   * R-9. The school's decision about whether push may REPLACE an SMS.
+   *
+   * Off by default and deliberately framed as a trade rather than a feature.
+   * A push notification can be muted at the OS level or land on a phone the
+   * parent has handed to the child; an SMS is harder to miss. So the screen
+   * states what is gained and what is given up, and lets the school choose —
+   * this is a judgement about their parents, not a technical fact we can
+   * decide for them.
+   */
+  private async savePush(next: boolean): Promise<void> {
+    this.busy = true; this.error = ''; this.notice = ''; this.render();
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/ops/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ push: { replacesSms: next } }),
+      });
+      const body = await res.json() as { push?: PushSettings; message?: string };
+      if (!res.ok) { this.error = body.message ?? 'সংরক্ষণ করা যায়নি।'; return; }
+      this.push = body.push ?? this.push;
+      this.notice = next
+        ? 'সংরক্ষিত — নোটিফিকেশন পৌঁছালে সেই বার্তার এসএমএস আর পাঠানো হবে না।'
+        : 'সংরক্ষিত — নোটিফিকেশনের পাশাপাশি এসএমএসও যাবে।';
+    } catch {
+      this.error = 'সংযোগ নেই — সংরক্ষণ করা যায়নি।';
+    } finally {
+      this.busy = false; this.render();
+    }
+  }
+
+  private renderPushCard(root: HTMLElement): void {
+    if (!this.push) return;
+    const d = this.o.doc;
+
+    const h2 = d.createElement('h2');
+    h2.className = 'section-heading';
+    h2.textContent = 'নোটিফিকেশন ও এসএমএস খরচ';
+    root.append(h2);
+
+    const card = d.createElement('div');
+    card.className = 'card card-form';
+    card.style.margin = '0 var(--s-4) var(--s-3)';
+    card.dataset.pushAvailable = String(this.push.available);
+
+    const explain = d.createElement('p');
+    explain.className = 'att-sub';
+    explain.textContent =
+      'যাঁরা অ্যাপে নোটিফিকেশন চালু করেছেন, তাঁদের বার্তা ইন্টারনেটে যায় — খরচ নেই। '
+      + 'সেই বার্তার এসএমএসটি বন্ধ রাখলে প্রতিষ্ঠানের খরচ কমে।';
+    card.append(explain);
+
+    if (!this.push.available) {
+      // The toggle would save and change nothing: suppression only applies to
+      // a push a service ACCEPTED, and with no VAPID keys none ever is.
+      const off = d.createElement('p');
+      off.className = 'inline-notice';
+      off.textContent = 'এই সার্ভারে নোটিফিকেশন চালু নেই — সেটি চালু হলে এই সুবিধা ব্যবহার করা যাবে।';
+      card.append(off);
+      root.append(card);
+      return;
+    }
+
+    const label = d.createElement('label');
+    // Same idiom as the notice composer's SMS toggle — a checkbox row with a
+    // tap target big enough for a phone.
+    label.className = 'sms-toggle';
+    const box = d.createElement('input');
+    box.type = 'checkbox';
+    box.checked = this.push.replacesSms;
+    box.disabled = this.busy || !this.o.canManage;
+    box.id = 'push-replaces-sms';
+    const text = d.createElement('span');
+    text.textContent = 'নোটিফিকেশন পৌঁছালে একই বার্তার এসএমএস পাঠানো হবে না';
+    label.append(box, text);
+    card.append(label);
+
+    const caveat = d.createElement('p');
+    caveat.className = 'att-sub';
+    // The two exceptions are stated on the screen, not just in the code, so a
+    // principal deciding this knows what is NOT being given up.
+    caveat.textContent =
+      'জরুরি নোটিশ ও লগইন কোড সবসময় এসএমএসেও যাবে। '
+      + 'যাঁদের নোটিফিকেশন চালু নেই, তাঁরা আগের মতোই এসএমএস পাবেন।';
+    card.append(caveat);
+
+    if (this.o.canManage) {
+      box.addEventListener('change', () => void this.savePush(box.checked));
+    } else {
+      const ro = d.createElement('p');
+      ro.className = 'att-sub';
+      ro.textContent = 'পরিবর্তনের অনুমতি কেবল প্রধান শিক্ষক ও আইটি অ্যাডমিনের।';
+      card.append(ro);
+    }
+
+    root.append(card);
   }
 }

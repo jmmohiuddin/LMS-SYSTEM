@@ -4190,3 +4190,343 @@ describe it as the product's sync mechanism.
 The two things that would most change the product's readiness are not R-9 work
 and are not code: the aggregator contract, which makes every SMS path in this
 phase real rather than rehearsed, and a pilot school.
+
+---
+
+# 2026-08-29 · R-9 · Web push notifications
+
+**Status: complete for one of R-9's seven items, and explicit about the other
+six.** A parent, teacher or student can turn on notifications for their own
+device; a school notice reaches them over the internet instead of by SMS; and a
+school that opts in stops paying for the SMS that push carried.
+
+Verified end to end against a real HTTP push service: the notice was encrypted
+per RFC 8291, sent with a real VAPID header, received, and **decrypted back to
+the school's own name in Bangla** — with the SMS row marked `suppressed` and no
+other tenant able to see any of it.
+
+## What the Master Plan defines as R-9, and what was actually there
+
+> Section chat (moderated, section-scoped, teacher present), web push
+> notifications (cuts SMS cost — the biggest infra line), content authoring
+> workspace (F-403) + NCTB corpus ingestion (F-1301) to light up grounded AI,
+> photo/voice submissions (F-902), report trend charts (F-1505), native app
+> wrappers, library/transport/hostel/payroll.
+
+Seven items, audited against the repository rather than against the roadmap's
+own words:
+
+| Item | State in the repo | Blocked by |
+|---|---|---|
+| Section chat | Nothing. No table, endpoint or view. | The plan itself calls it **optional**; moderation/safety design |
+| **Web push** | Nothing. No table, no VAPID, no `pushManager`, no SW `push` handler. | **nothing** |
+| Content authoring (F-403) | Not built. `topics`/`topic_blocks` reachable only by direct INSERT; every *consumer* exists. | — (large, code-only) |
+| NCTB corpus (F-1301) | Half. Retrieval path exists, no corpus ingested. | **External**: the corpus, an embedding key |
+| Photo/voice (F-902) | Half. `038_submission_media` has the metadata and the presign *contract*; **no object-storage client exists anywhere**. | **External**: R2/S3 credential (open R-5 backlog) |
+| Trend charts (F-1505) | Not built. `class-perf-view` answers a different question. | — |
+| Native wrappers | Nothing. | **External**: store accounts |
+| Library/transport/hostel/payroll | Nothing. | — (four new product areas) |
+
+### The discrepancy, recorded before deciding
+
+**R-9's stated dependency is a pilot, and there is no pilot.** The sequence
+table reads `| R-9 | Add-ons | — | pilot | — |`, and R-8 closed with pilot
+schools explicitly open and externally blocked. Read literally, R-9 cannot
+start. Read usefully: the items that do not depend on pilot feedback can be
+built, and the ones that are genuinely pilot-shaped — native wrappers, four new
+product modules — should not be guessed at in their absence.
+
+Also found: **`docs/09-PRD-AUDIT.md` is stale** (2026-08-12, pre-R-1…R-8). It
+still says dark mode is unbuilt, that F-1310 has no cost ceiling (R-8 built the
+AI budget), and that `LOGIN_DISABLED` is a constant (R-8 made it an env switch).
+Not rewritten wholesale — out of scope — but noted so it is not read as current.
+
+## Why web push, and not the rest
+
+- It is the **only** item the plan gives a business reason for — "cuts SMS cost,
+  the biggest infra line" — and R-8 is what made that cost real: there is now an
+  actual provider, an actual per-message cost, and a delivery report recording
+  it. The saving is measurable against R-8's own work rather than asserted.
+- It is the **only** item with **no external dependency**. VAPID keys are
+  self-issued by a script in this repository. There is no vendor, no contract,
+  no merchant account, no corpus, no store listing.
+- It **reuses** R-2's audience resolution and R-8's dispatcher wholesale.
+
+Items 3, 6 and 8 are code-only and deliberately not attempted: doing push
+properly — crypto, service worker, permission UX, cost suppression, isolation —
+is the phase. They are recorded as open, not as done.
+
+## The crypto is hand-written, and that is the point
+
+`web-push` on npm would have done this in three lines. It is also ~15
+transitive dependencies in the path of a message sent to a child's parent, in a
+codebase whose server depends on `pg` and `jose` and nothing else.
+
+Everything needed — P-256 ECDH, HKDF-SHA256, AES-128-GCM, an ES256 signature —
+is in `node:crypto`. It came to about 120 lines. The decisive argument was not
+size: **both RFCs publish worked examples with fixed keys and a fixed expected
+output**, so the implementation is asserted against the *specification* rather
+than against its own previous output. A snapshot of my own bytes would pass
+just as happily if every one of them were wrong.
+
+`db/tests/…` cannot check this, so `web-push.test.ts` does: RFC 8291 §5's vector
+matches byte for byte. It passed on the first run, which is the only reassuring
+thing about writing your own crypto.
+
+Getting it wrong would not have failed loudly. A push service accepts a
+malformed body with a 201 and the browser silently fails to decrypt, so the
+symptom is "some parents never get notifications" — reported weeks later by
+somebody who assumed they had turned them off by accident.
+
+## The endpoint is globally unique, and that is a security property
+
+`push_subscriptions.endpoint` is `UNIQUE` across every tenant. Not tidiness:
+
+A push endpoint identifies a **browser**, not a person. Two users at two
+different schools sharing one device and one origin — a school office computer,
+a shared family phone — receive the SAME endpoint from the push service. If both
+rows were allowed to exist, school A would go on pushing to a browser now used
+by school B's parent, and B's parent would read A's notices on their lock
+screen. No amount of RLS prevents it, because both rows are individually
+legitimate inside their own tenant.
+
+So: one row per endpoint, and whoever most recently proved they are signed in on
+that device owns it. Claiming it deletes the previous owner's row, which
+necessarily crosses tenants — hence `app.claim_push_subscription()`, SECURITY
+DEFINER for exactly that one DELETE. It takes **no tenant and no user
+argument**: both come from the session, so there is nothing a caller could
+supply to redirect the row, and it re-checks active membership because DEFINER
+means RLS is not doing it. `db/tests/web_push.sql` §4 is the test.
+
+## Not even the principal
+
+Layer 2 on this table is **owner-only**, a deliberate departure from every other
+table in the product. Management can see who received a notice, who was absent,
+who paid. A push endpoint is different in kind: it is a **capability** — whoever
+holds it can put a notification on that person's phone — and no question the
+office has to answer requires it. The API never returns one either; the screen
+gets a 12-character fingerprint, enough to identify a row for deletion.
+
+`app.is_system_ingest()` is admitted for the sender, the same narrow admission
+migration 010 makes for the outbound-delivery worker on `sms_outbox`.
+
+## The saving, and the order that makes it safe
+
+Push is a second **transport** on the existing pipeline, not a second pipeline.
+It sits between enqueueing and sending and asks one question of each queued
+message: *could this have gone to a browser instead?*
+
+**Push is attempted first, and the SMS is cancelled only once a push service has
+accepted the message.** The other order — cancel, then try — loses the message
+whenever push fails, and it fails for ordinary reasons: a revoked permission, an
+uninstalled browser, an outage. A failed push therefore costs a few
+milliseconds; the row stays `queued` and goes out as SMS a moment later. A
+school is never worse off than before R-9, only cheaper when push works.
+
+No new table: `sms_outbox.status` already had `'suppressed'`, so a cancelled SMS
+stays an honest record of what the school did not pay for, with
+`error_code = 'delivered_by_push'`.
+
+**Two things are never suppressed.** An emergency notice — "school is closed
+today" should arrive by every route available, and it is the one message worth
+paying twice for. And anything `auth.*`: a person requesting a login code may
+well be doing so *because* they have lost access to the app that would have
+received the push.
+
+**Suppression is opt-in per school, default off.** Replacing an SMS with a push
+is a judgement about a school's parents, not a technical fact: a notification
+can be muted at the OS level or land on a phone the parent has handed to the
+child. Until a school opts in, push is purely additive, and the dispatcher
+reports `couldHaveSuppressed` — what opting in would have saved, which is the
+number that makes the case for it.
+
+## Two defects, one of them older than this phase
+
+### 1. A screen that loaded forever
+
+`navigator.serviceWorker.ready` resolves when there is an ACTIVE worker, and
+when registration has failed it does not resolve **at all**. Not slowly: never.
+It has no rejection path.
+
+So on any browser where the service worker fails to register — a corporate
+policy, some private-window modes, a failed update — the notification screen sat
+on its loading skeleton permanently, with no error and no way out.
+
+Found in a real browser within a minute. The unit tests could not see it: they
+inject a client rather than touching `navigator`. Fixed with `getRegistration()`
+on the read path, which settles either way, and a bounded race on the subscribe
+path, which genuinely needs `.ready`. The regression test hands the client a
+promise that never resolves.
+
+### 2. A setting that had never saved (pre-existing, R-3)
+
+The settings endpoint wrote with
+`jsonb_set(settings, '{sms,noticeMaxChars}', …, true)`, and `create_missing`
+creates the **last** element of a path, never the object that would contain it:
+
+```
+jsonb_set('{}', '{sms,noticeMaxChars}', '180', true)  →  {}
+```
+
+On any school whose `settings` had never held an `sms` object — every freshly
+provisioned one — the PUT returned 200, the screen said সংরক্ষিত, and **nothing
+was written**. The next visit showed the default, which reads like somebody
+changing their mind rather than like a defect.
+
+It survived from R-3 because **there was no test file for that endpoint at
+all**. R-9 hit it on the first save, because `push` is a key that never
+pre-exists. Fixed with a `||` merge at both levels; both keys now persist, and
+neither clobbers the other or the branding stored beside them. A 13-test suite
+now exists, and it asserts against the **column** rather than the response —
+the response was right all along.
+
+### 3. My own harness, not the product
+
+The acceptance script reported a cross-tenant leak. It connects as
+`shikhon_owner`, a SUPERUSER in the local container, and superusers bypass RLS
+unconditionally. `db/tests/web_push.sql` had it right with `SET ROLE
+shikhon_app`; the harness did not. The product was never wrong, and the fix was
+one line in the harness.
+
+## Migration 047
+
+One table, one function. The rollback is the first in this product that **loses
+data**, and says so: dropping `push_subscriptions` discards every registered
+device. Nothing about a person, a child, a mark or a payment is in it, and the
+browser can re-issue everything — but the consequence is silence, not an error,
+because from the browser's side the subscription still exists.
+
+Full cycle exercised: **up → 12 assertions pass → down → the suite correctly
+fails (table gone) → up → 12 assertions pass**, 47/47 applied. Wired into CI in
+both the main and re-run passes; `schema_lint` and the RLS-coverage gate both
+pass on the new table.
+
+## Tests
+
+**1037 with a database attached, 755 without, all passing.** 13 DB suites green.
+New in R-9:
+
+| suite | what it holds |
+|---|---|
+| `packages/server-core/test/web-push.test.ts` (24) | RFC 8291 §5's vector byte for byte; `aud` is the push service ORIGIN; the signature is raw r‖s, not DER |
+| `db/tests/web_push.sql` (12) | the shared device evicts the previous school; not even the principal can read an endpoint; the DEFINER function cannot be redirected |
+| `services/ops-svc/test/push.test.ts` (23) | no response ever contains an endpoint; nothing inside a network survives the SSRF guard |
+| `services/sms-svc/test/push-send.test.ts` (18) | a FAILED push never cancels an SMS; an emergency and a login code are never suppressed |
+| `services/ops-svc/test/settings.test.ts` (13) | the endpoint's first test file, written for the bug above |
+| `apps/pwa/test/push-ui.test.ts` (25) | every state renders something; the click target can only be an in-app route; `serviceWorker.ready` cannot hang the screen |
+
+## Browser verification
+
+- **`denied`** — the automation browser blocks notifications by policy, which
+  made it the right browser to verify the hardest state in: no button, and an
+  explanation of where the block actually is. A button there would call
+  `requestPermission()`, get `denied` back without showing anything, and look
+  like a broken app.
+- **`unconfigured`** — the same screen on the deployment with no VAPID keys,
+  proving the precedence: an unconfigured server outranks a denied browser, so
+  nobody is sent to fix their browser for a feature the school has not enabled.
+- **Mobile 375×812** — `scrollWidth === clientWidth`, no horizontal overflow.
+- **The school-wide toggle** — saved as principal, **refreshed**, and both it
+  and the SMS length survived. This is what caught defect 2.
+- **End to end** — notice → dispatcher → VAPID header → real HTTP push service →
+  decrypted to `{"title":"নথি বিদ্যালয়","body":"আগামীকাল বিদ্যালয় বন্ধ থাকবে।"}`,
+  SMS row `suppressed`/`delivered_by_push`, other tenant sees 0 subscriptions.
+
+**What could NOT be verified in a browser:** a real `pushManager.subscribe()`.
+This automation browser denies notification permission by policy and blocks
+service-worker registration, so the browser's own half of the handshake was
+stood in for by a script that generates the same P-256 keypair, registers
+through the same database function, and decrypts with the private key. That
+proves our end of the contract completely and does not prove that Chrome and
+Firefox accept our `applicationServerKey` — which is a first-contact risk,
+recorded below rather than claimed.
+
+## Offline classification
+
+**Online-acceptable, deliberately.**
+
+- **Subscribing** requires the network by definition: the browser is asking a
+  push service for an endpoint.
+- **The notification screen** is configuration, not a workflow a teacher must
+  complete during a power cut.
+- **Receiving** a push is the opposite of an offline concern — it is what
+  happens when the device *has* connectivity, and it arrives whether or not the
+  app is open, which is the whole point.
+
+Nothing here touches the outbox or the sync engine, and no second offline
+mechanism was created.
+
+## Known limitations
+
+1. **Never handshaken with a real push service.** Verified against the RFC
+   vectors and a fake service; FCM, Mozilla and Apple have not seen a message
+   from this code. The likeliest first-contact corrections are the
+   `applicationServerKey` encoding and a 400 whose body explains nothing.
+2. **A real `pushManager.subscribe()` was not exercised** — see above.
+3. **No retry for a push that failed transiently.** A 500 or 503 leaves the row
+   `queued` and the SMS goes out, which is the safe outcome and also means a
+   momentary push outage costs the school an SMS. `failure_count` is stored and
+   nothing reads it yet.
+4. **`last_success_at` means a push service accepted it**, not that a person saw
+   it. The same distinction R-8 drew for SMS, drawn here in the column name.
+5. **No per-notice channel choice.** A school opts in for everything or nothing;
+   there is no "always SMS for absences, push for the rest".
+6. **iOS needs the app added to the Home Screen** before Safari will allow web
+   push at all. The screen reports `unsupported` there, which is accurate, but
+   it does not explain the Home Screen step.
+7. **DNS rebinding is not defended against.** The SSRF guard refuses IP
+   literals, non-https, credentials in the URL and internal-looking names, but a
+   public hostname whose DNS answers with a private address would still be
+   fetched. Defeating that needs resolve-then-connect-to-the-resolved-IP, which
+   `fetch` does not offer.
+
+## Carried backlog — preserved, none of it closed by R-9
+
+**R-3:** class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision.
+
+**R-5:** object storage (no stored PDFs or student photos) · CSV export
+(`toCsv()` still unused) · multi-card ID-card layout · **money-formatting
+decision** (still open, still needs a call).
+
+**R-6:** an index on the board registration/roll columns · an attendance
+date-range filter · type-ahead suggestions.
+
+**R-7:** operator SSO and key rotation · trial expiry automation · per-class
+group configuration in the wizard · logo/favicon/watermark upload in the wizard
+· wildcard DNS/TLS · platform audit UI · plan feature gating.
+
+**R-8:** SMS retry backoff · AI soft-limit notification wired to R-2 ·
+per-message cost on send · the aggregator contract, the MFS merchant agreement,
+the data-residency decision and pilot schools (all external).
+
+**R-9 (new):** push retry/backoff · per-notice channel choice · the iOS
+Home-Screen explanation · a first-contact test against a real push service.
+
+**R-9 items NOT built, and still open:** section chat (optional per the plan) ·
+content authoring workspace (F-403) · NCTB corpus ingestion (F-1301, external) ·
+photo/voice submissions (F-902, external — object storage) · report trend charts
+(F-1505) · native app wrappers (external) · library/transport/hostel/payroll.
+
+## Unresolved bugs / issues
+
+**1. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+calls it.** Carried forward from R-8, unchanged and **not** closed: R-9 touches
+nothing in the sync path. The only client-side mention remains a service-worker
+routing rule declaring a caching strategy for a URL nothing requests;
+`transport.ts` calls `/sync/push` and nothing else. Two honest resolutions
+exist — wire the client to it, or delete it and its documentation — and R-9
+chose neither.
+
+**2. `docs/09-PRD-AUDIT.md` is stale**, as described above. Its P0 rows for
+F-403, F-406, F-902 and F-1301 remain accurate; several of its P1/P2 rows have
+since been closed by R-1…R-8 and it has not been updated in place.
+
+## Next recommended step
+
+**R-10 is not defined.** The master plan ends at R-9, whose remaining items are
+either externally blocked or genuinely want a pilot school to aim at. The
+highest-value code-only work left on the R-9 list is the **content authoring
+workspace (F-403)**: it is the last open P0, and the reason it matters is stated
+best by the audit itself — the product can teach a syllabus it has not been
+given. Every consumer of content is built; the producer is not.

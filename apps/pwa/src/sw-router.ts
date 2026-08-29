@@ -263,3 +263,76 @@ export function dataSaverPolicy(
     autoCropWasm: !lite && deviceMemoryGb > 2,
   };
 }
+
+/**
+ * ── R-9: what a push notification becomes on screen ──────────────────────
+ *
+ * Pure, and here rather than in sw.ts, for the same reason routing is: this is
+ * the part with decisions in it, and a service worker is the hardest place in
+ * the product to debug. sw.ts stays event wiring.
+ *
+ * The payload arrives from `services/sms-svc/src/push-send.ts`, decrypted by
+ * the browser. It is nonetheless treated as untrusted input: a service worker
+ * shows whatever it is handed on a lock screen, and "the server sent it" is
+ * not a reason to skip validating a blob that arrived over the network.
+ */
+export interface PushNotification {
+  title: string;
+  body: string;
+  tag: string;
+  url: string;
+}
+
+/** Shown when a push arrives that we cannot read. See `notificationFor`. */
+export const PUSH_FALLBACK: PushNotification = {
+  // Deliberately vague, and deliberately NOT the platform's name (D11): this
+  // renders on a parent's lock screen and the school's identity is exactly
+  // what we have failed to read.
+  title: 'নতুন বার্তা',
+  body: 'বিস্তারিত দেখতে অ্যাপ খুলুন।',
+  tag: 'shikhon-generic',
+  url: '#/inbox',
+};
+
+/**
+ * Turn a raw push payload into something showable.
+ *
+ * Never throws and never returns null. A push event that produces no
+ * notification is worse than a vague one: on Chrome, a service worker that
+ * receives a push and shows nothing gets a browser-generated "This site has
+ * been updated in the background" — so failing to decide means the OS decides,
+ * in English, for a Bangla-speaking parent.
+ */
+export function notificationFor(raw: string | null | undefined): PushNotification {
+  if (!raw) return PUSH_FALLBACK;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return PUSH_FALLBACK;
+  }
+  if (!parsed || typeof parsed !== 'object') return PUSH_FALLBACK;
+  const p = parsed as Record<string, unknown>;
+
+  const text = (v: unknown, max: number): string =>
+    (typeof v === 'string' ? v : '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+  const title = text(p.title, 80);
+  const body = text(p.body, 300);
+  if (!title && !body) return PUSH_FALLBACK;
+
+  // Only in-app hash routes. A url from the payload is a link the OS will
+  // open on click; anything absolute would make a push notification an
+  // open-redirect with a school's name on it.
+  const rawUrl = typeof p.url === 'string' ? p.url : '';
+  const url = /^#\/[A-Za-z0-9/_-]{0,64}$/.test(rawUrl) ? rawUrl : PUSH_FALLBACK.url;
+
+  return {
+    title: title || PUSH_FALLBACK.title,
+    body: body || PUSH_FALLBACK.body,
+    // The tag collapses a repeat of the same message rather than stacking a
+    // second copy on the lock screen.
+    tag: text(p.tag, 120) || PUSH_FALLBACK.tag,
+    url,
+  };
+}

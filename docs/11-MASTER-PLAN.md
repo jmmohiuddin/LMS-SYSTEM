@@ -1192,10 +1192,36 @@ delivered nothing while the readiness screen reported it green. See
 
 ### R-9 — Post-roadmap add-ons (only after pilot stability)
 
-Section chat (moderated, section-scoped, teacher present), web push notifications
-(cuts SMS cost — the biggest infra line), content authoring workspace (F-403) + NCTB
-corpus ingestion (F-1301) to light up grounded AI, photo/voice submissions (F-902),
-report trend charts (F-1505), native app wrappers, library/transport/hostel/payroll.
+**Web push done 2026-08-29. The other six items are open** — see the table
+below for which are externally blocked and which are merely unbuilt.
+
+A note on this phase's stated dependency: it says *only after pilot stability*
+and the sequence table says *depends on: pilot*. **There is no pilot** — R-8
+closed with pilot schools open and externally blocked. R-9 was therefore read as
+"build what does not depend on pilot feedback, and do not guess at what does".
+
+- [x] **Web push notifications** — `047_web_push`, RFC 8291/8292 in
+      `packages/server-core/src/web-push.ts`, a per-person screen at
+      `#/notifications`, and a per-school opt-in that lets a delivered push
+      cancel the same message's SMS. The only item on this list with **no
+      external dependency**: VAPID keys are self-issued by
+      `scripts/generate-vapid-keys.mjs`. Emergency notices and login codes are
+      never suppressed.
+- [ ] Section chat (moderated, section-scoped, teacher present). Marked
+      optional by §2 and §3 of this plan; a child-safety design problem before
+      it is a code one.
+- [ ] Content authoring workspace (F-403). **Code-only and the last open P0** —
+      every consumer of content is built and the producer is not.
+- [ ] NCTB corpus ingestion (F-1301). **External**: the corpus itself, plus an
+      embedding key.
+- [ ] Photo/voice submissions (F-902). **External**: an R2/S3 credential. The
+      metadata columns and the presign contract exist (`038_submission_media`);
+      no object-storage client exists anywhere in the repo.
+- [ ] Report trend charts (F-1505). Code-only. `class-perf-view` answers a
+      different question — per-question class analysis, not a student's trend.
+- [ ] Native app wrappers. **External**: Play/App Store accounts.
+- [ ] Library / transport / hostel / payroll. Four new product areas; nothing
+      exists.
 
 ---
 
@@ -1212,7 +1238,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
 | R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** (console + wizard; wildcard DNS/TLS is a deploy step) |
 | R-8 | Go-live unlocks | M | any | **code done 2026-08-29** (provider adapter + DLR, switches, AI budget, readiness screen); contracts, PII key, MFS and pilot remain externally blocked |
-| R-9 | Add-ons | — | pilot | — |
+| R-9 | Add-ons | — | pilot (absent) | **web push done 2026-08-29**; six items open — F-403 and F-1505 are code-only, the rest externally blocked or optional |
 
 Recommended execution order: **R-0 → R-1 → R-2 → R-3 → R-4 → R-5 → R-6 → R-7**, with
 R-8 items flipped as credentials arrive. Each phase ends with a commit-tested,
@@ -1231,7 +1257,7 @@ deployable system and an update to `docs/07-IMPLEMENTATION-STATUS.md`.
 - No new framework, no rewrite of the PWA shell, no microservices split.
 - Never delete assignment/enrolment/attendance history — end-date and supersede.
 - Never trust frontend visibility as security — RLS is the enforcement layer.
-- No social/chat features before R-9.
+- No social/chat features before R-9. (R-9 shipped web push and did NOT ship section chat; the moderation and child-safety design is still owed.)
 - No Elasticsearch/Redis/queues until Postgres measurably fails at the job.
 - Don't edit `api/v1/*.js` or `netlify/functions/*` bundles — sources live in `services/`.
 - Don't touch `PII_MASTER_KEY_V1` rotation without `08` §5.

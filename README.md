@@ -236,8 +236,10 @@ ANS hooks, substitution finder included); and CI.
 
 **Currently off by configuration, not by code** ([docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)):
 OTP login (`OTP_SENDING_ENABLED`), real SMS sending (`SMS_PROVIDER` and its
-credentials), delivery reports (`SMS_DLR_SECRET`), MFS payment initiation
-(`MFS_PAYMENTS_ENABLED`) and the AI engines (`ANTHROPIC_API_KEY`). Since R-8
+credentials), delivery reports (`SMS_DLR_SECRET`), web push
+(`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY` — self-issued by
+`node scripts/generate-vapid-keys.mjs`, no vendor involved), MFS payment
+initiation (`MFS_PAYMENTS_ENABLED`) and the AI engines (`ANTHROPIC_API_KEY`). Since R-8
 these are environment variables read per request — turning one on is an env
 change, not an edit-and-redeploy — and the platform console's গো-লাইভ অবস্থা
 screen reports which of them a given deployment actually has. What remains

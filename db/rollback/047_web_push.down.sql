@@ -1,0 +1,31 @@
+-- Rollback for 047 — web push subscriptions (R-9).
+--
+-- This one DOES lose data, and it is the only rollback in this product so far
+-- that does, so it is worth being exact about what and why.
+--
+-- Dropping `push_subscriptions` discards every registered device. Nothing
+-- about a person, a child, a mark or a payment is in it — the rows hold a push
+-- service URL and two of the browser's own keys, and none of it can be
+-- reconstructed from anywhere else because none of it originated here. The
+-- browser issued it and the browser can issue it again.
+--
+-- The consequence for a school is therefore not lost records but silence:
+-- every parent who had turned notifications on stops receiving them, with no
+-- error and nothing on screen to say so, because from the browser's side the
+-- subscription still exists. They would have to open নোটিফিকেশন and turn it
+-- on again.
+--
+-- **Turn off SMS suppression first.** A school that opted into
+-- `settings.push.replacesSms` is relying on push to carry messages this
+-- rollback is about to stop carrying. The suppression only ever applies to a
+-- push a service ACCEPTED, so with the table gone nothing is suppressed and
+-- every message reverts to SMS — the fail-safe direction, and the reason this
+-- is a note rather than a migration step. Left on, the setting simply has
+-- nothing to act on.
+--
+-- The VAPID keys are environment variables and are not touched. Keep them: a
+-- re-applied 047 with the same keys lets a browser's existing subscription be
+-- re-registered, and a rotated pair would force every device to start over.
+
+DROP FUNCTION IF EXISTS app.claim_push_subscription(text, text, text, text);
+DROP TABLE IF EXISTS push_subscriptions;

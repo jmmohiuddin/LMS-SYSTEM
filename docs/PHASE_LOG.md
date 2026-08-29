@@ -25,21 +25,25 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-1 closed, R-2 not started
-Last Completed Phase: R-1 — White-label & branding foundation
+Current Phase:        none in progress — R-1-A closed, R-2 not started
+Last Completed Phase: R-1-A — Three surfaces, three addresses (Option B)
+Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
+                      /design  the Ata Ekta prototype
 Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-0   a2a26942fe7a503b57344ff67a827ad2a2814189
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
-Tests:                415 unit passing, 0 failing (node --test, verified 2026-08-29)
+                      D12   4ea1541b816745db580ed1b02154338a6f695f74
+Tests:                432 unit passing, 0 failing (node --test, verified 2026-08-29)
                       + DB-backed suites that self-skip without DATABASE_URL — NOT YET RUN
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 74 KB gz / 180 KB budget
-Known Blockers:       1. Two front doors: "/" serves the design mock-up, not the app (R-1-A)
-                      2. DB-backed branding tests never executed — first CI run is their first run
-                      3. Service-worker cache-first on unhashed app.js: deploys may not reach devices
-                      4. Migration 038 has no probe in migration-status.mjs
+Known Blockers:       1. DB-backed branding tests never executed — first CI run is their first run
+                      2. Migration 038 has no probe in migration-status.mjs
+                      RESOLVED since the last update:
+                        · two front doors — closed by R-1-A
+                        · service-worker deploy staleness — closed by R-1-A
 Next Step:            R-2 — Notices & notification system (docs/11-MASTER-PLAN.md)
-                      Owner decision needed first on R-1-A (see that entry)
+                      No owner decision outstanding.
 ```
 
 ---
@@ -469,7 +473,7 @@ R-2 — Notices & notification system.
 | **Date** | 2026-08-29 |
 | **Phase ID** | R-1-A |
 | **Phase name** | Discovery — `index.html` vs `index.legacy.html` |
-| **Status** | 🔴 **Open — owner decision required.** Documented, not acted on. |
+| **Status** | 🔴 Open at the time of writing — **superseded 2026-08-29** by the R-1-A completion entry at the end of this log, which implemented Option B. Left exactly as written (D10): this is the record of how the situation arose and what the alternatives were. |
 | **Git commit** | investigated during `5265ea3`; recorded in the commit that added this file — `git log --diff-filter=A --format=%H -- docs/PHASE_LOG.md` |
 
 ### Objective
@@ -803,3 +807,203 @@ None new from this entry. (R-1-A's option A/B/C choice still pending.)
 ### Next recommended step
 
 R-2 — Notices & notification system.
+
+---
+
+# 2026-08-29 · R-1-A · Three surfaces, three addresses (Option B implemented)
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-1-A |
+| **Phase name** | Production surface architecture — Option B |
+| **Status** | ✅ **Complete.** Supersedes the 🔴 open R-1-A discovery entry above, which stays as written: it is the record of how the situation arose and what the alternatives were. |
+| **Migration number** | none |
+| **Rollback status** | n/a — no schema change. Reverting is a `git revert` of the file moves and two routing files. |
+| **Git commit** | `git log -1 --format=%H -- apps/pwa/public/app.html` |
+
+### Objective
+
+Give the three surfaces three distinct addresses, so the marketing site, the
+tenant application and the design prototype stop competing for `/`. The owner
+chose **Option B** from the discovery entry above.
+
+### What was already existing
+
+The situation set out in the R-1-A discovery entry: `/` served a 4,341-line
+prototype with zero API calls; the functional, tested PWA sat at
+`index.legacy.html` linked from nowhere; `netlify.toml` sent every deep link to
+the prototype; the service worker precached `/` as its offline app shell.
+
+### What was implemented
+
+Three `git mv`s (history preserved) and the routing to match:
+
+| Was | Is | Serves |
+|---|---|---|
+| `landing.html` | `index.html` | `/` — shikhonBD marketing |
+| `index.legacy.html` | `app.html` | `/app` — the tenant application |
+| `index.html` | `design.html` | `/design` — the Ata Ekta prototype |
+
+- **Marketing links repaired**: 13 CTAs pointed at `/` back when `/` was the
+  application, and would have become links to themselves — now `/app`. The 5
+  brand-mark links point home.
+- **Routing** on both hosts (see below).
+- **Service worker** — app-shell scoping, precache target, offline fallback,
+  wake-up URL, unhashed-asset policy, cache version. See its own section.
+- **PWA manifests** — generated and static both move to `/app`.
+- **D11 guard rescoped** to the new filenames: `index.html` is now the
+  platform-branded surface; `app.html` and `design.html` are tenant-branded.
+
+### Important architectural decisions
+
+1. **`/` is a real file, not a rewrite.** Making the marketing page literally
+   `index.html` means the site root resolves through the static filesystem on
+   both hosts, with no config to drift. Only `/app` and `/design` need rewrites.
+2. **The service worker keeps scope `/` but narrows what it *treats* as the
+   app.** It is registered from `/app.html` and must control `/app.js`, so its
+   scope cannot shrink. Instead `isAppPath()` decides: only `/app*` navigations
+   get the offline app-shell. Answering `/` with the app's HTML would have
+   silently re-created the problem this phase closed.
+3. **Unhashed entry assets get stale-while-revalidate, not cache-first.**
+   `/app.js`, `/app.css` and `/manifest.webmanifest` matched the IMMUTABLE
+   extension test and were pinned to whatever a device downloaded first. SWR
+   keeps offline working (cached copy answers instantly) while making the next
+   load current. This is §9b known-limitation 3, now fixed.
+4. **`CACHE_SHELL` bumped to v2.** `stalecaches()` deletes any `shikhon-*` cache
+   outside the keep set, so returning devices drop the v1 cache that held `/` as
+   the app shell and a never-revalidated `app.js`. No migration code needed.
+5. **The prototype was kept, not deleted** — the owner asked for it to be
+   preserved if useful, and deleting a design reference is not reversible by
+   reading a diff.
+
+### Database changes
+
+None.
+
+### API changes
+
+`buildManifest()` now emits `start_url: /app?tid=…` and `scope: /app` (was `/`).
+No endpoint, auth, or tenant-resolution behaviour changed.
+
+### UI changes
+
+No screen changed. The application's markup, views, styles and behaviour are
+byte-identical to R-1 apart from one stale comment reference in the prototype.
+Marketing CTAs now open the application instead of reloading the marketing page.
+
+### Files created
+
+```text
+apps/pwa/test/surfaces.test.ts
+```
+
+### Files modified
+
+```text
+apps/pwa/public/index.html         (renamed from landing.html; CTAs -> /app)
+apps/pwa/public/app.html           (renamed from index.legacy.html; content unchanged)
+apps/pwa/public/design.html        (renamed from index.html; one stale comment fixed)
+apps/pwa/public/manifest.webmanifest   start_url + scope -> /app
+apps/pwa/src/sw-router.ts          APP_SHELL_URL, isAppPath, SWR for unhashed assets, cache v2
+apps/pwa/src/sw.ts                 app-shell fallback + wake-up URL -> /app
+services/ops-svc/api/manifest.ts   start_url + scope -> /app
+vercel.json                        /app, /app/:path*, /design rewrites
+netlify.toml                       same three redirects before the catch-all; cache headers
+.github/workflows/frontend.yml     D11 guard rescoped to the new filenames
+apps/pwa/test/attendance-view.test.ts   two SW-policy tests updated to the new contract
+services/ops-svc/test/branding.test.ts  start_url expectation updated
+.claude/static-server.mjs          local preview mirrors production routing (gitignored)
+docs/07-IMPLEMENTATION-STATUS.md   §9c, surfaces row, test count
+docs/11-MASTER-PLAN.md             §1a resolved, test count corrected
+README.md                          Surfaces section, D1-D12
+docs/PHASE_LOG.md                  this entry
+api/v1/ops/[action].js             regenerated bundle
+```
+
+### Files removed
+
+None. All three HTML surfaces still exist, under new names.
+
+### Tests added
+
+**17**, in `apps/pwa/test/surfaces.test.ts`:
+
+- The three surfaces identified **by content, not by filename** — a rename that
+  swapped two of them would keep the names plausible and break everything, which
+  is precisely how this situation arose.
+- Both hosts' routing tables, including the ordering assertion that `/app` is
+  declared before Netlify's catch-all (first match wins).
+- App-shell scoping, including `isAppPath('/application')` being false.
+- The unhashed-asset policy and the cache-version bump.
+- Manifest `start_url`/`scope`, generated and static, and that the two agree.
+
+### Tests executed
+
+Full suite, plus a browser acceptance test with the origin server stopped.
+
+### Test results
+
+**432 unit tests, 0 failures** (415 → +17):
+offline 46 · server-core 75 · ui-core 85 · academics-svc 19 · ops-svc 5 ·
+rms-svc 15 · **pwa 179** · netlify 8.
+
+Three pre-existing tests encoded the old `/`-based contract and were updated
+with the reason recorded inline — the app-shell navigation test, the
+stale-cache-pruning test (v1 is now stale too), and the manifest `start_url`
+test. They were genuine regressions caught by the suite, not noise.
+
+### Build / typecheck results
+
+`tsc --noEmit` ×3 → exit 0 · `npm run build` ok · working tree clean after
+rebuild.
+
+### Security validation
+
+No change to authentication, authorisation or tenant scoping. The D11 brand
+guard passes in both directions against the new filenames. One security-adjacent
+improvement: the marketing site is no longer served from the service worker's
+app-shell cache, so it cannot be pinned to a stale copy on a device.
+
+### Tenant-isolation validation
+
+Unchanged and re-verified in the browser: `/app?tenant=a` and `/app?tenant=b`
+render two different institutions with no value of either appearing in the
+other's DOM or cache. Tenant resolution still `?tid=`; no second mechanism, no
+school-picker (D12).
+
+### Acceptance test — passed
+
+| Step | Result |
+|---|---|
+| `/` | shikhonBD marketing site; platform brand present; does not boot the app; CTAs → `/app` |
+| `/app?tenant=a` | Application mounted, SW registered, শাহজালাল আদর্শ উচ্চ বিদ্যালয়, `#156a3f`, manifest `?tid=demo-tenant-a` |
+| `/app?tenant=b` | Application mounted, নর্থ সিটি মহিলা কলেজ, `#1b3e7a`; **no trace of tenant A** |
+| `/design` | 66-screen prototype; no app boot; no platform brand |
+| SW active, fetch `/` | Returns **marketing**, not the app shell |
+| Shell cache | `shikhon-shell-v2` only; `/app` cached, `/` **not** cached as a shell |
+| **Origin server stopped**, load `/app` | Full application boots from cache with Tenant A's identity, tab bar and offline banner |
+
+### Known limitations
+
+- The prototype at `/design` is static sample data and has no behavioural test
+  coverage. It is a design reference; whether it earns its place is a later call.
+- Per-tenant **subdomains** remain R-7. Today a school's door is its `?tid=` link.
+- The local preview server (`.claude/static-server.mjs`, gitignored) mirrors the
+  production routing by hand. If the hosts' routing changes, that file must be
+  updated too or local verification will diverge from what ships.
+- Carried forward unchanged from R-1: the DB-backed branding suites have still
+  never executed, and migration 038 still has no probe.
+
+### Unresolved bugs / issues
+
+None. §9b known-limitation 3 (service-worker deploy staleness) is closed by this
+entry.
+
+### Decisions that require owner input
+
+None outstanding.
+
+### Next recommended step
+
+**R-2 — Notices & notification system.**

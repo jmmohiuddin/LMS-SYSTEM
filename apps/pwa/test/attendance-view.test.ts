@@ -267,9 +267,15 @@ describe('service-worker routing policy', () => {
   });
 
   test('navigations fall back to the app shell so a cold offline start works', () => {
-    const r = route({ url: 'https://a.bd/attendance/sec_9a', method: 'GET', mode: 'navigate' });
+    // R-1-A: the application lives at /app. The worker's scope is still "/"
+    // (it is registered from /app.html and must control /app.js), so it also
+    // sees the marketing site — which must NOT be answered with the app.
+    const r = route({ url: 'https://a.bd/app', method: 'GET', mode: 'navigate' });
     assert.equal(r.strategy, 'app-shell');
     assert.equal(r.cache, CACHE_SHELL);
+
+    assert.equal(route({ url: 'https://a.bd/', method: 'GET', mode: 'navigate' }).strategy,
+      'network-only', 'the marketing site must never be served the app shell');
   });
 
   test('content-hashed assets are cache-first; reference data is SWR', () => {
@@ -295,8 +301,12 @@ describe('service-worker routing policy', () => {
   });
 
   test('old deploy caches are pruned, foreign caches are left alone', () => {
+    // v1 is now stale too: R-1-A bumped the shell cache to v2 precisely so
+    // returning devices drop the cache that held "/" as the app shell and a
+    // never-revalidated app.js. Another app's caches are still untouched.
     const stale = stalecaches(['shikhon-shell-v0', 'shikhon-shell-v1', 'shikhon-media-v1', 'other-app-v3']);
-    assert.deepEqual(stale, ['shikhon-shell-v0']);
+    assert.deepEqual(stale, ['shikhon-shell-v0', 'shikhon-shell-v1']);
+    assert.ok(!stale.includes('other-app-v3'));
   });
 });
 

@@ -15,10 +15,11 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **415 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 85, `services/academics-svc` 19, `services/ops-svc` 5, `services/rms-svc` 15, `apps/pwa` 162, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 17 SQL assertion suites |
+| Tests | **432 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 85, `services/academics-svc` 19, `services/ops-svc` 5, `services/rms-svc` 15, `apps/pwa` 179, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 17 SQL assertion suites |
 | Schema | 39 migrations (38 rollback files), verified by applying the full chain to an empty database in CI, then 17 SQL assertion suites |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
-| Preview | **`https://shikhon-lms.vercel.app/?demo=1`** — every screen, sample data, no login (§6) |
+| Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
+| Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
 
 What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their
 day/week routine (substitutions included), pick a section and see its roster, take
@@ -421,6 +422,62 @@ in the other's DOM or cache. Verified in a browser, not only asserted.
   present.
 - Colour customisation is deliberately bounded to primary + accent. Status colours
   (absent, overdue, paid) and the destructive `--c-accent` are not tenant-controlled.
+
+---
+
+## 9c. R-1-A — three surfaces, three addresses (closed)
+
+Until 2026-08-29, `/` served a design mock-up and the functional application was
+reachable only by typing `/index.legacy.html`. Option B of the three set out in
+[PHASE_LOG.md](PHASE_LOG.md) was chosen and implemented.
+
+| Address | File | Surface | Brand |
+|---|---|---|---|
+| `/` | `public/index.html` *(was `landing.html`)* | shikhonBD marketing site | **platform** |
+| `/app` | `public/app.html` *(was `index.legacy.html`)* | the tenant application | white-labelled |
+| `/design` | `public/design.html` *(was `index.html`)* | Ata Ekta prototype, retained | white-labelled |
+
+**Routing.** `vercel.json` rewrites `/app`, `/app/:path*` and `/design`; `/`
+resolves to `index.html` through the static filesystem. `netlify.toml` declares
+the same three redirects **before** its catch-all, which now lands on marketing
+rather than on the application. The `/api/v1/auth/:path*` rewrite is untouched.
+The app is a hash router, so `/app#/routine` needs no server route of its own.
+
+**Service worker.** Three changes, all narrow:
+
+- Only `/app*` navigations get the `app-shell` strategy. The worker's scope is
+  still `/` (it must control `/app.js`), so it *sees* the marketing site —
+  answering that with the app's HTML would have re-created the very confusion
+  R-1-A closed.
+- `PRECACHE` and the offline fallback point at `/app`, not `/`. A teacher who
+  loses signal gets the attendance screen, not a page selling the product.
+- `/app.js`, `/app.css` and `/manifest.webmanifest` moved from `cache-first` to
+  `stale-while-revalidate`. They are not content-hashed, so they matched the
+  IMMUTABLE extension test and were pinned forever — **the deploy-staleness bug
+  recorded in §9b's known limitations, now fixed**. Offline is unaffected: the
+  cached copy still answers instantly. `CACHE_SHELL` bumped to `v2` so returning
+  devices drop the poisoned v1 cache on activate.
+
+**PWA.** Generated and static manifests both use `start_url: /app` (plus `?tid=`)
+and `scope: /app`, so a school's installed icon opens that school's application.
+
+**Tenant resolution is unchanged** — `?tid=` still works exactly as before, no
+second mechanism was introduced, and no school-picker exists (D12).
+
+**Verified in a browser**, not only asserted: `/` shows the shikhonBD site with
+CTAs pointing at `/app`; `/app?tenant=a` and `?tenant=b` show two different
+institutions' applications; `/design` shows the 66-screen prototype; and with the
+origin server **stopped**, `/app` still boots the full application with Tenant A's
+identity from the service-worker cache.
+
+**17 new tests** in `apps/pwa/test/surfaces.test.ts` cover surface identity by
+content, both hosts' routing tables, the app-shell scoping, the unhashed-asset
+policy, the cache-version bump, and the manifest. Three pre-existing tests
+encoding the old `/`-based contract were updated with the reason recorded inline.
+
+**Remaining limitation:** the prototype at `/design` is still built from static
+sample data and is not covered by any behavioural test — it is kept as a design
+reference, and whether it earns its place is a later question.
 
 ---
 

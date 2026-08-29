@@ -49,7 +49,16 @@ jobs:
       #   2. Platform brand being stripped OUT of the marketing site — the
       #      likelier mistake now that a guard exists at all, because
       #      "remove ShikhonBD" reads like a rule that applies everywhere.
-      #      It does not. landing.html is our own shopfront.
+      #      It does not. index.html is our own shopfront.
+      #
+      # Since R-1-A the three surfaces have three files, and which list a
+      # file belongs to follows from which surface it serves:
+      #   index.html   →  "/"        marketing        PLATFORM-branded
+      #   app.html     →  "/app"     the application  tenant-branded
+      #   design.html  →  "/design"  the prototype    tenant-branded
+      #                              (it mimics tenant screens, so it must
+      #                               not teach anyone the platform's brand
+      #                               belongs on them)
       - name: Brand boundary (D11)
         run: |
           set -euo pipefail
@@ -59,8 +68,8 @@ jobs:
           # documents it prints. Comment lines are excluded: explaining the
           # rule is not breaking it.
           hits=$(grep -rn 'ShikhonBD' \
-                   apps/pwa/src apps/pwa/public/index.html \
-                   apps/pwa/public/index.legacy.html apps/pwa/public/offline.html \
+                   apps/pwa/src apps/pwa/public/app.html \
+                   apps/pwa/public/design.html apps/pwa/public/offline.html \
                    apps/pwa/public/manifest.webmanifest \
                  | grep -vE '^\s*[^:]+:[0-9]+:\s*(//|\*|<!--)' || true)
           if [ -n "$hits" ]; then
@@ -74,9 +83,9 @@ jobs:
           # The marketing site must keep saying who we are. A white-label
           # sweep that reached this file would silently un-brand the
           # company's own website, and nothing else would notice.
-          for f in apps/pwa/public/landing.html; do
+          for f in apps/pwa/public/index.html; do
             if ! grep -qi 'shikhonbd' "$f"; then
-              echo "::error file=$f::platform brand missing from a PLATFORM surface (D11) — landing.html is shikhonBD's own site and must stay branded"
+              echo "::error file=$f::platform brand missing from a PLATFORM surface (D11) — index.html is shikhonBD's own marketing site and must stay branded"
               exit 1
             fi
             echo "ok  $f carries the platform brand"

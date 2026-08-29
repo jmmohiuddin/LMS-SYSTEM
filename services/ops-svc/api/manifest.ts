@@ -15,11 +15,16 @@
  * outside any session, often before login, and it carries only signboard
  * fields.
  *
- * ── start_url carries the tenant ────────────────────────────────────────
+ * ── start_url points at /app, and carries the tenant ────────────────────
  * An installed icon launches at start_url with no query string of its own,
  * so `?tid=` is what tells a freshly-installed app which school it belongs
  * to on first run. Without it, an install performed before first login
  * would open a tenant-less app.
+ *
+ * The path is `/app` since R-1-A: "/" is the shikhonBD marketing site, and
+ * a school that installs its own app must land in the application, not on
+ * a page selling it. `scope` is narrowed to match, so the installed window
+ * keeps marketing links out of the app's own navigation context.
  *
  * ── Icons ───────────────────────────────────────────────────────────────
  * A tenant favicon is used when set. Otherwise the platform's generic
@@ -62,8 +67,8 @@ export function buildManifest(
   return {
     name,
     short_name: branding.shortName || name,
-    start_url: tenantId ? `/?tid=${encodeURIComponent(tenantId)}` : '/',
-    scope: '/',
+    start_url: tenantId ? `/app?tid=${encodeURIComponent(tenantId)}` : '/app',
+    scope: '/app',
     display: 'standalone',
     background_color: '#FFFFFF',
     theme_color: branding.primaryColor,

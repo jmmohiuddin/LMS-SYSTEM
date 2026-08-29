@@ -22,14 +22,41 @@
 # the ops function returned 403 to the PWA's product-event ingest, which
 # shares that dispatcher. See SCHEDULED_ENTRIES in scripts/build.mjs.
 
-# The PWA is a hash-router single page: every non-asset path has to return
-# index.html or a deep link like /#/routine 404s on a cold load. Listed
-# after the functions so /api/v1/* is claimed first.
+# Three surfaces, three addresses (R-1-A, master plan §1a):
+#
+#   /        the shikhonBD marketing site        index.html
+#   /app     the tenant management application   app.html
+#   /design  the Ata Ekta prototype              design.html
+#
+# Order matters — first match wins, and /api/v1/* is claimed earlier by the
+# functions' own `export const config = { path }`.
+#
+# The application is a HASH router, so /app#/routine needs no server route of
+# its own; /app/* is here only so a stray path segment still lands on the app
+# rather than on the marketing page.
 [[redirects]]
   from = "/offline"
   to = "/offline.html"
   status = 200
 
+[[redirects]]
+  from = "/app"
+  to = "/app.html"
+  status = 200
+
+[[redirects]]
+  from = "/app/*"
+  to = "/app.html"
+  status = 200
+
+[[redirects]]
+  from = "/design"
+  to = "/design.html"
+  status = 200
+
+# Everything else is the marketing site. This used to send every unmatched
+# path to the application, which is how the application came to own "/" —
+# see docs/PHASE_LOG.md R-1-A.
 [[redirects]]
   from = "/*"
   to = "/index.html"
@@ -45,6 +72,16 @@
 
 [[headers]]
   for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/app.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/design.html"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
 

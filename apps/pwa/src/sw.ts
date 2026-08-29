@@ -10,7 +10,7 @@
  */
 /// <reference lib="webworker" />
 import {
-  route, stalecaches, PRECACHE, CACHE_SHELL, type RouteDecision,
+  route, stalecaches, PRECACHE, CACHE_SHELL, APP_SHELL_URL, type RouteDecision,
 } from './sw-router.ts';
 
 declare const self: ServiceWorkerGlobalScope;
@@ -76,10 +76,16 @@ async function handle(req: Request, d: RouteDecision): Promise<Response> {
       try {
         return await fetch(req);
       } catch {
-        // No network: serve the shell so the app boots and hydrates from
+        // No network: serve the APP shell so it boots and hydrates from
         // IndexedDB. This is the difference between "works offline" and
         // "shows the browser's dinosaur".
-        return (await cache!.match('/')) ?? (await cache!.match(OFFLINE_URL)) ?? Response.error();
+        //
+        // APP_SHELL_URL, never '/': since R-1-A "/" is the marketing site,
+        // and a teacher who loses signal must get the attendance screen, not
+        // a page selling the product they are already using.
+        return (await cache!.match(APP_SHELL_URL))
+          ?? (await cache!.match(OFFLINE_URL))
+          ?? Response.error();
       }
     }
 
@@ -115,7 +121,7 @@ async function flushOutbox(): Promise<void> {
     return;
   }
   // No window open: wake one so the engine can run.
-  await self.clients.openWindow?.('/?flush=1').catch(() => undefined);
+  await self.clients.openWindow?.(`${APP_SHELL_URL}?flush=1`).catch(() => undefined);
 }
 
 export {};

@@ -50,8 +50,12 @@ describe('buildManifest', () => {
   test('start_url carries the tenant, so a fresh install knows its school', () => {
     // An installed icon launches with no query string of its own. Without
     // this, an install done before first login opens a tenant-less app.
-    assert.equal(buildManifest(A, 'tenant-a').start_url, '/?tid=tenant-a');
-    assert.equal(buildManifest(A, null).start_url, '/');
+    //
+    // The path is /app since R-1-A — "/" is the shikhonBD marketing site,
+    // and a school installing its own app must land in the application.
+    assert.equal(buildManifest(A, 'tenant-a').start_url, '/app?tid=tenant-a');
+    assert.equal(buildManifest(A, null).start_url, '/app');
+    assert.equal(buildManifest(A, 'tenant-a').scope, '/app');
   });
 
   test('uses the tenant icon when there is one, the platform icon otherwise', () => {

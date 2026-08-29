@@ -18,7 +18,8 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (২২৩+ টেস্ট)। **নতুন করে ভিত্তি বানানোর দরকার নেই।**
+এবং টেস্টেড (**৪৩২ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত)। **নতুন করে ভিত্তি
+বানানোর দরকার নেই।**
 
 যা নেই, সেটাই এই প্ল্যান — অগ্রাধিকার অনুযায়ী:
 
@@ -84,11 +85,20 @@ Platform attribution inside a tenant application is not forbidden, but it is a
 deliberate design decision (a discreet footer, say) — not something that arrives
 by a string nobody removed.
 
-**Current state — unresolved.** `/` serves `apps/pwa/public/index.html`, which is
-the Ata Ekta design mock-up, not the functional application; the real PWA is
-`index.legacy.html` and is linked from nowhere. Investigated and documented in
-[PHASE_LOG.md](PHASE_LOG.md) under `R-1-A`. Resolving it is a prerequisite for
-the pilot (R-8) and is the one open item this plan does not yet assign to a phase.
+**Current state — resolved (R-1-A, 2026-08-29).** The three surfaces now live at
+three addresses, Option B of the three set out in [PHASE_LOG.md](PHASE_LOG.md):
+
+| Address | File | Surface | Brand |
+|---|---|---|---|
+| `/` | `apps/pwa/public/index.html` | shikhonBD marketing site | **platform** |
+| `/app` | `apps/pwa/public/app.html` | the tenant application | white-labelled |
+| `/design` | `apps/pwa/public/design.html` | the Ata Ekta prototype | white-labelled |
+
+Routed identically on both hosts (`vercel.json` rewrites, `netlify.toml`
+redirects declared before the catch-all). The service worker treats only
+`/app*` navigations as the application, so it never answers the marketing site
+with the app's HTML; `PRECACHE` and the offline fallback point at `/app`; the
+web manifest installs with `start_url` and `scope` of `/app`.
 
 ---
 

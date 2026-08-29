@@ -23,11 +23,44 @@ export interface RouteDecision {
   reason: string;
 }
 
-export const CACHE_SHELL = 'shikhon-shell-v1';
+// v2: R-1-A. Bumped so every returning device drops the v1 shell on activate
+// (see stalecaches()). v1 cached "/" as the app shell — which is now the
+// marketing site — and had cached an unhashed app.js under a cache-first
+// policy that never revalidated. Both are wrong to keep.
+export const CACHE_SHELL = 'shikhon-shell-v2';
 export const CACHE_MEDIA = 'shikhon-media-v1';
 export const CACHE_DATA = 'shikhon-data-v1';
 
+/**
+ * Where the tenant application lives (R-1-A, master plan §1a).
+ *
+ * "/" is the shikhonBD marketing site and "/design" is the prototype; only
+ * this path is the application. It is the app-shell fallback, the precache
+ * entry, and what the worker opens when it wakes with no window.
+ */
+export const APP_SHELL_URL = '/app';
+
+/** Does this path belong to the tenant application? */
+export function isAppPath(path: string): boolean {
+  return path === '/app' || path.startsWith('/app/') || path === '/app.html';
+}
+
 const IMMUTABLE = /\/_next\/static\/|\/assets\/|\.(?:woff2|css|js|svg|png|webp|ico)$/;
+
+/**
+ * Entry assets that are NOT content-hashed, so their URL cannot tell us
+ * whether the bytes changed.
+ *
+ * They used to match IMMUTABLE (both end in .js/.css) and were therefore
+ * cached first and never revalidated — a deploy did not reach a returning
+ * device until the cache name changed, which is not something a normal
+ * release does. Local verification of R-1 was misled by this twice.
+ *
+ * Stale-while-revalidate is the correct trade for them: the cached copy is
+ * served instantly (offline still works, first paint is unchanged) and the
+ * network copy replaces it in the background, so the NEXT load is current.
+ */
+const UNHASHED_ENTRY_ASSETS = new Set(['/app.js', '/app.css', '/manifest.webmanifest']);
 
 export function route(request: { url: string; method: string; mode?: string }): RouteDecision {
   const url = new URL(request.url);
@@ -38,10 +71,18 @@ export function route(request: { url: string; method: string; mode?: string }): 
     return { strategy: 'network-only', reason: 'mutation — the outbox owns durability' };
   }
 
-  // Navigations render the app shell; the page hydrates from IndexedDB, so a
-  // cold start with no network still shows a working screen.
+  // Navigations.
+  //
+  // The worker is registered from /app.html with the default scope "/", so it
+  // sees navigations to the marketing site and the prototype too. Only the
+  // application gets the offline app-shell treatment: answering a request for
+  // "/" with the app's HTML would put the application where the marketing
+  // site belongs, which is the exact confusion R-1-A exists to end.
   if (request.mode === 'navigate') {
-    return { strategy: 'app-shell', cache: CACHE_SHELL, reason: 'navigation' };
+    if (isAppPath(path)) {
+      return { strategy: 'app-shell', cache: CACHE_SHELL, reason: 'app navigation' };
+    }
+    return { strategy: 'network-only', reason: 'not the app — marketing and prototype are ordinary pages' };
   }
 
   // Authoritative data must never be stale-served.
@@ -89,6 +130,17 @@ export function route(request: { url: string; method: string; mode?: string }): 
     };
   }
 
+  // The entry bundles carry no hash, so cache-first would pin a device to
+  // whatever it downloaded first. Checked BEFORE the IMMUTABLE test, which
+  // they would otherwise match on their extension alone.
+  if (UNHASHED_ENTRY_ASSETS.has(path)) {
+    return {
+      strategy: 'stale-while-revalidate',
+      cache: CACHE_SHELL,
+      reason: 'entry asset, not content-hashed — instant from cache, current on the next load',
+    };
+  }
+
   // Content-hashed assets are immutable by construction.
   if (IMMUTABLE.test(path)) {
     return { strategy: 'cache-first', cache: CACHE_SHELL, reason: 'content-hashed, immutable' };
@@ -107,7 +159,9 @@ export function route(request: { url: string; method: string; mode?: string }): 
 // worker at all (the font/sprite files this once listed were never built).
 // Bangla text renders from the device's system Noto Sans Bengali instead.
 export const PRECACHE: readonly string[] = [
-  '/',
+  // The APPLICATION, not "/" — "/" is the marketing site since R-1-A, and
+  // precaching it would make the offline fallback show a school a sales page.
+  APP_SHELL_URL,
   '/offline',
   '/app.css',
   '/app.js',

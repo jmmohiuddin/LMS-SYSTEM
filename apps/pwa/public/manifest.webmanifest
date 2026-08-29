@@ -1,7 +1,8 @@
 {
   "name": "শিক্ষা প্রতিষ্ঠান",
   "short_name": "প্রতিষ্ঠান",
-  "start_url": "/",
+  "start_url": "/app",
+  "scope": "/app",
   "display": "standalone",
   "background_color": "#FFFFFF",
   "theme_color": "#D23B2E",

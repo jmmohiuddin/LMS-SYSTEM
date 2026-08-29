@@ -30,8 +30,24 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 | 8 | [docs/08-CREDENTIAL-ROTATION.md](docs/08-CREDENTIAL-ROTATION.md) | Credential rotation ledger and the automated secret checks |
 | 9 | [docs/09-PRD-AUDIT.md](docs/09-PRD-AUDIT.md) | Coverage of the PRD's 128 prioritised requirements, audited against the repository |
 | 10 | [docs/10-NETLIFY.md](docs/10-NETLIFY.md) | Netlify as a second deployment target sharing every handler |
-| 11 | [docs/11-MASTER-PLAN.md](docs/11-MASTER-PLAN.md) | **The plan of record**: decisions D1–D11, the R-0…R-9 roadmap, and what not to do |
+| 11 | [docs/11-MASTER-PLAN.md](docs/11-MASTER-PLAN.md) | **The plan of record**: decisions D1–D12, the R-0…R-9 roadmap, and what not to do |
 | — | [docs/PHASE_LOG.md](docs/PHASE_LOG.md) | **Start here.** Chronological history of everything that has been built, why, and what is still open |
+
+---
+
+## Surfaces
+
+One deployment, three addresses (R-1-A; master plan §1a):
+
+| Address | File | What it is | Brand |
+|---|---|---|---|
+| `/` | `apps/pwa/public/index.html` | The shikhonBD / eShikhon marketing site | **platform** |
+| `/app` | `apps/pwa/public/app.html` | The tenant management PWA — the actual product | white-labelled per institution |
+| `/design` | `apps/pwa/public/design.html` | The Ata Ekta design prototype, kept as a reference | — |
+
+A school reaches its own application through its own link, `/app?tid=<tenant-id>`,
+and later through its own subdomain (R-7). There is no school-picker, by decision
+D12: it would enumerate the customer list to anyone who loads the page.
 
 ---
 

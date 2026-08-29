@@ -1756,8 +1756,8 @@ function buildManifest(branding, tenantId, locale = "bn") {
   return {
     name,
     short_name: branding.shortName || name,
-    start_url: tenantId ? `/?tid=${encodeURIComponent(tenantId)}` : "/",
-    scope: "/",
+    start_url: tenantId ? `/app?tid=${encodeURIComponent(tenantId)}` : "/app",
+    scope: "/app",
     display: "standalone",
     background_color: "#FFFFFF",
     theme_color: branding.primaryColor,

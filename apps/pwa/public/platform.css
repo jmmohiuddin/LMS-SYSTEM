@@ -1,0 +1,84 @@
+/* shikhonBD platform console.
+   Loaded after app.css, which supplies the tokens, buttons, fields, tables
+   and state helpers. Only what the console adds lives here — a console that
+   forked the design system would drift from the product it operates. */
+
+/* --color-bg / --color-text are the tokens the design system actually
+   defines and that dark mode redefines. --c-bg looks like it belongs to the
+   same family and is not defined anywhere — see the two notes in app.css. */
+.platform { background: var(--color-bg); color: var(--color-text); }
+.platform-shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+.platform-bar {
+  display: flex; align-items: baseline; gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--c-line);
+  background: var(--c-surface);
+}
+.platform-brand { font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em; }
+.platform-sub   { font-size: var(--text-2xs); color: var(--c-ink-2); }
+.platform-bar .btn-ghost { margin-left: auto; }
+
+.platform-main { flex: 1; padding-bottom: var(--s-6); max-width: 60rem; width: 100%; }
+
+.platform-title { margin: var(--s-5) var(--s-4) var(--s-1); font-size: var(--text-2xl);
+                  letter-spacing: -0.01em; }
+.platform-head  { display: flex; align-items: center; justify-content: space-between;
+                  gap: var(--s-3); flex-wrap: wrap; padding-right: var(--s-4); }
+.platform-search { padding: 0 var(--s-4) var(--s-2); }
+
+/* An inline primary button: the shared .btn-primary is full-width because on
+   a phone it is the only action on the screen. Here it sits beside others. */
+.btn-inline { width: auto; padding: 0 var(--s-4); }
+
+.platform-state { margin: var(--s-3) var(--s-4); padding: var(--s-4) 0 var(--s-3); }
+.platform-state .section-heading { margin-top: 0; }
+
+/* State is carried by the glyph and the words as well as the colour (F-812):
+   ✓ 7 · … and ⚠ 0 · required. A screenshot in greyscale still reads. */
+.state-ok      { color: var(--c-ink); }
+.state-pending { color: var(--c-warn); }
+
+.mono { font-family: ui-monospace, monospace; font-size: var(--text-2xs);
+        overflow-wrap: anywhere; }
+
+/* The activation code is read aloud down a phone line, so it is set large,
+   monospaced and widely tracked — the difference between B and 8 has to
+   survive a bad connection. */
+.platform-code {
+  margin: var(--s-3) var(--s-4);
+  font-family: ui-monospace, monospace;
+  font-size: var(--text-xl); font-weight: 700; letter-spacing: 0.18em;
+  padding: var(--s-3); text-align: center;
+  border: 1px dashed var(--c-line-strong, var(--c-line));
+  border-radius: var(--radius);
+  background: var(--c-surface);
+}
+
+/* The step rail. Horizontal and scrollable rather than wrapped: nine labels
+   wrap to three lines on a laptop and push the form below the fold. */
+.wizard-steps {
+  display: flex; gap: var(--s-1); list-style: none;
+  margin: var(--s-3) 0 0; padding: 0 var(--s-4) var(--s-2);
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.wizard-steps::-webkit-scrollbar { display: none; }
+.wizard-step {
+  flex: none; white-space: nowrap;
+  padding: 4px var(--s-2); border-radius: 999px;
+  font-size: var(--text-2xs); font-weight: 600;
+  color: var(--c-ink-2); background: var(--c-surface);
+  border: 1px solid var(--c-line);
+}
+.wizard-step.is-done    { color: var(--c-ink); }
+.wizard-step.is-current { color: #fff; background: var(--c-primary); border-color: var(--c-primary); }
+
+.field-hint { font-size: var(--text-3xs); color: var(--c-ink-2); }
+.check-inline { display: inline-flex; align-items: center; gap: 4px;
+                margin-right: var(--s-3); font-size: var(--text-sm); }
+.platform fieldset { border: 0; margin: 0; padding: 0; }
+.platform legend { font-size: var(--text-2xs); color: var(--c-ink-2); padding: 0; }
+
+.status-trial     { color: var(--c-warn); }
+.status-active    { color: var(--c-ok, var(--c-ink)); }
+.status-suspended { color: var(--c-danger, var(--c-warn)); }

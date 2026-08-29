@@ -51,6 +51,7 @@ import {
   cachedBranding,
   fetchFullBranding,
   fetchPublicBranding,
+  tenantKeyFromHost,
 } from './branding.ts';
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
 import { Tracker } from './track.ts';
@@ -75,7 +76,22 @@ const apiBase = location.origin;
 // belongs to. login-view.ts falls back to an inline field if this is empty.
 const tenantIdFromUrl = params.get('tid') ?? '';
 if (tenantIdFromUrl) localStorage.setItem('shikhon_tid', tenantIdFromUrl);
-const tenantId = tenantIdFromUrl || localStorage.getItem('shikhon_tid') || '';
+
+// R-7.12. A school reached at monipur-high-school.shikhonbd.com carries its
+// key in the hostname. `?tid=` still wins: it is printed on admission slips
+// and baked into installed PWAs, so a subdomain that overrode it would break
+// every device already in a school's hands. The two agree because
+// `app.public_branding()` resolves a slug and a tenant id to the same row —
+// there is no third mechanism, which is what D12 requires.
+//
+// It is NOT written to localStorage: the hostname supplies it on every visit,
+// and caching it would leave the wrong school's key on a device that later
+// opened a different subdomain.
+const tenantKeyFromSubdomain = tenantKeyFromHost();
+const tenantId = tenantIdFromUrl
+  || localStorage.getItem('shikhon_tid')
+  || tenantKeyFromSubdomain
+  || '';
 
 // 60 placeholder students — used only until a real roster has been picked
 // in the roster view (see roster-view.ts's shikhon_last_roster cache).

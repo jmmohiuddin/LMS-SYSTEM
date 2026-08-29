@@ -2056,9 +2056,13 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 
 .brand-color-row { margin-top: var(--s-3); }
 .brand-color-inputs { display: flex; gap: var(--s-2); align-items: center; }
+/* --c-bg is not a defined token — the same bug the .chat-form comment above
+   records, still present here in a third place. A swatch on a transparent
+   background shows whatever is behind it, which for a colour PICKER is the
+   one thing it must not do. */
 .brand-color-swatch { width: 48px; height: var(--tap-min); padding: 2px;
                       border: 1px solid var(--c-line); border-radius: var(--radius-md);
-                      background: var(--c-bg); cursor: pointer; flex: none; }
+                      background: var(--color-bg); cursor: pointer; flex: none; }
 .brand-color-hex { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
 /* A contrast warning is advice, not a refusal — a school may have a light
    brand colour and a good reason. It reads as a caution, not an error. */

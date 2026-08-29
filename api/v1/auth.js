@@ -1779,9 +1779,6 @@ async function handler4(req, res) {
   }
 }
 
-// services/identity-svc/api/activate.ts
-import { createHmac as createHmac2, randomBytes as randomBytes2 } from "node:crypto";
-
 // packages/server-core/src/auth.ts
 async function authenticate(req) {
   const authHeader = header(req, "authorization");
@@ -1799,13 +1796,10 @@ function requireRole(claims, allowed) {
   }
 }
 
-// services/identity-svc/api/activate.ts
-var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var ISSUER_ROLES = ["principal", "school_owner", "academic_coordinator", "class_teacher"];
+// services/identity-svc/src/activation.ts
+import { createHmac as createHmac2, randomBytes as randomBytes2 } from "node:crypto";
 var ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ2345678";
 var CODE_LEN = 8;
-var REFRESH_TTL_DAYS3 = 30;
-var ACCESS_TTL3 = "15m";
 function generateCode() {
   const bytes = randomBytes2(CODE_LEN);
   let out = "";
@@ -1817,6 +1811,12 @@ function codeHash(code) {
   const norm = code.toUpperCase().replace(/[^A-Z2-9]/g, "").replace(/0/g, "O").replace(/O/g, "Q").replace(/[1IL]/g, "J");
   return createHmac2("sha256", pepper).update(norm).digest();
 }
+
+// services/identity-svc/api/activate.ts
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var ISSUER_ROLES = ["principal", "school_owner", "academic_coordinator", "class_teacher"];
+var REFRESH_TTL_DAYS3 = 30;
+var ACCESS_TTL3 = "15m";
 async function handler5(req, res) {
   const cors = corsHeaders();
   if (req.method === "OPTIONS") {

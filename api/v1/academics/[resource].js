@@ -2968,7 +2968,7 @@ async function handler14(req, res) {
   }
 }
 
-// services/academics-svc/api/import.ts
+// services/academics-svc/src/import-run.ts
 import { createHash } from "node:crypto";
 
 // packages/server-core/src/csv.ts
@@ -3430,175 +3430,291 @@ function validateStudents(table, snap) {
   return { headers: table.headers, rowsRead: table.rows.length, valid, errors };
 }
 
-// services/academics-svc/api/import.ts
-var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var IMPORT_ROLES = ["principal", "school_owner", "academic_coordinator"];
+// services/academics-svc/src/teacher-import.ts
+var COLUMNS2 = {
+  nameBn: ["name_bn", "name", "\u09A8\u09BE\u09AE"],
+  nameEn: ["name_en", "english_name"],
+  employeeCode: ["employee_code", "employee_id", "staff_id", "code", "\u0986\u0987\u09A1\u09BF"],
+  phone: ["phone", "mobile", "phone_e164", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2"],
+  email: ["email", "\u0987\u09AE\u09C7\u0987\u09B2"],
+  designationBn: ["designation", "post", "\u09AA\u09A6\u09AC\u09BF"],
+  roleCode: ["role", "role_code", "\u09AD\u09C2\u09AE\u09BF\u0995\u09BE"],
+  joiningDate: ["joining_date", "joined", "\u09AF\u09CB\u0997\u09A6\u09BE\u09A8"]
+};
+var IMPORTABLE_ROLES = /* @__PURE__ */ new Set(["subject_teacher", "class_teacher", "dept_head"]);
+var ROLE_ALIASES = {
+  "subject_teacher": "subject_teacher",
+  "class_teacher": "class_teacher",
+  "dept_head": "dept_head",
+  "\u09AC\u09BF\u09B7\u09AF\u09BC \u09B6\u09BF\u0995\u09CD\u09B7\u0995": "subject_teacher",
+  "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09B6\u09BF\u0995\u09CD\u09B7\u0995": "class_teacher",
+  "\u09AC\u09BF\u09AD\u09BE\u0997\u09C0\u09AF\u09BC \u09AA\u09CD\u09B0\u09A7\u09BE\u09A8": "dept_head",
+  "teacher": "subject_teacher",
+  "\u09B6\u09BF\u0995\u09CD\u09B7\u0995": "subject_teacher"
+};
+function mapHeaders2(headers) {
+  const norm = (h) => h.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const byNorm = new Map(headers.map((h) => [norm(h), h]));
+  const found = {};
+  for (const [field, aliases] of Object.entries(COLUMNS2)) {
+    for (const a of aliases) {
+      const hit = byNorm.get(norm(a));
+      if (hit !== void 0) {
+        found[field] = hit;
+        break;
+      }
+    }
+  }
+  return found;
+}
+function validateTeachers(table, snap) {
+  const map = mapHeaders2(table.headers);
+  const errors = [];
+  const valid = [];
+  const missing = [];
+  if (!map.nameBn) missing.push("\u09A8\u09BE\u09AE (name_bn)");
+  if (!map.employeeCode) missing.push("\u0986\u0987\u09A1\u09BF (employee_code)");
+  if (missing.length > 0) {
+    return {
+      headers: table.headers,
+      rowsRead: table.rows.length,
+      valid: [],
+      errors: [{
+        lineNo: 1,
+        rollNo: "",
+        field: "header",
+        messageBn: `\u09AB\u09BE\u0987\u09B2\u09C7 \u0986\u09AC\u09B6\u09CD\u09AF\u0995 \u0995\u09B2\u09BE\u09AE \u09A8\u09C7\u0987: ${missing.join(", ")}`
+      }]
+    };
+  }
+  for (const r of table.ragged) {
+    errors.push({
+      lineNo: r.lineNo,
+      rollNo: "",
+      field: "row",
+      messageBn: `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${r.got}\u099F\u09BF \u0998\u09B0, ${r.expected}\u099F\u09BF \u09B9\u0993\u09AF\u09BC\u09BE\u09B0 \u0995\u09A5\u09BE`
+    });
+  }
+  const seenCodes = /* @__PURE__ */ new Set();
+  const seenPhones = /* @__PURE__ */ new Set();
+  for (const row of table.rows) {
+    const cell = (f) => {
+      const h = map[f];
+      return h ? (row.cells[h] ?? "").trim() : "";
+    };
+    const fail = (field, messageBn) => {
+      errors.push({ lineNo: row.lineNo, rollNo: cell("employeeCode"), field, messageBn });
+    };
+    const nameBn = cell("nameBn");
+    if (!nameBn) {
+      fail("name_bn", "\u09A8\u09BE\u09AE \u09A8\u09C7\u0987");
+      continue;
+    }
+    if (nameBn.length > 120) {
+      fail("name_bn", "\u09A8\u09BE\u09AE \u0985\u09A8\u09C7\u0995 \u09AC\u09A1\u09BC");
+      continue;
+    }
+    const employeeCode = cell("employeeCode");
+    if (!employeeCode) {
+      fail("employee_code", "\u0995\u09B0\u09CD\u09AE\u099A\u09BE\u09B0\u09C0 \u0986\u0987\u09A1\u09BF \u09A8\u09C7\u0987");
+      continue;
+    }
+    const codeKey = employeeCode.toLowerCase();
+    if (seenCodes.has(codeKey)) {
+      fail("employee_code", "\u098F\u0987 \u0986\u0987\u09A1\u09BF \u09AB\u09BE\u0987\u09B2\u09C7\u0987 \u09A6\u09C1\u0987\u09AC\u09BE\u09B0 \u0986\u099B\u09C7");
+      continue;
+    }
+    if (snap.takenCodes.has(codeKey)) {
+      fail("employee_code", "\u098F\u0987 \u0986\u0987\u09A1\u09BF \u0986\u0997\u09C7 \u09A5\u09C7\u0995\u09C7\u0987 \u09AC\u09CD\u09AF\u09AC\u09B9\u09C3\u09A4");
+      continue;
+    }
+    const rawPhone = cell("phone");
+    let phone = null;
+    if (rawPhone) {
+      phone = normalizePhone(rawPhone);
+      if (!phone) {
+        fail("phone", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC");
+        continue;
+      }
+      if (seenPhones.has(phone)) {
+        fail("phone", "\u098F\u0987 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AB\u09BE\u0987\u09B2\u09C7\u0987 \u09A6\u09C1\u0987\u09AC\u09BE\u09B0 \u0986\u099B\u09C7");
+        continue;
+      }
+      if (snap.takenPhones.has(phone)) {
+        fail("phone", "\u098F\u0987 \u09A8\u09AE\u09CD\u09AC\u09B0 \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u0986\u0997\u09C7 \u09A5\u09C7\u0995\u09C7\u0987 \u0986\u099B\u09C7");
+        continue;
+      }
+    }
+    const email = cell("email") || null;
+    if (!phone && !email) {
+      fail("phone", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2 \u09AC\u09BE \u0987\u09AE\u09C7\u0987\u09B2 \u2014 \u0985\u09A8\u09CD\u09A4\u09A4 \u098F\u0995\u099F\u09BF \u09A6\u09B0\u0995\u09BE\u09B0");
+      continue;
+    }
+    const rawRole = cell("roleCode").trim().toLowerCase();
+    const roleCode = rawRole ? ROLE_ALIASES[rawRole] ?? rawRole : "subject_teacher";
+    if (!IMPORTABLE_ROLES.has(roleCode)) {
+      fail("role", "\u09AD\u09C2\u09AE\u09BF\u0995\u09BE \u09B6\u09C1\u09A7\u09C1 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u2014 \u09AA\u09CD\u09B0\u09A7\u09BE\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995/\u0986\u0987\u099F\u09BF \u0985\u09CD\u09AF\u09BE\u09A1\u09AE\u09BF\u09A8 \u0986\u09B2\u09BE\u09A6\u09BE\u09AD\u09BE\u09AC\u09C7 \u09A4\u09C8\u09B0\u09BF \u09B9\u09AF\u09BC");
+      continue;
+    }
+    seenCodes.add(codeKey);
+    if (phone) seenPhones.add(phone);
+    valid.push({
+      lineNo: row.lineNo,
+      nameBn,
+      // `users.full_name_en` is NOT NULL, so a file without an English name
+      // still has to produce one. The Bangla name is a truthful fallback;
+      // an empty string would fail the insert after validation passed.
+      nameEn: cell("nameEn") || nameBn,
+      employeeCode,
+      phone,
+      email,
+      designationBn: cell("designationBn") || null,
+      roleCode,
+      joiningDate: cell("joiningDate") || null
+    });
+  }
+  errors.sort((a, b) => a.lineNo - b.lineNo);
+  return { headers: table.headers, rowsRead: table.rows.length, valid, errors };
+}
+
+// services/academics-svc/src/import-run.ts
 var MAX_CSV_BYTES = 1e6;
 var OPTIONAL_SUBJECT_FROM = 9;
+var ImportError = class extends Error {
+  status;
+  code;
+  constructor(status, code, message2) {
+    super(message2);
+    this.status = status;
+    this.code = code;
+  }
+};
 function digestOf(rows) {
   return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 }
-async function handler15(req, res) {
-  const cors = corsHeaders();
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, cors);
-    res.end();
-    return;
-  }
-  if (req.method !== "POST") {
-    json(res, 405, { error: "method_not_allowed" }, cors);
-    return;
-  }
-  try {
-    const claims = await authenticate(req);
-    requireRole(claims, IMPORT_ROLES);
-    const body = await readJson(req);
-    if (body.kind !== "student") {
-      throw new HttpError(400, "kind must be 'student'", "unsupported_kind");
-    }
-    const academicYearId = body.academicYearId ?? "";
-    if (!UUID_RE13.test(academicYearId)) {
-      throw new HttpError(400, "academicYearId must be a valid uuid", "invalid_year");
-    }
-    const csv = body.csv ?? "";
-    if (!csv.trim()) throw new HttpError(400, "csv is empty", "empty_file");
-    if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
-      throw new HttpError(413, "file is larger than 1 MB", "file_too_large");
-    }
-    const table = parseCsv(csv);
-    const digest = digestOf(table.rows.map((r) => r.raw));
-    if (body.commit && body.digest !== digest) {
-      throw new HttpError(
-        409,
-        "this file is not the one that was validated \u2014 run the check again",
-        "digest_mismatch"
-      );
-    }
-    const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
-    const result = await db.withTenant(ctx, async (client) => {
-      const sectionRows = await client.query(
-        `SELECT c.level_no, s.name, s.id
-           FROM sections s JOIN classes c ON c.id = s.class_id
-          WHERE s.academic_year_id = $1`,
-        [academicYearId]
-      );
-      const sections = /* @__PURE__ */ new Map();
-      for (const r of sectionRows.rows) {
-        if (!sections.has(r.level_no)) sections.set(r.level_no, /* @__PURE__ */ new Map());
-        sections.get(r.level_no).set(r.name, r.id);
-      }
-      const subjectRows = await client.query(
-        `SELECT id, name_bn, nctb_code FROM subjects`
-      );
-      const subjects = /* @__PURE__ */ new Map();
-      for (const s of subjectRows.rows) {
-        subjects.set(s.name_bn.trim().toLowerCase(), s.id);
-        if (s.nctb_code) subjects.set(s.nctb_code.trim().toLowerCase(), s.id);
-      }
-      const rollRows = await client.query(
-        `SELECT c.level_no, s.name, e.roll_no
-           FROM enrolments e
-           JOIN sections s ON s.id = e.section_id
-           JOIN classes  c ON c.id = s.class_id
-          WHERE e.academic_year_id = $1 AND e.status = 'active'`,
-        [academicYearId]
-      );
-      const takenRolls = new Set(
-        rollRows.rows.map((r) => `${r.level_no}|${r.name}|${r.roll_no}`)
-      );
-      const templateRows = await client.query(
-        `SELECT DISTINCT c.level_no
-           FROM subject_templates st
-           JOIN classes c ON c.id = st.class_id
-           JOIN curriculum_schemes cs ON cs.id = st.curriculum_scheme_id
-          WHERE cs.academic_year_id = $1`,
-        [academicYearId]
-      );
-      const snap = {
-        sections,
-        subjects,
-        takenRolls,
-        templatedClasses: new Set(templateRows.rows.map((r) => r.level_no)),
-        optionalSubjectFrom: OPTIONAL_SUBJECT_FROM
-      };
-      const checked = validateStudents(table, snap);
-      let valid = checked.valid;
-      const errors = [...checked.errors];
-      if (!piiCryptoAvailable()) {
-        const withBrn = valid.filter((r) => r.birthRegNo !== null);
-        if (withBrn.length > 0) {
-          for (const r of withBrn) {
-            errors.push({
-              lineNo: r.lineNo,
-              rollNo: String(r.rollNo),
-              field: "birth_reg_no",
-              messageBn: "\u099C\u09A8\u09CD\u09AE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u09A8\u09AE\u09CD\u09AC\u09B0 \u098F\u0996\u09A8 \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE \u2014 \u0995\u09B2\u09BE\u09AE\u099F\u09BF \u09AC\u09BE\u09A6 \u09A6\u09BF\u09AF\u09BC\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8"
-            });
-          }
-          valid = valid.filter((r) => r.birthRegNo === null);
-        }
-      }
-      errors.sort((a, b) => a.lineNo - b.lineNo);
-      const counts = {
-        rowsRead: checked.rowsRead,
-        rowsValid: valid.length,
-        rowsRejected: errors.length
-      };
-      if (!body.commit) {
-        return {
-          ...counts,
-          digest,
-          rowsImported: 0,
-          batchId: null,
-          errors,
-          // §10.2: "the error list is downloadable so it can be fixed in
-          // the source spreadsheet". Built here rather than in the browser
-          // so the file the operator opens is byte-identical to the one
-          // the server judged.
-          errorCsv: errors.length > 0 ? toCsv(
-            ["line", "roll", "field", "reason"],
-            errors.map((e) => ({
-              line: String(e.lineNo),
-              roll: e.rollNo,
-              field: e.field,
-              reason: e.messageBn
-            }))
-          ) : null
-        };
-      }
-      const imported = await importStudents(client, valid, academicYearId, claims.tid);
-      const batch = await client.query(
-        `INSERT INTO import_batches
-           (tenant_id, kind, academic_year_id, file_name, file_digest,
-            rows_read, rows_valid, rows_rejected, rows_imported,
-            status, started_by, completed_at)
-         VALUES (app.current_tenant(), 'student', $1, $2, $3, $4, $5, $6, $7,
-                 'imported', $8, now())
-         RETURNING id`,
-        [
-          academicYearId,
-          body.fileName ?? null,
-          digest,
-          counts.rowsRead,
-          counts.rowsValid,
-          counts.rowsRejected,
-          imported,
-          claims.sub
-        ]
-      );
-      return { ...counts, digest, rowsImported: imported, batchId: batch.rows[0].id, errors, errorCsv: null };
-    });
-    json(res, 200, result, cors);
-  } catch (err) {
-    if (err instanceof HttpError) {
-      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
-      return;
-    }
-    json(res, 500, { error: "import_failed" }, cors);
+function errorCsvFor(errors) {
+  return errors.length > 0 ? toCsv(
+    ["line", "roll", "field", "reason"],
+    errors.map((e) => ({
+      line: String(e.lineNo),
+      roll: e.rollNo,
+      field: e.field,
+      reason: e.messageBn
+    }))
+  ) : null;
+}
+function guardFile(csv) {
+  if (!csv.trim()) throw new ImportError(400, "empty_file", "csv is empty");
+  if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
+    throw new ImportError(413, "file_too_large", "file is larger than 1 MB");
   }
 }
-async function importStudents(client, rows, academicYearId, tenantId) {
+async function runStudentImport(client, o) {
+  guardFile(o.csv);
+  const table = parseCsv(o.csv);
+  const digest = digestOf(table.rows.map((r) => r.raw));
+  if (o.commit && o.digest !== digest) {
+    throw new ImportError(
+      409,
+      "digest_mismatch",
+      "this file is not the one that was validated \u2014 run the check again"
+    );
+  }
+  const sectionRows = await client.query(
+    `SELECT c.level_no, s.name, s.id
+       FROM sections s JOIN classes c ON c.id = s.class_id
+      WHERE s.academic_year_id = $1`,
+    [o.academicYearId]
+  );
+  const sections = /* @__PURE__ */ new Map();
+  for (const r of sectionRows.rows) {
+    if (!sections.has(r.level_no)) sections.set(r.level_no, /* @__PURE__ */ new Map());
+    sections.get(r.level_no).set(r.name, r.id);
+  }
+  const subjectRows = await client.query(
+    `SELECT id, name_bn, nctb_code FROM subjects`
+  );
+  const subjects = /* @__PURE__ */ new Map();
+  for (const s of subjectRows.rows) {
+    subjects.set(s.name_bn.trim().toLowerCase(), s.id);
+    if (s.nctb_code) subjects.set(s.nctb_code.trim().toLowerCase(), s.id);
+  }
+  const rollRows = await client.query(
+    `SELECT c.level_no, s.name, e.roll_no
+       FROM enrolments e
+       JOIN sections s ON s.id = e.section_id
+       JOIN classes  c ON c.id = s.class_id
+      WHERE e.academic_year_id = $1 AND e.status = 'active'`,
+    [o.academicYearId]
+  );
+  const takenRolls = new Set(
+    rollRows.rows.map((r) => `${r.level_no}|${r.name}|${r.roll_no}`)
+  );
+  const templateRows = await client.query(
+    `SELECT DISTINCT c.level_no
+       FROM subject_templates st
+       JOIN classes c ON c.id = st.class_id
+       JOIN curriculum_schemes cs ON cs.id = st.curriculum_scheme_id
+      WHERE cs.academic_year_id = $1`,
+    [o.academicYearId]
+  );
+  const snap = {
+    sections,
+    subjects,
+    takenRolls,
+    templatedClasses: new Set(templateRows.rows.map((r) => r.level_no)),
+    optionalSubjectFrom: OPTIONAL_SUBJECT_FROM
+  };
+  const checked = validateStudents(table, snap);
+  let valid = checked.valid;
+  const errors = [...checked.errors];
+  if (!piiCryptoAvailable()) {
+    const withBrn = valid.filter((r) => r.birthRegNo !== null);
+    for (const r of withBrn) {
+      errors.push({
+        lineNo: r.lineNo,
+        rollNo: String(r.rollNo),
+        field: "birth_reg_no",
+        messageBn: "\u099C\u09A8\u09CD\u09AE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u09A8\u09AE\u09CD\u09AC\u09B0 \u098F\u0996\u09A8 \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE \u2014 \u0995\u09B2\u09BE\u09AE\u099F\u09BF \u09AC\u09BE\u09A6 \u09A6\u09BF\u09AF\u09BC\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8"
+      });
+    }
+    valid = valid.filter((r) => r.birthRegNo === null);
+  }
+  errors.sort((a, b) => a.lineNo - b.lineNo);
+  const counts = {
+    rowsRead: checked.rowsRead,
+    rowsValid: valid.length,
+    rowsRejected: errors.length
+  };
+  if (!o.commit) {
+    return { ...counts, digest, rowsImported: 0, batchId: null, errors, errorCsv: errorCsvFor(errors) };
+  }
+  const imported = await writeStudents(client, valid, o.academicYearId, o.tenantId);
+  const batch = await client.query(
+    `INSERT INTO import_batches
+       (tenant_id, kind, academic_year_id, file_name, file_digest,
+        rows_read, rows_valid, rows_rejected, rows_imported,
+        status, started_by, completed_at)
+     VALUES (app.current_tenant(), 'student', $1, $2, $3, $4, $5, $6, $7,
+             'imported', $8, now())
+     RETURNING id`,
+    [
+      o.academicYearId,
+      o.fileName ?? null,
+      digest,
+      counts.rowsRead,
+      counts.rowsValid,
+      counts.rowsRejected,
+      imported,
+      o.userId
+    ]
+  );
+  return { ...counts, digest, rowsImported: imported, batchId: batch.rows[0].id, errors, errorCsv: null };
+}
+function studentCodeFor(userId) {
+  return `STU-${userId.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+async function writeStudents(client, rows, academicYearId, tenantId) {
   const guardianByPhone = /* @__PURE__ */ new Map();
   let imported = 0;
   for (const r of rows) {
@@ -3620,8 +3736,8 @@ async function importStudents(client, rows, academicYearId, tenantId) {
         await client.query(
           // scope_type is CHECK IN (tenant, department, class, section) and
           // NULL-permissive. A guardian's role is scoped to their own
-          // children, which is none of those, so it stays unset rather
-          // than being mislabelled as tenant-wide.
+          // children, which is none of those, so it stays unset rather than
+          // being mislabelled as tenant-wide.
           `INSERT INTO user_roles (tenant_id, user_id, role_code)
            VALUES (app.current_tenant(), $1, 'guardian')
            ON CONFLICT DO NOTHING`,
@@ -3636,6 +3752,14 @@ async function importStudents(client, rows, academicYearId, tenantId) {
       [r.nameBn, r.nameEn, r.gender, r.dateOfBirth]
     );
     const studentId = student.rows[0].id;
+    await client.query(
+      `INSERT INTO student_profiles
+         (user_id, tenant_id, student_code, admission_date, admission_class,
+          religion, lifecycle_status)
+       VALUES ($1, app.current_tenant(), $2, CURRENT_DATE, $3, $4, 'enrolled')
+       ON CONFLICT (user_id) DO NOTHING`,
+      [studentId, studentCodeFor(studentId), r.classLevel, r.religion]
+    );
     if (r.birthRegNo) {
       const sealed = sealIdentifier("brc", r.birthRegNo, tenantId, studentId);
       await client.query(
@@ -3669,6 +3793,157 @@ async function importStudents(client, rows, academicYearId, tenantId) {
     imported++;
   }
   return imported;
+}
+async function runTeacherImport(client, o) {
+  guardFile(o.csv);
+  const table = parseCsv(o.csv);
+  const digest = digestOf(table.rows.map((r) => r.raw));
+  if (o.commit && o.digest !== digest) {
+    throw new ImportError(
+      409,
+      "digest_mismatch",
+      "this file is not the one that was validated \u2014 run the check again"
+    );
+  }
+  const codeRows = await client.query(
+    `SELECT employee_code FROM staff_profiles`
+  );
+  const phoneRows = await client.query(
+    `SELECT phone_e164 FROM users WHERE phone_e164 IS NOT NULL AND deleted_at IS NULL`
+  );
+  const snap = {
+    takenCodes: new Set(codeRows.rows.map((r) => r.employee_code.toLowerCase())),
+    takenPhones: new Set(phoneRows.rows.map((r) => r.phone_e164))
+  };
+  const checked = validateTeachers(table, snap);
+  const counts = {
+    rowsRead: checked.rowsRead,
+    rowsValid: checked.valid.length,
+    rowsRejected: checked.errors.length
+  };
+  if (!o.commit) {
+    return {
+      ...counts,
+      digest,
+      rowsImported: 0,
+      batchId: null,
+      errors: checked.errors,
+      errorCsv: errorCsvFor(checked.errors)
+    };
+  }
+  const imported = await writeTeachers(client, checked.valid);
+  const batch = await client.query(
+    `INSERT INTO import_batches
+       (tenant_id, kind, file_name, file_digest,
+        rows_read, rows_valid, rows_rejected, rows_imported,
+        status, started_by, completed_at)
+     VALUES (app.current_tenant(), 'staff', $1, $2, $3, $4, $5, $6,
+             'imported', $7, now())
+     RETURNING id`,
+    [
+      o.fileName ?? null,
+      digest,
+      counts.rowsRead,
+      counts.rowsValid,
+      counts.rowsRejected,
+      imported,
+      o.userId
+    ]
+  );
+  return {
+    ...counts,
+    digest,
+    rowsImported: imported,
+    batchId: batch.rows[0].id,
+    errors: checked.errors,
+    errorCsv: null
+  };
+}
+async function writeTeachers(client, rows) {
+  let imported = 0;
+  for (const r of rows) {
+    const u = await client.query(
+      `INSERT INTO users (tenant_id, full_name_bn, full_name_en, phone_e164, email, status)
+       VALUES (app.current_tenant(), $1, $2, $3, $4, 'invited') RETURNING id`,
+      [r.nameBn, r.nameEn, r.phone, r.email]
+    );
+    const userId = u.rows[0].id;
+    await client.query(
+      `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn, joining_date)
+       VALUES ($1, app.current_tenant(), $2, $3, $4)`,
+      [userId, r.employeeCode, r.designationBn, r.joiningDate]
+    );
+    await client.query(
+      `INSERT INTO user_roles (tenant_id, user_id, role_code, scope_type)
+       VALUES (app.current_tenant(), $1, $2, 'tenant') ON CONFLICT DO NOTHING`,
+      [userId, r.roleCode]
+    );
+    imported++;
+  }
+  return imported;
+}
+
+// services/academics-svc/api/import.ts
+var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var IMPORT_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var STAFF_IMPORT_ROLES = ["principal", "school_owner", "it_admin"];
+async function handler15(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "POST") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const body = await readJson(req);
+    if (body.kind !== "student" && body.kind !== "teacher") {
+      throw new HttpError(400, "kind must be 'student' or 'teacher'", "unsupported_kind");
+    }
+    requireRole(claims, body.kind === "teacher" ? STAFF_IMPORT_ROLES : IMPORT_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const result = await db.withTenant(ctx, async (client) => {
+      if (body.kind === "teacher") {
+        return runTeacherImport(client, {
+          csv: body.csv ?? "",
+          tenantId: claims.tid,
+          userId: claims.sub,
+          commit: body.commit,
+          digest: body.digest,
+          fileName: body.fileName ?? null
+        });
+      }
+      const academicYearId = body.academicYearId ?? "";
+      if (!UUID_RE13.test(academicYearId)) {
+        throw new HttpError(400, "academicYearId must be a valid uuid", "invalid_year");
+      }
+      return runStudentImport(client, {
+        csv: body.csv ?? "",
+        academicYearId,
+        tenantId: claims.tid,
+        userId: claims.sub,
+        commit: body.commit,
+        digest: body.digest,
+        fileName: body.fileName ?? null
+      });
+    });
+    json(res, 200, result, cors);
+  } catch (err) {
+    if (err instanceof ImportError) {
+      json(res, err.status, { error: err.code, message: err.message }, cors);
+      return;
+    }
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "import_failed" }, cors);
+  }
 }
 
 // services/academics-svc/api/ward.ts

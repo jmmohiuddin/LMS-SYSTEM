@@ -18,7 +18,7 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৮৬৫ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-6 শেষে; এর সাথে
+এবং টেস্টেড (**৮৯০ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-7 শেষে; এর সাথে
 ২১টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
@@ -366,7 +366,7 @@ no phase accidentally re-implements these):
 | প্রতি বছর সহজে নতুন অ্যাসাইন (promotion) | **Done (R-3)** — পূর্বরূপ → পরিকল্পনা → নিশ্চিতকরণ | — |
 | সফটওয়্যার নাকি ওয়েব | **Decided: Web+PWA** (D3) | — |
 | সেকশন-ভিত্তিক কমন চ্যাট (ঐচ্ছিক) | Missing, deliberately | R-9 (optional) |
-| নতুন স্কুলকে দ্রুত সার্ভিস দেওয়া (onboarding) | `provision_tenant()` SQL only | R-7 |
+| নতুন স্কুলকে দ্রুত সার্ভিস দেওয়া (onboarding) | **Done (R-7)** — ৯-ধাপের কনসোল, SQL ছাড়াই | R-7 |
 
 ---
 
@@ -712,11 +712,36 @@ Full detail, the measurements and the four defects found, in the R-6 entry of
 
 **Goal:** নতুন স্কুল যোগ করা = ঘণ্টার কাজ, দিনের না।
 
-> **Full specification below.** Until R-7 ships, the first pilot institutions are
-> onboarded by hand using the same steps in the same order — see
-> [PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md). The runbook is the
-> manual rehearsal of this wizard; if a step is awkward there, it will be awkward
-> here, and that is the point of doing it manually first.
+**Status: DONE** (2026-08-29). The specification below was built as written; the
+notes marked ▶ record where reality corrected it.
+
+> The runbook ([PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md)) stays
+> as the manual fallback for a deployment where the platform console is not
+> configured — and it was right that it came first: two of the three gaps R-7
+> found are gaps the runbook would have hit at step 6.
+
+▶ **Three things this phase discovered, none of them in the spec below.**
+> 1. **Nothing had ever written `student_profiles`.** R-6 built
+>    search-by-permanent-ID against `student_code` and no code path had ever
+>    inserted a row. The student import now creates the profile and the code.
+> 2. **`provision_tenant` leaves no subject template**, so a freshly
+>    provisioned school rejected *every row* of its first student import.
+>    `app.provision_curriculum()` (migration 045) closes it, deriving the
+>    templates from the `class_subjects` provisioning already seeds.
+> 3. **`student_cap` was never enforced anywhere** — declared in migration 001,
+>    checked by nothing. It is now a statement-level trigger on `enrolments`
+>    that states both numbers when it refuses.
+
+▶ **BYPASSRLS was removed from `shikhon_platform`.** R-7.13 below says the
+> runtime role cannot list or create tenants, and that holds; what it did not
+> say is that the PLATFORM role should not be exempt from RLS either. It is
+> not. The cross-tenant functions are SECURITY DEFINER and work regardless;
+> everything else the console does is work inside one school under the ordinary
+> policies. `assertRlsEnforced` therefore still guards platform-svc.
+
+▶ **The onboarding state is derived, not stored** (R-7.14's recovery story).
+> `app.tenant_onboarding_state()` counts the real rows, so an interrupted setup
+> reports what actually landed rather than what a stage column believed.
 
 #### R-7.1 Who creates a tenant, and the authorization chain
 
@@ -1114,6 +1139,12 @@ no-op; a tenant created and abandoned is invisible to every other tenant.
 **Exit:** operator onboards a brand-new madrasa — different weekend, own branding —
 without touching SQL, and the school's head teacher logs in from a printed code.
 
+▶ **Met, and measured.** মোহাম্মদপুর কলেজ (madrasah, weekend `{5}`, 34 subject
+mappings) and মনিপুর উচ্চ বিদ্যালয় (school, `{5,6}`, 48) were both created
+through the console against a real PostgreSQL — 208 ms and 249 ms of server
+work — and the head teacher's activation code redeemed to a `principal`
+session. Full detail in the R-7 entry of [PHASE_LOG.md](PHASE_LOG.md).
+
 ### R-8 — Go-live unlocks (credentials & production posture)
 
 Everything here is built and dark; this phase is contracts, credentials, and switches —
@@ -1155,7 +1186,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** (+ R-4.1) |
 | R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
 | R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
-| R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |
+| R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** (console + wizard; wildcard DNS/TLS is a deploy step) |
 | R-8 | Go-live unlocks | external-blocked | any | blocked externally |
 | R-9 | Add-ons | — | pilot | — |
 

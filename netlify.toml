@@ -39,6 +39,19 @@
   to = "/offline.html"
   status = 200
 
+# R-7. The shikhonBD operator console. A separate page and a separate bundle
+# from /app: this is the platform's own surface and keeps the platform brand
+# (D11), while everything under /app is white-labelled to the school.
+[[redirects]]
+  from = "/platform"
+  to = "/platform.html"
+  status = 200
+
+[[redirects]]
+  from = "/platform/*"
+  to = "/platform.html"
+  status = 200
+
 [[redirects]]
   from = "/app"
   to = "/app.html"

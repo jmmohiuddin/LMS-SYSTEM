@@ -1,15 +1,25 @@
 # Pilot Onboarding Runbook — the first 3–5 institutions
 
 **Audience:** the platform operator, onboarding a school by hand.
-**Status:** current procedure until **R-7** ships the wizard that automates it.
-**Companion:** [11-MASTER-PLAN.md](11-MASTER-PLAN.md) §R-7 is the specification
-this runbook is the manual rehearsal of. Same steps, same order, same guards.
+**Status:** **the fallback.** R-7 shipped 2026-08-29 — the normal path is now the
+console at **`/platform`**, which does every step below through a nine-step
+wizard with no SQL at all. See [11-MASTER-PLAN.md](11-MASTER-PLAN.md) §R-7 and
+the R-7 entry of [PHASE_LOG.md](PHASE_LOG.md).
 
-> **Why do it by hand first.** Every awkward step here becomes a wizard screen in
-> R-7. Onboarding three schools manually is how we find out which fields the
-> office cannot supply on day one, which errors are confusing, and which order
-> actually works — before that shape is frozen in a UI. Keep notes; they are R-7's
-> real requirements document.
+> **Use this document when the console is not available to you** — a deployment
+> where `PLATFORM_API_KEY` or `PLATFORM_DATABASE_URL` is not configured (the
+> service answers 503 rather than falling back), or a recovery where you have a
+> database and nothing else. The steps and their order are unchanged, because the
+> wizard performs exactly these operations.
+
+> **Doing it by hand first was worth it.** Two of the three gaps R-7 found are
+> gaps this runbook would have hit at step 6, on a real school's data:
+> `provision_tenant` leaves no subject template, so the student import in §6
+> would have rejected *every row*; and nothing in the product had ever written
+> `student_profiles`, so the permanent student IDs this document promises would
+> not have existed. Both are fixed. If you are following this runbook on a
+> deployment that has migration 045, call `app.provision_curriculum(<tenant>)`
+> after `app.provision_tenant(...)` in §3 — the console does it automatically.
 
 ---
 
@@ -115,6 +125,12 @@ SELECT * FROM app.provision_tenant(
   6::smallint,                  -- lowest class
   10::smallint                  -- highest class
 );
+
+-- R-7. provision_tenant does NOT create the subject templates that
+-- app.derive_student_subjects() needs, so without this the student import in
+-- §6 rejects every row with "বিষয় তালিকা (টেমপ্লেট) তৈরি হয়নি". The console
+-- calls it automatically; by hand you must not forget it.
+SELECT * FROM app.provision_curriculum('<tenant-id>'::uuid, NULL);
 COMMIT;
 ```
 

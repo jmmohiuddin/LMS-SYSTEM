@@ -97,6 +97,11 @@ jobs:
       - name: Student search, history and role scope
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
 
+      # ── 3i. R-7: only the platform creates a school, the platform role is
+      #        still bound by RLS, and student_cap is finally enforced.
+      - name: Platform console, provisioning and the student cap
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -114,6 +119,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

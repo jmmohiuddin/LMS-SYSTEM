@@ -77,7 +77,9 @@ jobs:
           # is the most tenant-facing surface the product has. A school's
           # legal statement about a child must carry the school's name and
           # not its software vendor's.
-          hits=$(grep -rn 'ShikhonBD' \
+          # apps/pwa/src/platform.ts is EXCLUDED: R-7's operator console is a
+          # PLATFORM surface and is checked in the other direction below.
+          hits=$(grep -rn 'ShikhonBD' --exclude=platform.ts \
                    apps/pwa/src packages/ui-core/src apps/pwa/public/app.html \
                    apps/pwa/public/design.html apps/pwa/public/offline.html \
                    apps/pwa/public/manifest.webmanifest \
@@ -93,7 +95,11 @@ jobs:
           # The marketing site must keep saying who we are. A white-label
           # sweep that reached this file would silently un-brand the
           # company's own website, and nothing else would notice.
-          for f in apps/pwa/public/index.html; do
+          # R-7 adds the console. Both files must keep saying whose tool this
+          # is: an operator holding a console with no brand on it cannot tell
+          # our staging from a customer's, and a white-label sweep that reached
+          # these would silently un-brand the company's own surfaces.
+          for f in apps/pwa/public/index.html apps/pwa/public/platform.html apps/pwa/src/platform.ts; do
             if ! grep -qi 'shikhonbd' "$f"; then
               echo "::error file=$f::platform brand missing from a PLATFORM surface (D11) — index.html is shikhonBD's own marketing site and must stay branded"
               exit 1

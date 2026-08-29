@@ -34,6 +34,37 @@ export type { Branding, PublicBranding };
 export { DEFAULT_BRANDING, brandName };
 
 const CACHE_PREFIX = 'shikhon_branding_';
+/**
+ * R-7.12 — the school's door, resolved from the hostname.
+ *
+ *     monipur-high-school.shikhonbd.com  →  monipur-high-school
+ *
+ * There is no third identifier and no new lookup: `app.public_branding()`
+ * has accepted a slug OR a tenant id since migration 039, precisely so a
+ * vanity URL could work later without one. The subdomain label IS the slug,
+ * the slug is already unique, and both resolvers land on the same tenant —
+ * which is what D12 requires of a second door.
+ *
+ * `?tid=` keeps working and keeps priority. It is printed on admission slips
+ * and baked into installed PWAs; a subdomain that overrode it would break
+ * every device already in a school's hands.
+ *
+ * Labels that are never a school: `platform` is the operator console, `www`
+ * and `app` are ours, and a bare host or an IP has no label at all.
+ */
+const NOT_A_TENANT = new Set(['www', 'app', 'platform', 'api', 'staging', 'localhost']);
+
+export function tenantKeyFromHost(host: string = location.hostname): string {
+  const labels = host.split('.');
+  // Fewer than three labels is an apex domain (shikhonbd.com) or a bare
+  // hostname (localhost) — no room for a school's label.
+  if (labels.length < 3) return '';
+  const first = labels[0].toLowerCase();
+  if (NOT_A_TENANT.has(first)) return '';
+  // The same shape the database enforces on tenants.slug.
+  return /^[a-z0-9][a-z0-9-]{2,62}$/.test(first) ? first : '';
+}
+
 /** The <style> element holding the tenant's colour overrides. */
 const STYLE_ID = 'tenant-branding';
 

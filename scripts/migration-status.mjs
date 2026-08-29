@@ -93,6 +93,9 @@ const SENTINELS = [
   // 044 adds exactly one object: the index that turns one student's
   // multi-year timeline from a scan into a seek.
   ['044_student_history_index',        'index',      'ix_enrolment_student_history'],
+  // 045's headline object is the function that is the ONLY way a tenant
+  // comes into existence. If it is missing, onboarding is back to SQL.
+  ['045_platform_console',             'function',   'app.create_tenant'],
 ];
 
 /**
@@ -144,6 +147,7 @@ const MEANING = {
   '042_structure_write_scope':       'R-3 — a teacher can no longer create a class or move a fee permission',
   '043_calendar':                    'R-4 — the school calendar becomes editable, and only by the right people',
   '044_student_history_index':       'R-6 — a student enrolment timeline becomes a seek, not a scan',
+  '045_platform_console':            'R-7 — the platform can create a school, and only the platform can',
 };
 
 const QUERIES = {

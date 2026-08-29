@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shikhonBD — প্ল্যাটফর্ম কনসোল</title>
+<!--
+  The shikhonBD operator console.
+
+  This is the ONE surface that is deliberately NOT white-labelled. D11: the
+  platform brand is permanent and belongs on the platform's own surfaces —
+  the marketing site and this. Every OTHER surface in apps/pwa/public carries
+  the school's identity and must never carry ours; here it is the reverse,
+  and the CI brand guard checks both directions.
+
+  It is a separate page and a separate bundle from /app on purpose. A school's
+  device should never download the console's code, and one bundle could not
+  honestly be both white-labelled and shikhonBD-branded.
+
+  noindex: this is an internal tool with a tenant list behind it. It should
+  not appear in a search result even though every request it makes is
+  authorised.
+-->
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0f172a">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/platform.css">
+</head>
+<body class="platform">
+<div id="root" class="platform-shell">
+  <noscript>এই কনসোল চালাতে জাভাস্ক্রিপ্ট দরকার।</noscript>
+</div>
+<script type="module" src="/platform.js"></script>
+</body>
+</html>

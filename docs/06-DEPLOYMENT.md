@@ -68,6 +68,42 @@ DATABASE_URL="postgresql://shikhon_runtime:<runtime-password>@ep-late-fog-azjd29
 ```
 
 The runtime password is **not stored in this repository**. Put it in your secret manager.
+
+### The platform console (R-7)
+
+The operator console is the only surface that can see more than one school, so it
+connects as a **different role** and needs a **second credential**. Both are
+optional: with either unset, `platform-svc` answers 503 and onboarding falls back
+to [PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md). It never falls back
+to `DATABASE_URL` — that would quietly turn a platform endpoint into a tenant one.
+
+```bash
+# The platform role. Migration 045 gives it LOGIN and takes BYPASSRLS OFF, so
+# assertRlsEnforced still guards this service. Set its password once, by hand:
+#   ALTER ROLE shikhon_platform WITH PASSWORD '<strong-password>';
+PLATFORM_DATABASE_URL="postgresql://shikhon_platform:<platform-password>@…-pooler…/shikhon_lms?sslmode=require"
+
+# The second factor on every platform request. Long and random; rotating it
+# locks the console out until the operators are given the new one, which is the
+# intended blast radius.
+PLATFORM_API_KEY="<32+ random bytes, base64>"
+```
+
+Creating a school is the highest-blast-radius operation in the product, so a
+leaked operator session token is deliberately not enough on its own.
+
+### Wildcard subdomains — outstanding
+
+R-7 ships the resolver: a request to `monipur-high-school.shikhonbd.com` reads the
+first label and uses it as the tenant key, which `app.public_branding()` has
+accepted since migration 039. Two deployment actions remain and neither is code:
+
+- point `*.shikhonbd.com` at the deployment (wildcard A/CNAME);
+- issue a **wildcard TLS certificate** for it.
+
+Until then every school reaches the app through `/app?tid=<tenant-id>`, which is
+unchanged, still printed on the install slips, and keeps priority over the
+hostname even after the wildcard lands.
 Rotation, the ledger, and the blast radius of every credential are in
 [08-CREDENTIAL-ROTATION.md](08-CREDENTIAL-ROTATION.md). The short version:
 

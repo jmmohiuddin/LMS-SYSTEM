@@ -13,6 +13,8 @@ coverage/
 # out of git.
 apps/pwa/public/app.js
 apps/pwa/public/sw.js
+# R-7: the operator console bundle, generated the same way as app.js.
+apps/pwa/public/platform.js
 
 # The api/ tree is DELIBERATELY COMMITTED, and it used to be ignored here.
 #

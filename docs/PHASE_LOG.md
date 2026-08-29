@@ -25,10 +25,10 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-6 complete, R-7 not started
-Last Completed Phase: R-6 — Student history & global search (old code → 4-year history)
-Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
-                      (documentation only; R-7 itself is NOT implemented)
+Current Phase:        none in progress — R-7 complete, R-8 not started
+Last Completed Phase: R-7 — Tenant onboarding & the platform console (no SQL to add a school)
+Last Doc Phase:       R-7-DOC — the specification R-7 was built from. R-7 itself
+                      is now IMPLEMENTED; the runbook stays as the manual fallback.
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
                       /design  the Ata Ekta prototype
 Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
@@ -36,19 +36,25 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                865 passing, 0 failing (node --test, verified 2026-08-29)
+Tests:                890 passing, 0 failing (node --test, verified 2026-08-29)
                       offline 46 · server-core 92 · ui-core 153 · academics-svc 111
-                      identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22
+                      identity-svc 10 · ops-svc 26 · platform-svc 25 · rms-svc 62 · sms-svc 22
                       sync-svc 23 · pwa 312 · netlify 8
-                      + 23 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      + 24 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
                       NOTE: on Windows the runner silently ran ZERO tests until R-5
                       fixed it — see the R-5 entry, "The tooling was lying".
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
-Migrations:           44 applied, 44/44 probed by scripts/migration-status.mjs
-                      (R-6 added ONE: 044, a single index. No new table — the
-                      multi-year history was already in `enrolments`.)
+Migrations:           45 applied, 45/45 probed by scripts/migration-status.mjs
+                      (R-7 added 045: the DEFINER functions that are the ONLY way
+                      a tenant comes into existence, plus the student_cap trigger.
+                      No new table.)
 Known Blockers:       none open. No capability is "Backend complete — UI pending".
+                      CLOSED in R-7: onboarding a school without SQL — plus THREE gaps
+                      it exposed: nothing had ever written student_profiles (so R-6's
+                      search had nothing to find), provision_tenant left no subject
+                      template (so a new school could not import ONE student), and
+                      student_cap had never been enforced anywhere.
                       CLOSED in R-6: global student search and the multi-year student
                       record — an old permanent ID now returns a graduated child and
                       every year they were enrolled, read from `enrolments` rather
@@ -3490,3 +3496,335 @@ None open.
 
 **R-7 — Onboarding & platform console.** Not started. R-6 stopped here as
 instructed.
+
+---
+
+# 2026-08-29 · R-7 · Tenant onboarding & the platform console
+
+**Status: complete.** A shikhonBD operator creates an institution through a
+nine-step wizard and activates it, and the school's head teacher signs in with
+a printed code. Measured end to end: **~250 ms of server work**, and no SQL
+after the initial platform setup.
+
+Two institutions were onboarded this way — মনিপুর উচ্চ বিদ্যালয় (school) and
+মোহাম্মদপুর কলেজ (madrasah) — against a real PostgreSQL, through the real
+endpoints.
+
+## What already existed, and the one thing that did not
+
+`tenants` has carried `plan_code`, `student_cap`, `trial_ends_on`, `status`,
+`eiin`, `weekend_days`, `dek_wrapped` and `blind_index_pepper` since migration
+001. `app.provision_tenant()` has seeded a school's academic spine since 012.
+`audit.platform_access` has been waiting since 001. The activation-code login
+has worked since 037.
+
+What was missing was any way to **insert a tenant at all** — by design.
+`tenant_self` is `USING (id = app.current_tenant())` and, with no separate
+`WITH CHECK`, that expression governs INSERT too. So `shikhon_app` can only
+write a tenant row whose id equals the tenant it is already inside: it cannot
+create a school and cannot list one. That property is what the product's whole
+isolation story rests on, and R-7 had to add the ability without spending it.
+
+## The authorization chain, and three separate credentials
+
+Migration 045 adds `app.create_tenant`, `app.platform_tenants`,
+`app.set_tenant_status` and `app.log_platform_action` as SECURITY DEFINER with
+a pinned `search_path`, granted to `shikhon_platform` and **explicitly revoked
+from `shikhon_app`** — the same shape as `app.public_branding()` in 039.
+
+platform-svc then needs three things a school does not have:
+
+1. a **`super_admin` JWT** — a `principal` token is refused, and the DB suite
+   asserts it;
+2. **`PLATFORM_API_KEY`**, checked with a timing-safe compare, never in the
+   browser bundle;
+3. **`PLATFORM_DATABASE_URL`**, a different database role. Unset, the service
+   answers 503 rather than falling back — a fallback to the runtime role is
+   how a platform endpoint quietly becomes a tenant endpoint.
+
+A wrong key and a missing key return the same code, so an attacker holding one
+half learns nothing about the other.
+
+### BYPASSRLS comes OFF, and that was a decision
+
+Migration 001 created `shikhon_platform` with BYPASSRLS, back when it was a
+role nothing could use. Giving it a login and leaving that on would have made
+the one service that touches every school the one service where row-level
+security does not apply — and `assertRlsEnforced` in server-core would have
+refused to start against it, which is the boot guard doing its job.
+
+It does not need it. The cross-tenant functions are DEFINER and run as the
+owner; everything else the wizard does is work inside ONE school, and for that
+it sets `app.tenant_id` and lives under the same policies as everybody else.
+So a bug in the wizard cannot write into the wrong school.
+
+That decision then produced three bugs, all of the same shape and all found by
+running the thing: **a bare pool query sees nothing.** The tenant-detail
+endpoint returned an empty branding object for a school that was branded; the
+test's verification queries read every count as zero; and the fixture cleanup
+deleted nothing and then failed on a duplicate slug. Each is now explicit
+about the context it runs in, and each has a comment saying why.
+
+## What the console is, and is not
+
+A separate page, a separate bundle, a separate service, a separate database
+role and a separate credential. `/platform`, `platform.js`, platform-svc,
+`shikhon_platform`, `PLATFORM_API_KEY`. A school's device never downloads the
+console's code.
+
+It is also the one surface that **keeps** the shikhonBD brand (D11). The CI
+guard now runs three ways: tenant surfaces must not carry the platform brand,
+`index.html` must, and so must `platform.html` and `platform.ts`. One bundle
+could not honestly be both white-labelled and shikhonBD-branded, which is the
+strongest argument for it being a separate bundle.
+
+Operator sign-in is two pasted secrets held in `sessionStorage` — not
+`localStorage`, so a console left open on a shared laptop does not survive the
+tab closing. Real operator SSO belongs with R-8's credential work; two pasted
+secrets is an honest posture for a tool used by people who already hold the
+deployment's environment.
+
+## The state the operator sees is DERIVED, never stored
+
+§23 asks the operator to see how far a half-finished school got. The obvious
+implementation is a stage column the wizard updates, and it is the wrong one:
+a stored stage is exactly what goes stale when provisioning dies between the
+act and the bookkeeping — which is the failure §22 is about.
+
+`app.tenant_onboarding_state()` counts the real rows instead: years, grading
+bands, classes, sections, subjects, fee heads, teachers, students, guardians,
+admins. It cannot disagree with the database because it IS the database, and
+after a crash it reports what landed rather than what someone meant to land.
+
+The console renders it as a checklist where every line carries a tick or a
+warning **and** the count **and** the note — never colour alone (F-812). Three
+lines are labelled `সক্রিয় করতে আবশ্যক`, and the grading-scale line says why:
+*না থাকলে প্রথম ফলাফল প্রকাশ ব্যর্থ হবে.*
+
+## The gaps this phase found
+
+Four of them, and two would have stopped a pilot.
+
+### 1. Nothing had ever written `student_profiles`
+
+R-6 built search-by-permanent-ID against `student_profiles.student_code`, and
+it turned out **no code in the product had ever inserted a row into that
+table** — not the student import, not enrolment, not any endpoint. It has held
+the permanent identifier since migration 001 and only test fixtures had put
+anything in it. So R-6's search worked and had nothing to find.
+
+The import is where a student first exists, so that is where the profile and
+the code are now created: `STU-` plus eight hex from the user's own uuid,
+derived so it is stable and needs no counter.
+
+### 2. A provisioned school could not import a single student
+
+`provision_tenant` seeds the year, terms, grading bands, bell schedule,
+classes, `class_subjects`, fee heads and the chart of accounts — everything
+except the `subject_templates` that F-304's `app.derive_student_subjects()`
+requires. Nothing in the product had ever created a `curriculum_schemes` or
+`subject_templates` row either.
+
+So a freshly onboarded school rejected **every row** of its first student
+import with `৯ শ্রেণির বিষয় তালিকা (টেমপ্লেট) তৈরি হয়নি`. The pilot runbook's
+step 6 would have hit the same wall.
+
+`app.provision_curriculum()` closes it, deriving the templates from the
+`class_subjects` `provision_tenant` already populated — it adds no curriculum
+knowledge of its own, it reshapes what is there. It is a separate function
+rather than an edit to `provision_tenant` because that function is exercised
+by six phases of tests and this one can be re-run against a school provisioned
+before R-7.
+
+### 3. `student_cap` was decoration
+
+Declared in migration 001 with a CHECK that it is positive, and enforced
+nowhere: not on enrolment, not on import, not at all. A school on a
+500-student plan could import 5,000.
+
+It is now a statement-level trigger on `enrolments` — statement-level because
+an 800-row import is one INSERT and a row trigger would count the school 800
+times. It is on `enrolments` rather than `student_profiles` because, per (1),
+nothing wrote the latter. The refusal states both numbers: *capped at 2
+students and this would make 3*.
+
+### 4. My own regression, caught by the browser walk
+
+Extracting the activation-code alphabet, length and HMAC into a shared module
+so the wizard could issue a school's first code left `CODE_LEN` undefined in
+the redeem path — a ReferenceError surfacing as a **500 on the one login a
+brand-new school has**. identity-svc's ten tests all passed through it,
+because none of them redeems a code. There is now a test that does, and it
+asserts the round trip and the single-use property.
+
+Two smaller ones: `parseBranding` fills DEFAULTS for absent fields, so saving
+`{nameBn, primaryColor}` would have written `nameEn: "Institution"` over every
+school's real English name — only supplied keys are persisted now. And
+`app.provision_curriculum` was not idempotent on its first pass: the unique
+index on `subject_templates` includes a nullable `group_code`, and PostgreSQL
+treats NULLs as DISTINCT unless the index says `NULLS NOT DISTINCT`, so
+`ON CONFLICT` matched nothing and a re-run doubled every ungrouped template
+(3 → 6). It uses `NOT EXISTS … IS NOT DISTINCT FROM` now, and the DB suite
+asserts a re-run changes nothing.
+
+## Reuse, not reimplementation
+
+Three things the wizard needed already existed inside an endpoint that
+required a tenant session the operator does not have. All three were
+**extracted**, not copied:
+
+- `services/academics-svc/src/import-run.ts` — the import orchestration.
+  `api/import.ts` is now a thin handler over it and gained `kind:'teacher'`.
+  The alternative was minting the operator an impersonation token, or a second
+  importer that would eventually disagree with the first about what a phone
+  number looks like.
+- `services/identity-svc/src/activation.ts` — the code alphabet, length and
+  HMAC. Three definitions that must agree exactly; one copy.
+- The R-1 branding parser is the validator for the console's branding step, so
+  it cannot accept something the school's own editor would reject.
+
+Teacher import is new (`teacher-import.ts`), deliberately the same shape as
+the student importer, and deliberately **does not assign anybody to a section
+or subject** — R-7.6: a teacher exists first and is assigned second, and the
+assignment is a dated record R-3's screen can end and replace.
+
+## Two doors, and the second one is the hostname
+
+`app.public_branding()` has accepted a slug OR a tenant id since migration
+039, precisely so a vanity URL could work later without a third identifier.
+`tenantKeyFromHost()` reads the subdomain label and uses it as that key:
+
+    monipur-high-school.shikhonbd.com  →  monipur-high-school
+
+`?tid=` keeps working and keeps **priority** — it is printed on admission slips
+and baked into installed PWAs, and a subdomain that overrode it would break
+every device already in a school's hands. The label is not cached, because the
+hostname supplies it on every visit and caching it would leave the wrong
+school's key on a device that later opened a different subdomain. Labels that
+are never a school (`www`, `app`, `platform`, `api`) are excluded.
+
+**Wildcard DNS and TLS are a deployment step, not a code one.** The resolver
+ships; `*.shikhonbd.com` and its certificate are recorded in the deployment
+doc as the remaining action. Nothing in the product depends on them — the
+`?tid=` door is unchanged.
+
+## Slugs
+
+Generated from the English name, lowercased, non-alphanumeric runs collapsed
+to one hyphen: `Monipur High School` → `monipur-high-school`. On collision the
+console offers a **district suffix, never a number** — this becomes the
+school's web address and `monipur-high-2` is not a URL anyone prints on an
+admission slip. The field carries a permanent quiet warning that it cannot be
+changed once printed.
+
+## Tests
+
+- **25 endpoint tests** (`services/platform-svc/test/platform.test.ts`) against
+  a real PostgreSQL: a principal refused, each credential alone refused, both
+  refusals indistinguishable, validation before any write, slug collision
+  without naming the other school, activation blocked on the two silent
+  failures, provisioning idempotent, branding not overwritten with
+  placeholders, the same phone granted rather than duplicated, a platform role
+  never grantable to a school, dry-run writing nothing, digest mismatch
+  refused, siblings collapsed to one guardian, the cap refusing with both
+  numbers, the derived state, suspend/restore losing nothing, the audit trail,
+  and the activation round trip.
+- **15 SQL assertions** (`db/tests/platform.sql`), wired into CI including the
+  idempotency re-run: the runtime role cannot create, enumerate, suspend or
+  forge an audit row; the platform role can log in and is still bound by RLS;
+  the audit trail is readable and not directly writable; a school sees no
+  other even by id; provisioning is idempotent; the cap states both numbers;
+  suspension is reversible and lossless.
+- **`scripts/r7-acceptance.mjs`** — the §28 walk as a repeatable script.
+- Full gate: **890 tests across 12 workspaces, all passing** against a real
+  PostgreSQL 16. All eleven SQL suites green (134 assertions). `tsc` clean,
+  `npm run build` ok, migration 045 verified down → up, 45/45 probed, D11
+  guard green in all three directions.
+
+## Browser verification
+
+`/platform` in a real browser, against the real API and the real database.
+
+- **Sign-in** with the two pasted credentials; the institution list renders
+  §18's columns — institution, type, slug, status, plan, students/cap, trial
+  end, created — and **no student-level PII**.
+- **The nine-step wizard**, clicked through: the rail marks done steps with a
+  tick and the current one with `aria-current`; the slug auto-filled as
+  `monipur-high-school`; the tenant was written at step 3 (`প্রতিষ্ঠান তৈরি
+  হয়েছে`); provisioning showed its counts verbatim, including
+  `(grading_bands,7)`, which is how an operator knows the scale exists.
+- **Both institutions onboarded end to end** — 249 ms and 208 ms of server
+  work. The madrasah defaulted to a **Friday-only weekend** `{5}` against the
+  school's `{5,6}`, and got a different curriculum (34 subject mappings
+  against 48): institution type behaving as configuration, visibly.
+- **Isolation**: inside each school, exactly one tenant row is visible, its
+  own four students, and zero of the other's — including when the other's id
+  is named directly.
+- **The head teacher logs in.** The activation code from step 7 redeemed
+  through `/auth/activate` and returned a session with role `principal`. This
+  is R-7's exit criterion and it is the one thing a wizard cannot fake.
+- **The console's own states**: skeletons while loading, an error state with a
+  retry that recovered from an expired operator token, an empty state on the
+  list, and per-field validation messages in Bangla.
+
+The first screenshot of the console was **unreadable** — dark text on black.
+`--c-bg` is not a defined token anywhere in the design system, and this
+stylesheet is the third place to use it; `app.css` already carries a comment
+about the same bug in `.chat-form`. Both remaining uses are fixed, and the
+console now sets `data-theme` from the operator's own machine, because dark
+mode here is an explicit attribute rather than a media query.
+
+## Known limitations
+
+1. **Wildcard DNS and TLS are not provisioned.** The hostname→slug resolver
+   ships and is unit-testable; pointing `*.shikhonbd.com` at the deployment
+   and issuing the certificate is a deployment action, recorded in
+   06-DEPLOYMENT.md. `?tid=` is unaffected.
+2. **Operator sign-in is two pasted secrets.** No SSO, no operator account
+   management, no key rotation UI. Deliberate: R-8 owns credentials.
+3. **`plan_code` is a label.** No feature gating — `tenants.features` exists
+   for that later. `student_cap` and `trial_ends_on` are enforced and shown;
+   billing the school stays manual, per R-7.10.
+4. **Trial expiry is not automatic.** `trial_ends_on` is stored, shown in the
+   console, and moves nothing on its own. The master plan says expiry moves a
+   tenant to `suspended`; scheduling that belongs with the maintenance cron
+   and is not built.
+5. **The wizard's branding step is a subset** — colour, head teacher, phone.
+   Logo, favicon, watermark and signature upload remain the school's own R-1
+   editor, which is where they were always going to be done and where the
+   school has the files.
+6. **Groups are not configurable per class in the wizard.** `provision_tenant`
+   derives a class's group from the NCTB template; a school wanting Science
+   and Humanities sections of class 9 creates them in R-3's structure screen.
+   §11's tree is therefore read from what provisioning made, not authored in
+   the wizard.
+7. **The activation code's `issued_by` points at the account itself.** That
+   column FKs to `users` — a person inside the school — and for a school's
+   first account there is nobody inside the school yet. The truthful record of
+   which operator issued it is the `audit.platform_access` row. Same division
+   for `import_batches.started_by`.
+8. **platform-svc is the 11th of the Hobby plan's 12 functions.** One spare.
+
+## Carried backlog — preserved per §33, none of it closed by R-7
+
+**R-3:** class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision.
+
+**R-5:** object storage (no stored PDFs or student photos) · CSV export
+(`toCsv()` still unused) · multi-card ID-card layout (one card per A4 sheet) ·
+**money-formatting decision** (`৳ 1,300.00` in Latin digits beside Bangla
+rolls — still open, still needs a call).
+
+**R-6:** an index on the board registration/roll columns if a school leans on
+that search shape · an attendance date-range filter · type-ahead suggestions.
+
+## Unresolved bugs / issues
+
+None open.
+
+## Next recommended step
+
+**R-8 — go-live unlocks (credentials & production posture).** Not started.
+R-7 stopped here as instructed. R-8 is where the SMS aggregator, the object
+storage credential, operator SSO and the wildcard certificate land — and where
+`LOGIN_DISABLED` is finally flipped, which R-7 deliberately did not touch.

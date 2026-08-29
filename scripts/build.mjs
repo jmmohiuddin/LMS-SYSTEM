@@ -40,6 +40,20 @@ await build({
   define: { 'process.env.NODE_ENV': '"production"' },
 });
 
+// R-7. The platform console is a SEPARATE bundle from the tenant app, not a
+// route inside it. It is shikhonBD's own operator surface and stays
+// shikhonBD-branded (D11), while everything in app.js is white-labelled to
+// the school — one bundle could not honestly be both, and the D11 CI guard
+// would be right to fail it. It also means a school's device never downloads
+// the console's code.
+await build({
+  ...BROWSER,
+  entryPoints: ['apps/pwa/src/platform.ts'],
+  format: 'esm',
+  outfile: 'apps/pwa/public/platform.js',
+  define: { 'process.env.NODE_ENV': '"production"' },
+});
+
 await build({
   ...BROWSER,
   entryPoints: ['apps/pwa/src/sw.ts'],
@@ -72,6 +86,12 @@ const API_ENTRIES = [
   ['services/ai-svc/api/index.ts', 'api/v1/ai/[engine].js'],
   ['services/ans-svc/api/index.ts', 'api/v1/ans/[action].js'],
   ['services/ops-svc/api/index.ts', 'api/v1/ops/[action].js'],
+  // R-7. The 11th of the Hobby plan's 12 functions, leaving one spare. It is
+  // a separate function rather than a route inside ops-svc on purpose: this
+  // is the ONLY code that connects as the platform database role, and a
+  // shared process would put that connection one routing bug away from a
+  // tenant request.
+  ['services/platform-svc/api/index.ts', 'api/v1/platform/[action].js'],
 ];
 
 // The api/ tree is fully generated. Clear it first so entries removed from
@@ -129,6 +149,7 @@ const NETLIFY_ENTRIES = [
   ['services/ai-svc/api/index.ts',                      'ai',              '/api/v1/ai/:engine'],
   ['services/ans-svc/api/index.ts',                     'ans',             '/api/v1/ans/:action'],
   ['services/ops-svc/api/index.ts',                     'ops',             '/api/v1/ops/:action'],
+  ['services/platform-svc/api/index.ts',                'platform',        '/api/v1/platform/:action'],
 ];
 
 await rm('netlify/functions', { recursive: true, force: true });

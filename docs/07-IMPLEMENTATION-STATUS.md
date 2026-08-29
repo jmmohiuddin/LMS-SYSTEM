@@ -12,14 +12,15 @@ security block (§9a).
 | | |
 |---|---|
 | Production URL | `https://shikhon-lms.vercel.app` |
-| Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
+| Hosting | Vercel (Hobby plan) — static PWA + **11** Serverless Functions (12-function cap, 1 spare after R-7 added platform-svc) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **865 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector). offline 46 · server-core 92 · **ui-core 153** · academics-svc 111 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22 · sync-svc 23 · **pwa 312** · netlify 8. Plus 23 SQL assertion suites, all green, all idempotent. R-5 found that on Windows the runner had been executing **zero** tests while printing a tick — see PHASE_LOG R-5 |
-| Schema | 44 migrations (43 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
+| Tests | **890 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector). offline 46 · server-core 92 · **ui-core 153** · academics-svc 111 · identity-svc 10 · platform-svc 25 · ops-svc 26 · rms-svc 62 · sms-svc 22 · sync-svc 23 · **pwa 312** · netlify 8. Plus 24 SQL assertion suites, all green, all idempotent. R-5 found that on Windows the runner had been executing **zero** tests while printing a tick — see PHASE_LOG R-5 |
+| Schema | 45 migrations (44 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
-| Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
+| Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) · **`/platform`** the shikhonBD operator console (R-7, §9j) — the only other surface that keeps the platform brand |
 | Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
+| Onboarding | R-7 (§9j): a platform operator creates an institution through a nine-step console — no SQL. Three separate credentials; the runtime role still cannot create or list a tenant |
 | Student record | R-6 (§9i): global search by permanent ID, name, phone or guardian phone, scoped by app.can_see_student; and one child multi-year enrolment timeline read from enrolments, with attendance, results, fees and printable documents |
 | Documents | R-5 (§9h): fee receipt, report card, admit card, ID card, transfer certificate and attendance sheet, all on the tenant own letterhead through ONE renderer. Print-first HTML — no stored PDF, because object storage is still stubbed |
 | Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied. R-4.1: a `working_weekend` row now overrides the weekly weekend for SMS |
@@ -76,6 +77,7 @@ can never linger as extra functions.
 | `auth.js` | `POST /api/v1/auth/{otp/request, otp/verify, refresh, logout}` | public / refresh token | OTP request **503 `otp_disabled` while the kill switch is on** (§5); verify issues EdDSA access (15 min) + rotating refresh (30 d) with reuse detection |
 | `sync/[action].js` | `POST /api/v1/sync/push`, `GET /api/v1/sync/pull` | JWT | Outbox op batches, idempotent on `opId`; entities: `attendance_session`, **`exam_mark`** (component marks with optimistic concurrency), `class_delivery_log`; cursor-based delta pull |
 | `academics/[resource].js` | `GET .../sections`, `GET .../roster`, `GET .../exams`, `GET .../marks`, `POST .../publish`, **`GET .../students/search`**, **`GET .../students/history`** | JWT (staff; publish: principal-level) | `exams` lists exam-subjects + component maxima per section; `marks` returns roster⋈existing marks + `rowVersion`. Mark **writes** go through sync/push, offline-first. `publish` runs the full result flow in one transaction: `compute_subject_grade` per mark → `compute_exam_gpa` → `exam_results` upsert → section ranks → marking locked + exam published (immutable after). R-6: the two `students/*` routes are TWO SEGMENTS where both hosts route one — the dispatcher keys off the last segment and the documented URL is made to work by a rewrite in `vercel.json` and a second declared path on the Netlify function, not by a second function |
+| `platform/[action].js` | `GET/POST /api/v1/platform/{tenants, tenant, provision, branding, admin, import, status, audit}` | **super_admin JWT + `X-Platform-Key` + its own DB role** | R-7. The operator console. Not reachable by any tenant role, including `principal`; `shikhon_app` is explicitly revoked EXECUTE on the DEFINER functions behind it. Answers 503 rather than falling back if `PLATFORM_DATABASE_URL` is unset |
 | `rms/[action].js` | `GET .../routine`, `POST .../solve`, `POST .../substitute` | JWT / coordinator roles | `substitute`: free-period + subject-expertise candidate ranking per 02 §5 (find mode) and `routine_substitutions` insert (assign mode); the `check_substitute_free` DB trigger stays the hard guarantee |
 | `sms/dispatch.js` | `GET/POST /api/v1/sms/dispatch` | `CRON_SECRET` / `SERVICE_API_KEY` | Outbox drain; **send is a stub** — no aggregator credentials. Cron: daily `0 18 * * *` UTC = 00:00 BST |
 | `finance/webhooks/[provider].js` | `POST .../webhooks/{bkash,nagad,rocket}` | webhook signature | Shared processor per 03 §2.4; unknown provider → 404 |
@@ -1037,6 +1039,118 @@ more years do not degrade them.
   request sequencing is already in place if that changes.
 - **No date-range filter on attendance** — per-academic-year totals are what a
   person reading a history wants.
+
+
+## 9j. R-7 — tenant onboarding and the platform console (closed)
+
+A shikhonBD operator opens `/platform`, walks a nine-step wizard, and a new
+institution exists and is usable. No SQL. Measured end to end against a real
+PostgreSQL: **249 ms** of server work for a school, **208 ms** for a madrasah.
+
+**What was missing was the ability to insert a tenant at all**, and that was
+by design. `tenant_self` is `USING (id = app.current_tenant())` and with no
+separate `WITH CHECK` it governs INSERT too, so `shikhon_app` can only write a
+tenant row whose id equals the tenant it is already inside. It cannot create a
+school and cannot list one. Everything else R-7 needed had existed for
+months: the columns since migration 001, `provision_tenant()` since 012,
+`audit.platform_access` since 001, activation codes since 037.
+
+**Three separate credentials, and a school holds none of them.** A
+`super_admin` JWT (a `principal` token is refused); `PLATFORM_API_KEY`, checked
+with a timing-safe compare and never in the browser bundle; and
+`PLATFORM_DATABASE_URL`, a different database role. Unset, platform-svc answers
+503 rather than falling back — a fallback to the runtime role is how a platform
+endpoint quietly becomes a tenant endpoint. A wrong key and a missing key
+return the same code.
+
+**BYPASSRLS came off `shikhon_platform`.** Migration 001 gave it that flag back
+when it was a role nothing could use. Leaving it on would have made the one
+service that touches every school the one service where row-level security does
+not apply — and `assertRlsEnforced` would have refused to start against it.
+The cross-tenant functions are SECURITY DEFINER and work regardless; everything
+else the console does is work inside ONE school under the ordinary policies. So
+a bug in the wizard cannot write into the wrong school.
+
+**The console is a separate everything**: page, bundle, service, database role,
+credential. A school's device never downloads its code. It is also the one
+surface besides the marketing site that **keeps** the shikhonBD brand — the D11
+CI guard now runs three ways rather than two.
+
+**The state the operator sees is derived, never stored.**
+`app.tenant_onboarding_state()` counts real rows — years, grading bands,
+classes, sections, subjects, fee heads, teachers, students, guardians, admins.
+A stored stage column is exactly what goes stale when provisioning dies between
+the act and the bookkeeping, which is the failure the recovery story is about.
+The checklist renders a tick or a warning **and** the count **and** the note,
+never colour alone.
+
+**Only three things block activation**: an academic year, a grading scale, and
+one administrator account. Everything else is a warning. The grading scale is
+singled out because it is the failure that hides — without bands,
+`app.compute_subject_grade` returns NULL and the year's first result
+publication fails months later with no obvious cause.
+
+### Three gaps this phase found, two of which would have stopped a pilot
+
+1. **Nothing had ever written `student_profiles`.** R-6 built
+   search-by-permanent-ID against `student_code` and no code path in the
+   product had ever inserted a row — the table has held the permanent
+   identifier since migration 001 and only test fixtures had put anything in
+   it. The student import now creates the profile and the code.
+2. **A provisioned school could not import a single student.**
+   `provision_tenant` seeds everything except the `subject_templates` that
+   F-304's `derive_student_subjects()` requires, so a freshly onboarded school
+   rejected *every row* with `বিষয় তালিকা (টেমপ্লেট) তৈরি হয়নি`. The pilot
+   runbook's step 6 would have hit the same wall.
+   `app.provision_curriculum()` closes it, deriving templates from the
+   `class_subjects` provisioning already seeds — it adds no curriculum
+   knowledge, it reshapes what is there.
+3. **`student_cap` was decoration.** Declared in migration 001, enforced
+   nowhere. It is now a statement-level trigger on `enrolments` — statement
+   level because an 800-row import is one INSERT — and the refusal states both
+   numbers: *capped at 2 students and this would make 3*.
+
+### Reuse, not reimplementation
+
+The wizard needed three things that lived inside endpoints requiring a tenant
+session the operator does not have. All three were **extracted**:
+`src/import-run.ts` (the import orchestration, now also serving
+`kind:'teacher'`), `src/activation.ts` (the code alphabet, length and HMAC —
+three definitions that must agree exactly), and R-1's branding parser as the
+console's validator. The alternative to each was either impersonating a school
+or a second copy that would eventually disagree with the first.
+
+### Two doors
+
+`app.public_branding()` has accepted a slug OR a tenant id since migration 039,
+so the subdomain needs no third identifier: `tenantKeyFromHost()` reads the
+label and uses it as the key. `?tid=` keeps working and keeps **priority** — it
+is printed on admission slips and baked into installed PWAs. Slug collisions
+resolve with a district suffix, never a number, because this becomes the
+school's web address.
+
+**Known limitations:**
+
+- **Wildcard DNS and TLS are not provisioned.** The resolver ships; pointing
+  `*.shikhonbd.com` at the deployment and issuing the certificate is a
+  deployment action. `?tid=` is unaffected.
+- **Operator sign-in is two pasted secrets** in `sessionStorage`. No SSO, no
+  key rotation UI — R-8 owns credentials.
+- **`plan_code` is a label**; no feature gating. `student_cap` and
+  `trial_ends_on` are enforced and shown, billing stays manual.
+- **Trial expiry is not automatic** — the date is stored and displayed and
+  moves nothing on its own.
+- **The wizard's branding step is a subset** (colour, head teacher, phone);
+  logo, favicon, watermark and signature stay in the school's own R-1 editor,
+  where the school has the files.
+- **Groups are not authored in the wizard** — a class's group comes from the
+  NCTB template, and a school wanting Science and Humanities sections of class
+  9 creates them in R-3's structure screen.
+- **`activation_codes.issued_by` points at the account itself** for a school's
+  first admin, because that column FKs to a person inside the school and there
+  is nobody there yet. The operator's identity is in the platform audit row.
+  Same division for `import_batches.started_by`.
+- **platform-svc is the 11th of 12 functions.** One spare.
 
 ---
 

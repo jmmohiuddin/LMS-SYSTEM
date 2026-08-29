@@ -29,7 +29,7 @@
  * gateway: a security feature misconfigured must fail closed, loudly.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createHmac, randomBytes } from 'node:crypto';
+
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { sha256Buf, randomOpaqueToken } from '../../../packages/server-core/src/crypto.ts';
@@ -37,31 +37,16 @@ import { signAccessToken } from '../../../packages/server-core/src/jwt.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { loadRoles } from '../src/roles.ts';
 import { enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+// R-7 moved these to src/activation.ts so the onboarding wizard can issue a
+// code for a school's FIRST principal — before that school has anybody who
+// could issue one. Three definitions that must agree exactly; one copy.
+import { generateCode, codeHash, CODE_LEN } from '../src/activation.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISSUER_ROLES = ['principal', 'school_owner', 'academic_coordinator', 'class_teacher'];
 
-/** No 0/O, no 1/I/L — a code read aloud across a classroom must survive it. */
-const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ2345678';
-const CODE_LEN = 8;
 const REFRESH_TTL_DAYS = 30;
 const ACCESS_TTL = '15m';
-
-function generateCode(): string {
-  const bytes = randomBytes(CODE_LEN);
-  let out = '';
-  for (let i = 0; i < CODE_LEN; i++) out += ALPHABET[bytes[i] % ALPHABET.length];
-  return out;
-}
-
-function codeHash(code: string): Buffer {
-  const pepper = process.env.ACTIVATION_PEPPER as string;
-  // Normalised so a code typed with the lookalikes or a stray dash still
-  // matches: the person typing it is ten years old.
-  const norm = code.toUpperCase().replace(/[^A-Z2-9]/g, '')
-    .replace(/0/g, 'O').replace(/O/g, 'Q').replace(/[1IL]/g, 'J');
-  return createHmac('sha256', pepper).update(norm).digest();
-}
 
 interface ActivateBody {
   action?: string;

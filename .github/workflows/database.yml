@@ -60,6 +60,12 @@ jobs:
       - name: Invariants
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
 
+      # ── 3b. R-1: one school's identity is not readable or writable by
+      #        another, and the pre-auth read cannot widen past the
+      #        signboard fields.
+      - name: Tenant branding isolation
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -70,6 +76,7 @@ jobs:
           set -euo pipefail
           psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

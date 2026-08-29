@@ -27,6 +27,10 @@ function header(req, name) {
   const v = req.headers[name.toLowerCase()];
   return Array.isArray(v) ? v[0] ?? "" : v ?? "";
 }
+function query(req) {
+  const url = new URL(req.url ?? "/", "http://internal");
+  return url.searchParams;
+}
 async function readJson(req) {
   const raw = await readBody(req);
   return JSON.parse(raw);
@@ -1358,6 +1362,11 @@ async function authenticate(req) {
     throw new HttpError(401, "invalid or expired access token", "unauthorized");
   }
 }
+function requireRole(claims, allowed) {
+  if (!allowed.includes(claims.role)) {
+    throw new HttpError(403, `this endpoint requires one of: ${allowed.join(", ")}`, "forbidden");
+  }
+}
 
 // services/ops-svc/api/events.ts
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1454,9 +1463,346 @@ async function handler2(req, res) {
   }
 }
 
-// services/ops-svc/api/index.ts
-var ROUTES = { maintenance: handler, events: handler2 };
+// packages/ui-core/src/branding.ts
+var DEFAULT_BRANDING = Object.freeze({
+  nameBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8",
+  nameEn: "Institution",
+  shortName: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8",
+  logoUrl: "",
+  faviconUrl: "",
+  primaryColor: "#D23B2E",
+  accentColor: "#4E7A94",
+  address: "",
+  phone: "",
+  email: "",
+  website: "",
+  watermarkUrl: "",
+  headmasterName: "",
+  signatureUrl: ""
+});
+var LIMITS = Object.freeze({
+  nameBn: 120,
+  nameEn: 120,
+  shortName: 32,
+  address: 300,
+  phone: 40,
+  email: 120,
+  website: 200,
+  headmasterName: 120,
+  /** Data-URL byte caps. base64 inflates by 4/3, so 64 KB ≈ a 48 KB image. */
+  logoUrl: 64 * 1024,
+  faviconUrl: 32 * 1024,
+  watermarkUrl: 96 * 1024,
+  signatureUrl: 48 * 1024
+});
+var HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+var DATA_IMAGE_RE = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+var HTTPS_RE = /^https:\/\/[^\s"'<>]+$/;
+var PATH_RE = /^\/[^\s"'<>]*$/;
+var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+var PHONE_RE = /^[0-9+][0-9\s+\-(),]{4,39}$/;
+var BrandingError = class extends Error {
+  field;
+  constructor(field, message2) {
+    super(message2);
+    this.field = field;
+  }
+};
+function normaliseColor(field, value) {
+  const v = value.trim();
+  if (!HEX_RE.test(v)) {
+    throw new BrandingError(field, `${field} must be a hex colour like #1A73E8`);
+  }
+  const hex = v.slice(1).toLowerCase();
+  return "#" + (hex.length === 3 ? hex.split("").map((c) => c + c).join("") : hex);
+}
+function validateAssetUrl(field, value, maxBytes) {
+  const v = value.trim();
+  if (v === "") return "";
+  if (v.length > maxBytes) {
+    throw new BrandingError(field, `${field} exceeds ${Math.floor(maxBytes / 1024)} KB`);
+  }
+  if (DATA_IMAGE_RE.test(v) || HTTPS_RE.test(v) || PATH_RE.test(v)) return v;
+  throw new BrandingError(
+    field,
+    `${field} must be a PNG, JPEG or WebP image, an https URL, or a site path`
+  );
+}
+function text(field, value, max, fallback) {
+  if (value === void 0 || value === null) return fallback;
+  if (typeof value !== "string") throw new BrandingError(field, `${field} must be text`);
+  const v = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (v.length > max) throw new BrandingError(field, `${field} must be ${max} characters or fewer`);
+  return v;
+}
+function parseBranding(input, base = DEFAULT_BRANDING) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new BrandingError("branding", "branding must be an object");
+  }
+  const i = input;
+  const nameBn = text("nameBn", i.nameBn, LIMITS.nameBn, base.nameBn);
+  const nameEn = text("nameEn", i.nameEn, LIMITS.nameEn, base.nameEn);
+  if (nameBn === "" && nameEn === "") {
+    throw new BrandingError("nameBn", "an institution needs a name in Bangla or English");
+  }
+  const email = text("email", i.email, LIMITS.email, base.email);
+  if (email !== "" && !EMAIL_RE.test(email)) {
+    throw new BrandingError("email", "email is not a valid address");
+  }
+  const phone = text("phone", i.phone, LIMITS.phone, base.phone);
+  if (phone !== "" && !PHONE_RE.test(phone)) {
+    throw new BrandingError("phone", "phone is not a valid number");
+  }
+  const website = text("website", i.website, LIMITS.website, base.website);
+  if (website !== "" && !HTTPS_RE.test(website)) {
+    throw new BrandingError("website", "website must be a full https:// address");
+  }
+  const asset = (f) => i[f] === void 0 || i[f] === null ? base[f] : typeof i[f] === "string" ? validateAssetUrl(f, i[f], LIMITS[f]) : (() => {
+    throw new BrandingError(f, `${f} must be text`);
+  })();
+  return {
+    nameBn,
+    nameEn,
+    // Falling back to the Bangla name beats falling back to "প্রতিষ্ঠান":
+    // a school that never filled this in still gets its own name in the
+    // places that are too tight for the full one.
+    shortName: text("shortName", i.shortName, LIMITS.shortName, base.shortName) || nameBn || nameEn,
+    logoUrl: asset("logoUrl"),
+    faviconUrl: asset("faviconUrl"),
+    primaryColor: i.primaryColor === void 0 || i.primaryColor === null ? base.primaryColor : normaliseColor("primaryColor", String(i.primaryColor)),
+    accentColor: i.accentColor === void 0 || i.accentColor === null ? base.accentColor : normaliseColor("accentColor", String(i.accentColor)),
+    address: text("address", i.address, LIMITS.address, base.address),
+    phone,
+    email,
+    website,
+    watermarkUrl: asset("watermarkUrl"),
+    headmasterName: text("headmasterName", i.headmasterName, LIMITS.headmasterName, base.headmasterName),
+    signatureUrl: asset("signatureUrl")
+  };
+}
+function publicBranding(b) {
+  return {
+    nameBn: b.nameBn,
+    nameEn: b.nameEn,
+    shortName: b.shortName,
+    logoUrl: b.logoUrl,
+    faviconUrl: b.faviconUrl,
+    primaryColor: b.primaryColor,
+    accentColor: b.accentColor
+  };
+}
+function brandName(b, locale = "bn") {
+  return locale === "en" ? b.nameEn || b.nameBn : b.nameBn || b.nameEn;
+}
+
+// services/ops-svc/api/branding.ts
+var BRANDING_WRITERS = ["principal", "school_owner", "it_admin", "academic_coordinator"];
+var MAX_BRANDING_BYTES = 320 * 1024;
+async function loadBranding(tenantId, userId, role) {
+  const db = await sharedDb();
+  const raw = await db.withTenant({ tenantId, userId, role }, async (c) => {
+    const { rows } = await c.query(
+      `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding
+         FROM tenants WHERE id = app.current_tenant()`
+    );
+    return rows[0]?.branding ?? {};
+  });
+  try {
+    return parseBranding(raw, DEFAULT_BRANDING);
+  } catch {
+    return DEFAULT_BRANDING;
+  }
+}
 async function handler3(req, res) {
+  const cors = corsHeaders([], "GET, PUT, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    if (req.method === "GET") {
+      const branding = await loadBranding(claims.tid, claims.sub, claims.role);
+      json(res, 200, { branding }, cors);
+      return;
+    }
+    if (req.method !== "PUT") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    requireRole(claims, BRANDING_WRITERS);
+    const body = await readJson(req);
+    const current = await loadBranding(claims.tid, claims.sub, claims.role);
+    let next;
+    try {
+      next = parseBranding(body.branding, current);
+    } catch (err) {
+      if (err instanceof BrandingError) {
+        throw new HttpError(400, err.message, "invalid_branding", { field: err.field });
+      }
+      throw err;
+    }
+    const serialised = JSON.stringify(next);
+    if (Buffer.byteLength(serialised, "utf8") > MAX_BRANDING_BYTES) {
+      throw new HttpError(
+        413,
+        `branding exceeds ${Math.floor(MAX_BRANDING_BYTES / 1024)} KB \u2014 use smaller images`,
+        "branding_too_large"
+      );
+    }
+    const db = await sharedDb();
+    const saved = await db.withTenant(
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      async (c) => {
+        const { rows } = await c.query(
+          `UPDATE tenants
+              SET settings = COALESCE(settings, '{}'::jsonb)
+                             || jsonb_build_object('branding', $1::jsonb),
+                  updated_at = now()
+            WHERE id = app.current_tenant()
+        RETURNING settings->'branding' AS branding`,
+          [serialised]
+        );
+        return rows[0]?.branding ?? null;
+      }
+    );
+    if (!saved) throw new HttpError(404, "tenant not found", "tenant_not_found");
+    json(res, 200, { branding: saved }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(
+        res,
+        err.status,
+        { error: err.code ?? "error", message: err.message, ...err.detail ?? {} },
+        cors
+      );
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
+// services/ops-svc/src/public-branding.ts
+var TENANT_KEY_RE = /^[a-z0-9][a-z0-9-]{2,62}$/;
+function tenantKey(req) {
+  const q = query(req);
+  return (q.get("slug") ?? q.get("tid") ?? "").trim().toLowerCase();
+}
+async function resolvePublicTenant(key) {
+  if (!TENANT_KEY_RE.test(key)) return null;
+  try {
+    const db = await sharedDb();
+    const row = await db.withSystemRole("anonymous", async (c) => {
+      const { rows } = await c.query(
+        `SELECT tenant_id, slug, name_bn, name_en, branding
+           FROM app.public_branding($1::text)`,
+        [key]
+      );
+      return rows[0] ?? null;
+    });
+    if (!row) return null;
+    const base = parseBranding(
+      { nameBn: row.name_bn, nameEn: row.name_en, shortName: row.name_bn.slice(0, 32) },
+      DEFAULT_BRANDING
+    );
+    return {
+      tenantId: row.tenant_id,
+      slug: row.slug,
+      branding: parseBranding(row.branding, base)
+    };
+  } catch {
+    return null;
+  }
+}
+
+// services/ops-svc/api/brand.ts
+async function handler4(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  const resolved = await resolvePublicTenant(tenantKey(req));
+  json(res, 200, resolved ? {
+    tenantId: resolved.tenantId,
+    slug: resolved.slug,
+    branding: publicBranding(resolved.branding)
+  } : {
+    // Neutral fallback — see the header on why this is not a 404.
+    tenantId: null,
+    slug: "",
+    branding: publicBranding(DEFAULT_BRANDING)
+  }, cors);
+}
+
+// services/ops-svc/api/manifest.ts
+var DEFAULT_ICONS = [
+  { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+  { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+];
+function mimeOfDataUrl(url) {
+  const m = /^data:(image\/[a-z+]+);/.exec(url);
+  return m ? m[1] : "image/png";
+}
+function buildManifest(branding, tenantId, locale = "bn") {
+  const name = brandName(branding, locale);
+  const icon = branding.faviconUrl || branding.logoUrl;
+  return {
+    name,
+    short_name: branding.shortName || name,
+    start_url: tenantId ? `/?tid=${encodeURIComponent(tenantId)}` : "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#FFFFFF",
+    theme_color: branding.primaryColor,
+    lang: locale === "en" ? "en" : "bn",
+    dir: "ltr",
+    icons: icon ? [
+      // A data URL has no intrinsic size to disagree with, and Chrome
+      // needs a >=192px candidate to offer installation at all, so the
+      // one asset is declared at both sizes. The platform's maskable
+      // icon is kept as the last resort for launcher shapes.
+      { src: icon, sizes: "192x192", type: mimeOfDataUrl(icon), purpose: "any" },
+      { src: icon, sizes: "512x512", type: mimeOfDataUrl(icon), purpose: "any" },
+      ...DEFAULT_ICONS.slice(1)
+    ] : DEFAULT_ICONS
+  };
+}
+async function handler5(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    res.writeHead(405, { ...cors, "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method_not_allowed" }));
+    return;
+  }
+  const resolved = await resolvePublicTenant(tenantKey(req));
+  const body = JSON.stringify(
+    resolved ? buildManifest(resolved.branding, resolved.tenantId) : buildManifest(DEFAULT_BRANDING, null)
+  );
+  res.writeHead(200, {
+    ...cors,
+    "Content-Type": "application/manifest+json; charset=utf-8",
+    // Short cache: a school that has just changed its logo should see the
+    // install identity follow within minutes, not at the next deploy.
+    "Cache-Control": "public, max-age=300"
+  });
+  res.end(body);
+}
+
+// services/ops-svc/api/index.ts
+var ROUTES = { maintenance: handler, events: handler2, branding: handler3, brand: handler4, manifest: handler5 };
+async function handler6(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -1464,11 +1810,12 @@ async function handler3(req, res) {
     json(res, 404, { error: "not_found" }, corsHeaders());
     return;
   }
-  if (sub === "events" && req.method !== "OPTIONS") {
-    if (!await enforceRateLimit(req, res, corsHeaders(), "mutation")) return;
+  if (req.method !== "OPTIONS" && sub !== "maintenance") {
+    const bucket = sub === "events" || sub === "branding" && req.method === "PUT" ? "mutation" : "read";
+    if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
   }
   return route(req, res);
 }
 export {
-  handler3 as default
+  handler6 as default
 };

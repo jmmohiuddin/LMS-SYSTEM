@@ -31,6 +31,14 @@ import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
 import { GenerationView } from './generation-view.ts';
 import { GuardianView } from './guardian-view.ts';
+import { BrandingView } from './branding-view.ts';
+import {
+  applyBranding,
+  cachedBranding,
+  fetchFullBranding,
+  fetchPublicBranding,
+} from './branding.ts';
+import { brandName } from '../../../packages/ui-core/src/branding.ts';
 import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
@@ -112,6 +120,10 @@ const CARD = {
   roles:      { path: 'roles',      glyph: 'lock',         titleBn: 'ভূমিকা ও অ্যাক্সেস',  subtitleBn: '১০ ভূমিকা · RLS' },
   ledger:     { path: 'ledger',     glyph: 'book',         titleBn: 'লেজার ও পুনর্মিলন',   subtitleBn: 'দ্বৈত-এন্ট্রি হিসাব' },
   system:     { path: 'system',     glyph: 'settings',     titleBn: 'সিস্টেম',            subtitleBn: 'সব ইন্টিগ্রেশনের অবস্থা' },
+  // R-1. Seated on the principal/owner dashboard because branding is the
+  // first thing a school configures and the last thing it thinks to look
+  // for in a menu.
+  branding:   { path: 'branding',   glyph: 'star',         titleBn: 'প্রতিষ্ঠানের পরিচয়',  subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজ' },
   // The guardian's own home (F-203, §9.1). It was reachable only from the
   // More menu — the persona least able to hunt for it. It now leads the
   // guardian dashboard; the glyph matches its More entry so the one control
@@ -153,7 +165,7 @@ function dashboardFor(role: string): DashCards {
     case 'school_owner':
       return {
         primary: [CARD.routine, CARD.ledger],
-        secondary: [CARD.roster, CARD.marks, CARD.fees, CARD.system],
+        secondary: [CARD.roster, CARD.marks, CARD.fees, CARD.branding],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -236,6 +248,22 @@ async function main() {
 
   const idb       = await openDb(indexedDB);
   const store     = new IndexedDbOutboxStore(idb);
+
+  // R-1. Paint the institution's identity before anything else renders, so
+  // no frame of the app ever carries the platform's brand on a school's
+  // screen. Cached first (synchronous, works offline and on a cold 2G
+  // start), then reconciled with the server in the background.
+  //
+  // The tenant key comes from the same ?tid= / localStorage resolution the
+  // login screen uses — a device knows which school it belongs to before
+  // it knows who is holding it.
+  const brandingKey = auth.tenantId || tenantId;
+  applyBranding(document, cachedBranding(brandingKey), { tenantKey: brandingKey });
+  const brandingRefresh = auth.isLoggedIn()
+    // Signed in: fetch the full letterhead, since documents need the
+    // contact block a public read deliberately withholds.
+    ? fetchFullBranding((path, init) => auth.authedFetch(path, init), brandingKey)
+    : fetchPublicBranding(brandingKey);
 
   function startShell(): Shell {
     const { students, sectionId } = loadRosterStudents();
@@ -379,6 +407,7 @@ async function main() {
               { path: 'shikho', glyph: 'message', titleBn: 'শিখো টিউটর', subtitleBn: 'শিক্ষার্থীদের জন্য AI সহপাঠী' },
               { path: 'roles', glyph: 'lock', titleBn: 'ভূমিকা ও অ্যাক্সেস', subtitleBn: '১০ ভূমিকা · RLS আইসোলেশন' },
               { path: 'ledger', glyph: 'book', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
+              { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
               { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
           });
@@ -533,14 +562,30 @@ async function main() {
         hidden: true,
         mount: (container) => { new SystemView({ root: container, doc: document, auth }); },
       },
+      {
+        // R-1. The screen that makes one deployment serve many schools.
+        // Registered for every role and hidden from the bar: the endpoint
+        // decides who may WRITE (a 403 renders the screen read-only), and
+        // a route nobody can reach is a route esbuild tree-shakes away.
+        path: 'branding',
+        labelBn: 'পরিচয়',
+        glyph: 'star',
+        hidden: true,
+        mount: (container) => {
+          new BrandingView({ root: container, doc: document, auth, tenantKey: brandingKey });
+        },
+      },
     ];
 
+    const brand = cachedBranding(brandingKey);
     return new Shell({
       root,
       doc: document,
       routes,
       defaultPath: 'home',
       displayName: auth.displayName,
+      // R-1: whose school this is, on every screen.
+      institution: { name: brandName(brand), logoUrl: brand.logoUrl },
       onLogout: () => { void doLogout(); },
       roleSwitcher: demoMode
         ? {
@@ -558,6 +603,15 @@ async function main() {
   }
 
   let shell: Shell | null = null;
+
+  // The shell is built from the CACHED branding so it paints without
+  // waiting; when the server's answer lands, repaint the document and
+  // patch the top bar in place. On a device's first ever launch there is
+  // no cache, so this is what puts the school's name on screen at all.
+  void brandingRefresh.then((b) => {
+    applyBranding(document, b, { tenantKey: brandingKey });
+    shell?.setInstitution({ name: brandName(b), logoUrl: b.logoUrl });
+  });
 
   function showLogin(): void {
     shell?.destroy();

@@ -4,9 +4,133 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<title>ShikhonBD — শিখন</title>
+<!-- R-1: neutral placeholder. The bootstrap at the end of <head> replaces
+     it with the institution's own name; naming the platform in a school's
+     browser tab is exactly what white-labelling removes. -->
+<title>শিক্ষা প্রতিষ্ঠান</title>
 <link rel="stylesheet" href="/design/styles.css">
 <script src="https://unpkg.com/lucide@latest"></script>
+
+<!--
+  R-1 tenant-branding bootstrap  (docs/11-MASTER-PLAN.md)
+
+  This page is the Ata Ekta design surface and, unlike the TypeScript app
+  in index.legacy.html, it loads no modules — so it cannot import
+  apps/pwa/src/branding.ts. Rather than restructure the page (out of R-1's
+  scope, and the master plan forbids rewriting the PWA architecture), this
+  applies the same three things that module applies: the colour custom
+  properties, the document title and favicon, and the institution's name
+  wherever the static markup hard-codes the platform's.
+
+  Cache first, network second — identical to branding.ts, and for the same
+  reason: on a 2G link the school's name must be on screen before the
+  request that confirms it has finished.
+-->
+<script>
+(function () {
+  var KEY_RE = /^[a-z0-9][a-z0-9-]{2,62}$/;
+  var params = new URLSearchParams(location.search);
+  var tid = (params.get('tid') || '').trim().toLowerCase();
+  try {
+    if (tid) localStorage.setItem('shikhon_tid', tid);
+    else tid = (localStorage.getItem('shikhon_tid') || '').trim().toLowerCase();
+  } catch (e) { /* private mode — carry on unbranded */ }
+
+  function shade(hex, amount) {
+    var h = hex.slice(1);
+    var out = '#';
+    for (var i = 0; i < 3; i++) {
+      var c = parseInt(h.substr(i * 2, 2), 16);
+      c = amount < 0 ? c * (1 + amount) : c + (255 - c) * amount;
+      out += Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0');
+    }
+    return out;
+  }
+
+  function apply(b) {
+    if (!b) return;
+    var name = b.nameBn || b.nameEn || '';
+    if (name) {
+      document.title = name;
+      var initial = Array.from(name)[0] || '';
+
+      // The static markup repeats the institution's name in a brand plate
+      // on every mocked screen. Swapping the text nodes leaves the layout,
+      // the mark and the stylesheet untouched.
+      var plates = document.querySelectorAll('.d-brand');
+      for (var i = 0; i < plates.length; i++) {
+        var mark = plates[i].querySelector('.d-brand-mark');
+        plates[i].textContent = '';
+        if (mark) {
+          mark.textContent = initial;
+          plates[i].appendChild(mark);
+        }
+        plates[i].appendChild(document.createTextNode(name));
+      }
+
+      // The login screens and the desktop sidebar carry the same identity
+      // in their own markup; they are tagged rather than special-cased so
+      // a new surface only has to add the attribute.
+      var names = document.querySelectorAll('[data-brand-name]');
+      for (var j = 0; j < names.length; j++) names[j].textContent = name;
+      var marks = document.querySelectorAll('[data-brand-mark]');
+      for (var k = 0; k < marks.length; k++) marks[k].textContent = initial;
+    }
+    if (/^#[0-9a-fA-F]{6}$/.test(b.primaryColor || '')) {
+      var r = document.documentElement.style;
+      r.setProperty('--color-primary', b.primaryColor);
+      r.setProperty('--color-primary-hover', shade(b.primaryColor, -0.16));
+      r.setProperty('--color-primary-ink', shade(b.primaryColor, -0.38));
+    }
+    var icon = b.faviconUrl || b.logoUrl;
+    if (icon) {
+      var link = document.querySelector('link[rel="icon"]');
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = icon;
+    }
+    if (tid) {
+      var man = document.querySelector('link[rel="manifest"]');
+      if (!man) {
+        man = document.createElement('link');
+        man.rel = 'manifest';
+        document.head.appendChild(man);
+      }
+      man.href = '/api/v1/ops/manifest?tid=' + encodeURIComponent(tid);
+    }
+  }
+
+  function onReady(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn, { once: true });
+    } else { fn(); }
+  }
+
+  if (!KEY_RE.test(tid)) return;
+
+  // Same cache key as apps/pwa/src/branding.ts, so the two surfaces share
+  // one cached identity instead of each warming their own.
+  var cached = null;
+  try { cached = JSON.parse(localStorage.getItem('shikhon_branding_' + tid) || 'null'); }
+  catch (e) { /* ignore */ }
+  if (cached) onReady(function () { apply(cached); });
+
+  fetch('/api/v1/ops/brand?tid=' + encodeURIComponent(tid), { headers: { accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (body) {
+      if (!body || !body.branding) return;
+      try {
+        localStorage.setItem('shikhon_branding_' + tid,
+          JSON.stringify(Object.assign({}, cached || {}, body.branding)));
+      } catch (e) { /* ignore */ }
+      onReady(function () { apply(body.branding); });
+    })
+    .catch(function () { /* offline: the cached identity already painted */ });
+})();
+</script>
 <style>
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
@@ -399,8 +523,8 @@
     <div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;background:var(--color-surface);padding:40px 20px">
       <div style="width:100%;max-width:440px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:20px;box-shadow:var(--shadow-lg);padding:48px 40px">
         <div style="text-align:center;margin-bottom:40px">
-          <div style="width:72px;height:72px;border-radius:20px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;margin:0 auto 18px">শি</div>
-          <div style="font-size:24px;font-weight:700">ShikhonBD</div>
+          <div data-brand-mark style="width:72px;height:72px;border-radius:20px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;margin:0 auto 18px">প</div>
+          <div data-brand-name style="font-size:24px;font-weight:700">শিক্ষা প্রতিষ্ঠান</div>
           <div style="font-size:14px;color:var(--color-text-muted);margin-top:8px">আপনার শিক্ষা প্রতিষ্ঠানের ডিজিটাল প্ল্যাটফর্ম</div>
         </div>
         <label style="display:flex;flex-direction:column;gap:8px;font-size:14px;font-weight:500;margin-bottom:18px">ফোন নম্বর
@@ -411,7 +535,6 @@
         </label>
         <button class="btn btn-primary" id="login-desktop-submit" style="width:100%;height:52px">প্রবেশ করুন</button>
         <div style="text-align:center;margin-top:22px;font-size:13px;color:var(--color-text-faint);cursor:pointer" id="login-desktop-demo">ডেমো মোডে প্রবেশ করুন</div>
-        <a href="/landing.html" style="display:block;text-align:center;margin-top:14px;font-size:13px;font-weight:600;color:var(--color-primary)">ShikhonBD সম্পর্কে জানুন →</a>
       </div>
     </div>
   </div>
@@ -421,8 +544,8 @@
     <div class="phone">
       <div class="phone-body" style="display:flex;flex-direction:column;justify-content:center;padding:32px 28px;height:100%">
         <div style="text-align:center;margin-bottom:36px">
-          <div style="width:56px;height:56px;border-radius:16px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px;margin:0 auto 14px">শি</div>
-          <div style="font-size:20px;font-weight:700">ShikhonBD</div>
+          <div data-brand-mark style="width:56px;height:56px;border-radius:16px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:22px;margin:0 auto 14px">প</div>
+          <div data-brand-name style="font-size:20px;font-weight:700">শিক্ষা প্রতিষ্ঠান</div>
           <div style="font-size:13px;color:var(--color-text-muted);margin-top:6px">আপনার শিক্ষা প্রতিষ্ঠানের ডিজিটাল প্ল্যাটফর্ম</div>
         </div>
         <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500;margin-bottom:14px">ফোন নম্বর
@@ -430,7 +553,6 @@
         </label>
         <button class="btn btn-primary" style="width:100%">ওটিপি পাঠান</button>
         <div style="text-align:center;margin-top:18px;font-size:12px;color:var(--color-text-faint)">ডেমো মোডে প্রবেশ করুন</div>
-        <a href="/landing.html" style="display:block;text-align:center;margin-top:12px;font-size:12.5px;font-weight:600;color:var(--color-primary)">ShikhonBD সম্পর্কে জানুন →</a>
       </div>
     </div>
   </div>
@@ -705,8 +827,8 @@
     <div style="width:1240px;background:var(--color-bg);border-radius:20px;box-shadow:var(--shadow-lg);overflow:hidden;display:flex;height:760px">
       <nav style="width:224px;background:var(--color-surface);border-right:1px solid var(--color-border);padding:18px 14px;display:flex;flex-direction:column;gap:2px;flex:none">
         <div style="display:flex;align-items:center;gap:8px;padding:4px 10px 18px;font-weight:700;font-size:16px">
-          <span style="width:26px;height:26px;border-radius:8px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">শি</span>
-          ShikhonBD
+          <span data-brand-mark style="width:26px;height:26px;border-radius:8px;background:var(--color-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">প</span>
+          <span data-brand-name>শিক্ষা প্রতিষ্ঠান</span>
         </div>
         <a class="dnav active" data-page="dashboard" data-i="layout-dashboard">ড্যাশবোর্ড</a>
         <a class="dnav" data-page="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -935,7 +1057,7 @@
   <div class="screen" id="s-teacher-home-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav active" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1050,7 +1172,7 @@
   <div class="screen" id="s-attendance-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav active" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1097,7 +1219,7 @@
   <div class="screen" id="s-students-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1144,7 +1266,7 @@
   <div class="screen" id="s-teacher-routine-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1188,7 +1310,7 @@
   <div class="screen" id="s-teacher-more-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1237,7 +1359,7 @@
   <div class="screen" id="s-guardian-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav active" data-nav="guardian" data-i="home">হোম</a>
           <a class="dnav" data-nav="guardian-attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1330,7 +1452,7 @@
   <div class="screen" id="s-guardian-attendance-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="guardian" data-i="home">হোম</a>
           <a class="dnav active" data-nav="guardian-attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1367,7 +1489,7 @@
   <div class="screen" id="s-guardian-results-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="guardian" data-i="home">হোম</a>
           <a class="dnav" data-nav="guardian-attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1403,7 +1525,7 @@
   <div class="screen" id="s-guardian-fees-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="guardian" data-i="home">হোম</a>
           <a class="dnav" data-nav="guardian-attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1468,7 +1590,7 @@
   <div class="screen" id="s-exam-routine-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1521,7 +1643,7 @@
   <div class="screen" id="s-assignments-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1589,7 +1711,7 @@
   <div class="screen" id="s-sikhok-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1669,7 +1791,7 @@
   <div class="screen" id="s-substitute-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="teacher-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -1771,7 +1893,7 @@
   <div class="screen" id="s-student-home-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav active" data-nav="student-home" data-i="home">হোম</a>
           <a class="dnav" data-nav="learn" data-i="book-open">পাঠ</a>
@@ -1888,7 +2010,7 @@
   <div class="screen" id="s-shikho-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <a class="dnav" data-nav="student-home" data-i="home">হোম</a>
         <a class="dnav" data-nav="learn" data-i="book-open">পাঠ</a>
         <a class="dnav" data-nav="practice" data-i="edit">অনুশীলন</a>
@@ -1928,7 +2050,7 @@
   <div class="screen" id="s-practice-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <a class="dnav" data-nav="student-home" data-i="home">হোম</a>
         <a class="dnav" data-nav="learn" data-i="book-open">পাঠ</a>
         <a class="dnav active" data-nav="practice" data-i="edit">অনুশীলন</a>
@@ -1968,7 +2090,7 @@
   <div class="screen" id="s-learn-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <a class="dnav" data-nav="student-home" data-i="home">হোম</a>
         <a class="dnav active" data-nav="learn" data-i="book-open">পাঠ</a>
         <a class="dnav" data-nav="practice" data-i="edit">অনুশীলন</a>
@@ -2020,7 +2142,7 @@
   <div class="screen" id="s-my-attendance-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <a class="dnav" data-nav="student-home" data-i="home">হোম</a>
         <a class="dnav" data-nav="learn" data-i="book-open">পাঠ</a>
         <a class="dnav" data-nav="practice" data-i="edit">অনুশীলন</a>
@@ -2214,7 +2336,7 @@
   <div class="screen" id="s-ledger-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="desktop" data-i="layout-dashboard">ড্যাশবোর্ড</a>
           <a class="dnav active" data-nav="ledger" data-i="book">হিসাবখাতা</a>
@@ -2249,7 +2371,7 @@
   <div class="screen" id="s-system-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="desktop" data-i="layout-dashboard">ড্যাশবোর্ড</a>
           <a class="dnav" data-nav="ledger" data-i="book">হিসাবখাতা</a>
@@ -2310,7 +2432,7 @@
   <div class="screen" id="s-guardian-more-desktop">
     <div class="d-shell">
       <nav class="d-sidebar">
-        <div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>
+        <div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>
         <div class="d-nav-scroll">
           <a class="dnav" data-nav="guardian" data-i="home">হোম</a>
           <a class="dnav" data-nav="guardian-attendance" data-i="calendar-check">উপস্থিতি</a>
@@ -3147,7 +3269,7 @@ document.querySelectorAll('nav.d-sidebar[data-role-nav]').forEach(nav => {
   ).join('');
   const [initial, name, role] = spec.profile;
   nav.innerHTML =
-    `<div class="d-brand"><span class="d-brand-mark">শি</span>ShikhonBD</div>` +
+    `<div class="d-brand"><span class="d-brand-mark">প</span>শিক্ষা প্রতিষ্ঠান</div>` +
     `<div class="d-nav-scroll">${links}</div>` +
     `<div class="d-sidebar-profile">` +
       `<div class="d-sidebar-profile-avatar">${initial}</div>` +

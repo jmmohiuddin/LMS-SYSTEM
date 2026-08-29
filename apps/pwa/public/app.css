@@ -1998,3 +1998,128 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 .theme-option[data-chosen='true'] { background: var(--c-primary);
                                     border-color: var(--c-primary); color: #fff;
                                     font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   R-1 — tenant identity  (docs/11-MASTER-PLAN.md)
+
+   Written against the semantic aliases like every rule above, so a
+   tenant's colours reach these surfaces through the same --c-primary
+   seam the rest of the app uses. No school-specific selectors exist and
+   none may be added: per-institution CSS is what R-1 was built to avoid.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Shell: whose school this is, on every screen ───────────────────── */
+.shell-org { display: flex; align-items: center; gap: var(--s-2);
+             min-width: 0; margin-right: auto; }
+.shell-org-logo { width: 22px; height: 22px; object-fit: contain;
+                  border-radius: var(--radius-md); flex: none; }
+.shell-org-name { font-size: var(--text-xs); font-weight: 700;
+                  color: var(--c-ink); overflow: hidden;
+                  text-overflow: ellipsis; white-space: nowrap; }
+/* The person's name yields to the institution's when both are present —
+   at 360px only one can win, and the school is the one that identifies
+   which install this is. */
+.shell-org + .shell-who { flex: 0 1 auto; min-width: 0; }
+
+/* ── Login: the institution's mark, never the platform's ───────────── */
+.login-brandmark.has-logo { background: transparent; padding: 0; }
+.login-brandlogo { width: 56px; height: 56px; object-fit: contain;
+                   border-radius: var(--radius-lg); display: block; }
+
+/* ── Branding editor ───────────────────────────────────────────────── */
+/* The screen header uses .att-header (the app-wide sticky header) and only
+   needs the sub-line to sit under the title rather than beside it, since
+   .att-header is a two-column grid. */
+.brand-head { grid-template-columns: 1fr; }
+.brand-head h1 { font-size: var(--text-lg); margin: 0; }
+.brand-head .att-sub { margin: var(--s-1) 0 0; }
+.brand-card-title { font-size: var(--text-base); font-weight: 700;
+                    color: var(--c-ink); margin: 0 0 var(--s-1); }
+
+.brand-layout { display: grid; grid-template-columns: 1fr; gap: var(--s-4);
+                padding: 0 var(--s-4) var(--s-6); }
+/* The preview sits beside the form once there is room for both to be
+   legible; below that it follows the form, because a preview above the
+   fold that pushes every input off it is worse than no preview. */
+@media (min-width: 900px) {
+  .brand-layout { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+                  align-items: start; }
+  .brand-layout > .card { position: sticky; top: var(--s-5); }
+}
+.brand-form { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+.brand-card { padding: var(--s-4); }
+.brand-field { display: block; margin-top: var(--s-3); }
+.brand-field > span { display: block; font-size: var(--text-2xs);
+                      font-weight: 600; color: var(--c-ink-2, var(--color-text-muted));
+                      margin-bottom: var(--s-1); }
+.brand-field textarea.login-input { min-height: 72px; resize: vertical; }
+
+.brand-color-row { margin-top: var(--s-3); }
+.brand-color-inputs { display: flex; gap: var(--s-2); align-items: center; }
+.brand-color-swatch { width: 48px; height: var(--tap-min); padding: 2px;
+                      border: 1px solid var(--c-line); border-radius: var(--radius-md);
+                      background: var(--c-bg); cursor: pointer; flex: none; }
+.brand-color-hex { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
+/* A contrast warning is advice, not a refusal — a school may have a light
+   brand colour and a good reason. It reads as a caution, not an error. */
+.brand-warn { margin: var(--s-2) 0 0; font-size: var(--text-2xs);
+              color: var(--c-warn); line-height: 1.5; }
+.brand-ok { margin: 0 var(--s-4) var(--s-3); font-size: var(--text-2xs);
+            color: var(--c-success); font-weight: 600; }
+
+.brand-asset { margin-top: var(--s-4); padding-top: var(--s-3);
+               border-top: 1px solid var(--c-line); }
+.brand-asset:first-of-type { border-top: 0; padding-top: 0; }
+.brand-asset-head { display: flex; align-items: center;
+                    justify-content: space-between; gap: var(--s-2); }
+.brand-asset-name { font-size: var(--text-xs); font-weight: 700; color: var(--c-ink); }
+.brand-asset-preview { margin: var(--s-2) 0; min-height: 64px; display: flex;
+                       align-items: center; justify-content: center;
+                       border: 1px dashed var(--c-line); border-radius: var(--radius-md);
+                       background: var(--c-surface); padding: var(--s-2); }
+.brand-asset-preview img { max-width: 100%; max-height: 96px; object-fit: contain; }
+.brand-asset-empty { font-size: var(--text-2xs); color: var(--c-ink-3, var(--color-text-faint)); }
+.brand-actions { margin: var(--s-2) 0 0; }
+
+/* ── Live preview ──────────────────────────────────────────────────── */
+.brand-preview-cap { margin: var(--s-3) 0 var(--s-1); font-size: var(--text-3xs);
+                     font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+                     color: var(--c-ink-3, var(--color-text-faint)); }
+.brand-preview-shell { display: flex; align-items: center; gap: var(--s-2);
+                       padding: var(--s-2) var(--s-3); border: 1px solid var(--c-line);
+                       border-radius: var(--radius-md); background: var(--c-surface); }
+.brand-preview-mark { width: 26px; height: 26px; border-radius: var(--radius-md);
+                      background: var(--preview-primary, var(--c-primary)); color: #fff;
+                      display: flex; align-items: center; justify-content: center;
+                      font-size: var(--text-2xs); font-weight: 700; flex: none;
+                      overflow: hidden; }
+.brand-preview-mark img { width: 100%; height: 100%; object-fit: contain; }
+.brand-preview-name { font-size: var(--text-2xs); font-weight: 700; color: var(--c-ink);
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                      flex: 1; min-width: 0; }
+.brand-preview-btn { font-size: var(--text-3xs); font-weight: 600; color: #fff;
+                     background: var(--preview-primary, var(--c-primary));
+                     padding: 5px 9px; border-radius: var(--radius-md);
+                     flex: none; white-space: nowrap; }
+
+/* The paper preview renders ui-core's brandedLetterhead() output, so the
+   class names below are that function's and must not be renamed here
+   without changing it — they are one contract, which is the point. */
+.brand-preview-paper { position: relative; overflow: hidden; background: #fff;
+                       color: #1f2937; border: 1px solid var(--c-line);
+                       border-radius: var(--radius-md); padding: var(--s-3); }
+.brand-preview-watermark { position: absolute; inset: 0; background-repeat: no-repeat;
+                           background-position: center; background-size: 65% auto;
+                           opacity: .07; pointer-events: none; }
+.brand-preview-paper .doc-head { position: relative; display: flex; gap: 10px;
+                                 align-items: center; padding-bottom: 8px;
+                                 border-bottom: 2px solid var(--doc-primary, var(--c-primary)); }
+.brand-preview-paper .doc-logo { width: 40px; height: 40px; object-fit: contain; flex: none; }
+.brand-preview-paper .doc-org { margin: 0; font-size: 13px; font-weight: 700;
+                                color: var(--doc-primary, var(--c-primary)); }
+.brand-preview-paper .doc-addr,
+.brand-preview-paper .doc-contact { margin: 2px 0 0; font-size: 9.5px; color: #4b5563; }
+.brand-preview-sig { position: relative; margin-top: var(--s-4); text-align: right; }
+.brand-preview-sig img { max-height: 34px; max-width: 130px; object-fit: contain; }
+.brand-preview-signame { font-size: 9.5px; color: #4b5563; border-top: 1px solid #374151;
+                         display: inline-block; padding-top: 3px; min-width: 110px; }

@@ -55,6 +55,21 @@ export function route(request: { url: string; method: string; mode?: string }): 
     return { strategy: 'network-only', reason: 'money is never served from cache' };
   }
 
+  // R-1. The institution's identity is the most cacheable thing in the
+  // product — it changes when a school rebrands, which is roughly never —
+  // and it is needed at the very first paint, before login, on whatever
+  // connection the device has. Stale-while-revalidate is what lets a
+  // teacher open the app on a dead link and still see their own school.
+  if (path.startsWith('/api/v1/ops/brand')
+    || path.startsWith('/api/v1/ops/branding')
+    || path.startsWith('/api/v1/ops/manifest')) {
+    return {
+      strategy: 'stale-while-revalidate',
+      cache: CACHE_DATA,
+      reason: 'tenant identity — must render before the network answers',
+    };
+  }
+
   // Reference reads: render instantly from cache, refresh in the background.
   if (path.startsWith('/api/v1/rms/') || path.startsWith('/api/v1/academics/')) {
     return {

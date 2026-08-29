@@ -1,10 +1,10 @@
 {
-  "name": "শিখন — Shikhon",
-  "short_name": "শিখন",
+  "name": "শিক্ষা প্রতিষ্ঠান",
+  "short_name": "প্রতিষ্ঠান",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F9FAFB",
-  "theme_color": "#006A4E",
+  "background_color": "#FFFFFF",
+  "theme_color": "#D23B2E",
   "lang": "bn",
   "dir": "ltr",
   "icons": [

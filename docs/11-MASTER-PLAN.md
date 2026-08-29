@@ -144,7 +144,13 @@ gate, and a docs/07 status update.
 - Update stale counts in `docs/07` (38 migrations, not 23).
 - Decide nothing else here; this phase exists so every later diff is clean.
 
-### R-1 — White-label & branding foundation *(owner priority #1)*
+### R-1 — White-label & branding foundation *(owner priority #1)* — **DONE**
+
+> Shipped 2026-08-29. What was built, where it lives, and its known limitations
+> are recorded in [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md) §9b.
+> Two deviations from the plan below, both deliberate: branding is keyed by slug
+> **or tenant id** (the install link carries the id), and the served `index.html`
+> mock-up got its own inline branding bootstrap rather than being restructured.
 
 **Goal:** a school sees only its own identity — app shell, login, PWA install, and a
 reusable branded print header — with zero per-school code.

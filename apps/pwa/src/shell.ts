@@ -36,6 +36,14 @@ export interface ShellOptions {
   onLogout: () => void;
   /** Demo mode only — lets a previewer see each role's dashboard. */
   roleSwitcher?: { current: string; onChange: (role: string) => void };
+  /**
+   * R-1. The institution's name and logo for the top bar. A teacher on a
+   * shared device should be able to tell at a glance which school this
+   * install belongs to, and the top bar is the one piece of chrome present
+   * on every screen. Optional so a caller that has not resolved branding
+   * yet still gets a working shell.
+   */
+  institution?: { name: string; logoUrl?: string };
 }
 
 export class Shell {
@@ -51,6 +59,46 @@ export class Shell {
     this.renderChrome();
     addEventListener('hashchange', this.onHashChange);
     void this.renderRoute();
+  }
+
+  /**
+   * Update the institution plate after construction.
+   *
+   * The shell is built from the CACHED branding so it paints immediately,
+   * but the server's answer arrives a round-trip later — and on a device's
+   * very first launch there is no cache at all, so without this the top bar
+   * would sit on the neutral placeholder until the next reload. Patching
+   * the two nodes in place rather than re-rendering keeps the current
+   * route mounted and its scroll position intact.
+   */
+  setInstitution(institution: { name: string; logoUrl?: string }): void {
+    this.o.institution = institution;
+    const d = this.o.doc;
+    const org = this.o.root.querySelector('.shell-org');
+    if (!org) return;
+
+    let nameEl = org.querySelector('.shell-org-name');
+    if (!nameEl) {
+      nameEl = d.createElement('span');
+      nameEl.className = 'shell-org-name';
+      org.append(nameEl);
+    }
+    nameEl.textContent = institution.name;
+
+    const existing = org.querySelector<HTMLImageElement>('.shell-org-logo');
+    if (institution.logoUrl) {
+      if (existing) {
+        existing.src = institution.logoUrl;
+      } else {
+        const img = d.createElement('img');
+        img.className = 'shell-org-logo';
+        img.src = institution.logoUrl;
+        img.alt = '';
+        org.prepend(img);
+      }
+    } else {
+      existing?.remove();
+    }
   }
 
   /** Call when the shell itself is being torn down (e.g. on logout). */
@@ -79,6 +127,28 @@ export class Shell {
 
     const topbar = d.createElement('div');
     topbar.className = 'shell-topbar';
+
+    // R-1: institution identity leads the bar, before the person's name.
+    // Whose school this is outranks who is signed in — a teacher covering
+    // at a second institution needs that distinction more than a reminder
+    // of their own name.
+    if (this.o.institution?.name) {
+      const org = d.createElement('span');
+      org.className = 'shell-org';
+      if (this.o.institution.logoUrl) {
+        const img = d.createElement('img');
+        img.className = 'shell-org-logo';
+        img.src = this.o.institution.logoUrl;
+        img.alt = '';
+        org.append(img);
+      }
+      const orgName = d.createElement('span');
+      orgName.className = 'shell-org-name';
+      orgName.textContent = this.o.institution.name;
+      org.append(orgName);
+      topbar.append(org);
+    }
+
     const who = d.createElement('span');
     who.className = 'shell-who';
     who.textContent = this.o.displayName;

@@ -497,13 +497,87 @@ function ok(body: unknown): Response {
   });
 }
 
+/**
+ * Two demo institutions — R-1's acceptance test, runnable in a browser
+ * with no database.
+ *
+ * The requirement is that ONE deployment serves institutions with
+ * completely different identities, and the only honest way to show that is
+ * side by side: open ?demo=1&tenant=a and ?demo=1&tenant=b and compare the
+ * login screen, the shell, the tab title and the printed letterhead.
+ *
+ * Deliberately unalike in every dimension the feature covers — Bangla and
+ * English name, short name, logo, colour, address, contact, head teacher —
+ * so a bug that leaks one tenant's value into the other shows up as an
+ * obvious mismatch rather than something a reader has to hunt for.
+ *
+ * The logos are 24px discs generated as PNG (not SVG: the ui-core
+ * validator refuses SVG, and a demo that used one would be demonstrating
+ * something the product does not accept).
+ */
+export const DEMO_TENANTS: Record<string, { id: string; branding: Record<string, string> }> = {
+  a: {
+    id: 'demo-tenant-a',
+    branding: {
+      nameBn: 'শাহজালাল আদর্শ উচ্চ বিদ্যালয়',
+      nameEn: 'Shahjalal Adarsha High School',
+      shortName: 'শাহজালাল',
+      logoUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAATUlEQVR4nGMQzbJnoCUmpOA/kZgsC4g1HK8l1DAYr0XUNhzDErpaQC3DUSyhleFwS0YtGLVg1AI6WkDzomJ4lKZ0qXDoUmXSrdKnCgYAp65CFhRKEgcAAAAASUVORK5CYII=',
+      faviconUrl: '',
+      primaryColor: '#156a3f',
+      accentColor: '#4e7a94',
+      address: 'জিন্দাবাজার, সিলেট ৩১০০',
+      phone: '+8801711000001',
+      email: 'office@shahjalal-high.example.edu.bd',
+      website: 'https://shahjalal-high.example.edu.bd',
+      watermarkUrl: '',
+      headmasterName: 'মোঃ আব্দুল কাদের',
+      signatureUrl: '',
+    },
+  },
+  b: {
+    id: 'demo-tenant-b',
+    branding: {
+      nameBn: 'নর্থ সিটি মহিলা কলেজ',
+      nameEn: 'North City Women’s College',
+      shortName: 'নর্থ সিটি',
+      logoUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAATUlEQVR4nGOQtqtioCUmpOA/kZgsC4g1HK8l1DAYr0XUNhzDErpaQC3DUSyhleFwS0YtGLVg1AI6WkDzomJ4lKZ0qXDoUmXSrdKnCgYAK6dxVsAgk2IAAAAASUVORK5CYII=',
+      faviconUrl: '',
+      primaryColor: '#1b3e7a',
+      accentColor: '#a76a47',
+      address: 'উত্তরা সেক্টর ৭, ঢাকা ১২৩০',
+      phone: '+8801711000002',
+      email: 'info@northcity-college.example.edu.bd',
+      website: 'https://northcity-college.example.edu.bd',
+      watermarkUrl: '',
+      headmasterName: 'অধ্যাপক সালমা বেগম',
+      signatureUrl: '',
+    },
+  },
+};
+
+/** Which demo institution this preview is showing. Defaults to A. */
+export function demoTenantKey(search = location.search): 'a' | 'b' {
+  const t = new URLSearchParams(search).get('tenant');
+  if (t === 'b') return 'b';
+  if (t === 'a') return 'a';
+  try {
+    return localStorage.getItem('shikhon_demo_tenant') === 'b' ? 'b' : 'a';
+  } catch {
+    return 'a';
+  }
+}
+
 export class DemoAuth extends Auth {
   constructor() {
     super({ apiBase: '', deviceId: 'demo-device' });
+    // Remembered so a reload (the role switcher does a full reload) stays
+    // on the same institution instead of snapping back to A.
+    try { localStorage.setItem('shikhon_demo_tenant', demoTenantKey()); } catch { /* ignore */ }
   }
 
   override isLoggedIn(): boolean { return true; }
-  override get tenantId(): string { return 'demo-tenant'; }
+  override get tenantId(): string { return DEMO_TENANTS[demoTenantKey()].id; }
   // Student-role demo must match the submission rows below, so the
   // "my answer" pre-fill and graded-state branches actually exercise.
   override get userId(): string { return this.role === 'student' ? 'demo-user' : 'demo-teacher'; }
@@ -544,6 +618,14 @@ export class DemoAuth extends Auth {
     const url = new URL(path, 'http://demo.internal');
 
     switch (url.pathname) {
+      // R-1. Answered locally like every other demo endpoint, and answered
+      // for THIS demo institution only — a demo that could hand back the
+      // other tenant's branding would be demonstrating the bug the feature
+      // exists to prevent.
+      case '/api/v1/ops/branding':
+      case '/api/v1/ops/brand':
+        return ok({ branding: DEMO_TENANTS[demoTenantKey()].branding });
+
       case '/api/v1/academics/sections':
         return ok({ sections: SECTIONS });
 

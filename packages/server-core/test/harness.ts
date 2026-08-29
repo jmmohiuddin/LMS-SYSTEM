@@ -65,7 +65,9 @@ function captureResponse(): { res: ServerResponse; captured: CapturedResponse } 
 }
 
 export interface CallOptions {
-  method?: 'GET' | 'POST' | 'OPTIONS';
+  // PUT is here for /ops/branding (R-1), the first endpoint in the product
+  // to replace a whole resource rather than append to one.
+  method?: 'GET' | 'POST' | 'PUT' | 'OPTIONS';
   url?: string;
   token?: string;
   body?: unknown;

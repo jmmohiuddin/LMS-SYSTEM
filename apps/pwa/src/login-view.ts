@@ -11,6 +11,12 @@
  * covered by a fallback text field so the screen never dead-ends.
  */
 import type { Auth } from './auth.ts';
+import {
+  applyCachedThenRefresh,
+  fetchPublicBranding,
+  cachedBranding,
+} from './branding.ts';
+import { type Branding, brandName } from '../../../packages/ui-core/src/branding.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 
@@ -54,6 +60,13 @@ export class LoginView {
   private step: Step = 'phone';
   private phone = '';
   private tenantId: string;
+  /**
+   * The institution's identity. Starts from the local cache so the first
+   * paint already carries the school's name — see branding.ts on why a
+   * network round-trip before painting is the wrong trade on 2G — and is
+   * replaced by the server's answer when it arrives.
+   */
+  private branding: Branding;
   private errorEl!: HTMLElement;
   private cooldownEl!: HTMLElement;
   private submitEl!: HTMLButtonElement;
@@ -65,7 +78,31 @@ export class LoginView {
   constructor(options: LoginViewOptions) {
     this.o = options;
     this.tenantId = options.tenantId;
+    this.branding = cachedBranding(this.tenantId);
     this.render();
+    // Paint from cache (already done by render above), then reconcile with
+    // the server. A school that changed its logo this morning sees it on
+    // the next launch without the login screen ever waiting on the network.
+    if (this.tenantId) {
+      const { refreshed } = applyCachedThenRefresh(
+        options.doc,
+        this.tenantId,
+        () => fetchPublicBranding(this.tenantId),
+      );
+      void refreshed.then((b) => {
+        // Only re-render if something visible actually changed — a
+        // re-render mid-typing would discard the phone number.
+        if (b.nameBn !== this.branding.nameBn
+          || b.nameEn !== this.branding.nameEn
+          || b.logoUrl !== this.branding.logoUrl
+          || b.shortName !== this.branding.shortName) {
+          this.branding = b;
+          this.render();
+        } else {
+          this.branding = b;
+        }
+      });
+    }
   }
 
   /** Called by the shell when the view is torn down. Stops the tick. */
@@ -85,26 +122,43 @@ export class LoginView {
     const wrap = d.createElement('div');
     wrap.className = 'login-wrap';
 
-    // Ata Ekta LMS brand-mark: 56px rounded red square with "শি" glyph,
-    // brand name below, tagline under it. Matches ui_kits/lms/index.html
-    // login screen exactly.
+    // R-1: the institution's mark, not the platform's. A school that has
+    // uploaded a logo gets the logo; one that has not gets the first
+    // letter of its own name in the Ata Ekta 56px rounded brand square,
+    // which is still ITS identity rather than "শি" for ShikhonBD.
+    const institution = brandName(this.branding);
     const brand = d.createElement('div');
     brand.className = 'login-brand';
+
     const mark = d.createElement('div');
     mark.className = 'login-brandmark';
-    mark.textContent = 'শি';
-    const brandName = d.createElement('div');
-    brandName.className = 'login-brandname';
-    brandName.textContent = 'ShikhonBD';
+    if (this.branding.logoUrl) {
+      const img = d.createElement('img');
+      img.className = 'login-brandlogo';
+      img.src = this.branding.logoUrl;
+      img.alt = '';
+      mark.classList.add('has-logo');
+      mark.append(img);
+    } else {
+      // [...institution] rather than charAt(0): Bangla is multi-byte, and
+      // charAt would slice a grapheme in half and render a broken glyph.
+      mark.textContent = [...institution][0] ?? '';
+    }
+
+    const brandNameEl = d.createElement('div');
+    brandNameEl.className = 'login-brandname';
+    brandNameEl.textContent = institution;
     const tagline = d.createElement('div');
     tagline.className = 'login-tagline';
-    tagline.textContent = 'আপনার শিক্ষা প্রতিষ্ঠানের ডিজিটাল প্ল্যাটফর্ম';
-    brand.append(mark, brandName, tagline);
+    // Deliberately generic: this is the school's screen, and naming the
+    // platform on it is the exact thing R-1 removes.
+    tagline.textContent = 'শিক্ষা ব্যবস্থাপনা ব্যবস্থা';
+    brand.append(mark, brandNameEl, tagline);
 
-    // Kept for a11y and page title, but hidden — brand element above
+    // Kept for a11y and page title, but hidden — the brand element above
     // carries the visible headline now.
     const h1 = d.createElement('h1');
-    h1.textContent = 'শিখন';
+    h1.textContent = institution;
     h1.className = 'visually-hidden';
 
     if (LOGIN_DISABLED && this.step !== 'activate') {

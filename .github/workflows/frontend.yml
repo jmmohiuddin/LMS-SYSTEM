@@ -34,6 +34,29 @@ jobs:
           fi
           echo "none found"
 
+      # R-1 (docs/11-MASTER-PLAN.md): one deployment serves many schools,
+      # and a school's own screens must carry ITS identity, not the
+      # platform's. That is the kind of rule that erodes one reasonable
+      # string at a time — a placeholder here, a footer there — so it is
+      # held by a check rather than by memory.
+      #
+      # landing.html is the platform's marketing site and is exempt: that
+      # page IS ShikhonBD talking about itself.
+      - name: No platform branding in tenant-facing UI
+        run: |
+          set -euo pipefail
+          hits=$(grep -rn 'ShikhonBD' \
+                   apps/pwa/src apps/pwa/public/index.html \
+                   apps/pwa/public/index.legacy.html apps/pwa/public/offline.html \
+                   apps/pwa/public/manifest.webmanifest \
+                 | grep -vE '^\s*[^:]+:[0-9]+:\s*(//|\*|<!--)' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::platform branding found in tenant-facing UI (R-1)"
+            echo "$hits"
+            exit 1
+          fi
+          echo "none found"
+
       # The critical path is budgeted at 180 KB gzipped (docs/01 §8).
       #
       # This used to weigh the raw hand-written sources against a 30 KB

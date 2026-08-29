@@ -77,6 +77,7 @@ const SENTINELS = [
   ['035_double_periods',              'function',   'app.assert_double_period_coherent'],
   ['036_product_events',              'table',      'public.product_event_rollups'],
   ['037_activation_codes',            'table',      'public.activation_codes'],
+  ['039_tenant_branding',             'function',   'app.public_branding'],
 ];
 
 /**
@@ -121,6 +122,7 @@ const MEANING = {
   '035_double_periods':              'F-504 — a double period is two CONTIGUOUS halves, or it is a lie',
   '036_product_events':              'F-1503 — the pilot produces data; PII cannot enter it',
   '037_activation_codes':            'F-202 — first login without the SMS aggregator',
+  '039_tenant_branding':             'R-1 — a school sees its own name on its own login screen',
 };
 
 const QUERIES = {

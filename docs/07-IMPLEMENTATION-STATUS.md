@@ -15,8 +15,8 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **354 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 48, `services/academics-svc` 19, `services/rms-svc` 15, `apps/pwa` 143, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 16 SQL assertion suites |
-| Schema | 38 migrations (37 rollback files), verified by applying the full chain to an empty database in CI, then 16 SQL assertion suites |
+| Tests | **415 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 85, `services/academics-svc` 19, `services/ops-svc` 5, `services/rms-svc` 15, `apps/pwa` 162, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 17 SQL assertion suites |
+| Schema | 39 migrations (38 rollback files), verified by applying the full chain to an empty database in CI, then 17 SQL assertion suites |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Preview | **`https://shikhon-lms.vercel.app/?demo=1`** — every screen, sample data, no login (§6) |
 
@@ -76,6 +76,9 @@ can never linger as extra functions.
 | `ai/[engine].js` | `POST /api/v1/ai/sikhok`, `POST /api/v1/ai/shikho` | JWT (sikhok: staff) | SikhokAI (CQ/MCQ/rubric/lesson-plan, Claude Opus) + ShikhoAI (Socratic tutor, Claude Haiku) via the Anthropic SDK. **503 `ai_disabled` until `ANTHROPIC_API_KEY` is set** (§5). NCTB-scope-bounded prompts, PII redaction before egress, `ai_sessions`/`ai_turns` audit. RAG runs lexical-only until the NCTB corpus is ingested (responses carry `grounded: false`) |
 | `ans/[action].js` | `GET /api/v1/ans/students`, `POST .../dispatch`, `POST .../inbound` | `SERVICE_API_KEY` (+`CRON_SECRET` for dispatch) | Batch pull with `globalPersonId` merge keys and consent-gated contact fields; HMAC-SHA256-signed outbound webhook dispatcher over `alumni_export_logs` (backoff, dead-letter, stable `delivery_id`); inbound staged into `ans_inbound_events`, applied only after review |
 | `ops/maintenance.js` | `GET/POST /api/v1/ops/maintenance` | `CRON_SECRET` / `SERVICE_API_KEY` | Second daily cron (01:00 BST): `app.maintain_partitions()` / `purge_expired_data()` / `refresh_dashboards()` over `DATABASE_MAINTENANCE_URL` (owner role, direct endpoint — the DDL these need), plus a default-partition-leakage report. **503 `maintenance_unconfigured` until that env var is set** |
+| `ops/[action].js` | `GET/PUT /api/v1/ops/branding` | JWT (PUT: principal / school_owner / it_admin / academic_coordinator) | R-1. Full tenant branding, read by any signed-in member (documents need the letterhead) and written by the four roles that own structural settings. No tenant id in URL or body — the only tenant a caller can name is the one they authenticated as; `tenant_self` RLS is the boundary |
+| `ops/[action].js` | `GET /api/v1/ops/brand?slug=\|tid=` | **public** | R-1. Pre-auth login-screen identity: seven signboard fields only, fixed by an explicit key allowlist in `app.public_branding()`. Exact-key lookup, so it cannot enumerate; an unknown key returns neutral defaults with 200 rather than a 404 existence oracle |
+| `ops/[action].js` | `GET /api/v1/ops/manifest?slug=\|tid=` | **public** | R-1. Per-tenant `application/manifest+json`, so installing tenant A's PWA yields A's name, icon and theme colour. `start_url` carries `?tid=` |
 
 Conventions that differ from 03: base URL is `https://shikhon-lms.vercel.app/api/v1` (not
 `api.shikhon.bd/v1`), and errors are plain `{ error, message }` JSON rather than RFC 9457
@@ -104,6 +107,8 @@ implemented as specified.
 | Substitution finder | `src/substitute-view.ts` | Date → own teaching slots → ranked free/subject-matched candidates → one-tap assign; `substitute_conflict` re-runs the search; 403 surfaced plainly for non-coordinators |
 | SikhokAI | `src/sikhok-view.ts` | CQ/MCQ/rubric/lesson-plan form over `/ai/sikhok`; friendly `ai_disabled` state; ungrounded output carries a verify-before-use notice |
 | ShikhoAI | `src/shikho-view.ts` | Socratic tutor chat over `/ai/shikho` (Bangla/English/Banglish), class-level selector, `ai_disabled` banner |
+| Branding editor | `src/branding-view.ts` | R-1 প্রতিষ্ঠানের পরিচয়: name / logo / favicon / watermark / signature / colours / contact, with a live preview whose letterhead panel calls ui-core's `brandedLetterhead()` — the same function the documents will — so the preview cannot drift from the paper. Images are downscaled on-device to the byte cap rather than refused. A 403 renders it read-only |
+| Branding runtime | `src/branding.ts` | Applies the tenant's identity to the document: colour tokens (light + dark), title, favicon, theme colour, manifest link. Cache-first then revalidate, keyed per tenant, re-validated on read because localStorage is writable by anything on the origin |
 | Sync | `packages/offline/` | Outbox engine per 01 §2.3: UUIDv7-keyed ops, monotonic `seq`, exponential backoff with jitter, conflict surfacing |
 | Service worker | `src/sw.ts` + `src/sw-router.ts` | Route policy of 01 §2.4 (network-only for auth/sync, SWR for reference data, cache-first for hashed assets, app-shell fallback for navigations) |
 | Data saver | (policy module, tested) | 2G/`saveData` drops avatars, lengthens sync interval; WASM cropper skipped on ≤2 GB devices — 04 §6 |
@@ -326,6 +331,96 @@ Both were recorded as "Built" and are not:
 
   Paper generation must select from the `student_ready_question_items` view, never from
   `question_items` directly. A filter you have to remember is a filter someone will forget.
+
+---
+
+## 9b. R-1 — white-label & branding foundation (closed)
+
+The first phase of [11-MASTER-PLAN.md](11-MASTER-PLAN.md). Tenancy was already
+enforced everywhere it mattered for data; what was missing was the visible half —
+every school saw **ShikhonBD** on its own login screen.
+
+### What was implemented
+
+| Piece | Where |
+|---|---|
+| Branding contract — schema, validation, colour derivation, WCAG contrast | `packages/ui-core/src/branding.ts` |
+| Print foundation — letterhead, watermark, signature, standalone A4 document | `packages/ui-core/src/branded-doc.ts` |
+| Seed + pre-auth read function + shape guard | `db/migrations/039_tenant_branding.sql` |
+| `GET/PUT /ops/branding`, `GET /ops/brand`, `GET /ops/manifest` | `services/ops-svc/api/`, shared lookup in `services/ops-svc/src/public-branding.ts` |
+| Runtime application + per-tenant cache | `apps/pwa/src/branding.ts` |
+| Editor with live preview | `apps/pwa/src/branding-view.ts` |
+| Institution plate in the shell; institution mark on login | `apps/pwa/src/shell.ts`, `src/login-view.ts` |
+| Two demo institutions for side-by-side verification | `apps/pwa/src/demo.ts` |
+
+### Where branding lives, and why
+
+`tenants.settings->'branding'` — a column, not a table. It is exactly one row per
+tenant, always read whole, never joined, never queried by any of its fields. It
+inherits the `tenant_self` RLS policy from 010 and the `app.enforce_tenant()`
+immutability guarantee by being part of the tenant row. Assets are inline data
+URLs under per-field byte caps (logo 64 KB, favicon 32 KB, watermark 96 KB,
+signature 48 KB; 320 KB total), so R-1 needed no object storage — that decision
+arrives with R-5's stored PDFs and student photos.
+
+### What actually enforces isolation
+
+Not the handlers. `tenant_self` (`id = app.current_tenant()`, FORCE'd) is the
+boundary, and every statement runs inside `withTenant()`. The endpoints carry no
+tenant id in URL or body, so the only tenant a caller can name is the one they
+authenticated as; `requireRole()` is a clean 403 in front of the policy, not the
+policy. `db/tests/tenant_branding.sql` asserts this directly — with tenant A's
+session context, an `UPDATE … WHERE id = <B>` matches **zero rows**.
+
+The one deliberate exception is `app.public_branding()`, `SECURITY DEFINER` with a
+pinned `search_path`: the login screen and the manifest are fetched before any
+session exists. It answers by exact key only (slug *or* tenant id — the install
+link carries the id), returns seven signboard fields fixed by an allowlist **in
+SQL**, and returns nothing for an unknown key. Contact details, head teacher,
+watermark and signature stay behind authentication.
+
+### Tests
+
+61 new, all passing: `packages/ui-core/test/branding.test.ts` (24 — validation,
+refusals, colour derivation), `branded-doc.test.ts` (13 — escaping, two-tenant
+document isolation), `apps/pwa/test/branding-ui.test.ts` (19 — apply, cache,
+login, shell), `services/ops-svc/test/branding.test.ts` (5 pure + a DB-backed
+suite), and `db/tests/tenant_branding.sql` wired into `database.yml`. A CI guard
+in `frontend.yml` fails the build if platform branding reappears in tenant-facing
+UI (`landing.html` is exempt — that page is the platform talking about itself).
+
+### Acceptance test
+
+`?demo=1&tenant=a` and `?demo=1&tenant=b` on one deployment: different name, logo,
+colour, address, head teacher; different browser title, theme colour, favicon and
+manifest URL; different printed letterhead; and no value of one appearing anywhere
+in the other's DOM or cache. Verified in a browser, not only asserted.
+
+### Known limitations
+
+- **The DB-backed half of `services/ops-svc/test/branding.test.ts` and
+  `db/tests/tenant_branding.sql` have not been executed** — no PostgreSQL was
+  reachable on the machine R-1 was built on. They are written to the conventions of
+  the suites around them and are wired into `database.yml`, so the first CI run is
+  their first execution. Until that run is green, R-1's isolation guarantee is
+  code-complete and CI-pending, exactly as §9a says of Phase 0.
+- **Two front doors.** `apps/pwa/public/index.html` — what `/` actually serves — is
+  the Ata Ekta design mock-up: 66 static screens, no API calls, no `app.js`. The
+  functional TypeScript PWA is `index.legacy.html`. Both are branded (the mock-up by
+  an inline bootstrap using the same cache key and endpoint), but which one is the
+  product is an open question this phase did not resolve.
+- **A branding change does not reach an already-open tab** on another device until
+  it reloads; there is no push. The service worker serves `/ops/brand` stale-
+  while-revalidate, so the next launch is correct.
+- **`app.js` is cache-first in the service worker and is not content-hashed**, so a
+  deploy does not reach a returning device until `CACHE_SHELL`'s version string
+  changes. Pre-existing, and it made local verification of R-1 misleading twice
+  before it was noticed; worth a version bump policy before the pilot.
+- Migration **038 still has no probe** in `scripts/migration-status.mjs` — it only
+  alters columns, which the current probe kinds cannot express. 039's probe is
+  present.
+- Colour customisation is deliberately bounded to primary + accent. Status colours
+  (absent, overdue, paid) and the destructive `--c-accent` are not tenant-controlled.
 
 ---
 

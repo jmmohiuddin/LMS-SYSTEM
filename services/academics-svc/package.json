@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Roster, exams, marks, results, content and subject-choice endpoints.",
   "scripts": {
-    "test": "node --test 'test/*.test.ts'"
+    "test": "node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "pg": "^8.13.0"

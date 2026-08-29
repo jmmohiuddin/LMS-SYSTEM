@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Netlify Functions v2 adapter over the shared Node-http service handlers.",
   "scripts": {
-    "test": "node --test 'test/*.test.mjs'"
+    "test": "node --test \"test/*.test.mjs\""
   },
   "engines": {
     "node": ">=22"

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Server side of the offline sync protocol: idempotent batch push against RLS-scoped PostgreSQL.",
   "scripts": {
-    "test": "node --test 'test/*.test.ts'"
+    "test": "node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "pg": "^8.13.0"

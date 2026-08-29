@@ -164,19 +164,66 @@ export function brandedDocumentCss(branding: Branding): string {
   ].filter(Boolean).join('');
 }
 
+/** One page of a set: the same options minus the branding they all share. */
+export type BrandedSection = Omit<BrandedDocumentOptions, 'branding' | 'locale'>;
+
 /**
- * A complete, standalone, printable HTML document on the tenant's
- * letterhead. Self-contained by construction — inline CSS, inline assets —
- * so it prints identically from a print window, a saved file, or a
- * server-side renderer with no network.
+ * One `<main class="doc">` — a single page on the tenant's letterhead.
+ *
+ * Split out of brandedDocument() in R-5 so that one page and forty pages go
+ * through the same code. A separate renderer for bulk would be a second place
+ * for the watermark to be forgotten, and the forty-page case is exactly the
+ * one nobody checks by eye.
  */
-export function brandedDocument(o: BrandedDocumentOptions): string {
-  const locale = o.locale ?? 'bn';
-  const b = o.branding;
+function docSection(b: Branding, s: BrandedSection, locale: string): string {
   const watermark = safeAsset('watermarkUrl', b.watermarkUrl);
-  const meta = (o.meta ?? [])
+  const meta = (s.meta ?? [])
     .map((m) => `<div><b>${escapeHtml(m.label)}:</b> ${escapeHtml(m.value)}</div>`)
     .join('');
+
+  return [
+    '<main class="doc">',
+    watermark ? '<div class="doc-watermark"></div>' : '',
+    brandedLetterhead(b, locale),
+    '<div class="doc-title-row">',
+    `<h2 class="doc-title">${escapeHtml(s.title)}</h2>`,
+    meta ? `<div class="doc-meta">${meta}</div>` : '',
+    '</div>',
+    `<div class="doc-body">${s.bodyHtml}</div>`,
+    s.showSignature === false
+      ? ''
+      : `<footer class="doc-foot">${brandedSignature(b, s.signatureCaption)}</footer>`,
+    '</main>',
+  ].filter(Boolean).join('\n');
+}
+
+export interface BrandedDocumentSetOptions {
+  branding: Branding;
+  sections: BrandedSection[];
+  locale?: string;
+  /** Title of the whole page. Defaults to the first section's. */
+  title?: string;
+  /** Document-type CSS appended to the foundation's — see documents.ts. */
+  extraCss?: string;
+}
+
+/**
+ * One printable page carrying one or MANY documents.  (R-5)
+ *
+ * The bulk case the master plan asks for — "report cards print for a whole
+ * section in one go" — is this with forty sections. Each gets its own
+ * letterhead, its own watermark, its own signature block and its own printed
+ * page; `documentBodyCss()` supplies the `break-before` that makes the last
+ * of those true, because browsers do not break between siblings on their own.
+ *
+ * Self-contained by construction: inline CSS, inline assets, no network. It
+ * prints identically from a print window, a saved file, or a server-side
+ * renderer.
+ */
+export function brandedDocumentSet(o: BrandedDocumentSetOptions): string {
+  const locale = o.locale ?? 'bn';
+  const b = o.branding;
+  const title = o.title ?? o.sections[0]?.title ?? '';
 
   return [
     '<!doctype html>',
@@ -184,23 +231,37 @@ export function brandedDocument(o: BrandedDocumentOptions): string {
     '<head>',
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    `<title>${escapeHtml(o.title)} — ${escapeHtml(brandName(b, locale))}</title>`,
-    `<style>:root{--doc-primary:${escapeHtml(b.primaryColor)}}${brandedDocumentCss(b)}</style>`,
+    `<title>${escapeHtml(title)} — ${escapeHtml(brandName(b, locale))}</title>`,
+    `<style>:root{--doc-primary:${escapeHtml(b.primaryColor)}}`
+      + `${brandedDocumentCss(b)}${o.extraCss ?? ''}</style>`,
     '</head>',
     '<body>',
-    '<main class="doc">',
-    watermark ? '<div class="doc-watermark"></div>' : '',
-    brandedLetterhead(b, locale),
-    '<div class="doc-title-row">',
-    `<h2 class="doc-title">${escapeHtml(o.title)}</h2>`,
-    meta ? `<div class="doc-meta">${meta}</div>` : '',
-    '</div>',
-    `<div class="doc-body">${o.bodyHtml}</div>`,
-    o.showSignature === false
-      ? ''
-      : `<footer class="doc-foot">${brandedSignature(b, o.signatureCaption)}</footer>`,
-    '</main>',
+    ...o.sections.map((s) => docSection(b, s, locale)),
     '</body>',
     '</html>',
   ].filter(Boolean).join('\n');
+}
+
+/**
+ * A complete, standalone, printable HTML document on the tenant's
+ * letterhead. Self-contained by construction — inline CSS, inline assets —
+ * so it prints identically from a print window, a saved file, or a
+ * server-side renderer with no network.
+ *
+ * The one-document case of brandedDocumentSet(), kept as its own name because
+ * most callers have exactly one.
+ */
+export function brandedDocument(o: BrandedDocumentOptions): string {
+  return brandedDocumentSet({
+    branding: o.branding,
+    locale: o.locale,
+    title: o.title,
+    sections: [{
+      title: o.title,
+      bodyHtml: o.bodyHtml,
+      meta: o.meta,
+      showSignature: o.showSignature,
+      signatureCaption: o.signatureCaption,
+    }],
+  });
 }

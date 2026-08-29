@@ -44,6 +44,7 @@ import { RolloverView } from './rollover-view.ts';
 import { UsersView } from './users-view.ts';
 import { AuditView } from './audit-view.ts';
 import { CalendarView } from './calendar-view.ts';
+import { DocumentsView, type DocKind } from './documents-view.ts';
 import {
   applyBranding,
   cachedBranding,
@@ -133,6 +134,29 @@ const READ_AUDIT       = new Set(['principal', 'school_owner', 'it_admin']);
 /** R-4. Mirrors calendar_{insert,update,delete}_scope in migration 043. */
 const MANAGE_CALENDAR  = new Set(
   ['principal', 'school_owner', 'academic_coordinator', 'it_admin']);
+
+/**
+ * R-5. Which document kinds each role is OFFERED.
+ *
+ * Mirrors ACCESS in services/ops-svc/api/document.ts, which is the gate;
+ * RLS underneath decides WHICH records each caller reaches, so a class
+ * teacher printing report cards gets their own sections and nobody else's.
+ */
+const DOCS_FOR: Record<string, DocKind[]> = {
+  principal: ['fee_receipt', 'report_card', 'admit_card', 'id_card',
+              'transfer_certificate', 'attendance_sheet'],
+  school_owner: ['fee_receipt', 'report_card', 'admit_card', 'id_card',
+                 'transfer_certificate', 'attendance_sheet'],
+  academic_coordinator: ['report_card', 'admit_card', 'id_card', 'attendance_sheet'],
+  it_admin: ['id_card'],
+  accountant: ['fee_receipt'],
+  dept_head: ['report_card', 'admit_card', 'attendance_sheet'],
+  class_teacher: ['report_card', 'admit_card', 'id_card', 'attendance_sheet'],
+  subject_teacher: ['report_card', 'admit_card', 'attendance_sheet'],
+  // A family prints its own: the receipt it paid and the card it sat.
+  student: ['fee_receipt', 'report_card', 'admit_card'],
+  guardian: ['fee_receipt', 'report_card', 'admit_card'],
+};
 /** Mirrors finance-svc's BILLING_ROLES. */
 const GENERATE_INVOICES = new Set(['principal', 'school_owner', 'accountant']);
 
@@ -184,6 +208,7 @@ const CARD = {
   adminSettings: { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস',          subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
   audit:      { path: 'audit',      glyph: 'lock',         titleBn: 'কার্যবিবরণী',        subtitleBn: 'কে কখন কী পরিবর্তন করেছেন' },
   calendar:   { path: 'calendar',   glyph: 'calendar',     titleBn: 'শিক্ষাপঞ্জি',         subtitleBn: 'ছুটি, পরীক্ষা ও অনুষ্ঠান' },
+  documents:  { path: 'documents',  glyph: 'book',         titleBn: 'নথি ও ছাপা',          subtitleBn: 'রসিদ, প্রগতি পত্র, প্রবেশপত্র' },
 } satisfies Record<string, DashboardItem>;
 
 // Home is an orientation surface, not an index. Each dashboard is trimmed to
@@ -201,7 +226,7 @@ function dashboardFor(role: string): DashCards {
       // one thing a student arrives worried about.
       return {
         primary: [CARD.subjects, CARD.homework],
-        secondary: [CARD.results, CARD.myAtt, CARD.inbox, CARD.calendar],
+        secondary: [CARD.results, CARD.myAtt, CARD.calendar, CARD.documents],
       };
     case 'guardian':
       // The ward home leads — it is the guardian's whole reason for opening
@@ -209,12 +234,12 @@ function dashboardFor(role: string): DashCards {
       // payment one tap from home.
       return {
         primary: [CARD.wardHome, CARD.feesStu],
-        secondary: [CARD.results, CARD.inbox, CARD.routineStu, CARD.calendar],
+        secondary: [CARD.results, CARD.inbox, CARD.calendar, CARD.documents],
       };
     case 'accountant':
       return {
         primary: [CARD.fees, CARD.ledger],
-        secondary: [CARD.roster, CARD.inbox, CARD.system],
+        secondary: [CARD.roster, CARD.documents, CARD.inbox, CARD.calendar],
       };
     case 'principal':
     case 'school_owner':
@@ -223,7 +248,7 @@ function dashboardFor(role: string): DashCards {
       // what is waiting for this person.
       return {
         primary: [CARD.institution, CARD.academic],
-        secondary: [CARD.compose, CARD.publish, CARD.calendar, CARD.inbox],
+        secondary: [CARD.compose, CARD.publish, CARD.calendar, CARD.documents],
       };
     case 'it_admin':
       // R-3. Structure and accounts, not teaching. An IT admin has no class,
@@ -237,7 +262,7 @@ function dashboardFor(role: string): DashCards {
       // not own money or accounts.
       return {
         primary: [CARD.academic, CARD.routine],
-        secondary: [CARD.institution, CARD.calendar, CARD.compose, CARD.inbox],
+        secondary: [CARD.institution, CARD.calendar, CARD.documents, CARD.inbox],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -246,7 +271,7 @@ function dashboardFor(role: string): DashCards {
       // is one tap away in More.
       return {
         primary: [CARD.attendance, CARD.routine],
-        secondary: [CARD.homeworkT, CARD.marks, CARD.inbox, CARD.calendar],
+        secondary: [CARD.homeworkT, CARD.marks, CARD.calendar, CARD.documents],
       };
   }
 }
@@ -488,6 +513,7 @@ async function main() {
               { path: 'users', glyph: 'users', titleBn: 'ব্যবহারকারী', subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট, নিষ্ক্রিয়করণ' },
               { path: 'rollover', glyph: 'repeat', titleBn: 'বার্ষিক উন্নয়ন', subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
               { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস', subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
+              { path: 'documents', glyph: 'book', titleBn: 'নথি ও ছাপা', subtitleBn: 'প্রতিষ্ঠানের লোগো, সিল ও স্বাক্ষরসহ ছাপার নথি' },
               { path: 'calendar', glyph: 'calendar', titleBn: 'শিক্ষাপঞ্জি', subtitleBn: 'ছুটি, পরীক্ষা ও অনুষ্ঠান — সব ভূমিকার জন্য' },
               { path: 'audit', glyph: 'lock', titleBn: 'কার্যবিবরণী', subtitleBn: 'কে কখন কী পরিবর্তন করেছেন — শুধু পড়ার জন্য' },
               { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
@@ -695,6 +721,21 @@ async function main() {
           new RolloverView({
             root: container, doc: document, auth,
             canCommit: COMMIT_ROLLOVER.has(auth.role),
+          });
+        },
+      },
+      {
+        // R-5. Registered for every role; DOCS_FOR decides what each one is
+        // offered, and the endpoint's ACCESS list plus RLS decide what they
+        // actually receive.
+        path: 'documents',
+        labelBn: 'নথি ও ছাপা',
+        glyph: 'book',
+        hidden: true,
+        mount: (container) => {
+          new DocumentsView({
+            root: container, doc: document, auth,
+            allowed: DOCS_FOR[auth.role] ?? [],
           });
         },
       },

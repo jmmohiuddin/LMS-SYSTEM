@@ -1189,7 +1189,7 @@ async function compactVerify(jws, key, options2) {
 }
 
 // node_modules/jose/dist/node/esm/lib/epoch.js
-var epoch_default = (date) => Math.floor(date.getTime() / 1e3);
+var epoch_default = (date2) => Math.floor(date2.getTime() / 1e3);
 
 // node_modules/jose/dist/node/esm/lib/secs.js
 var minute = 60;
@@ -4221,6 +4221,901 @@ async function remove(db, ctx, req) {
   });
 }
 
+// packages/ui-core/src/branded-doc.ts
+function escapeHtml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function safeAsset(field, url) {
+  if (!url) return "";
+  try {
+    return escapeHtml(validateAssetUrl(String(field), url, LIMITS[field]));
+  } catch {
+    return "";
+  }
+}
+function brandedLetterhead(branding, locale = "bn") {
+  const name = escapeHtml(brandName(branding, locale));
+  const logo = safeAsset("logoUrl", branding.logoUrl);
+  const contact = [
+    branding.phone && `\u09AB\u09CB\u09A8: ${branding.phone}`,
+    branding.email,
+    branding.website
+  ].filter(Boolean).map((s) => escapeHtml(String(s))).join(" \xB7 ");
+  return [
+    '<header class="doc-head">',
+    logo ? `<img class="doc-logo" src="${logo}" alt="">` : "",
+    '<div class="doc-ident">',
+    `<h1 class="doc-org">${name}</h1>`,
+    branding.address ? `<p class="doc-addr">${escapeHtml(branding.address)}</p>` : "",
+    contact ? `<p class="doc-contact">${contact}</p>` : "",
+    "</div>",
+    "</header>"
+  ].filter(Boolean).join("");
+}
+function brandedSignature(branding, caption) {
+  const sig = safeAsset("signatureUrl", branding.signatureUrl);
+  const who = escapeHtml(caption ?? branding.headmasterName ?? "");
+  return [
+    '<div class="doc-sign">',
+    sig ? `<img class="doc-sign-img" src="${sig}" alt="">` : '<div class="doc-sign-gap"></div>',
+    '<div class="doc-sign-rule"></div>',
+    who ? `<div class="doc-sign-name">${who}</div>` : "",
+    '<div class="doc-sign-role">\u0985\u09A8\u09C1\u09AE\u09CB\u09A6\u09BF\u09A4 \u09B8\u09CD\u09AC\u09BE\u0995\u09CD\u09B7\u09B0</div>',
+    "</div>"
+  ].filter(Boolean).join("");
+}
+function brandedDocumentCss(branding) {
+  const watermark = safeAsset("watermarkUrl", branding.watermarkUrl);
+  return [
+    "*{box-sizing:border-box}",
+    'body{margin:0;font-family:"Noto Sans Bengali",system-ui,sans-serif;color:#1f2937;background:#fff}',
+    ".doc{position:relative;max-width:210mm;min-height:297mm;margin:0 auto;padding:16mm 14mm;background:#fff}",
+    watermark ? '.doc-watermark{position:absolute;inset:0;background-image:url("' + watermark + '");background-repeat:no-repeat;background-position:center;background-size:60% auto;opacity:.07;pointer-events:none;z-index:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' : "",
+    ".doc-body,.doc-head,.doc-title-row,.doc-foot{position:relative;z-index:1}",
+    ".doc-head{display:flex;gap:12px;align-items:center;border-bottom:2px solid var(--doc-primary,#D23B2E);padding-bottom:10px}",
+    ".doc-logo{width:64px;height:64px;object-fit:contain;flex:none}",
+    ".doc-org{margin:0;font-size:20px;font-weight:700;color:var(--doc-primary,#D23B2E)}",
+    ".doc-addr,.doc-contact{margin:2px 0 0;font-size:11px;color:#4b5563}",
+    ".doc-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin:14px 0 10px}",
+    ".doc-title{margin:0;font-size:15px;font-weight:700}",
+    ".doc-meta{font-size:11px;color:#4b5563;text-align:right}",
+    ".doc-meta div{margin-bottom:2px}",
+    ".doc-meta b{font-weight:600;color:#1f2937}",
+    ".doc-foot{margin-top:28px;display:flex;justify-content:flex-end}",
+    ".doc-sign{width:190px;text-align:center}",
+    ".doc-sign-img{max-width:170px;max-height:56px;object-fit:contain}",
+    ".doc-sign-gap{height:56px}",
+    ".doc-sign-rule{border-top:1px solid #374151;margin-top:4px}",
+    ".doc-sign-name{font-size:12px;font-weight:600;margin-top:4px}",
+    ".doc-sign-role{font-size:10.5px;color:#6b7280}",
+    "@page{size:A4;margin:0}",
+    "@media print{.doc{margin:0;box-shadow:none}}"
+  ].filter(Boolean).join("");
+}
+function docSection(b, s, locale) {
+  const watermark = safeAsset("watermarkUrl", b.watermarkUrl);
+  const meta = (s.meta ?? []).map((m) => `<div><b>${escapeHtml(m.label)}:</b> ${escapeHtml(m.value)}</div>`).join("");
+  return [
+    '<main class="doc">',
+    watermark ? '<div class="doc-watermark"></div>' : "",
+    brandedLetterhead(b, locale),
+    '<div class="doc-title-row">',
+    `<h2 class="doc-title">${escapeHtml(s.title)}</h2>`,
+    meta ? `<div class="doc-meta">${meta}</div>` : "",
+    "</div>",
+    `<div class="doc-body">${s.bodyHtml}</div>`,
+    s.showSignature === false ? "" : `<footer class="doc-foot">${brandedSignature(b, s.signatureCaption)}</footer>`,
+    "</main>"
+  ].filter(Boolean).join("\n");
+}
+function brandedDocumentSet(o) {
+  const locale = o.locale ?? "bn";
+  const b = o.branding;
+  const title = o.title ?? o.sections[0]?.title ?? "";
+  return [
+    "<!doctype html>",
+    `<html lang="${locale === "en" ? "en" : "bn"}">`,
+    "<head>",
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `<title>${escapeHtml(title)} \u2014 ${escapeHtml(brandName(b, locale))}</title>`,
+    `<style>:root{--doc-primary:${escapeHtml(b.primaryColor)}}${brandedDocumentCss(b)}${o.extraCss ?? ""}</style>`,
+    "</head>",
+    "<body>",
+    ...o.sections.map((s) => docSection(b, s, locale)),
+    "</body>",
+    "</html>"
+  ].filter(Boolean).join("\n");
+}
+
+// packages/ui-core/src/format.ts
+var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var LATIN_DIGITS = "0123456789";
+function toLatinDigits(s) {
+  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
+}
+function toBanglaDigits(s) {
+  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
+}
+function formatBdt(amount) {
+  const n = typeof amount === "string" ? Number(toLatinDigits(amount)) : amount;
+  if (!Number.isFinite(n)) return "\u09F3 \u2014";
+  return `\u09F3 ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+var BN_MONTHS = [
+  "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AE\u09BE\u09B0\u09CD\u099A",
+  "\u098F\u09AA\u09CD\u09B0\u09BF\u09B2",
+  "\u09AE\u09C7",
+  "\u099C\u09C1\u09A8",
+  "\u099C\u09C1\u09B2\u09BE\u0987",
+  "\u0986\u0997\u09B8\u09CD\u099F",
+  "\u09B8\u09C7\u09AA\u09CD\u099F\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u0985\u0995\u09CD\u099F\u09CB\u09AC\u09B0",
+  "\u09A8\u09AD\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u09A1\u09BF\u09B8\u09C7\u09AE\u09CD\u09AC\u09B0"
+];
+var EN_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+function formatDayMonth(isoDate, locale) {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
+}
+
+// packages/ui-core/src/documents.ts
+var DOCUMENT_TITLES_BN = {
+  fee_receipt: "\u09AB\u09BF \u09B0\u09B8\u09BF\u09A6",
+  report_card: "\u09AA\u09CD\u09B0\u0997\u09A4\u09BF \u09AA\u09A4\u09CD\u09B0",
+  admit_card: "\u09AA\u09CD\u09B0\u09AC\u09C7\u09B6\u09AA\u09A4\u09CD\u09B0",
+  id_card: "\u09AA\u09B0\u09BF\u099A\u09AF\u09BC\u09AA\u09A4\u09CD\u09B0",
+  transfer_certificate: "\u099B\u09BE\u09A1\u09BC\u09AA\u09A4\u09CD\u09B0",
+  attendance_sheet: "\u09B9\u09BE\u099C\u09BF\u09B0\u09BE \u09B6\u09BF\u099F"
+};
+var DOCUMENT_TITLES_EN = {
+  fee_receipt: "Fee Receipt",
+  report_card: "Report Card",
+  admit_card: "Admit Card",
+  id_card: "Identity Card",
+  transfer_certificate: "Transfer Certificate",
+  attendance_sheet: "Attendance Sheet"
+};
+function num(v, locale) {
+  if (v === null || v === void 0 || v === "") return "\u2014";
+  return locale === "bn" ? toBanglaDigits(String(v)) : String(v);
+}
+function date(iso, locale) {
+  if (!iso) return "\u2014";
+  const day2 = String(iso).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day2)) return day2;
+  return `${formatDayMonth(day2, locale)} ${num(day2.slice(0, 4), locale)}`;
+}
+function monthLabel(period, locale) {
+  if (!/^\d{4}-\d{2}$/.test(period)) return period;
+  const month = formatDayMonth(`${period}-01`, locale).replace(/^\S+\s/, "");
+  return `${month} ${num(period.slice(0, 4), locale)}`;
+}
+function fields(rows) {
+  return [
+    '<dl class="doc-fields">',
+    ...rows.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`),
+    "</dl>"
+  ].join("");
+}
+function table(headers, rows, cls = "") {
+  return [
+    `<table class="doc-table${cls ? " " + cls : ""}">`,
+    "<thead><tr>",
+    ...headers.map((h) => `<th>${escapeHtml(h)}</th>`),
+    "</tr></thead><tbody>",
+    ...rows.map((r) => "<tr>" + r.map((c) => `<td>${escapeHtml(c)}</td>`).join("") + "</tr>"),
+    "</tbody></table>"
+  ].join("");
+}
+function titleFor(type, locale) {
+  return locale === "en" ? DOCUMENT_TITLES_EN[type] : DOCUMENT_TITLES_BN[type];
+}
+function studentFields(s, locale) {
+  const out = [["\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09A8\u09BE\u09AE", s.nameBn]];
+  if (s.studentCode) out.push(["\u0986\u0987\u09A1\u09BF", s.studentCode]);
+  if (s.classBn) out.push(["\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF", s.groupBn ? `${s.classBn} \xB7 ${s.groupBn}` : s.classBn]);
+  if (s.section) out.push(["\u09B6\u09BE\u0996\u09BE", s.section]);
+  if (s.rollNo != null) out.push(["\u09B0\u09CB\u09B2", num(s.rollNo, locale)]);
+  return out;
+}
+var METHOD_BN = {
+  bkash: "\u09AC\u09BF\u0995\u09BE\u09B6",
+  nagad: "\u09A8\u0997\u09A6",
+  rocket: "\u09B0\u0995\u09C7\u099F",
+  cash: "\u09A8\u0997\u09A6 (\u09B9\u09BE\u09A4\u09C7)",
+  bank: "\u09AC\u09CD\u09AF\u09BE\u0982\u0995",
+  cheque: "\u099A\u09C7\u0995"
+};
+function buildFeeReceipt(d, locale = "bn") {
+  const lines = d.lines.length > 0 ? table(
+    ["\u09AC\u09BF\u09AC\u09B0\u09A3", "\u099F\u09BE\u0995\u09BE", "\u09AE\u0993\u0995\u09C1\u09AB"],
+    d.lines.map((l) => [
+      l.descriptionBn,
+      formatBdt(l.amount),
+      Number(l.waiver) > 0 ? formatBdt(l.waiver) : "\u2014"
+    ]),
+    "doc-table-money"
+  ) : '<p class="doc-note">\u098F\u0987 \u0987\u09A8\u09AD\u09AF\u09BC\u09C7\u09B8\u09C7 \u0995\u09CB\u09A8\u09CB \u09AB\u09BF \u09AC\u09BF\u09AC\u09B0\u09A3 \u09A8\u09C7\u0987\u0964</p>';
+  return {
+    title: titleFor("fee_receipt", locale),
+    meta: [
+      { label: "\u09B0\u09B8\u09BF\u09A6 \u09A8\u09AE\u09CD\u09AC\u09B0", value: d.receiptNo },
+      { label: "\u09A4\u09BE\u09B0\u09BF\u0996", value: date(d.issuedAt, locale) }
+    ],
+    bodyHtml: [
+      fields([
+        ...studentFields(d.student, locale),
+        ["\u0987\u09A8\u09AD\u09AF\u09BC\u09C7\u09B8", d.invoiceNo],
+        ["\u09AE\u09BE\u09B8", monthLabel(d.billingPeriod, locale)]
+      ]),
+      lines,
+      '<div class="doc-total">',
+      `<div><span>\u09AE\u09CB\u099F \u09AC\u09BF\u09B2</span><b>${escapeHtml(formatBdt(d.invoiceTotal))}</b></div>`,
+      `<div class="doc-total-paid"><span>\u098F\u0987 \u09B0\u09B8\u09BF\u09A6\u09C7 \u099C\u09AE\u09BE</span><b>${escapeHtml(formatBdt(d.amount))}</b></div>`,
+      `<div><span>\u09AE\u09CB\u099F \u099C\u09AE\u09BE</span><b>${escapeHtml(formatBdt(d.paidToDate))}</b></div>`,
+      `<div><span>\u09AC\u0995\u09C7\u09AF\u09BC\u09BE</span><b>${escapeHtml(formatBdt(d.balance))}</b></div>`,
+      "</div>",
+      `<p class="doc-note">\u09AA\u09B0\u09BF\u09B6\u09CB\u09A7\u09C7\u09B0 \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE: ${escapeHtml(METHOD_BN[d.method] ?? d.method)}</p>`
+    ].join("")
+  };
+}
+function buildReportCard(d, locale = "bn") {
+  const rows = d.subjects.map((s) => [
+    s.nameBn,
+    s.isAbsent ? "\u0985\u09A8\u09C1\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4" : num(s.obtained, locale),
+    num(s.max, locale),
+    s.isAbsent ? "\u2014" : s.grade ?? "\u2014",
+    s.isAbsent ? "\u2014" : num(s.gradePoint, locale)
+  ]);
+  const summary = [
+    ["\u09AE\u09CB\u099F \u09A8\u09AE\u09CD\u09AC\u09B0", `${num(d.totalMarks, locale)} / ${num(d.totalMax, locale)}`],
+    ["\u09B6\u09A4\u0995\u09B0\u09BE", d.percentage ? `${num(d.percentage, locale)}%` : "\u2014"],
+    ["\u099C\u09BF\u09AA\u09BF\u098F", num(d.gpa, locale)],
+    ["\u0997\u09CD\u09B0\u09C7\u09A1", d.letterGrade ?? "\u2014"],
+    ["\u09AB\u09B2\u09BE\u09AB\u09B2", d.isPass ? "\u0989\u09A4\u09CD\u09A4\u09C0\u09B0\u09CD\u09A3" : "\u0985\u09A8\u09C1\u09A4\u09CD\u09A4\u09C0\u09B0\u09CD\u09A3"]
+  ];
+  if (d.rankInSection != null) summary.push(["\u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09B8\u09CD\u09A5\u09BE\u09A8", num(d.rankInSection, locale)]);
+  if (d.attendancePercent) summary.push(["\u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4\u09BF", `${num(d.attendancePercent, locale)}%`]);
+  return {
+    title: titleFor("report_card", locale),
+    meta: [
+      { label: "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE", value: d.examNameBn },
+      { label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: d.yearLabel }
+    ],
+    bodyHtml: [
+      fields(studentFields(d.student, locale)),
+      d.subjects.length > 0 ? table(["\u09AC\u09BF\u09B7\u09AF\u09BC", "\u09AA\u09CD\u09B0\u09BE\u09AA\u09CD\u09A4", "\u09AA\u09C2\u09B0\u09CD\u09A3\u09AE\u09BE\u09A8", "\u0997\u09CD\u09B0\u09C7\u09A1", "\u09AA\u09AF\u09BC\u09C7\u09A8\u09CD\u099F"], rows) : '<p class="doc-note">\u098F\u0987 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09AF\u09BC \u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09A8\u09C7\u0987\u0964</p>',
+      '<div class="doc-summary">',
+      fields(summary),
+      "</div>"
+    ].join(""),
+    signatureCaption: void 0
+  };
+}
+function buildAdmitCard(d, locale = "bn") {
+  const rows = d.papers.map((p) => [
+    p.subjectBn,
+    date(p.examDate, locale),
+    p.startTime ? num(p.startTime.slice(0, 5), locale) : "\u2014",
+    p.hallBn ?? "\u2014",
+    p.seat ? num(p.seat, locale) : "\u2014"
+  ]);
+  return {
+    title: titleFor("admit_card", locale),
+    meta: [
+      { label: "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE", value: d.examNameBn },
+      { label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: d.yearLabel }
+    ],
+    bodyHtml: [
+      fields(studentFields(d.student, locale)),
+      d.papers.length > 0 ? table(["\u09AC\u09BF\u09B7\u09AF\u09BC", "\u09A4\u09BE\u09B0\u09BF\u0996", "\u09B8\u09AE\u09AF\u09BC", "\u09B9\u09B2", "\u0986\u09B8\u09A8"], rows) : '<p class="doc-note">\u098F\u0987 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC\u09B8\u09C2\u099A\u09BF \u098F\u0996\u09A8\u09CB \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09BF\u09A4 \u09B9\u09AF\u09BC\u09A8\u09BF\u0964</p>',
+      d.instructionsBn.length > 0 ? '<div class="doc-rules"><h3>\u09A8\u09BF\u09B0\u09CD\u09A6\u09C7\u09B6\u09BE\u09AC\u09B2\u09BF</h3><ol>' + d.instructionsBn.map((i) => `<li>${escapeHtml(i)}</li>`).join("") + "</ol></div>" : ""
+    ].join("")
+  };
+}
+var ADMIT_INSTRUCTIONS_BN = [
+  "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09BF\u09A4 \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09E9\u09E6 \u09AE\u09BF\u09A8\u09BF\u099F \u0986\u0997\u09C7 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u0995\u0995\u09CD\u09B7\u09C7 \u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u09A5\u09BE\u0995\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964",
+  "\u09AA\u09CD\u09B0\u09AC\u09C7\u09B6\u09AA\u09A4\u09CD\u09B0 \u099B\u09BE\u09A1\u09BC\u09BE \u0995\u09CB\u09A8\u09CB \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u0995\u09C7 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u0995\u0995\u09CD\u09B7\u09C7 \u09AA\u09CD\u09B0\u09AC\u09C7\u09B6 \u0995\u09B0\u09A4\u09C7 \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AC\u09C7 \u09A8\u09BE\u0964",
+  "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2 \u09AB\u09CB\u09A8 \u09AC\u09BE \u0995\u09CB\u09A8\u09CB \u0987\u09B2\u09C7\u0995\u099F\u09CD\u09B0\u09A8\u09BF\u0995 \u09A1\u09BF\u09AD\u09BE\u0987\u09B8 \u09B8\u0999\u09CD\u0997\u09C7 \u0986\u09A8\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964",
+  "\u09AA\u09CD\u09B0\u09AC\u09C7\u09B6\u09AA\u09A4\u09CD\u09B0\u099F\u09BF \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u09B6\u09C7\u09B7 \u09A8\u09BE \u09B9\u0993\u09AF\u09BC\u09BE \u09AA\u09B0\u09CD\u09AF\u09A8\u09CD\u09A4 \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964"
+];
+function buildIdCard(d, locale = "bn") {
+  return {
+    title: titleFor("id_card", locale),
+    meta: [{ label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: d.yearLabel }],
+    showSignature: false,
+    bodyHtml: [
+      '<div class="doc-idcard">',
+      '<div class="doc-photo" aria-hidden="true"><span>\u099B\u09AC\u09BF</span></div>',
+      '<div class="doc-idcard-body">',
+      fields([
+        ...studentFields(d.student, locale),
+        ...d.student.bloodGroup ? [["\u09B0\u0995\u09CD\u09A4\u09C7\u09B0 \u0997\u09CD\u09B0\u09C1\u09AA", d.student.bloodGroup]] : [],
+        ...d.guardianPhone ? [["\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09AE\u09CB\u09AC\u09BE\u0987\u09B2", d.guardianPhone]] : [],
+        ...d.validUntil ? [["\u09AE\u09C7\u09AF\u09BC\u09BE\u09A6", date(d.validUntil, locale)]] : []
+      ]),
+      "</div>",
+      "</div>"
+    ].join("")
+  };
+}
+function buildTransferCertificate(d, locale = "bn") {
+  const name = escapeHtml(d.student.nameBn);
+  const father = d.student.fatherNameBn ? escapeHtml(d.student.fatherNameBn) : null;
+  const mother = d.student.motherNameBn ? escapeHtml(d.student.motherNameBn) : null;
+  const parentage = [
+    father ? `\u09AA\u09BF\u09A4\u09BE: ${father}` : null,
+    mother ? `\u09AE\u09BE\u09A4\u09BE: ${mother}` : null
+  ].filter(Boolean).join(", ");
+  return {
+    title: titleFor("transfer_certificate", locale),
+    meta: [
+      { label: "\u099B\u09BE\u09A1\u09BC\u09AA\u09A4\u09CD\u09B0 \u09A8\u09AE\u09CD\u09AC\u09B0", value: d.certificateNo },
+      { label: "\u0987\u09B8\u09CD\u09AF\u09C1\u09B0 \u09A4\u09BE\u09B0\u09BF\u0996", value: date(d.issuedOn, locale) }
+    ],
+    bodyHtml: [
+      '<div class="doc-letter">',
+      `<p>\u098F\u0987 \u09AE\u09B0\u09CD\u09AE\u09C7 \u09AA\u09CD\u09B0\u09A4\u09CD\u09AF\u09AF\u09BC\u09A8 \u0995\u09B0\u09BE \u09AF\u09BE\u0987\u09A4\u09C7\u099B\u09C7 \u09AF\u09C7, <b>${name}</b>`,
+      parentage ? `, ${escapeHtml(parentage)},` : ",",
+      ` \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 ${escapeHtml(d.lastYearLabel)} \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7`,
+      ` <b>${escapeHtml(d.lastClassBn)}</b> \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u0985\u09A7\u09CD\u09AF\u09AF\u09BC\u09A8\u09B0\u09A4 \u099B\u09BF\u09B2\u0964</p>`,
+      d.admissionDate ? `<p>\u09B8\u09C7 ${escapeHtml(date(d.admissionDate, locale))} \u09A4\u09BE\u09B0\u09BF\u0996\u09C7 \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u09AD\u09B0\u09CD\u09A4\u09BF \u09B9\u09AF\u09BC` + (d.leftOn ? ` \u098F\u09AC\u0982 ${escapeHtml(date(d.leftOn, locale))} \u09A4\u09BE\u09B0\u09BF\u0996 \u09AA\u09B0\u09CD\u09AF\u09A8\u09CD\u09A4 \u0985\u09A7\u09CD\u09AF\u09AF\u09BC\u09A8 \u0995\u09B0\u09C7\u0964</p>` : "\u0964</p>") : "",
+      `<p>\u0986\u09AE\u09BE\u09B0 \u099C\u09BE\u09A8\u09BE\u09AE\u09A4\u09C7 \u09A4\u09BE\u09B9\u09BE\u09B0 \u0986\u099A\u09B0\u09A3 <b>${escapeHtml(d.conductBn)}</b>\u0964`,
+      d.duesCleared ? " \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u09AA\u09BE\u0993\u09A8\u09BE \u09A4\u09BE\u09B9\u09BE\u09B0 \u09A8\u09BF\u0995\u099F \u09AC\u0995\u09C7\u09AF\u09BC\u09BE \u09A8\u09BE\u0987\u0964" : " \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u09AA\u09BE\u0993\u09A8\u09BE \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u09AA\u09B0\u09BF\u09B6\u09CB\u09A7\u09BF\u09A4 \u09B9\u09AF\u09BC \u09A8\u09BE\u0987\u0964",
+      "</p>",
+      `<p>${escapeHtml(d.reasonBn)}</p>`,
+      "<p>\u0986\u09AE\u09BF \u09A4\u09BE\u09B9\u09BE\u09B0 \u09AD\u09AC\u09BF\u09B7\u09CD\u09AF\u09CE \u099C\u09C0\u09AC\u09A8\u09C7\u09B0 \u09B8\u09B0\u09CD\u09AC\u09BE\u0999\u09CD\u0997\u09C0\u09A3 \u09B8\u09BE\u09AB\u09B2\u09CD\u09AF \u0995\u09BE\u09AE\u09A8\u09BE \u0995\u09B0\u09BF\u0964</p>",
+      "</div>",
+      fields(studentFields(d.student, locale))
+    ].join("")
+  };
+}
+function buildAttendanceSheet(d, locale = "bn") {
+  const days = Array.from({ length: d.dayColumns }, (_, i) => num(i + 1, locale));
+  const head = ["\u09B0\u09CB\u09B2", "\u09A8\u09BE\u09AE", ...days];
+  const rows = d.students.map((s) => [
+    num(s.rollNo, locale),
+    s.nameBn,
+    ...days.map(() => "")
+  ]);
+  return {
+    title: titleFor("attendance_sheet", locale),
+    meta: [
+      { label: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF", value: d.groupBn ? `${d.classBn} \xB7 ${d.groupBn}` : d.classBn },
+      { label: "\u09B6\u09BE\u0996\u09BE", value: d.section },
+      { label: "\u09AE\u09BE\u09B8", value: d.monthBn }
+    ],
+    showSignature: true,
+    signatureCaption: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09B6\u09BF\u0995\u09CD\u09B7\u0995",
+    bodyHtml: d.students.length > 0 ? table(head, rows, "doc-table-grid") : '<p class="doc-note">\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u0995\u09CB\u09A8\u09CB \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09A8\u09C7\u0987\u0964</p>'
+  };
+}
+function documentBodyCss() {
+  return [
+    ".doc-fields{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;margin:0 0 12px}",
+    ".doc-fields>div{display:flex;gap:6px;font-size:12px;min-width:0}",
+    ".doc-fields dt{margin:0;color:#6b7280;flex:none}",
+    ".doc-fields dd{margin:0;font-weight:600;overflow-wrap:anywhere}",
+    ".doc-table{width:100%;border-collapse:collapse;font-size:11.5px;margin:8px 0}",
+    ".doc-table th,.doc-table td{border:1px solid #d1d5db;padding:4px 6px;text-align:left}",
+    ".doc-table thead th{background:#f3f4f6;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".doc-table-money td:nth-child(2),.doc-table-money td:nth-child(3){text-align:right}",
+    // The blank register: narrow day columns, tall rows to write in.
+    ".doc-table-grid td{height:20px}",
+    ".doc-table-grid th:nth-child(n+3),.doc-table-grid td:nth-child(n+3){width:18px;padding:2px;text-align:center}",
+    ".doc-summary{margin-top:12px;padding-top:8px;border-top:1px solid #d1d5db}",
+    ".doc-total{margin:10px 0 0;margin-left:auto;width:250px;font-size:12px}",
+    ".doc-total>div{display:flex;justify-content:space-between;padding:3px 0}",
+    ".doc-total-paid{border-top:1px solid #d1d5db;border-bottom:1px solid #d1d5db;font-size:13px}",
+    ".doc-note{font-size:11.5px;color:#4b5563;margin:8px 0 0}",
+    ".doc-rules{margin-top:14px;font-size:11px}",
+    ".doc-rules h3{font-size:12px;margin:0 0 4px}",
+    ".doc-rules ol{margin:0;padding-inline-start:18px}",
+    ".doc-letter{font-size:13px;line-height:1.9;margin-bottom:14px}",
+    ".doc-letter p{margin:0 0 10px}",
+    // The ID card: its own small block, photo frame on the left.
+    ".doc-idcard{display:flex;gap:14px;align-items:flex-start}",
+    ".doc-photo{width:100px;height:120px;border:1px solid #9ca3af;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:11px;flex:none}",
+    ".doc-idcard-body{flex:1;min-width:0}",
+    ".doc-idcard .doc-fields{grid-template-columns:1fr}",
+    // ── Bulk printing ──
+    // Each document is its own page. `break-after` is the modern property and
+    // `page-break-after` the one older print engines honour; both are set
+    // because a wrong page break in a batch of forty is forty wrong pages.
+    ".doc+.doc{page-break-before:always;break-before:page}",
+    "@media print{",
+    "  .doc{page-break-after:auto;break-after:auto}",
+    "  .doc-table{page-break-inside:auto}",
+    "  .doc-table tr{page-break-inside:avoid;break-inside:avoid}",
+    "  .doc-table thead{display:table-header-group}",
+    // repeat on each page
+    "  .doc-foot,.doc-sign{page-break-inside:avoid;break-inside:avoid}",
+    "  .doc-letter{orphans:3;widows:3}",
+    "}"
+  ].join("");
+}
+
+// services/ops-svc/api/document.ts
+var ACCESS = {
+  fee_receipt: ["principal", "school_owner", "accountant", "student", "guardian"],
+  report_card: [
+    "principal",
+    "school_owner",
+    "academic_coordinator",
+    "dept_head",
+    "class_teacher",
+    "subject_teacher",
+    "student",
+    "guardian"
+  ],
+  admit_card: [
+    "principal",
+    "school_owner",
+    "academic_coordinator",
+    "dept_head",
+    "class_teacher",
+    "subject_teacher",
+    "student",
+    "guardian"
+  ],
+  id_card: ["principal", "school_owner", "academic_coordinator", "it_admin", "class_teacher"],
+  transfer_certificate: ["principal", "school_owner"],
+  attendance_sheet: [
+    "principal",
+    "school_owner",
+    "academic_coordinator",
+    "dept_head",
+    "class_teacher",
+    "subject_teacher"
+  ]
+};
+var MAX_BULK = 120;
+var MONTHS_BN = [
+  "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AE\u09BE\u09B0\u09CD\u099A",
+  "\u098F\u09AA\u09CD\u09B0\u09BF\u09B2",
+  "\u09AE\u09C7",
+  "\u099C\u09C1\u09A8",
+  "\u099C\u09C1\u09B2\u09BE\u0987",
+  "\u0986\u0997\u09B8\u09CD\u099F",
+  "\u09B8\u09C7\u09AA\u09CD\u099F\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u0985\u0995\u09CD\u099F\u09CB\u09AC\u09B0",
+  "\u09A8\u09AD\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u09A1\u09BF\u09B8\u09C7\u09AE\u09CD\u09AC\u09B0"
+];
+async function handler18(req, res) {
+  const cors = corsHeaders([], "GET, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    res.writeHead(405, { ...cors, "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method_not_allowed" }));
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const q = query(req);
+    const type = q.get("type") ?? "";
+    if (!(type in ACCESS)) {
+      throw new HttpError(400, "unknown document type", "bad_type", { field: "type" });
+    }
+    if (!ACCESS[type].includes(claims.role)) {
+      throw new HttpError(403, "\u098F\u0987 \u09A8\u09A5\u09BF \u09A4\u09C8\u09B0\u09BF\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987", "forbidden");
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const html = await db.withTenant(ctx, async (c) => {
+      const { rows: brandRows } = await c.query(
+        `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding FROM tenants`
+      );
+      const branding = parseBranding(brandRows[0]?.branding ?? {});
+      const sections = await build(c, ctx, type, q, branding);
+      if (sections.length === 0) {
+        throw new HttpError(404, "\u09A8\u09A5\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09A4\u09A5\u09CD\u09AF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "no_data");
+      }
+      return brandedDocumentSet({
+        branding,
+        sections,
+        locale: q.get("locale") === "en" ? "en" : "bn",
+        extraCss: documentBodyCss()
+      });
+    });
+    res.writeHead(200, {
+      ...cors,
+      "Content-Type": "text/html; charset=utf-8",
+      // Never cached: a document carries a named child's marks or a family's
+      // fee balance, and a shared proxy holding one is a leak that outlives
+      // the session.
+      "Cache-Control": "no-store, private",
+      // The response is a full document rendered in a print window; nothing
+      // should frame it or sniff it into something else.
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN"
+    });
+    res.end(html);
+  } catch (err) {
+    const e = err instanceof HttpError ? err : new HttpError(500, "internal_error", "internal_error");
+    res.writeHead(e.status, { ...cors, "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: e.code, message: e.message, ...e.detail ?? {} }));
+  }
+}
+async function build(c, ctx, type, q, branding) {
+  switch (type) {
+    case "fee_receipt":
+      return feeReceipt(c, q);
+    case "report_card":
+      return reportCards(c, q);
+    case "admit_card":
+      return admitCards(c, q);
+    case "id_card":
+      return idCards(c, q);
+    case "transfer_certificate":
+      return transferCertificate(c, q, branding);
+    case "attendance_sheet":
+      return attendanceSheet(c, q);
+  }
+}
+async function studentIdsFor(c, q) {
+  const explicit = (q.get("studentIds") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (explicit.length > 0) {
+    if (explicit.length > MAX_BULK) {
+      throw new HttpError(
+        400,
+        `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_BULK} \u099C\u09A8\u09C7\u09B0 \u09A8\u09A5\u09BF \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC`,
+        "too_many",
+        { field: "studentIds" }
+      );
+    }
+    return explicit;
+  }
+  const one = (q.get("studentId") ?? "").trim();
+  if (one) return [one];
+  const sectionId = (q.get("sectionId") ?? "").trim();
+  if (!sectionId) {
+    throw new HttpError(400, "studentId or sectionId is required", "bad_request");
+  }
+  const { rows } = await c.query(
+    `SELECT e.student_id FROM enrolments e
+      WHERE e.section_id = $1 AND e.status = 'active'
+      ORDER BY e.roll_no LIMIT $2`,
+    [sectionId, MAX_BULK + 1]
+  );
+  if (rows.length > MAX_BULK) {
+    throw new HttpError(
+      400,
+      `\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09AF\u09BC ${MAX_BULK}-\u098F\u09B0 \u09AC\u09C7\u09B6\u09BF \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0986\u099B\u09C7`,
+      "too_many",
+      { field: "sectionId" }
+    );
+  }
+  return rows.map((r) => r.student_id);
+}
+var GROUP_BN = {
+  none: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3",
+  science: "\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8",
+  humanities: "\u09AE\u09BE\u09A8\u09AC\u09BF\u0995",
+  business_studies: "\u09AC\u09CD\u09AF\u09AC\u09B8\u09BE\u09AF\u09BC \u09B6\u09BF\u0995\u09CD\u09B7\u09BE",
+  vocational: "\u09AD\u09CB\u0995\u09C7\u09B6\u09A8\u09BE\u09B2",
+  general: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3"
+};
+async function loadStudents(c, ids) {
+  const { rows } = await c.query(
+    `SELECT u.id, u.full_name_bn AS name_bn, u.full_name_en AS name_en,
+            sp.student_code, cl.name_bn AS class_bn,
+            cl."group"::text AS group_bn, s.name AS section, e.roll_no,
+            u.father_name_bn AS father_bn, u.mother_name_bn AS mother_bn,
+            u.date_of_birth::text AS dob, sp.admission_date::text AS admission_date,
+            sp.blood_group, ay.label AS year_label
+       FROM users u
+       LEFT JOIN student_profiles sp ON sp.user_id = u.id
+       LEFT JOIN enrolments e ON e.student_id = u.id AND e.status = 'active'
+       LEFT JOIN sections s   ON s.id = e.section_id
+       LEFT JOIN classes cl   ON cl.id = s.class_id
+       LEFT JOIN academic_years ay ON ay.id = e.academic_year_id
+      WHERE u.id = ANY($1::uuid[]) AND app.can_see_student(u.id)
+      ORDER BY e.roll_no NULLS LAST, u.full_name_bn`,
+    [ids]
+  );
+  return rows;
+}
+function toRef(r) {
+  return {
+    nameBn: r.name_bn,
+    nameEn: r.name_en,
+    studentCode: r.student_code,
+    classBn: r.class_bn,
+    groupBn: r.group_bn ? GROUP_BN[r.group_bn] ?? r.group_bn : null,
+    section: r.section,
+    rollNo: r.roll_no,
+    fatherNameBn: r.father_bn,
+    motherNameBn: r.mother_bn,
+    dateOfBirth: r.dob,
+    admissionDate: r.admission_date,
+    bloodGroup: r.blood_group
+  };
+}
+async function feeReceipt(c, q) {
+  const id = (q.get("receiptId") ?? "").trim();
+  if (!id) throw new HttpError(400, "receiptId is required", "bad_request", { field: "receiptId" });
+  const { rows } = await c.query(
+    `SELECT pr.receipt_no, pr.issued_at::text, pr.amount::text, pr.method::text AS method,
+            i.id AS invoice_id, i.invoice_no, i.billing_period,
+            i.total_amount::text, i.paid_amount::text, i.balance_amount::text,
+            pr.student_id
+       FROM payment_receipts pr
+       JOIN invoices i ON i.id = pr.invoice_id
+      WHERE pr.id = $1`,
+    [id]
+  );
+  if (rows.length === 0) throw new HttpError(404, "\u09B0\u09B8\u09BF\u09A6 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  const r = rows[0];
+  const { rows: lines } = await c.query(
+    `SELECT description_bn, amount::text, waiver_amount::text
+       FROM invoice_lines WHERE invoice_id = $1 ORDER BY description_bn`,
+    [r.invoice_id]
+  );
+  const students = await loadStudents(c, [r.student_id]);
+  if (students.length === 0) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  return [buildFeeReceipt({
+    student: toRef(students[0]),
+    receiptNo: r.receipt_no,
+    issuedAt: r.issued_at,
+    amount: r.amount,
+    method: r.method,
+    invoiceNo: r.invoice_no,
+    billingPeriod: r.billing_period,
+    lines: lines.map((l) => ({
+      descriptionBn: l.description_bn,
+      amount: l.amount,
+      waiver: l.waiver_amount
+    })),
+    invoiceTotal: r.total_amount,
+    paidToDate: r.paid_amount,
+    balance: r.balance_amount
+  })];
+}
+async function reportCards(c, q) {
+  const examId = (q.get("examId") ?? "").trim();
+  if (!examId) throw new HttpError(400, "examId is required", "bad_request", { field: "examId" });
+  const { rows: exam } = await c.query(
+    `SELECT e.name_bn, e.status::text AS status, ay.label AS year_label
+       FROM exams e JOIN academic_years ay ON ay.id = e.academic_year_id
+      WHERE e.id = $1`,
+    [examId]
+  );
+  if (exam.length === 0) throw new HttpError(404, "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  if (exam[0].status !== "published") {
+    throw new HttpError(
+      409,
+      "\u098F\u0987 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09AB\u09B2\u09BE\u09AB\u09B2 \u098F\u0996\u09A8\u09CB \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u0986\u0997\u09C7 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09C1\u09A8",
+      "not_published"
+    );
+  }
+  const ids = await studentIdsFor(c, q);
+  const students = await loadStudents(c, ids);
+  const { rows: results } = await c.query(
+    `SELECT student_id, total_marks::text, total_max::text, percentage::text,
+            gpa::text, letter_grade, is_pass, rank_in_section, attendance_percent::text
+       FROM exam_results WHERE exam_id = $1 AND student_id = ANY($2::uuid[])`,
+    [examId, ids]
+  );
+  const byStudent = new Map(results.map((r) => [r.student_id, r]));
+  const { rows: marks } = await c.query(
+    `SELECT m.student_id, sub.name_bn AS subject_bn, m.total_marks::text,
+            (es.cq_max + es.mcq_max + es.practical_max + es.ca_max)::text AS max_marks,
+            m.grade_letter, m.grade_point::text, m.is_absent
+       FROM exam_marks m
+       JOIN exam_subjects es ON es.id = m.exam_subject_id
+       JOIN subjects sub     ON sub.id = es.subject_id
+      WHERE es.exam_id = $1 AND m.student_id = ANY($2::uuid[])
+      ORDER BY sub.name_bn`,
+    [examId, ids]
+  );
+  return students.map((s) => {
+    const res = byStudent.get(s.id);
+    return buildReportCard({
+      student: toRef(s),
+      examNameBn: exam[0].name_bn,
+      yearLabel: exam[0].year_label,
+      subjects: marks.filter((m) => m.student_id === s.id).map((m) => ({
+        nameBn: m.subject_bn,
+        obtained: m.total_marks,
+        max: m.max_marks,
+        grade: m.grade_letter,
+        gradePoint: m.grade_point,
+        isAbsent: m.is_absent
+      })),
+      totalMarks: res?.total_marks ?? null,
+      totalMax: res?.total_max ?? null,
+      percentage: res?.percentage ?? null,
+      gpa: res?.gpa ?? null,
+      letterGrade: res?.letter_grade ?? null,
+      isPass: res?.is_pass ?? false,
+      rankInSection: res?.rank_in_section ?? null,
+      attendancePercent: res?.attendance_percent ?? null
+    });
+  });
+}
+async function admitCards(c, q) {
+  const examId = (q.get("examId") ?? "").trim();
+  if (!examId) throw new HttpError(400, "examId is required", "bad_request", { field: "examId" });
+  const { rows: exam } = await c.query(
+    `SELECT e.name_bn, ay.label AS year_label
+       FROM exams e JOIN academic_years ay ON ay.id = e.academic_year_id
+      WHERE e.id = $1`,
+    [examId]
+  );
+  if (exam.length === 0) throw new HttpError(404, "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  const ids = await studentIdsFor(c, q);
+  const students = await loadStudents(c, ids);
+  const { rows: papers } = await c.query(
+    // `exam_halls` carries no name of its own — it points at a `rooms` row,
+    // which is where the code a candidate reads on the door lives. Found by
+    // running this against the real schema, not by reading it.
+    `SELECT e.student_id, sub.name_bn AS subject_bn, es.exam_date::text,
+            seat.start_time::text,
+            COALESCE(r.name_bn, r.code) AS hall_bn,
+            seat.seat_row, seat.seat_col
+       FROM enrolments e
+       JOIN exam_subjects es ON es.section_id = e.section_id AND es.exam_id = $1
+       JOIN subjects sub     ON sub.id = es.subject_id
+       LEFT JOIN exam_seats seat ON seat.enrolment_id = e.id AND seat.exam_subject_id = es.id
+       LEFT JOIN exam_halls h    ON h.id = seat.hall_id
+       LEFT JOIN rooms r         ON r.id = h.room_id
+      WHERE e.student_id = ANY($2::uuid[]) AND e.status = 'active'
+      ORDER BY es.exam_date NULLS LAST, sub.name_bn`,
+    [examId, ids]
+  );
+  return students.map((s) => buildAdmitCard({
+    student: toRef(s),
+    examNameBn: exam[0].name_bn,
+    yearLabel: exam[0].year_label,
+    papers: papers.filter((p) => p.student_id === s.id).map((p) => ({
+      subjectBn: p.subject_bn,
+      examDate: p.exam_date,
+      startTime: p.start_time,
+      hallBn: p.hall_bn,
+      seat: p.seat_row != null && p.seat_col != null ? `${p.seat_row}-${p.seat_col}` : null
+    })),
+    instructionsBn: ADMIT_INSTRUCTIONS_BN
+  }));
+}
+async function idCards(c, q) {
+  const ids = await studentIdsFor(c, q);
+  const students = await loadStudents(c, ids);
+  const { rows: phones } = await c.query(
+    `SELECT gs.student_id, g.phone_e164 AS phone
+       FROM guardianships gs JOIN users g ON g.id = gs.guardian_id
+      WHERE gs.student_id = ANY($1::uuid[]) AND gs.is_primary`,
+    [ids]
+  );
+  const phoneOf = new Map(phones.map((p) => [p.student_id, p.phone]));
+  const { rows: year2 } = await c.query(
+    `SELECT label, ends_on::text FROM academic_years
+      ORDER BY is_current DESC, starts_on DESC LIMIT 1`
+  );
+  return students.map((s) => buildIdCard({
+    student: toRef(s),
+    yearLabel: s.year_label ?? year2[0]?.label ?? "",
+    validUntil: year2[0]?.ends_on ?? null,
+    guardianPhone: phoneOf.get(s.id) ?? null
+  }));
+}
+async function transferCertificate(c, q, _branding) {
+  const studentId = (q.get("studentId") ?? "").trim();
+  if (!studentId) {
+    throw new HttpError(400, "studentId is required", "bad_request", { field: "studentId" });
+  }
+  const students = await loadStudents(c, [studentId]);
+  if (students.length === 0) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  const s = students[0];
+  const { rows: last } = await c.query(
+    `SELECT cl.name_bn AS class_bn, ay.label AS year_label,
+            e.ended_on::text, e.status
+       FROM enrolments e
+       JOIN sections s        ON s.id = e.section_id
+       JOIN classes cl        ON cl.id = s.class_id
+       JOIN academic_years ay ON ay.id = e.academic_year_id
+      WHERE e.student_id = $1
+      ORDER BY ay.starts_on DESC LIMIT 1`,
+    [studentId]
+  );
+  if (last.length === 0) {
+    throw new HttpError(
+      409,
+      "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u0995\u09CB\u09A8\u09CB \u09AD\u09B0\u09CD\u09A4\u09BF\u09B0 \u09B0\u09C7\u0995\u09B0\u09CD\u09A1 \u09A8\u09C7\u0987 \u2014 \u099B\u09BE\u09A1\u09BC\u09AA\u09A4\u09CD\u09B0 \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE",
+      "no_enrolment"
+    );
+  }
+  const { rows: dues } = await c.query(
+    `SELECT COALESCE(sum(balance_amount), 0)::text AS outstanding
+       FROM invoices WHERE student_id = $1`,
+    [studentId]
+  );
+  return [buildTransferCertificate({
+    student: toRef(s),
+    // Deterministic and tenant-unique by construction: `student_code` is
+    // UNIQUE per tenant, so this cannot collide and regenerating gives the
+    // same number. See docs/07 §9h for why there is no serial register yet.
+    certificateNo: `TC-${last[0].year_label}-${s.student_code ?? s.id.slice(0, 8)}`,
+    issuedOn: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+    lastClassBn: last[0].class_bn,
+    lastYearLabel: last[0].year_label,
+    admissionDate: s.admission_date,
+    leftOn: last[0].ended_on,
+    conductBn: (q.get("conduct") ?? "\u09B8\u09A8\u09CD\u09A4\u09CB\u09B7\u099C\u09A8\u0995").slice(0, 40),
+    reasonBn: (q.get("reason") ?? "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u0986\u09AC\u09C7\u09A6\u09A8\u09C7\u09B0 \u09AA\u09CD\u09B0\u09C7\u0995\u09CD\u09B7\u09BF\u09A4\u09C7 \u09A4\u09BE\u09B9\u09BE\u0995\u09C7 \u099B\u09BE\u09A1\u09BC\u09AA\u09A4\u09CD\u09B0 \u09AA\u09CD\u09B0\u09A6\u09BE\u09A8 \u0995\u09B0\u09BE \u09B9\u0987\u09B2\u0964").slice(0, 300),
+    duesCleared: Number(dues[0]?.outstanding ?? 0) <= 0
+  })];
+}
+async function attendanceSheet(c, q) {
+  const sectionId = (q.get("sectionId") ?? "").trim();
+  if (!sectionId) {
+    throw new HttpError(400, "sectionId is required", "bad_request", { field: "sectionId" });
+  }
+  const { rows: sec } = await c.query(
+    `SELECT s.name, cl.name_bn AS class_bn, cl."group"::text AS group_bn,
+            ay.label AS year_label
+       FROM sections s
+       JOIN classes cl        ON cl.id = s.class_id
+       JOIN academic_years ay ON ay.id = s.academic_year_id
+      WHERE s.id = $1`,
+    [sectionId]
+  );
+  if (sec.length === 0) throw new HttpError(404, "\u09B6\u09BE\u0996\u09BE \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  const { rows: roster } = await c.query(
+    `SELECT e.roll_no, u.full_name_bn AS name_bn,
+            app.can_see_student(u.id) AS visible
+       FROM enrolments e JOIN users u ON u.id = e.student_id
+      WHERE e.section_id = $1 AND e.status = 'active'
+      ORDER BY e.roll_no`,
+    [sectionId]
+  );
+  if (roster.some((r) => !r.visible)) {
+    throw new HttpError(
+      403,
+      "\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09B0 \u09B9\u09BE\u099C\u09BF\u09B0\u09BE \u0996\u09BE\u09A4\u09BE \u09A4\u09C8\u09B0\u09BF\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987",
+      "forbidden"
+    );
+  }
+  const monthParam = (q.get("month") ?? "").trim();
+  const now = /* @__PURE__ */ new Date();
+  const month = /^\d{4}-\d{2}$/.test(monthParam) ? monthParam : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [yy, mm] = month.split("-").map(Number);
+  const dayColumns = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+  return [buildAttendanceSheet({
+    classBn: sec[0].class_bn,
+    groupBn: GROUP_BN[sec[0].group_bn] ?? sec[0].group_bn,
+    section: sec[0].name,
+    yearLabel: sec[0].year_label,
+    monthBn: `${MONTHS_BN[mm - 1]} ${yy}`,
+    students: roster.map((r) => ({ rollNo: r.roll_no, nameBn: r.name_bn })),
+    dayColumns
+  })];
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -4239,9 +5134,10 @@ var ROUTES = {
   structure: handler14,
   guardians: handler15,
   audit: handler16,
-  calendar: handler17
+  calendar: handler17,
+  document: handler18
 };
-async function handler18(req, res) {
+async function handler19(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -4271,5 +5167,5 @@ async function handler18(req, res) {
   return route(req, res);
 }
 export {
-  handler18 as default
+  handler19 as default
 };

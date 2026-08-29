@@ -12,6 +12,13 @@ import { Auth } from './auth.ts';
 import type { PushRequest, PushResponse } from '../../../packages/offline/src/types.ts';
 import type { SectionSummary, RosterStudent } from './roster-view.ts';
 import type { RoutineSlot } from './routine-view.ts';
+import { parseBranding } from '../../../packages/ui-core/src/branding.ts';
+import { brandedDocumentSet, type BrandedSection } from '../../../packages/ui-core/src/branded-doc.ts';
+import {
+  documentBodyCss, buildFeeReceipt, buildReportCard, buildAdmitCard, buildIdCard,
+  buildTransferCertificate, buildAttendanceSheet, ADMIT_INSTRUCTIONS_BN,
+  type StudentRef,
+} from '../../../packages/ui-core/src/documents.ts';
 
 const SECTIONS: SectionSummary[] = [
   { id: 'demo-9a', name: 'ক', shift: 'morning', studentCount: 12, className: { bn: 'নবম শ্রেণি', en: 'Class 9' }, levelNo: 9 },
@@ -806,6 +813,167 @@ const DEMO_CALENDAR: Record<'a' | 'b', {
     ],
   },
 };
+
+/**
+ * R-5's document endpoint, answered locally.
+ *
+ * `DOC_ACCESS` mirrors `services/ops-svc/api/document.ts` deliberately: a
+ * demo that let a guardian print a transfer certificate would teach the
+ * wrong thing about the product. The two lists are duplicated rather than
+ * shared because the server's copy must not be reachable from the browser
+ * bundle; if they drift, the browser acceptance in the R-5 log is what
+ * catches it.
+ */
+const DOC_ACCESS: Record<string, string[]> = {
+  fee_receipt: ['principal', 'school_owner', 'accountant', 'student', 'guardian'],
+  report_card: ['principal', 'school_owner', 'academic_coordinator', 'dept_head',
+                'class_teacher', 'subject_teacher', 'student', 'guardian'],
+  admit_card: ['principal', 'school_owner', 'academic_coordinator', 'dept_head',
+               'class_teacher', 'subject_teacher', 'student', 'guardian'],
+  id_card: ['principal', 'school_owner', 'academic_coordinator', 'it_admin', 'class_teacher'],
+  transfer_certificate: ['principal', 'school_owner'],
+  attendance_sheet: ['principal', 'school_owner', 'academic_coordinator',
+                     'dept_head', 'class_teacher', 'subject_teacher'],
+};
+
+function demoStudentRef(studentId: string): StudentRef {
+  // Ids look like `demo-9a-s7`; the trailing number picks a name so the same
+  // id always renders the same child, which matters when someone prints a
+  // card twice and compares them.
+  const n = Number(studentId.match(/-s(\d+)$/)?.[1] ?? '1');
+  const [bn, en] = NAMES[(n - 1) % NAMES.length];
+  const sec = studentId.startsWith('demo-10a') ? 'ক' : studentId.includes('-9b-') ? 'খ' : 'ক';
+  return {
+    nameBn: bn, nameEn: en,
+    studentCode: `2024-${String(1000 + n).slice(1)}`,
+    classBn: studentId.startsWith('demo-10a') ? 'দশম শ্রেণি' : 'নবম শ্রেণি',
+    groupBn: 'বিজ্ঞান',
+    section: sec,
+    rollNo: n,
+    fatherNameBn: 'মোঃ আব্দুর রহিম',
+    motherNameBn: 'রোকসানা বেগম',
+    dateOfBirth: '2010-03-14',
+    admissionDate: '2024-01-05',
+    bloodGroup: ['A+', 'B+', 'O+', 'AB+'][n % 4],
+  };
+}
+
+function demoDocument(q: URLSearchParams): Response {
+  const type = q.get('type') ?? '';
+  const allowed = DOC_ACCESS[type];
+  if (!allowed) {
+    return new Response(JSON.stringify({ error: 'bad_type', message: 'অজানা নথি' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (!allowed.includes(demoRole())) {
+    return new Response(
+      JSON.stringify({ error: 'forbidden', message: 'এই নথি তৈরির অনুমতি আপনার নেই' }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const explicit = (q.get('studentIds') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const one = (q.get('studentId') ?? '').trim();
+  const sectionId = (q.get('sectionId') ?? '').trim();
+  const ids = explicit.length ? explicit
+    : one ? [one]
+    : sectionId ? NAMES.map((_, i) => `${sectionId}-s${i + 1}`)
+    : [];
+
+  const locale: 'bn' | 'en' = q.get('locale') === 'en' ? 'en' : 'bn';
+  const branding = parseBranding(DEMO_TENANTS[demoTenantKey()].branding);
+  const sections = demoSectionsFor(type, ids, sectionId, locale);
+  if (sections.length === 0) {
+    return new Response(
+      JSON.stringify({ error: 'no_data', message: 'নথির জন্য কোনো তথ্য পাওয়া যায়নি' }),
+      { status: 404, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const html = brandedDocumentSet({
+    branding, sections, locale, extraCss: documentBodyCss(),
+  });
+  return new Response(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, private' },
+  });
+}
+
+function demoSectionsFor(
+  type: string, ids: string[], sectionId: string, locale: 'bn' | 'en',
+): BrandedSection[] {
+  const students = ids.map(demoStudentRef);
+  switch (type) {
+    case 'fee_receipt': {
+      const s = students[0] ?? demoStudentRef('demo-9a-s1');
+      return [buildFeeReceipt({
+        student: s,
+        receiptNo: 'RCP-2026-00042',
+        issuedAt: '2026-05-12T09:15:00Z',
+        amount: '1300.00', method: 'bkash',
+        invoiceNo: 'INV-2026-05-00042', billingPeriod: '2026-05',
+        lines: [
+          { descriptionBn: 'মাসিক বেতন', amount: '1200.00', waiver: '200.00' },
+          { descriptionBn: 'পরীক্ষার ফি', amount: '300.00', waiver: '0.00' },
+        ],
+        invoiceTotal: '1300.00', paidToDate: '1300.00', balance: '0.00',
+      }, locale)];
+    }
+    case 'report_card':
+      return students.map((s) => buildReportCard({
+        student: s,
+        examNameBn: 'অর্ধবার্ষিক পরীক্ষা', yearLabel: '২০২৬',
+        subjects: [
+          { nameBn: 'বাংলা', obtained: '72', max: '100', grade: 'A-', gradePoint: '3.50', isAbsent: false },
+          { nameBn: 'ইংরেজি', obtained: '68', max: '100', grade: 'B', gradePoint: '3.00', isAbsent: false },
+          { nameBn: 'গণিত', obtained: '81', max: '100', grade: 'A', gradePoint: '4.00', isAbsent: false },
+          { nameBn: 'পদার্থবিজ্ঞান', obtained: null, max: '100', grade: null, gradePoint: null, isAbsent: true },
+        ],
+        totalMarks: '221', totalMax: '400', percentage: '55.25', gpa: '3.50',
+        letterGrade: 'A-', isPass: true, rankInSection: s.rollNo ?? null,
+        attendancePercent: '94.50',
+      }, locale));
+    case 'admit_card':
+      return students.map((s) => buildAdmitCard({
+        student: s,
+        examNameBn: 'বার্ষিক পরীক্ষা', yearLabel: '২০২৬',
+        papers: [
+          { subjectBn: 'বাংলা', examDate: '2026-11-02', startTime: '10:00', hallBn: 'হল ১', seat: 'সারি ২, আসন ৪' },
+          { subjectBn: 'ইংরেজি', examDate: '2026-11-04', startTime: '10:00', hallBn: 'হল ১', seat: 'সারি ২, আসন ৪' },
+          { subjectBn: 'গণিত', examDate: '2026-11-06', startTime: '10:00', hallBn: null, seat: null },
+        ],
+        instructionsBn: ADMIT_INSTRUCTIONS_BN,
+      }, locale));
+    case 'id_card':
+      return students.map((s) => buildIdCard({
+        student: s, yearLabel: '২০২৬', validUntil: '2026-12-31',
+        guardianPhone: '+8801711000010',
+      }, locale));
+    case 'transfer_certificate': {
+      const s = students[0] ?? demoStudentRef('demo-9a-s1');
+      return [buildTransferCertificate({
+        student: s,
+        certificateNo: `TC-2026-${s.studentCode ?? '0001'}`,
+        issuedOn: '2026-07-01',
+        lastClassBn: s.classBn ?? 'নবম শ্রেণি', lastYearLabel: '২০২৬',
+        admissionDate: s.admissionDate ?? null, leftOn: '2026-06-30',
+        conductBn: 'সন্তোষজনক',
+        reasonBn: 'অভিভাবকের বদলিজনিত কারণে।',
+        duesCleared: true,
+      }, locale)];
+    }
+    case 'attendance_sheet':
+      return [buildAttendanceSheet({
+        classBn: sectionId.startsWith('demo-10a') ? 'দশম শ্রেণি' : 'নবম শ্রেণি',
+        groupBn: 'বিজ্ঞান',
+        section: sectionId.includes('-9b') ? 'খ' : 'ক',
+        yearLabel: '২০২৬',
+        monthBn: 'মে ২০২৬',
+        students: NAMES.map(([bn], i) => ({ rollNo: i + 1, nameBn: bn })),
+        dayColumns: 31,
+      }, locale)];
+    default:
+      return [];
+  }
+}
 
 function demoRole(): string {
   const fromUrl = new URLSearchParams(location.search).get('role');
@@ -1630,6 +1798,24 @@ export class DemoAuth extends Auth {
         };
         return ok(res);
       }
+
+      // ── R-5 ────────────────────────────────────────────────────────
+      // The one demo endpoint that answers HTML rather than JSON, because
+      // that is what the real one answers.
+      //
+      // It renders through the SAME builders and the SAME brandedDocumentSet
+      // the server uses — a demo that mocked up a receipt with its own markup
+      // would be showing a document the product cannot actually produce, and
+      // would go stale the first time a template changed. What is faked here
+      // is the data, not the renderer.
+      //
+      // Switching demo tenants (?tenant=b) switches the letterhead, the
+      // colour and the head teacher's name, which is the whole feature made
+      // visible without two servers. Both demo tenants leave watermarkUrl
+      // and signatureUrl empty, so this preview also exercises the
+      // degrade-don't-break path every day.
+      case '/api/v1/ops/document':
+        return demoDocument(url.searchParams);
 
       default:
         return new Response(JSON.stringify({ error: 'not_found' }), {

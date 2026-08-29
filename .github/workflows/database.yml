@@ -86,6 +86,12 @@ jobs:
       - name: Calendar scope, isolation and weekend config
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
 
+      # ── 3g. R-5: a document carries one school's letterhead and one
+      #        family's data. Also pins the reason the document endpoint is
+      #        tighter than `users_scope` — see the file's test 5.
+      - name: Branded documents — tenant, family and section isolation
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -101,6 +107,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/assignment_history.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/guardian_links.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

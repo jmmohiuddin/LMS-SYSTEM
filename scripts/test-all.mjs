@@ -25,7 +25,7 @@
  * refuses to run rather than let anyone spend an afternoon on that.
  */
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,6 +62,31 @@ if (process.env.DATABASE_URL) {
   } finally { await c.end().catch(() => {}); }
 }
 
+// ── Two Windows faults this script was itself blind to ──────────────────
+//
+// 1. `npm` is npm.cmd there, and execFileSync does not use a shell, so
+//    spawning "npm" fails with ENOENT (and Node ≥20 refuses .cmd without a
+//    shell outright, EINVAL). Every workspace reported FAIL with no output:
+//    eleven identical failures and not one error message, which reads as
+//    "the repo is broken" rather than "the runner cannot find npm".
+//
+// 2. Worse, and quieter. The workspace scripts said
+//    `node --test 'test/*.test.ts'`. A POSIX shell strips those quotes; cmd
+//    passes them through literally, no file matches, and node exits 0 having
+//    run nothing. On Windows the entire suite reported success while running
+//    zero tests — precisely the invisible-tests failure this file exists to
+//    prevent, in this file's own tooling. They are now double-quoted, which
+//    both shells strip and node globs for itself.
+//
+// The second fault hid for so long because "ok" and "ok" look the same: a
+// workspace that ran 153 tests and one that ran none both printed a tick.
+// The reporting below now says "0 tests — NOTHING RAN" instead, which is
+// legitimate for the DB-backed suites when DATABASE_URL is unset and is a
+// bug in every other case. It is not a hard error precisely because of that
+// first case; it is simply impossible to mistake for a pass.
+const npmTest = (cwd) =>
+  execSync('npm test --silent', { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
 let failed = 0;
 let orphaned = [];
 const results = [];
@@ -88,10 +113,17 @@ for (const group of [...GROUPS, ...EXTRA]) {
 
     process.stdout.write(`${(isLeaf ? group : group + '/' + name).padEnd(28)} `);
     try {
-      const out = execFileSync('npm', ['test', '--silent'], { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const out = npmTest(ws);
       const pass = /^. tests (\d+)/m.exec(out)?.[1] ?? '?';
       const skip = /^. skipped (\d+)/m.exec(out)?.[1] ?? '0';
-      console.log(`ok  ${pass} tests${skip !== '0' ? `, ${skip} skipped` : ''}`);
+      const suites = /^. suites (\d+)/m.exec(out)?.[1] ?? '0';
+      if (pass === '0') {
+        console.log(`0 tests — NOTHING RAN${Number(suites) > 0
+          ? ` (${suites} suite(s) skipped; set DATABASE_URL if they are DB-backed)`
+          : ' (no test file matched)'}`);
+      } else {
+        console.log(`ok  ${pass} tests${skip !== '0' ? `, ${skip} skipped` : ''}`);
+      }
       results.push(Number(pass) || 0);
     } catch (err) {
       failed++;

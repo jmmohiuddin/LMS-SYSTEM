@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Routine solver, editor, exam routine and substitute finder.",
   "scripts": {
-    "test": "node --test 'test/*.test.ts'"
+    "test": "node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "pg": "^8.13.0"

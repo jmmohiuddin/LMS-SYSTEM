@@ -15,11 +15,12 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **787 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 312** · netlify 8. Plus 21 SQL assertion suites, all green, all idempotent |
+| Tests | **832 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector). offline 46 · server-core 92 · **ui-core 153** · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22 · sync-svc 23 · **pwa 312** · netlify 8. Plus 22 SQL assertion suites, all green, all idempotent. R-5 found that on Windows the runner had been executing **zero** tests while printing a tick — see PHASE_LOG R-5 |
 | Schema | 43 migrations (42 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
 | Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
+| Documents | R-5 (§9h): fee receipt, report card, admit card, ID card, transfer certificate and attendance sheet, all on the tenant own letterhead through ONE renderer. Print-first HTML — no stored PDF, because object storage is still stubbed |
 | Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied. R-4.1: a `working_weekend` row now overrides the weekly weekend for SMS |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
 | Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 and its completion pass closed every gap. **Nothing is "Backend complete — UI pending"**; `POST /rms/solve` stays API-only by an explicit documented decision, not by omission (PHASE_LOG R-3) |
@@ -366,7 +367,9 @@ inherits the `tenant_self` RLS policy from 010 and the `app.enforce_tenant()`
 immutability guarantee by being part of the tenant row. Assets are inline data
 URLs under per-field byte caps (logo 64 KB, favicon 32 KB, watermark 96 KB,
 signature 48 KB; 320 KB total), so R-1 needed no object storage — that decision
-arrives with R-5's stored PDFs and student photos.
+has still not arrived: R-5 shipped print-first HTML and no stored artifact, so
+`payment_receipts.pdf_object_key` and `student_profiles.photo_key` remain NULL,
+and the ID card prints a labelled photo frame rather than an image.
 
 ### What actually enforces isolation
 
@@ -855,6 +858,89 @@ their next navigation.
 
 ---
 
+## 9h. R-5 — branded print and the document engine (closed)
+
+Six documents a school hands to a family, all on that school's letterhead,
+all from one renderer: **fee receipt, report card, admit card, student ID
+card, transfer certificate, attendance sheet.**
+
+**One renderer, not six.** R-1's `brandedDocument` rendered a single page.
+R-5 extracted the page shell into `docSection()` and added
+`brandedDocumentSet()`, so one page and forty pages travel the same code path;
+`brandedDocument` is now a one-section call to the set, and R-1's thirteen
+tests pass unchanged. The six builders in `packages/ui-core/src/documents.ts`
+are pure functions returning `{title, meta, bodyHtml}` — they know nothing
+about tenants, HTTP or the database, which is what lets 45 unit tests assert
+that two institutions never mix without starting a server.
+
+**HTML, not PDF.** `GET /api/v1/ops/document` returns a printable document
+and the browser's own Save-as-PDF makes the file. This is the master plan's
+print-first stance, and it is why R-5 needed no object storage and puts
+nothing large in PostgreSQL. When an R2/S3 credential lands, this endpoint's
+markup is what gets rendered server-side; it does not change.
+
+**The tenant is not a parameter.** Branding comes from
+`tenants.settings->'branding'` — R-1's source, no second table — read inside
+`withTenant()` with no `WHERE` clause, because a session sees exactly one
+`tenants` row. There is no tenantId in the query string, the body or a
+header, so rendering on another school's letterhead is not something the API
+can express. `db/tests/documents.sql` asserts both halves.
+
+**What building it found.** `users_scope` (migration 010) ends with
+`OR app.is_staff()`, because the staff directory is visible to staff. Since
+every document is fed by `loadStudents`, which selects from `users`, a
+**subject teacher could print a letterheaded admit card, report card or ID
+card for any child in the school** — name, roll, parents, blood group — for a
+section they do not teach. Marks would have been blank; the identity would
+not.
+
+Reading a name in a directory and printing an official document about a child
+are different acts, so the printed surface is now deliberately tighter than
+the directory: `loadStudents` adds `AND app.can_see_student(u.id)`, the
+predicate that already existed for this exact question. The attendance sheet
+is a *section* rather than a set of students, so it asks directly and returns
+**403 rather than an empty grid** — a branded but blank register would have
+looked like a working feature.
+
+**Authorization** is a per-type allowlist. Money documents follow
+finance-svc's `BILLING_ROLES`; result documents follow the publish gate plus
+class teachers; the **transfer certificate is principal-only**, because it is
+a legal statement about a child's record. The picker mirrors the list, so a
+student is offered three documents and a principal six.
+
+**No document URLs.** The preview is an iframe `srcdoc`, not a `src`: the
+bytes arrive with the caller's bearer token and never become an address that
+could be shared or replayed. The sandbox is `allow-same-origin allow-modals`
+— `allow-scripts` is deliberately absent. Responses are `no-store, private`,
+`nosniff`, `SAMEORIGIN`. Tenant admins get no CSS or HTML injection: branding
+is a fixed set of typed fields and every interpolation is escaped.
+
+**Print behaviour**, verified in a live document rather than in the source:
+`@page {size:A4}`, a page break between documents, `table-header-group` so a
+long table repeats its header on each sheet, `page-break-inside:avoid` on
+rows and the signature block, and `@media print { body > .shell {
+display:none } }` so the app chrome does not print.
+
+**Degrading, not breaking.** A school on day one has no logo, watermark or
+signature. No `<img src="">` is ever emitted: the signature becomes a gap and
+a rule so the head signs by hand, and the ID-card photo is a labelled frame
+reading ছবি. Neither falls back to another tenant's asset.
+
+**Known limitations:**
+
+- **One ID card per A4 sheet.** A section of 38 is 38 sheets to cut up.
+  Several to a page needs a second page geometry, and a second print path to
+  keep correct. A decision, recorded rather than hidden.
+- **Money prints in Latin digits** (`৳ 1,300.00`) beside Bangla rolls and
+  marks, because `formatBdt` is the product-wide money formatter shared with
+  SMS and invoices. Consistent, but a real design question R-5 did not answer
+  on its own authority.
+- **No stored PDF and no student photos** until object storage lands.
+- **CSV export**, listed beside documents in the plan's R-5 section, was not
+  built. `toCsv()` still exists unused.
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The
@@ -867,7 +953,9 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 | Guardian absence-notification flow end-to-end (enqueue exists; send is stubbed) | 01 §3 events | 1 |
 | Attendance correction flow + absence-SMS grace window | 01 §2.6 | 1 |
 | MFS merchant credentials + per-provider initiation calls + signature verification (endpoints + webhooks exist; `pay` kill-switched) | 03 §2 | 2 |
-| Report-card rendering (PDF/print view — the `exam_results` data it reads from now ships via `POST /academics/publish`) | 05 Phase 2 | 2 |
+| ~~Report-card rendering~~ — **closed by R-5** (§9h): prints on the tenant letterhead, singly or a section at a time | 05 Phase 2 | done |
+| Object storage (S3/R2) for stored receipt PDFs, student photos and answer scripts — R-5 deferred it and works without it | 01 §7 | 2 |
+| CSV export endpoints (`toCsv()` exists, unused) — listed under R-5 in the plan, not built | 05 Phase 2 | 2 |
 | Set `DATABASE_MAINTENANCE_URL` in Vercel so the nightly maintenance cron goes live | 06 §5 | now |
 | CP-SAT solver upgrade; coordinator routine-editing UI (substitution finder ships now) | 02 §3 | 3 |
 | `ANTHROPIC_API_KEY` + NCTB corpus ingestion + embedding service → upgrades AI from disabled/lexical to grounded hybrid RAG (gateway ships now) | 01 §6 | 3 |

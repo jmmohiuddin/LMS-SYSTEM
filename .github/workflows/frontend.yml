@@ -72,8 +72,13 @@ jobs:
           # A school's login, shell, PWA identity, offline page and the
           # documents it prints. Comment lines are excluded: explaining the
           # rule is not breaking it.
+          # packages/ui-core/src joined this list in R-5: it is where every
+          # document template now lives, and a printed transfer certificate
+          # is the most tenant-facing surface the product has. A school's
+          # legal statement about a child must carry the school's name and
+          # not its software vendor's.
           hits=$(grep -rn 'ShikhonBD' \
-                   apps/pwa/src apps/pwa/public/app.html \
+                   apps/pwa/src packages/ui-core/src apps/pwa/public/app.html \
                    apps/pwa/public/design.html apps/pwa/public/offline.html \
                    apps/pwa/public/manifest.webmanifest \
                  | grep -vE '^\s*[^:]+:[0-9]+:\s*(//|\*|<!--)' || true)

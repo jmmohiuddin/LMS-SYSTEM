@@ -25,8 +25,8 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-4 complete incl. R-4.1, R-5 not started
-Last Completed Phase: R-4.1 — Working weekends now override the weekly weekend
+Current Phase:        none in progress — R-5 complete, R-6 not started
+Last Completed Phase: R-5 — Branded print & the document engine (6 document types)
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -36,18 +36,30 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                787 passing, 0 failing (node --test, verified 2026-08-29)
-                      offline 46 · server-core 92 · ui-core 108 · academics-svc 78
+Tests:                832 passing, 0 failing (node --test, verified 2026-08-29)
+                      offline 46 · server-core 92 · ui-core 153 · academics-svc 78
                       identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22
                       sync-svc 23 · pwa 312 · netlify 8
-                      + 21 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      + 22 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
+                      NOTE: on Windows the runner silently ran ZERO tests until R-5
+                      fixed it — see the R-5 entry, "The tooling was lying".
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
 Migrations:           43 applied, 43/43 probed by scripts/migration-status.mjs
+                      (R-5 needed none — branding was already R-1's `tenants.settings`)
 Known Blockers:       none open. No capability is "Backend complete — UI pending".
+                      CLOSED in R-5: branded documents — plus the leak it exposed,
+                      where a subject teacher could print a letterheaded admit card
+                      or ID card for any child in the school, not just their own
+                      sections, because `users_scope` ends with `OR app.is_staff()`.
                       CLOSED in R-4: the academic calendar — plus the write-scope gap
                       it exposed on calendar_days (043), where any student could have
                       declared a holiday and silenced the day's attendance SMS.
+
+Open design question   Money prints in Latin digits (৳ 1,300.00) beside Bangla rolls
+(R-5, needs a call):   and marks, because `formatBdt` is shared with SMS and invoices.
+                       Consistent product-wide; still a real question. Not answered
+                       silently by R-5.
 
 Carried backlog       Recorded, not blocking, from earlier phases:
 (R-3, not lost):      · class/section EDIT UI (042 permits the UPDATE; no screen)
@@ -2941,3 +2953,245 @@ None open. R-4 has no remaining owner decisions.
 ### Next recommended step
 
 **R-5 — Branded print & document engine.** Not started.
+
+---
+
+# 2026-08-29 · R-5 · Branded print & the document engine
+
+**Status: complete.** Six documents, one renderer, one endpoint, one screen.
+Every document a school hands a family now comes out on that school's
+letterhead, and the same code produces a different school's.
+
+## What was asked, and what "one renderer" bought
+
+The brief's first constraint was the load-bearing one: *one reusable
+renderer, not a separate PDF implementation per document type*. R-1 had
+already built the letterhead (`brandedLetterhead`, `brandedSignature`,
+`brandedDocumentCss`) and a single-page `brandedDocument`. R-5 extracted the
+page shell into `docSection()` and added `brandedDocumentSet()`, so one page
+and forty pages travel the same path; `brandedDocument` is now a one-section
+call to the set. R-1's thirteen tests still pass unchanged, which is the
+check that the refactor did not quietly become a rewrite.
+
+The six builders in `packages/ui-core/src/documents.ts` are pure functions
+returning `{title, meta, bodyHtml}`. They do not know about tenants, HTTP or
+the database. That is what makes 45 unit tests able to assert the thing that
+actually matters — that two institutions' documents never mix — without a
+server.
+
+## Print-first, and no bucket
+
+`GET /api/v1/ops/document` returns **HTML**, not PDF. The master plan says
+print-first — `window.print()` plus print CSS — with server-side PDF "only
+where a stored artifact is required". Nothing requires one:
+`payment_receipts.pdf_object_key` exists and stays NULL because the object
+storage behind it is stubbed pending an R2/S3 credential, the same stub as
+OTP and MFS.
+
+This is a scope line, not an omission, and it satisfies the brief's "do not
+put large PDFs in PostgreSQL" by having no PDF to put anywhere. The browser's
+own Save-as-PDF produces the file a school needs from the same markup. When
+the credential lands, this endpoint's output is what gets rendered
+server-side; the markup does not change.
+
+## The tenant is not a parameter
+
+The brief: *never accept an arbitrary `tenant_id` from the browser as the
+authority for document branding.*
+
+Branding is read inside `withTenant()` with
+
+    SELECT COALESCE(settings->'branding','{}'::jsonb) FROM tenants
+
+— no WHERE clause, because a session sees exactly one `tenants` row. There is
+no tenantId in the query string, the body or a header, so a Tenant A user
+cannot render on Tenant B's letterhead: not because a check rejects it, but
+because the request cannot express it. `db/tests/documents.sql` asserts both
+halves — the query returns one row and the right one, and naming the other
+tenant's id explicitly still returns nothing.
+
+No second branding table was created. `tenants.settings->'branding'` from R-1
+remains the single source, per the brief.
+
+## The bug this phase found: printing is not reading
+
+`users_scope` in migration 010 ends with `OR app.is_staff()` — the staff
+directory is visible to staff, which is correct for a directory. Every
+document builder is fed by `loadStudents`, which selects from `users`. So as
+first written, a **subject teacher could print a letterheaded admit card,
+report card or ID card for any child in the school**, including that child's
+roll, parents' names and blood group — for a section they do not teach. The
+marks would have been blank (`exam_results` is section-scoped) but the
+document, the identity and the seat would not.
+
+Reading a colleague's name in a list and printing an official document about
+a child are different acts. The printed surface is now deliberately tighter
+than the directory: `loadStudents` adds `AND app.can_see_student(u.id)`, the
+predicate that already existed for exactly this question — `true` for
+principal, owner, coordinator, dept head, accountant and IT admin; narrowed
+to own wards, own record or own sections for guardians, students and
+teachers. An id a caller may look up but not print for simply produces no
+page, and a request for nothing but such ids 404s.
+
+The attendance sheet is the one document that is a *section* rather than a
+set of students, so it cannot lean on that filter. It asks the same question
+directly and returns **403 rather than an empty grid** — a branded but blank
+register would have looked like a working feature.
+
+Tests 5 and 6 of `db/tests/documents.sql` are a pair on purpose: test 5
+proves the directory hole is real, so that the guard in test 6 is not deleted
+later as belt-and-braces.
+
+## The other defects, all found by running or looking
+
+1. **The receipt printed `2026-05` as the billing month**, and dated itself
+   with `formatShortDate` — which is documented as the *SMS* short form,
+   where every character costs money, and drops the year. §18 of the brief
+   forbids raw ISO dates in official documents. Fixed with local `date()`
+   and `monthLabel()` helpers, giving `১২ মে ২০২৬` and `মে ২০২৬`. Caught by a
+   test that sweeps whole documents for date-shaped text.
+2. **`exam_halls` has no `name_bn`.** It points at a `rooms` row, which is
+   where the code a candidate reads on the door lives. Found by running the
+   admit-card query against the real schema rather than reading it.
+3. **Three of my own tests were over-broad**, matching class names inside the
+   inlined stylesheet rather than elements — `doc-sign-img` appears as a CSS
+   rule whether or not an `<img>` does. They now assert on elements. A test
+   that fails on correct output is worse than no test.
+4. **The ID-card doc comment claimed the card skips the A4 letterhead.** The
+   render showed it plainly does not. The comment was wrong, not the code;
+   see Known limitations.
+
+## The tooling was lying, and had been for some time
+
+Running the quality gate on Windows produced eleven identical `FAIL` lines
+with no output. Two faults, one hiding the other:
+
+1. `execFileSync('npm', …)` cannot spawn `npm.cmd` (ENOENT, then EINVAL once
+   given the extension — Node ≥20 refuses `.cmd` without a shell). Now
+   `execSync('npm test --silent')`.
+2. Worse and quieter: every workspace's script was
+   `node --test 'test/*.test.ts'`. A POSIX shell strips those quotes; **cmd
+   passes them through literally, nothing matches, and node exits 0 having
+   run zero tests.** On Windows the whole suite reported success while
+   running nothing — precisely the invisible-tests failure `test-all.mjs`
+   exists to prevent, in that script's own tooling. All eleven are now
+   double-quoted, which both shells strip and node globs for itself.
+
+The runner now prints `0 tests — NOTHING RAN` instead of a tick, because
+"ok 0 tests" and "ok 153 tests" looked identical. It is not a hard error:
+zero is legitimate for the DB-backed suites when `DATABASE_URL` is unset.
+Linux CI never saw either fault.
+
+## Authorization
+
+`ACCESS` in `services/ops-svc/api/document.ts` is a per-type allowlist —
+money documents follow finance-svc's `BILLING_ROLES`, result documents follow
+the publish gate plus class teachers, and the **transfer certificate is
+principal-only**, deliberately narrower than the rest, because it is a legal
+statement about a child's record. The list decides who may *ask* for a type;
+RLS plus `can_see_student` decides *which children* they get.
+
+`apps/pwa/src/app.ts` mirrors the list in `DOCS_FOR`, so the picker offers a
+student exactly three documents and a principal six. The demo layer
+reproduces the 403 rather than skipping it — a demo that let a guardian print
+a transfer certificate would teach the wrong thing about the product.
+
+No arbitrary document URLs exist: the response is `no-store, private`,
+`nosniff`, `SAMEORIGIN`, and the preview is an **iframe `srcdoc`, not a
+`src`**. A URL would have needed a cookie or a token in the query string,
+which §15 forbids; `srcdoc` means the bytes arrive with the caller's bearer
+token and never become an address. The iframe's sandbox is
+`allow-same-origin allow-modals` — `allow-scripts` is deliberately absent, so
+a hostile string that survived escaping still cannot run.
+
+No CSS or HTML injection is offered to tenant admins. Branding is a fixed set
+of typed fields from R-1; every interpolation goes through `escapeHtml`,
+including the ones that obviously cannot contain markup, because that
+judgement is what rots. Two tests attack it — a hostile institution name and
+a hostile student name.
+
+## Tests
+
+- **45 new unit tests** (`packages/ui-core/test/documents.test.ts`), two
+  fixture tenants plus a bare one: neither leaks into the other, no ISO date
+  or raw billing period reaches a document, a missing logo, watermark or
+  signature degrades rather than breaking, markup injection is escaped, and
+  forty report cards are forty fully-branded pages.
+- **12 new SQL assertions** (`db/tests/documents.sql`), wired into
+  `.github/workflows/database.yml` including the idempotency re-run. It
+  pre-cleans as well as tears down, so a failed run reports the real failure
+  instead of a duplicate key. Verified re-runnable, twice, leaving nothing.
+- Full gate: **832 tests across 11 workspaces, all passing**, against a real
+  PostgreSQL 16. All nine SQL suites green. `tsc` clean, `npm run build` ok,
+  D11 guard green in both directions.
+
+`packages/ui-core/src` was added to the D11 tenant-facing list: it is where
+every document template now lives, and a printed transfer certificate is the
+most tenant-facing surface the product has.
+
+## Browser verification — two tenants, four documents each
+
+Rendered through the real builders and the real `brandedDocumentSet`, and
+looked at.
+
+- **Report card, side by side.** Same student, same marks, same code.
+  Shahjalal: green `#156a3f`, Sylhet address, মোঃ আব্দুল কাদের. North City:
+  navy `#1b3e7a`, Uttara address, অধ্যাপক সালমা বেগম. Zero trace of either
+  in the other; no `shikhon` anywhere in the markup.
+- **Bulk**: a 38-student section produced 38 `<main class="doc">`, 38
+  letterheads and 38 signature blocks in **one** request and one document.
+- **Degradation**: both demo tenants have no watermark and no signature
+  image. No `<img src="">` was emitted; the signature became a gap plus a
+  rule, so the head signs by hand. The ID-card photo is a labelled frame
+  reading ছবি, not a broken-image box.
+- **Localisation**: marks, rolls, percentages and dates in Bangla digits;
+  the absent subject reads অনুপস্থিত, not a zero. Latin digits appear only
+  in phone numbers, email addresses and the student code — all of which are
+  Latin on purpose.
+- **The transfer certificate** reads as a formal Bangla certificate
+  (এই মর্মে প্রত্যয়ন করা যাইতেছে যে…) with every date spelled out.
+- **Print**: `@page {size:A4}`, `.doc+.doc{page-break-before:always}`,
+  `thead{display:table-header-group}` so a long table repeats its header,
+  `page-break-inside:avoid` on rows and the signature block, and
+  `@media print { body > .shell { display:none } }` so the app chrome does
+  not print. All five verified in the live document, not in the source file.
+- **Role gate**: as `student`, the picker offers ফি রসিদ, প্রগতি পত্র and
+  প্রবেশপত্র — and nothing else. As `principal`, all six.
+
+## Known limitations
+
+1. **One ID card per A4 sheet.** A section of 38 is 38 sheets to cut up.
+   Laying several to a page needs a second page geometry the renderer does
+   not have, and inventing one would mean a second print path to keep
+   correct. A decision, not an oversight — and the doc comment that wrongly
+   claimed ID cards skip the letterhead has been corrected to say so.
+2. **Money is printed in Latin digits** (`৳ 1,300.00`) while rolls and marks
+   are Bangla, because `formatBdt` is the product-wide money formatter shared
+   with SMS and invoices. Making documents differ would mean a receipt and
+   the SMS about the same payment disagreeing on how to write the amount.
+   Consistent, but it is a real design question and R-5 should not answer it
+   silently — flagged for a decision.
+3. **No server-side PDF and no stored artifact**, per the section above.
+   Nothing in the product needs one yet.
+4. **`DOC_ACCESS` in `apps/pwa/src/demo.ts` duplicates the server's
+   `ACCESS`** rather than importing it, because the server's copy must not
+   reach the browser bundle. If they drift, the browser acceptance is what
+   catches it.
+
+## Carried backlog (unchanged, from R-3)
+
+class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision.
+
+## Unresolved bugs / issues
+
+One disclosure, not a code issue: the design hook flags
+`packages/ui-core/test/documents.test.ts` line 175 as `broken-image`. It is a
+false positive — the line is `assert.doesNotMatch(html, /<img[^>]*src=""/)`,
+an assertion that the product **never** emits a broken image. An attempt to
+persist the narrowest ignore was blocked, so the finding is left standing
+rather than suppressed quietly.
+
+## Next recommended step
+
+**R-6.** Not started. R-5 stopped here as instructed.

@@ -2,7 +2,7 @@
  * Dynamic-route dispatcher for
  * /api/v1/ops/{maintenance,events,branding,brand,manifest,notices,inbox,
  *              dashboard,assign,enrol,rollover,settings,users,
- *              structure,guardians,audit,calendar}
+ *              structure,guardians,audit,calendar,document}
  * — one Vercel function (api/v1/ops/[action].js) instead of sixteen. See
  * services/identity-svc/api/index.ts for the Hobby-cap rationale.
  *
@@ -32,13 +32,15 @@ import guardians from './guardians.ts';
 import audit from './audit.ts';
 // R-4 — the academic calendar.
 import calendar from './calendar.ts';
+// R-5 — the printable documents, on R-1's letterhead.
+import document from './document.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
   dashboard, assign, enrol, rollover, settings, users,
-  structure, guardians, audit, calendar,
+  structure, guardians, audit, calendar, document,
 };
 
 /**

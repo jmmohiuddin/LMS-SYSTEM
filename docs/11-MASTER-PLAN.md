@@ -18,7 +18,7 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৭৮৭ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-4.1 শেষে; এর সাথে
+এবং টেস্টেড (**৮৩২ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-5 শেষে; এর সাথে
 ২১টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
@@ -326,7 +326,8 @@ no phase accidentally re-implements these):
   structurally impossible), solver, editor UI, substitution finder with ranked candidates.
 - **Finance** — fee heads/structures/waivers, invoice generation (idempotent per
   student+period), MFS webhook skeleton, double-entry ledger with balance assertion,
-  digital receipts (JSON; print/PDF is the gap — Phase R-5).
+  digital receipts — printable on the school's letterhead since R-5 (HTML + browser
+  Save-as-PDF; no stored artifact, because object storage is still stubbed).
 - **Import** — CSV wizard with dry-run → digest → commit (`/academics/import`,
   `import-view.ts`). Export is the gap.
 - **Provisioning** — `app.provision_tenant()` seeds year/terms/grading/classes/sections/
@@ -346,7 +347,7 @@ no phase accidentally re-implements these):
 | Owner requirement | Status today | Phase |
 |---|---|---|
 | স্কুলের নিজস্ব লোগো/নাম/তথ্য সর্বত্র (white-label) | **Missing** | **R-1** |
-| প্রিন্টে স্কুলের ওয়াটারমার্ক/লোগো (রসিদ ইত্যাদি) | Missing | R-1 (foundation) + R-5 (documents) |
+| প্রিন্টে স্কুলের ওয়াটারমার্ক/লোগো (রসিদ ইত্যাদি) | **Done (R-5)** — ৬ ধরনের নথি | R-1 (foundation) + R-5 (documents) |
 | ক্লাস → গ্রুপ → সেকশন → ছাত্র ড্রিল-ডাউন (প্রধান শিক্ষক) | **Done (R-3)** | — |
 | সেকশনে শিক্ষক অ্যাসাইন / বছরে বছরে নতুন অ্যাসাইন | **Done (R-3)** | — |
 | শিক্ষক চলে গেলে রিপ্লেসমেন্ট, হিস্টরি অক্ষত | **Done (R-3)** — মাইগ্রেশন ০৪১ ছাড়া স্কিমা এটা পারত না | — |
@@ -614,6 +615,44 @@ Documents, in order of daily-habit frequency:
 
 **Exit:** a guardian pays; the office prints a receipt with the school's logo,
 watermark and signature. Term ends; report cards print for a whole section in one go.
+
+**Status: DONE** (2026-08-29) for the six documents and the exit criterion; **two
+bullets above are explicitly deferred, not delivered** — see below.
+
+All six documents ship, built by pure functions in `packages/ui-core/src/documents.ts`
+and rendered by ONE reusable renderer: R-1's single-page `brandedDocument` was
+refactored into `docSection()` + `brandedDocumentSet()`, so one page and forty travel
+the same path and R-1's thirteen tests still pass. `GET /api/v1/ops/document` serves
+them and `#/documents` is the screen. Bulk generation for a whole section is one
+request returning one document of N pages.
+
+Branding is read from R-1's `tenants.settings->'branding'` inside `withTenant()` —
+**no second branding table, and no tenantId anywhere in the request**, so rendering on
+another school's letterhead is not something the API can express.
+
+The plan's warning one section up ("R-5 should check first") paid off, though not
+where expected. `calendar_days` was the previous phase's unscoped table; here the
+gap was the opposite shape — `users_scope` is scoped, but ends with
+`OR app.is_staff()` for the staff directory, so **a subject teacher could print a
+letterheaded admit card or ID card for any child in the school**. The document
+surface is now deliberately tighter than the directory surface:
+`AND app.can_see_student(u.id)` in `loadStudents`, and a 403 rather than an empty
+grid for another section's attendance sheet.
+
+**Deferred from this phase, deliberately:**
+
+- **Object storage did NOT land.** The bucket is still stubbed, as it is for OTP and
+  MFS, so `payment_receipts.pdf_object_key` and `student_profiles.photo_key` stay
+  NULL. The engine is print-first HTML — the browser's own Save-as-PDF makes the
+  file, and when the credential arrives this endpoint's markup is what gets rendered
+  server-side unchanged. The ID card therefore prints a labelled photo frame, not a
+  broken image.
+- **CSV export endpoints were NOT built.** `toCsv()` still exists unused. They are
+  a different feature that happened to share a phase number; nothing in R-5 depends
+  on them and nothing built here blocks them.
+
+Full detail, including the two Windows tooling faults that had the test runner
+silently executing zero tests, is in the R-5 entry of [PHASE_LOG.md](PHASE_LOG.md).
 
 ### R-6 — Student history & global search
 
@@ -1076,7 +1115,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-2 | Notices + notifications | M–L | R-1 (branded shell) | **done 2026-08-29** |
 | R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** (+ completion pass) |
 | R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** (+ R-4.1) |
-| R-5 | Branded print engine | M | R-1 | next |
+| R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
 | R-6 | Search + history | S–M | — | planned |
 | R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |
 | R-8 | Go-live unlocks | external-blocked | any | blocked externally |

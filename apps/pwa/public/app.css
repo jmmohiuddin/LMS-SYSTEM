@@ -2307,3 +2307,27 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 .cal-legend-swatch[data-state='holiday']         { border-bottom: 3px solid var(--c-warn); }
 .cal-legend-swatch[data-state='working_weekend'] { background: var(--c-surface);
                                                    border-top: 3px solid var(--c-success); }
+
+/* ── Document preview (R-5) ────────────────────────────────────────────
+   The preview is an iframe holding a complete A4 document with its own
+   stylesheet — see documents-view.ts for why. It only needs a frame and a
+   sensible height here; everything inside it is the document's own.
+
+   4:3-ish rather than A4's 1:1.41 on purpose: a full-height A4 preview on a
+   phone is a page of whitespace you have to scroll past to reach the print
+   button. The frame scrolls; the document inside is unchanged. */
+.doc-preview {
+  display: block; width: calc(100% - var(--s-4) * 2); height: 60vh; min-height: 320px;
+  margin: 0 var(--s-4) var(--s-4);
+  border: 1px solid var(--c-line); border-radius: var(--radius);
+  background: #fff;
+}
+@media (min-width: 700px) { .doc-preview { height: 70vh; } }
+
+/* When the app itself is printed (a user hitting Ctrl+P on the screen
+   rather than the preview's own print button), print nothing: the shell,
+   the tab bar and a scaled-down iframe are not a document. The real print
+   path is iframe.contentWindow.print(), which prints only the document. */
+@media print {
+  body > .shell { display: none; }
+}

@@ -1637,8 +1637,22 @@ var COLUMNS = {
   birthRegNo: ["brn", "birth_reg_no", "\u099C\u09A8\u09CD\u09AE_\u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8"],
   religion: ["religion", "\u09A7\u09B0\u09CD\u09AE"],
   optionalSubject: ["optional_subject", "fourth_subject", "\u099A\u09A4\u09C1\u09B0\u09CD\u09A5_\u09AC\u09BF\u09B7\u09AF\u09BC"],
-  guardianNameBn: ["guardian_name", "guardian", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995"],
-  guardianPhone: ["guardian_phone", "phone", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2"],
+  guardianNameBn: ["guardian_name", "guardian", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09A8\u09BE\u09AE"],
+  // 'অভিভাবকের মোবাইল' is what the onboarding console's own hint tells an
+  // operator to write, and it is the phrase a school office would write
+  // unprompted. It was not accepted, so a CSV prepared by following the
+  // instructions on screen was rejected with "required column missing:
+  // guardian_phone" — naming a column the instructions never mentioned.
+  // `mapHeaders` folds whitespace to underscores, so the spaced and
+  // underscored spellings are the same header.
+  guardianPhone: [
+    "guardian_phone",
+    "phone",
+    "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2",
+    "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09AE\u09CB\u09AC\u09BE\u0987\u09B2",
+    "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09AB\u09CB\u09A8",
+    "guardian_mobile"
+  ],
   guardianRelation: ["relation", "\u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995"]
 };
 var RELATIONS = /* @__PURE__ */ new Set([
@@ -2518,6 +2532,8 @@ async function handler(req, res) {
         return json(res, 200, await createAdmin(db, op, req), cors);
       case "POST import":
         return json(res, 200, await runImport(db, op, req), cors);
+      case "POST plan":
+        return json(res, 200, await setPlan(db, op, req), cors);
       case "POST status":
         return json(res, 200, await setStatus(db, op, req), cors);
       case "GET audit":
@@ -2877,6 +2893,63 @@ async function runImport(db, op, req) {
       digest: b.digest,
       fileName: b.fileName ?? null
     });
+  });
+}
+async function setPlan(db, op, req) {
+  const b = await readJson(req);
+  const tenantId = (b.tenantId ?? "").trim();
+  if (!UUID_RE.test(tenantId)) throw new HttpError(400, "tenantId must be a uuid", "invalid_id");
+  const ctx = { tenantId, userId: op.id, role: "principal" };
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(`SELECT plan_code, student_cap, trial_ends_on FROM tenants WHERE id = $1`, [tenantId]);
+    if (before.length === 0) throw new HttpError(404, "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    const cap = b.studentCap === void 0 ? before[0].student_cap : Number(b.studentCap);
+    if (!Number.isInteger(cap) || cap <= 0) {
+      throw new HttpError(
+        400,
+        "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B8\u09C0\u09AE\u09BE \u09B6\u09C2\u09A8\u09CD\u09AF\u09C7\u09B0 \u09AC\u09C7\u09B6\u09BF \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7",
+        "invalid_cap",
+        { field: "studentCap" }
+      );
+    }
+    const { rows: used } = await c.query(
+      `SELECT count(*)::text AS n FROM enrolments
+        WHERE tenant_id = $1 AND status = 'active'`,
+      [tenantId]
+    );
+    const enrolled = Number(used[0].n);
+    if (cap < enrolled) {
+      throw new HttpError(
+        409,
+        `\u09B8\u09C0\u09AE\u09BE ${cap} \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u098F\u0996\u09A8\u0987 ${enrolled} \u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0986\u099B\u09C7`,
+        "cap_below_enrolled",
+        { cap, enrolled }
+      );
+    }
+    const plan = (b.planCode ?? before[0].plan_code).trim().slice(0, 40) || before[0].plan_code;
+    const trial = b.trialEndsOn === void 0 ? before[0].trial_ends_on : (b.trialEndsOn ?? "").trim() || null;
+    const { rows } = await c.query(
+      `UPDATE tenants SET plan_code = $2, student_cap = $3, trial_ends_on = $4::date
+        WHERE id = $1
+        RETURNING plan_code, student_cap, trial_ends_on`,
+      [tenantId, plan, cap, trial]
+    );
+    if (rows.length === 0) throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
+    await c.query(
+      `SELECT app.log_platform_action($1, $2, $3, $4)`,
+      [
+        op.id,
+        tenantId,
+        "plan.update",
+        `${before[0].plan_code}/${before[0].student_cap} \u2192 ${plan}/${cap}`
+      ]
+    );
+    return {
+      planCode: rows[0].plan_code,
+      studentCap: rows[0].student_cap,
+      trialEndsOn: rows[0].trial_ends_on,
+      enrolled
+    };
   });
 }
 async function setStatus(db, op, req) {

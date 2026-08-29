@@ -41,8 +41,17 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           class_name_bn: string;
           class_name_en: string;
           level_no: number;
+          academic_year_id: string;
         }>(
-          `SELECT s.id, s.name, s.shift, s.student_count,
+          // `academic_year_id` is returned because attendance needs it and had
+          // no way to learn it. The attendance screen was mounted with a
+          // hardcoded `academicYearId: 'yr-2026'` left over from early
+          // development, so every save a real teacher made was rejected by
+          // sync with `invalid input syntax for type uuid: "yr-2026"` — a 200
+          // response carrying a rejection the screen could only render as
+          // "১টি পাঠানো যায়নি". A section already knows its year; it simply
+          // was not being told.
+          `SELECT s.id, s.name, s.shift, s.student_count, s.academic_year_id,
                   c.name_bn AS class_name_bn, c.name_en AS class_name_en, c.level_no
              FROM sections s
              JOIN classes c ON c.id = s.class_id
@@ -55,6 +64,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           studentCount: row.student_count,
           className: { bn: row.class_name_bn, en: row.class_name_en },
           levelNo: row.level_no,
+          academicYearId: row.academic_year_id,
         }));
       },
     );

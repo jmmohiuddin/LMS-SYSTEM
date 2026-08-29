@@ -104,6 +104,10 @@ const SENTINELS = [
   // pipeline quietly falls back to SMS for everybody — which is safe, and
   // invisible, which is why it is probed.
   ['047_web_push',                     'table',      'public.push_subscriptions'],
+  // 048 seeds reference rows and creates no object, so it is probed by the
+  // rows themselves. Absent, a College provisions with classes and no
+  // subjects — and cannot import a single student.
+  ['048_higher_secondary_subjects',    'rows',       "subject_catalogue WHERE min_level_no >= 11"],
 ];
 
 /**
@@ -158,6 +162,7 @@ const MEANING = {
   '045_platform_console':            'R-7 — the platform can create a school, and only the platform can',
   '046_go_live_unlocks':             'R-8 — a delivery report can be recorded, and the AI budget is spent before it is billed',
   '047_web_push':                    'R-9 — a notice can reach a parent over the internet instead of over SMS',
+  '048_higher_secondary_subjects':   'R-7 — a College and the upper half of a School & College get subjects at all',
 };
 
 const QUERIES = {
@@ -174,6 +179,11 @@ const QUERIES = {
                      AND p.prosrc LIKE '%' || $2 || '%'`,
   policy: `SELECT 1 FROM pg_policy WHERE polname = $1`,
   constraint: `SELECT 1 FROM pg_constraint WHERE conname = $1`,
+  // For a migration that seeds REFERENCE DATA and creates no object. The
+  // sentinel is a table name plus a WHERE clause; it is interpolated rather
+  // than bound because a predicate cannot be a parameter, so the sentinels
+  // above are the only source and none of them comes from outside this file.
+  rows: null,
 };
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -206,8 +216,14 @@ const unprobed = onDisk.filter((m) => !known.has(m));
 const results = [];
 for (const [name, kind, object, pattern] of SENTINELS) {
   if (!onDisk.includes(name)) continue;   // sentinel for a deleted migration
-  const params = kind === 'function_body' ? [object, pattern] : [object];
-  const { rowCount } = await client.query(QUERIES[kind], params);
+  // `rows` probes seeded reference data, where the sentinel is a table plus a
+  // predicate. A predicate cannot be a bound parameter, so it is interpolated
+  // — safe here because SENTINELS is a literal in this file and nothing from
+  // outside it ever reaches this string.
+  const { rowCount } = kind === 'rows'
+    ? await client.query(`SELECT 1 FROM ${object} LIMIT 1`)
+    : await client.query(QUERIES[kind],
+        kind === 'function_body' ? [object, pattern] : [object]);
   results.push({ name, applied: rowCount > 0, kind, object });
 }
 await client.end();

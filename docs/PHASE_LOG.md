@@ -4530,3 +4530,315 @@ highest-value code-only work left on the R-9 list is the **content authoring
 workspace (F-403)**: it is the last open P0, and the reason it matters is stated
 best by the audit itself — the product can teach a syllabus it has not been
 given. Every consumer of content is built; the producer is not.
+
+---
+
+# 2026-08-29 · R-7 completion pass · Onboarding that actually reaches attendance
+
+**Status: complete.** A shikhonBD operator onboards a **School** and a
+**College** through the console, and each institution then runs its own core
+workflow — five roles signing in and a teacher taking attendance — without a
+line of SQL after the wizard starts.
+
+R-7 was marked DONE in the entry above. It was not: the wizard built a school
+correctly and the school could not then be used. This pass walked the whole
+path the master plan describes, found seven defects, and closed them. Three of
+the seven had been shipping since before R-7.
+
+## What the audit found before any code was written
+
+The R-7 entry above records two institutions onboarded through the console. One
+of them, **মোহাম্মদপুর কলেজ, was stored as `stream=madrasah, level=combined`
+and listed on the console as মাদ্রাসা** — a college displayed as a madrasa, on
+the operator's own screen, for the whole phase.
+
+That was not a typo. Screen 1 labelled the **stream** field "প্রতিষ্ঠানের ধরন"
+— institution type — and the tenant list printed the stream in its ধরন column.
+A stream is a teaching MEDIUM. So an operator asked for a type was shown a list
+of mediums, and the four types the product supports — School, College, Madrasa,
+School & College — could not be chosen at all. An operator had to know that
+"College" is spelled `level=higher_secondary`.
+
+It survived because **`apps/pwa/src/platform.ts` had no test file**. R-7 tested
+the endpoints beneath the wizard thoroughly and the nine screens driving them
+not at all.
+
+## The seven defects
+
+### 1. Institution type was not expressible (R-7)
+
+The four types are already implied by `stream` + `level`, so they are **derived,
+not stored** — a third column would be a second source of truth for a fact the
+first two carry, and they would disagree the first time somebody changed a
+level. `apps/pwa/src/institution-type.ts` holds the derivation; screen 1 now
+asks for the type and constrains the medium and level to what that type can be,
+so a School can no longer be built out of a madrasah medium and read back as a
+madrasa. 21 tests, including a round trip over every (type, stream, level) the
+wizard can produce.
+
+### 2. One administrator, then the door closed (R-7)
+
+Screen 7 created exactly one account and advanced. R-7.9 says an `it_admin` is
+"created the same way", and a school needing both a principal and an IT admin
+could not be finished — the second account required SQL.
+
+The screen now creates accounts one at a time, suggests the role not yet made,
+and lists what it has created. **The first version of that fix was itself
+wrong**: the primary button created the account, set the activation code and
+navigated away from the only screen that renders it, so the second code was
+destroyed before anyone read it. A code is shown once and stored nowhere.
+Creating now always stays, and each code sits beside the name it belongs to.
+
+### 3. The wizard was not resumable (R-7)
+
+R-7.15 promised it — "an operator can stop after step 4 and finish tomorrow" —
+and every step does commit, so nothing was ever lost. What was missing was the
+way back **in**: the wizard could only be entered by "+ নতুন প্রতিষ্ঠান", which
+clears `tenantId` and starts a different school. An operator who stopped after
+the academic setup had no route to the imports.
+
+`resumeStepFor()` derives the step from the same counts the readiness checklist
+shows, so the button names what is actually missing: *সেটআপ চালিয়ে যান — শিক্ষক
+আমদানি*.
+
+### 4. The import lost the file between validating and importing (R-7)
+
+Dry run, then Import — and Import answered **"একটি CSV ফাইল বেছে নিন"**, one
+click after validating that very file. `render()` rebuilds the file input, so
+the commit re-read an input that no longer held anything. The validated text is
+now kept, which is also what `digest` was always for: the bytes imported are
+provably the bytes that were checked.
+
+### 5. The importer rejected the columns its own screen asks for (R-7)
+
+The student-import hint reads *"কলাম: রোল, নাম, শ্রেণি, শাখা, অভিভাবকের
+মোবাইল"*. A CSV written by following that instruction was rejected with
+**"ফাইলে আবশ্যক কলাম নেই: guardian_phone"** — naming a column the instruction
+never mentioned. `অভিভাবকের মোবাইল` is now an accepted spelling, along with
+`অভিভাবকের ফোন` and `অভিভাবকের নাম`.
+
+### 6. A College could not take a single student (pre-existing, migration 012)
+
+The NCTB catalogue covered **classes 1–10 and nothing above**. A college
+provisioned cleanly — 2 classes, 2 sections, 7 grading bands, 6 fee heads — and
+`class_subject_mappings: 0`. Since a fourth subject is required from class 9
+upwards and there were no class-11/12 subjects to name, **every row of its first
+student import was rejected**.
+
+Two of the four supported types are affected: College, and the upper half of
+School & College. Migration 048 seeds the higher-secondary set — the compulsory
+subjects and the three groups, plus an আলিম core for madrasahs running to that
+stage. It is reference data only: `provision_tenant` already selects from this
+table by stream, level and group, so a college now provisions correctly with no
+code change.
+
+The codes are `H`-prefixed identifiers of ours, not claimed NCTB paper numbers.
+Two reasons, and the second would have caused a bug: the subject set and group
+structure are stable and stateable, the exact paper codes are not — and the
+existing codes in that table are SSC papers, so a `combined` institution
+provisioning classes 1–12 would receive `101 / Bangla 1st Paper` twice and
+`ON CONFLICT DO NOTHING` would silently drop one.
+
+### 7. No real user could save attendance (pre-existing)
+
+The last step of the acceptance, and the worst of the seven. The attendance
+route was mounted with a **hardcoded `academicYearId: 'yr-2026'`**, left over
+from before there was a roster to ask. It is not a uuid, so every save a real
+teacher made was rejected by sync with `invalid input syntax for type uuid` —
+and `/sync/push` answers **200** with the rejection in the body, so the screen
+could only render "১টি পাঠানো যায়নি" with no way to learn why.
+
+Nobody had taken attendance as a real user in a real school until this walk.
+`/academics/sections` now returns `academicYearId`, the roster caches the whole
+section descriptor, and the attendance screen uses it — which also replaced the
+hardcoded "৯-ক" header with the section's real name.
+
+### And two things that were not defects
+
+**A teacher taking attendance for a section they do not teach was refused** by
+`attendance_sessions_scope`. That is the security model working: the wizard's
+teacher import says section assignment happens later from the school's own
+screens, and once the principal assigned the class teacher through
+`#/academic`, the same save applied — `records: 2, smsQueued: 1`.
+
+**The plan editor's refusal blanked the detail screen.** The detail view took
+over the whole screen on any error, which is right for a failed LOAD and wrong
+for a failed SAVE: the data is still there and the operator needs the form back.
+An error now renders inline when there is content behind it.
+
+## What else this pass added
+
+- **Plan, cap and trial end are editable** (`POST /platform/plan`). They were
+  writable exactly once, at creation, so a school that outgrew its cap needed
+  SQL — and the refusal an operator sees on an over-cap import named a limit
+  nothing in the console could raise. A cap below the current enrolment is
+  refused, naming both numbers, because migration 045's trigger would otherwise
+  leave the school permanently unable to enrol anyone with nothing on screen to
+  explain it. No migration: the platform role writes inside the target tenant's
+  own context, exactly as `setBranding` does.
+- **Activation codes for staff.** `activation_issue_scope` has always let a
+  principal issue a code for anyone in their school, and only the student roster
+  offered it. So a teacher or IT admin — including the one the console had just
+  created — could not be given a code through any UI. **Backend complete, UI
+  absent**, and it was the account a new school needs first. The users screen
+  now offers it with the roster's reveal-once card.
+- **The activation door is always available.** It appeared only when OTP was
+  switched off, as a fallback for the missing aggregator. But an activation code
+  is how every newly onboarded school gets in, and with OTP enabled the door
+  vanished — so a principal holding the code the console had just printed had no
+  way to use it. That is R-7's own exit criterion, failing on any deployment
+  where OTP works.
+- **`platform.ts` boots only in a browser.** It called `matchMedia` and
+  `getElementById` at module scope, which is why the nine screens had no tests.
+
+## Browser acceptance — two institutions, five roles, one attendance
+
+Both created through the console UI, both activated, no SQL after the wizard
+started.
+
+| | মনিপুর স্কুল | মোহাম্মদপুর কলেজ |
+|---|---|---|
+| Type | **বিদ্যালয়** (school) | **কলেজ** (college) |
+| Level / medium | secondary · bangla_medium | higher_secondary · bangla_medium |
+| Colour | `#1b5e20` | `#7b1fa2` |
+| Head teacher | মোছাঃ রোকসানা বেগম | অধ্যক্ষ ড. শাহাদাত হোসেন |
+| Classes · sections | 5 · 10 | 2 · 2 |
+| Subjects | 36 | 13 |
+| Students | 10 | 3 |
+
+Five logins in মনিপুর স্কুল, each with an activation code issued through a UI:
+
+1. **Principal** — `NSCUPSHX` from the wizard, then `PNN47VEV` reissued through
+   the console's reuse path (`reused: true`, no duplicate account).
+2. **IT admin** — created on screen 7 alongside the principal.
+3. **Teacher** — code issued from the users screen, the surface this pass added.
+4. **Student** — code issued from the roster by the principal.
+5. **Guardian** — and the ward view shows **both children**, রাফিয়া and
+   সাদিয়া, who shared one phone number in the CSV. The M:N guardian model
+   works end to end from a spreadsheet column.
+
+**Attendance:** the teacher marked রোল ১১ absent in নবম শ্রেণি — ক and saved.
+`status: "applied"`, `records: 2`, `smsQueued: 1`. One session and two records
+in মনিপুর স্কুল; **zero** in মোহাম্মদপুর কলেজ.
+
+### Failure and recovery, walked
+
+Student cap set to 10 deliberately. Importing 5 more students over 7 was refused
+with **"student cap reached: this institution is capped at 10 students and this
+would make 11"** — and **nothing partial was written**, still 7. Lowering the
+cap to 3 was refused with *"সীমা 3 করা যাবে না — এই প্রতিষ্ঠানে এখনই 7 জন
+শিক্ষার্থী আছে"*. Raising it to 300 succeeded and the blocked import then
+completed. A bad row (class 99) was rejected with its line, roll, field and
+reason while the other 7 imported — partial import, loudly.
+
+### Cross-tenant, attempted rather than assumed
+
+With a live Tenant A teacher session:
+
+| Attempt | Result |
+|---|---|
+| `GET /platform/tenants` | 403 |
+| the same **with** `PLATFORM_API_KEY` | 403 — both factors required |
+| B's section by id | 404, not 403: no existence disclosure |
+| B's student history by id | 404 |
+| search for B's student by name | 0 results |
+| `x-tenant-id: <B>` header | ignored; A's own sections returned |
+| `?tid=<B>` on the app URL | session stays in A — title, classes, everything |
+| sync push naming B's tenant and section | `TENANT_MISMATCH` |
+
+## Performance
+
+Measured, not claimed. Server work per step, from the console against a real
+PostgreSQL: tenant creation ~1 s, academic provisioning **6.3 s** for a
+5-class/10-section school (48 subject mappings, grading bands, fee heads,
+14 ledger accounts) and ~1 s for a 2-class college, teacher import of 3 rows
+~1 s, student import of 8 rows ~2 s.
+
+**Wall-clock for a full onboarding is not honestly measurable from this run** —
+it included applying a migration mid-flight and re-provisioning — so no
+end-to-end figure is claimed. The step timings above are real; the master plan's
+"hours, not days" is comfortably met by them, and a clean single-operator run
+should be well under fifteen minutes.
+
+## Tests
+
+**1059 across 12 workspaces**, all passing. New: `apps/pwa/test/platform-console.test.ts`
+(21 — the wizard's first test file), plus a Bangla-header regression in
+`student-import.test.ts`. Eight DB suites re-run green; D11 three-way guard,
+parameter-property guard and `schema_lint` all pass. Migration 048 exercised
+up → down (33 → 0) → up (33), 48/48 applied.
+
+## Known limitations
+
+1. **The higher-secondary catalogue is a starting set, not the full NCTB
+   syllabus.** Compulsory subjects and the three group cores; a school adds what
+   else it teaches from its own subjects screen. The আলিম set is deliberately
+   smaller still, because that group structure varies by board.
+2. **`nctb_code` for those rows is ours, not the board's** — see defect 6.
+3. **The student cap refusal is in English**, surfaced raw from the database
+   trigger. Clear, and inconsistent with the rest of the console.
+4. **The console's admin endpoint will grant a role to an existing phone
+   number** and reports `reused: true`. That is the documented behaviour and it
+   is how a code is reissued — but it also means typing an existing teacher's
+   number while "principal" is selected quietly makes them a principal. It
+   should name the person and ask.
+5. **Teacher subject assignment is still per-section, by hand.** The wizard
+   imports teachers and says so; a school with 40 teachers and 50 sections has a
+   lot of clicking.
+6. **`app.tenant_onboarding_state`'s `has_branding` measures `logoUrl`**, which
+   the wizard cannot set. The checklist row is now labelled লোগো so it says what
+   it measures, and resume no longer gates on it.
+7. **Wildcard DNS and TLS remain unprovisioned** (carried from R-7).
+
+## Carried backlog — preserved, none of it closed here
+
+**R-3:** class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision.
+
+**R-5:** object storage · CSV export (`toCsv()` still unused) · multi-card
+ID-card layout · **money-formatting decision** (still open).
+
+**R-6:** an index on the board registration/roll columns · an attendance
+date-range filter · type-ahead suggestions.
+
+**R-7 (remaining):** operator SSO and key rotation · trial expiry automation ·
+per-class group configuration in the wizard · logo/favicon/watermark upload in
+the wizard · wildcard DNS/TLS · platform audit UI · plan feature gating.
+
+**R-8:** SMS retry backoff · AI soft-limit notification wired to R-2 ·
+per-message cost on send · the aggregator contract, the MFS merchant agreement,
+the data-residency decision and pilot schools (all external).
+
+**R-9:** push retry/backoff · per-notice channel choice · the iOS Home-Screen
+explanation · a first-contact test against a real push service.
+
+## R-9's pilot gate — recorded, and not satisfied
+
+**Web push was implemented on 2026-08-29, before any pilot**, and is recorded as
+an **independently implemented R-9 capability**: it needs no pilot feedback to
+design correctly, because it carries a message a school already sends over a
+cheaper channel, with no change to who receives it or what it says.
+
+**The R-9 pilot gate stands for the other six items** — section chat, content
+authoring (F-403), NCTB corpus (F-1301), photo/voice (F-902), trend charts
+(F-1505), native wrappers, and library/transport/hostel/payroll. Several are
+exactly the questions a pilot answers: whether section chat is wanted and how it
+must be moderated, which reports a principal actually opens, whether photo
+submission earns its storage bill. Nothing in this pass changes that, and web
+push remains deployed dark until an operator generates VAPID keys.
+
+## Unresolved bugs / issues
+
+**1. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+calls it.** Carried unchanged from R-8 and R-9, and not closed here: this pass
+touched `/sync/push` only to diagnose the attendance rejection. `transport.ts`
+still calls push and nothing else.
+
+**2. `docs/09-PRD-AUDIT.md` remains stale** (2026-08-12, pre-R-1…R-9).
+
+## Next recommended step
+
+**A pilot.** Every remaining R-9 item is behind that gate, R-8's open items are
+contracts, and this pass has now walked the full operator path end to end
+against a real database. The product's next real information comes from a
+school, not from another phase.

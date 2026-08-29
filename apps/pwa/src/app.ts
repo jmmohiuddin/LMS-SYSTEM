@@ -298,6 +298,31 @@ function dashboardFor(role: string): DashCards {
   }
 }
 
+/**
+ * The section the teacher last opened, as the roster cached it.
+ *
+ * Returns null when nothing has been picked yet — which is the state a fresh
+ * install is in, and the reason the attendance screen must not pretend to know
+ * a section. See `attendanceSection` below.
+ */
+function loadSectionMeta(): { id: string; labelBn: string; academicYearId: string } | null {
+  try {
+    const raw = localStorage.getItem('shikhon_last_section_meta');
+    if (!raw) return null;
+    const m = JSON.parse(raw) as {
+      id?: string; name?: string; className?: { bn?: string }; academicYearId?: string;
+    };
+    if (!m.id || !m.academicYearId) return null;
+    return {
+      id: m.id,
+      labelBn: `${m.className?.bn ?? ''}${m.name ? ` — ${m.name}` : ''}`.trim() || m.name || '',
+      academicYearId: m.academicYearId,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function loadRosterStudents(): { students: Student[]; sectionId: string | null } {
   try {
     const raw = localStorage.getItem('shikhon_last_roster');
@@ -484,11 +509,29 @@ async function main() {
         labelBn: 'হাজিরা',
         glyph: 'check-square',
         mount: (container) => {
+          // The section, the class label and the ACADEMIC YEAR all come from
+          // what the roster cached when the teacher picked a section.
+          //
+          // `academicYearId` used to be the literal string 'yr-2026', left
+          // over from before there was a roster to ask. It is not a uuid, so
+          // every attendance a real teacher saved was rejected by sync with
+          // `invalid input syntax for type uuid` — and the screen could only
+          // show "১টি পাঠানো যায়নি", because the push returns 200 and puts
+          // the rejection in the body. Nobody had taken attendance as a real
+          // user in a real school until R-7's acceptance walked it.
+          const meta = loadSectionMeta();
           new AttendanceView({
             root: container,
             doc: document,
             students,
-            section: { id: sectionId ?? 'demo-section', labelBn: '৯-ক', academicYearId: 'yr-2026' },
+            section: meta ?? {
+              // No section chosen yet. Demo mode has its own fixtures; a real
+              // session with no pick lands here, and the view shows the empty
+              // state rather than inventing a year.
+              id: sectionId ?? 'demo-section',
+              labelBn: '৯-ক',
+              academicYearId: 'yr-2026',
+            },
             takenOn: todayIso(),
             subjectBn: 'পদার্থবিজ্ঞান',
             outbox: engine,

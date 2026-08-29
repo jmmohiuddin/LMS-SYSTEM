@@ -64,6 +64,19 @@ const GRANTABLE = [
 ];
 
 export class UsersView {
+  /**
+   * The code just issued, shown once.  (R-7 completion)
+   *
+   * `activation_issue_scope` (migration 037) has always let a principal issue
+   * a code for anyone in their school, and the only UI that offered it was the
+   * student roster. So a teacher or IT admin created on THIS screen — which
+   * tells the operator "প্রথমবার প্রবেশের জন্য অ্যাক্টিভেশন কোড লাগবে" — had
+   * no way to be given one. Backend complete, UI absent, and the gap was
+   * exactly the account a newly onboarded school needs first.
+   */
+  private issued: { nameBn: string; code: string } | null = null;
+  private issuing: string | null = null;
+
   private readonly o: UsersViewOptions;
   private users: UserRow[] = [];
   private truncated = false;
@@ -164,6 +177,8 @@ export class UsersView {
       root.append(errorState(d, this.error,
         this.error.includes('অনুমতি') ? undefined : () => void this.load()));
     }
+    // Above the list, so it is the first thing read after issuing.
+    if (this.issued) root.append(this.issuedCard());
 
     root.append(this.searchBar());
     if (this.o.canManage) root.append(this.createToggle());
@@ -351,6 +366,21 @@ export class UsersView {
     row.append(t, desc, chip);
 
     if (this.o.canManage) {
+      // First login for a staff account is an activation code, exactly as it
+      // is for a student. Offered for anyone who can still sign in; a
+      // deactivated account is not given a way back in.
+      if (u.status === 'active' || u.status === 'invited') {
+        const codeBtn = d.createElement('button');
+        codeBtn.type = 'button';
+        codeBtn.className = 'btn-secondary btn-small';
+        codeBtn.dataset.action = 'issue-code';
+        codeBtn.textContent = this.issuing === u.id ? '…' : 'কোড';
+        codeBtn.disabled = this.issuing !== null || this.busy;
+        codeBtn.setAttribute('aria-label', `${u.nameBn} এর জন্য সক্রিয়ন কোড তৈরি করুন`);
+        codeBtn.addEventListener('click', () => { void this.issueCode(u); });
+        row.append(codeBtn);
+      }
+
       const btn = d.createElement('button');
       btn.type = 'button';
       btn.className = 'btn-ghost btn-small';
@@ -373,5 +403,70 @@ export class UsersView {
       row.append(btn);
     }
     return row;
+  }
+
+  private async issueCode(u: UserRow): Promise<void> {
+    if (this.issuing) return;
+    this.issuing = u.id;
+    this.error = '';
+    this.notice = '';
+    this.render();
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/auth/activate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'issue', userId: u.id }),
+      });
+      const body = (await res.json()) as { code?: string; error?: string };
+      if (!res.ok || !body.code) {
+        this.error = body.error === 'activation_unconfigured'
+          ? 'এই সুবিধাটি এখনো চালু হয়নি।'
+          : 'কোড তৈরি করা যায়নি। আবার চেষ্টা করুন।';
+      } else {
+        this.issued = { nameBn: u.nameBn, code: body.code };
+      }
+    } catch {
+      this.error = 'সংযোগ পাওয়া যায়নি।';
+    } finally {
+      this.issuing = null;
+      this.render();
+    }
+  }
+
+  /**
+   * The one place the code is visible, and it is visible once.
+   *
+   * Same shape and same warnings as the roster's: read across a desk,
+   * dismissed deliberately, honest that issuing again kills it.
+   */
+  private issuedCard(): HTMLElement {
+    const d = this.o.doc;
+    const issued = this.issued as NonNullable<typeof this.issued>;
+    const card = d.createElement('section');
+    card.className = 'card issued-code-card';
+    card.setAttribute('role', 'status');
+
+    const who = d.createElement('p');
+    who.className = 'issued-code-who';
+    who.textContent = `${issued.nameBn} এর সক্রিয়ন কোড`;
+
+    const code = d.createElement('p');
+    code.className = 'issued-code-value';
+    // Split for reading aloud; the server strips separators on redeem.
+    code.textContent = `${issued.code.slice(0, 4)}-${issued.code.slice(4)}`;
+
+    const note = d.createElement('p');
+    note.className = 'issued-code-note';
+    note.textContent = 'কোডটি লিখে তাঁকে দিন — এটি আর দেখা যাবে না। '
+      + 'মেয়াদ ৭২ ঘণ্টা; নতুন কোড তৈরি করলে এটি বাতিল হয়ে যাবে।';
+
+    const done = d.createElement('button');
+    done.type = 'button';
+    done.className = 'btn-primary';
+    done.textContent = 'বুঝেছি';
+    done.addEventListener('click', () => { this.issued = null; this.render(); });
+
+    card.append(who, code, note, done);
+    return card;
   }
 }

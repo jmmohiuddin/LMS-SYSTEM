@@ -152,6 +152,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       case 'POST branding': return json(res, 200, await setBranding(db, op, req), cors);
       case 'POST admin':    return json(res, 200, await createAdmin(db, op, req), cors);
       case 'POST import':   return json(res, 200, await runImport(db, op, req), cors);
+      case 'POST plan':     return json(res, 200, await setPlan(db, op, req), cors);
       case 'POST status':   return json(res, 200, await setStatus(db, op, req), cors);
       case 'GET audit':     return json(res, 200, await readAudit(db, req), cors);
       // R-8. Deliberately does NOT touch the database: it reports what this
@@ -607,6 +608,82 @@ async function runImport(db: Db, op: Operator, req: IncomingMessage) {
  * school. Everything else (no logo, no students yet) is the operator's
  * business, not a gate.
  */
+/**
+ * POST plan — change a school's plan, student cap or trial end.  (R-7 completion)
+ *
+ * These three columns were writable exactly once, at creation, and never
+ * again. A school that outgrew its cap therefore needed SQL against
+ * production — the one thing this console exists to remove — and the cap
+ * refusal an operator sees on an over-cap import ("capped at 500 and this
+ * would make 512") named a limit nothing in the UI could raise.
+ *
+ * No migration: the platform role is a member of `shikhon_app` and writes
+ * inside the target tenant's own context, exactly as `setBranding` does. There
+ * is no cross-tenant statement here to need a DEFINER function for.
+ */
+async function setPlan(db: Db, op: Operator, req: IncomingMessage) {
+  const b = await readJson<{
+    tenantId?: string; planCode?: string; studentCap?: number; trialEndsOn?: string;
+  }>(req);
+  const tenantId = (b.tenantId ?? '').trim();
+  if (!UUID_RE.test(tenantId)) throw new HttpError(400, 'tenantId must be a uuid', 'invalid_id');
+
+  const ctx = { tenantId, userId: op.id, role: 'principal' };
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query<{
+      plan_code: string; student_cap: number; trial_ends_on: string | null;
+    }>(`SELECT plan_code, student_cap, trial_ends_on FROM tenants WHERE id = $1`, [tenantId]);
+    if (before.length === 0) throw new HttpError(404, 'প্রতিষ্ঠান পাওয়া যায়নি', 'not_found');
+
+    const cap = b.studentCap === undefined ? before[0].student_cap : Number(b.studentCap);
+    if (!Number.isInteger(cap) || cap <= 0) {
+      throw new HttpError(400, 'শিক্ষার্থীর সীমা শূন্যের বেশি হতে হবে', 'invalid_cap',
+        { field: 'studentCap' });
+    }
+
+    // A cap below what the school already has would leave it permanently over
+    // its limit: migration 045's trigger refuses the NEXT enrolment, so the
+    // school could never enrol another student and nothing in the UI would
+    // explain why. Refused here, naming both numbers the way the trigger does.
+    const { rows: used } = await c.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM enrolments
+        WHERE tenant_id = $1 AND status = 'active'`, [tenantId]);
+    const enrolled = Number(used[0].n);
+    if (cap < enrolled) {
+      throw new HttpError(409,
+        `সীমা ${cap} করা যাবে না — এই প্রতিষ্ঠানে এখনই ${enrolled} জন শিক্ষার্থী আছে`,
+        'cap_below_enrolled', { cap, enrolled });
+    }
+
+    const plan = (b.planCode ?? before[0].plan_code).trim().slice(0, 40) || before[0].plan_code;
+    const trial = b.trialEndsOn === undefined ? before[0].trial_ends_on
+      : ((b.trialEndsOn ?? '').trim() || null);
+
+    const { rows } = await c.query<{
+      plan_code: string; student_cap: number; trial_ends_on: string | null;
+    }>(
+      `UPDATE tenants SET plan_code = $2, student_cap = $3, trial_ends_on = $4::date
+        WHERE id = $1
+        RETURNING plan_code, student_cap, trial_ends_on`,
+      [tenantId, plan, cap, trial]);
+    if (rows.length === 0) throw new HttpError(403, 'পরিবর্তনের অনুমতি নেই', 'forbidden');
+
+    // The platform audit trail, same as every other cross-tenant act: who
+    // raised whose cap, and from what to what.
+    await c.query(
+      `SELECT app.log_platform_action($1, $2, $3, $4)`,
+      [op.id, tenantId, 'plan.update',
+       `${before[0].plan_code}/${before[0].student_cap} → ${plan}/${cap}`]);
+
+    return {
+      planCode: rows[0].plan_code,
+      studentCap: rows[0].student_cap,
+      trialEndsOn: rows[0].trial_ends_on,
+      enrolled,
+    };
+  });
+}
+
 async function setStatus(db: Db, op: Operator, req: IncomingMessage) {
   const b = await readJson<{ tenantId?: string; status?: string; reason?: string }>(req);
   const tenantId = (b.tenantId ?? '').trim();

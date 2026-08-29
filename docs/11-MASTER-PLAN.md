@@ -714,8 +714,18 @@ Full detail, the measurements and the four defects found, in the R-6 entry of
 
 **Goal:** নতুন স্কুল যোগ করা = ঘণ্টার কাজ, দিনের না।
 
-**Status: DONE** (2026-08-29). The specification below was built as written; the
-notes marked ▶ record where reality corrected it.
+**Status: DONE** (2026-08-29), and **re-opened and closed again the same day**
+by a completion pass — see the R-7 completion entry in
+[PHASE_LOG.md](PHASE_LOG.md).
+
+The specification below was built as written; the notes marked ▶ record where
+reality corrected it. What the first pass did NOT do was walk the path
+afterwards, and walking it found seven defects — three older than R-7. The
+sharpest: the wizard asked for an "institution type" and offered a list of
+teaching MEDIUMS, so a college onboarded through it was stored as a madrasah
+and listed as one; and no real teacher could save attendance at all, because
+the attendance screen carried a hardcoded `academicYearId: 'yr-2026'` that is
+not a uuid. Both had been on screen the whole time.
 
 > The runbook ([PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md)) stays
 > as the manual fallback for a deployment where the platform console is not
@@ -1141,6 +1151,13 @@ no-op; a tenant created and abandoned is invisible to every other tenant.
 **Exit:** operator onboards a brand-new madrasa — different weekend, own branding —
 without touching SQL, and the school's head teacher logs in from a printed code.
 
+▶ **Met on the second pass, not the first.** The printed-code half was broken on any
+deployment where OTP works: the activation door was rendered only when OTP was
+switched off, so a principal holding the code the console had just issued had no
+way to use it. The door is now always offered. The completion pass also onboarded a
+**College** — a type the wizard could not previously express — and drove five roles
+through to a saved attendance register.
+
 ▶ **Met, and measured.** মোহাম্মদপুর কলেজ (madrasah, weekend `{5}`, 34 subject
 mappings) and মনিপুর উচ্চ বিদ্যালয় (school, `{5,6}`, 48) were both created
 through the console against a real PostgreSQL — 208 ms and 249 ms of server
@@ -1192,13 +1209,23 @@ delivered nothing while the readiness screen reported it green. See
 
 ### R-9 — Post-roadmap add-ons (only after pilot stability)
 
-**Web push done 2026-08-29. The other six items are open** — see the table
-below for which are externally blocked and which are merely unbuilt.
+**THE PILOT GATE IS NOT SATISFIED.** This phase says *only after pilot
+stability* and the sequence table says *depends on: pilot*. No pilot has
+happened. That gate stands for every item below.
 
-A note on this phase's stated dependency: it says *only after pilot stability*
-and the sequence table says *depends on: pilot*. **There is no pilot** — R-8
-closed with pilot schools open and externally blocked. R-9 was therefore read as
-"build what does not depend on pilot feedback, and do not guess at what does".
+**Web push was nonetheless implemented on 2026-08-29, in the pre-pilot period,
+and is recorded as an independently implemented R-9 capability** — one that
+needs no pilot feedback to design correctly, because what it does is carry a
+message a school already sends, over a cheaper channel, with no change to who
+receives it or what it says. Nothing about it is waiting to learn something
+from a school. It is deployed dark (no VAPID keys) until an operator generates
+a pair.
+
+**The remaining six items stay behind the pilot gate**, and several of them are
+exactly the ones a pilot would inform: whether section chat is wanted at all
+and how it must be moderated, which reports a principal actually opens, whether
+photo submission is worth the storage bill. Those are not questions to answer
+from this side of a pilot.
 
 - [x] **Web push notifications** — `047_web_push`, RFC 8291/8292 in
       `packages/server-core/src/web-push.ts`, a per-person screen at
@@ -1236,9 +1263,9 @@ closed with pilot schools open and externally blocked. R-9 was therefore read as
 | R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** (+ R-4.1) |
 | R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
 | R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
-| R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** (console + wizard; wildcard DNS/TLS is a deploy step) |
+| R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** + completion pass same day (4 institution types, resumable wizard, staff activation codes, HSC subjects, attendance fixed; wildcard DNS/TLS is a deploy step) |
 | R-8 | Go-live unlocks | M | any | **code done 2026-08-29** (provider adapter + DLR, switches, AI budget, readiness screen); contracts, PII key, MFS and pilot remain externally blocked |
-| R-9 | Add-ons | — | pilot (absent) | **web push done 2026-08-29**; six items open — F-403 and F-1505 are code-only, the rest externally blocked or optional |
+| R-9 | Add-ons | — | **pilot — NOT satisfied** | web push implemented pre-pilot as an independent capability (2026-08-29); **the pilot gate stands for the other six items** |
 
 Recommended execution order: **R-0 → R-1 → R-2 → R-3 → R-4 → R-5 → R-6 → R-7**, with
 R-8 items flipped as credentials arrive. Each phase ends with a commit-tested,

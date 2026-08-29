@@ -1,0 +1,12 @@
+-- Rollback for 048 — higher-secondary subjects (R-7 completion).
+--
+-- Removes the classes 11–12 reference rows. Tenants that have already
+-- provisioned from them keep their own `subjects` rows: those are per-school
+-- copies made at provisioning time, not references to this table, so a college
+-- that has been set up goes on working. What is lost is the ability to
+-- provision a NEW college with subjects — it would come out with classes and
+-- no subjects, which is the state that made 048 necessary.
+--
+-- Identified by the H-prefixed codes 048 introduced, so nothing seeded by
+-- migration 012 is touched.
+DELETE FROM subject_catalogue WHERE nctb_code LIKE 'H%' AND min_level_no >= 11;

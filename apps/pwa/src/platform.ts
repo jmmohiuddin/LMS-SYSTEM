@@ -37,6 +37,11 @@
  * landed rather than what this page thought it did.
  */
 import { skeleton, errorState, emptyState, bnNum, bnDate } from './view-states.ts';
+import {
+  INSTITUTION_TYPE_BN, institutionTypeOf, institutionTypeLabel,
+  defaultsForType, LEVELS_FOR_TYPE, STREAMS_FOR_TYPE,
+  type InstitutionType,
+} from './institution-type.ts';
 
 const API = '/api/v1/platform';
 
@@ -105,6 +110,39 @@ interface Draft {
   planCode: string; studentCap: number; trialEndsOn: string;
 }
 
+/**
+ * Where an interrupted setup resumes.
+ *
+ * R-7.15 promised the wizard is resumable — "an operator can stop after step 4
+ * and finish tomorrow, and a browser crash loses nothing" — and every step does
+ * commit, so nothing was ever lost. What was missing was the way back IN: the
+ * wizard could only be entered by "+ নতুন প্রতিষ্ঠান", which clears `tenantId`
+ * and starts a different school. An operator who stopped after the academic
+ * setup had no route to the imports except SQL, which is the one thing this
+ * console exists to remove.
+ *
+ * The step is derived from the same counts the readiness checklist shows, so
+ * it cannot disagree with what the operator is looking at. Screens 1–3 are
+ * skipped on resume: the tenant exists, so its identity, slug and plan are
+ * already written and are edited from the school's own settings, not here.
+ */
+export function resumeStepFor(s: {
+  years: number; classes: number;
+  admins: number; teachers: number; students: number;
+}): number {
+  // Branding is deliberately NOT a gate. `has_branding` in migration 045
+  // measures `settings.branding.logoUrl`, and the wizard's branding screen
+  // cannot set a logo — it collects colour, head teacher and phone, with
+  // uploads left to the school's own R-1 editor (a stated R-7 limitation).
+  // Resuming there would land an operator on a screen that cannot satisfy the
+  // check they were sent to satisfy, every time, forever.
+  if (s.years === 0) return 4;       // screen 5 — academic year
+  if (s.classes === 0) return 5;     // screen 6 — classes and sections
+  if (s.admins === 0) return 6;      // screen 7 — the administrator accounts
+  if (s.teachers === 0) return 7;    // screen 8 — teacher import
+  return 8;                          // screen 9 — student import
+}
+
 const STEPS = [
   'প্রতিষ্ঠান', 'ঠিকানা ও স্লাগ', 'প্ল্যান', 'ব্র্যান্ডিং', 'শিক্ষাবর্ষ',
   'শ্রেণি ও শাখা', 'প্রধান শিক্ষক', 'শিক্ষক আমদানি', 'শিক্ষার্থী আমদানি',
@@ -142,6 +180,19 @@ class Console_ {
   private search = '';
 
   private step = 0;
+  /**
+   * Admin accounts created in this wizard run, WITH their activation codes.
+   *
+   * The codes are held here for the length of the operator's session and
+   * nowhere else — the server stores only an HMAC and will never show one
+   * again. Keeping the list is what stops the second account's code being
+   * destroyed by the third: `activationCode` alone held exactly one, so
+   * creating a principal and then an IT admin displayed one code and silently
+   * dropped the other.
+   */
+  private adminsMade: Array<{
+    nameBn: string; roleCode: string; roleBn: string; code: string;
+  }> = [];
   private draft: Draft = {
     nameBn: '', nameEn: '', stream: 'bangla_medium', level: 'secondary',
     eiin: '', district: '', addressBn: '',
@@ -387,7 +438,10 @@ class Console_ {
       const td = d.createElement('td'); td.textContent = text; return td;
     };
     tr.append(cell(row.nameBn));
-    tr.append(cell(STREAM_BN[row.stream] ?? row.stream));
+    // The derived TYPE, not the medium. This column is headed ধরন and used
+    // to print the stream, which is how a college came to be listed as a
+    // madrasa.
+    tr.append(cell(institutionTypeLabel(row.stream, row.level)));
     const slug = cell(row.slug); slug.className = 'mono'; tr.append(slug);
 
     const st = d.createElement('td');
@@ -519,24 +573,40 @@ class Console_ {
     main.append(back);
 
     if (this.loading) { main.append(skeleton(d, 5)); return; }
-    if (this.error) {
+
+    const det = this.detail;
+
+    // An error takes over the screen ONLY when there is nothing to take over:
+    // a failed LOAD has no content behind it. A failed SAVE does, and blanking
+    // the screen for one — which is what this did — left an operator whose cap
+    // change was refused looking at a bare "try again" with the form they were
+    // editing gone, and no way back except a reload.
+    if (this.error && !det) {
       const id = this.tenantId;
       main.append(errorState(d, this.error, () => { if (id) void this.loadDetail(id); }));
       return;
     }
-    const det = this.detail;
     if (!det) return;
+    if (this.error) {
+      const p = d.createElement('p');
+      p.className = 'login-error';
+      p.setAttribute('role', 'alert');
+      p.textContent = this.error;
+      main.append(p);
+    }
 
     const h = d.createElement('h1');
     h.className = 'platform-title';
     h.textContent = det.tenant.nameBn;
     const sub = d.createElement('p');
     sub.className = 'page-sub';
-    sub.textContent = `${det.tenant.slug} · ${STREAM_BN[det.tenant.stream] ?? det.tenant.stream}`
+    sub.textContent = `${det.tenant.slug} · ${institutionTypeLabel(det.tenant.stream, det.tenant.level)}`
+      + ` · ${STREAM_BN[det.tenant.stream] ?? det.tenant.stream}`
       + ` · ${STATUS_BN[det.tenant.status] ?? det.tenant.status}`;
     main.append(h, sub);
 
     main.append(this.stateChecklist(det.state, det.canActivate));
+    main.append(this.planEditor(det.tenant));
     main.append(this.accessPanel(det.tenant));
     main.append(this.statusActions(det.tenant, det.canActivate));
 
@@ -573,7 +643,11 @@ class Console_ {
       ['শিক্ষক', s.teachers, s.teachers > 0, 'ঐচ্ছিক — পরে আমদানি করা যায়'],
       ['শিক্ষার্থী', s.students, s.students > 0, 'ঐচ্ছিক — পরে আমদানি করা যায়'],
       ['অভিভাবক', s.guardians, s.guardians > 0, 'শিক্ষার্থী আমদানির সঙ্গে তৈরি হয়'],
-      ['ব্র্যান্ডিং', s.hasBranding ? 1 : 0, s.hasBranding, 'ঐচ্ছিক — প্রতিষ্ঠান নিজেই পরে করতে পারে'],
+      // Labelled লোগো, not ব্র্যান্ডিং: migration 045 measures `logoUrl`, and
+      // the wizard's branding step sets colour and head teacher but no logo.
+      // Called ব্র্যান্ডিং it reported "not done" to an operator who had just
+      // done it.
+      ['লোগো', s.hasBranding ? 1 : 0, s.hasBranding, 'ঐচ্ছিক — প্রতিষ্ঠান নিজেই আপলোড করতে পারে'],
     ];
     const list = d.createElement('dl');
     list.className = 'detail-list';
@@ -642,10 +716,105 @@ class Console_ {
     return wrap;
   }
 
+  /**
+   * The plan, cap and trial end — editable.  (R-7 completion)
+   *
+   * These were writable exactly once, on wizard screen 3, and never again. A
+   * school that outgrew its cap needed SQL, and the refusal an operator sees
+   * on an over-cap import named a limit nothing in the console could raise.
+   */
+  private planEditor(t: TenantRow): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement('div');
+    wrap.className = 'card platform-state';
+    const h = d.createElement('h2');
+    h.className = 'section-heading';
+    h.textContent = 'প্ল্যান ও সীমা';
+    wrap.append(h);
+
+    const form = d.createElement('div');
+    form.className = 'card-form';
+    const plan = this.field('প্ল্যান কোড', 'text', t.planCode ?? '');
+    const cap = this.field('শিক্ষার্থীর সীমা *', 'number', String(t.studentCap ?? 0));
+    const trial = this.field('ট্রায়াল শেষের তারিখ', 'date', t.trialEndsOn ?? '');
+    cap.input.dataset.field = 'student-cap';
+    form.append(plan.wrap, cap.wrap, trial.wrap);
+
+    const note = d.createElement('p');
+    note.className = 'page-sub';
+    note.textContent = 'সীমা সার্ভারে প্রয়োগ হয় — বর্তমান শিক্ষার্থী সংখ্যার নিচে নামানো যাবে না।';
+    form.append(note);
+
+    const row = d.createElement('div');
+    row.className = 'action-row';
+    const save = d.createElement('button');
+    save.type = 'button';
+    save.className = 'btn-primary btn-inline';
+    save.dataset.action = 'save-plan';
+    save.textContent = this.busy ? 'অপেক্ষা করুন…' : 'সংরক্ষণ করুন';
+    save.disabled = this.busy;
+    save.addEventListener('click', async () => {
+      this.busy = true; this.error = ''; this.notice = ''; this.render();
+      try {
+        const r = await this.call<{ studentCap: number; planCode: string }>('plan', {
+          method: 'POST',
+          body: JSON.stringify({
+            tenantId: t.id,
+            planCode: plan.input.value.trim(),
+            studentCap: Number(cap.input.value),
+            trialEndsOn: trial.input.value || '',
+          }),
+        });
+        this.notice = `সংরক্ষিত — ${r.planCode} · সীমা ${bnNum(r.studentCap)}`;
+        await this.loadDetail(t.id);
+        return;
+      } catch (e) { this.error = (e as Error).message; }
+      finally { this.busy = false; this.render(); }
+    });
+    row.append(save);
+    form.append(row);
+    wrap.append(form);
+    return wrap;
+  }
+
   private statusActions(t: TenantRow, canActivate: boolean): HTMLElement {
     const d = this.doc;
     const row = d.createElement('div');
     row.className = 'action-row';
+
+    // The way back into the wizard. Placed with the status actions because it
+    // is the other thing an operator does from this screen, and labelled by
+    // what is actually missing rather than "continue" — an operator returning
+    // a week later should not have to work out where they stopped.
+    const st = this.detail?.state;
+    if (st) {
+      const step = resumeStepFor(st);
+      const resume = d.createElement('button');
+      resume.type = 'button';
+      resume.className = 'btn-secondary';
+      resume.dataset.action = 'resume-setup';
+      resume.textContent = `সেটআপ চালিয়ে যান — ${STEPS[step]}`;
+      resume.disabled = this.busy;
+      resume.addEventListener('click', () => {
+        this.tenantId = t.id;
+        this.step = step;
+        this.activationCode = '';
+        this.adminsMade = [];
+        // The draft describes screens 1–3, which are already committed for an
+        // existing tenant. It is filled from the row so screen 6's class-range
+        // hint still matches the school's level if the operator steps back.
+        this.draft = {
+          nameBn: t.nameBn, nameEn: t.nameEn, stream: t.stream, level: t.level,
+          eiin: '', district: '', addressBn: '',
+          slug: t.slug, weekendDays: [5, 6], shifts: ['single'],
+          planCode: '', studentCap: 0, trialEndsOn: '',
+        };
+        this.view = 'wizard';
+        this.error = ''; this.notice = '';
+        this.render();
+      });
+      row.append(resume);
+    }
 
     const set = (status: string, label: string, enabled: boolean): void => {
       const b = d.createElement('button');
@@ -826,13 +995,46 @@ class Console_ {
     const nameBn = this.field('বাংলা নাম *', 'text', this.draft.nameBn);
     const nameEn = this.field('ইংরেজি নাম *', 'text', this.draft.nameEn,
       'স্লাগ এখান থেকেই তৈরি হবে');
-    const stream = this.select('প্রতিষ্ঠানের ধরন *', STREAM_BN, this.draft.stream);
-    const level = this.select('স্তর *', LEVEL_BN, this.draft.level);
+    // ── Type first, then the two columns it implies ─────────────────
+    //
+    // This field used to be the STREAM, labelled "প্রতিষ্ঠানের ধরন". A stream
+    // is a teaching medium, not a type, and the result was on the screen: a
+    // college onboarded here was stored `stream=madrasah, level=combined` and
+    // listed as মাদ্রাসা. An operator should not have to know that "College"
+    // is spelled `higher_secondary`.
+    const currentType = institutionTypeOf(this.draft.stream, this.draft.level);
+    const type = this.select('প্রতিষ্ঠানের ধরন *', INSTITUTION_TYPE_BN, currentType);
+
+    // Only the mediums and levels this type can actually have. Offering
+    // "madrasah medium" under School would let an operator build a school
+    // that reads back as a madrasa — the confusion this is removing.
+    const pick = (all: Record<string, string>, allowed: readonly string[]) =>
+      Object.fromEntries(allowed.map((k) => [k, all[k] ?? k]));
+    const stream = this.select('মাধ্যম *',
+      pick(STREAM_BN, STREAMS_FOR_TYPE[currentType]), this.draft.stream);
+    const level = this.select('স্তর *',
+      pick(LEVEL_BN, LEVELS_FOR_TYPE[currentType]), this.draft.level);
+
+    // Changing the type re-renders with the choices that type allows, keeping
+    // a compatible medium rather than resetting a correction the operator has
+    // already made.
+    type.input.addEventListener('change', () => {
+      const next = type.input.value as InstitutionType;
+      const dflt = defaultsForType(next, {
+        stream: this.draft.stream, level: this.draft.level,
+      });
+      this.draft.nameBn = nameBn.input.value.trim();
+      this.draft.nameEn = nameEn.input.value.trim();
+      this.draft.stream = dflt.stream;
+      this.draft.level = dflt.level;
+      this.render();
+    });
+
     const eiin = this.field('EIIN', 'text', this.draft.eiin, '৬–৮ সংখ্যা, ঐচ্ছিক');
     const district = this.field('জেলা', 'text', this.draft.district);
     const address = this.field('ঠিকানা (বাংলা)', 'text', this.draft.addressBn,
       'ছাপা কাগজের শীর্ষভাগে যাবে');
-    form.append(nameBn.wrap, nameEn.wrap, stream.wrap, level.wrap,
+    form.append(nameBn.wrap, nameEn.wrap, type.wrap, stream.wrap, level.wrap,
                 eiin.wrap, district.wrap, address.wrap);
     main.append(form);
 
@@ -1096,33 +1298,89 @@ class Console_ {
     }, 'একাডেমিক কাঠামো তৈরি করুন');
   }
 
-  // Screen 7 — the head teacher, and the activation code.
+  /**
+   * Screen 7 — the school's administrator accounts.
+   *
+   * Plural, since the R-7 completion pass. It created exactly one account and
+   * advanced, so a school needing both a principal AND an IT admin — the
+   * documented shape for anything larger than a village school (R-7.9) —
+   * could not be finished here. The operator's only route to the second
+   * account was SQL, which is the one thing this console exists to remove.
+   *
+   * Each account is created on its own and its code shown on its own, because
+   * an activation code is displayed exactly once and two of them on screen
+   * together is how one gets handed to the wrong person.
+   */
   private screenAdmin(main: HTMLElement): void {
     const d = this.doc;
+
+    // What this run has already created. An operator who has just made the
+    // principal should see that before being asked for another name.
+    if (this.adminsMade.length > 0) {
+      const made = d.createElement('div');
+      made.className = 'card platform-state';
+      const mh = d.createElement('h2');
+      mh.className = 'section-heading';
+      mh.textContent = 'তৈরি হয়েছে';
+      made.append(mh);
+      const mlist = d.createElement('dl');
+      mlist.className = 'detail-list';
+      for (const a of this.adminsMade) {
+        const div = d.createElement('div');
+        const dt = d.createElement('dt'); dt.textContent = a.nameBn + ' · ' + a.roleBn;
+        const dd = d.createElement('dd');
+        // The code sits WITH the name. Two codes and two people is exactly the
+        // situation in which one gets handed to the wrong person.
+        dd.textContent = a.code;
+        dd.className = 'mono state-ok';
+        div.append(dt, dd); mlist.append(div);
+      }
+      made.append(mlist);
+      const warn = d.createElement('p');
+      warn.className = 'page-sub';
+      warn.textContent = 'কোডগুলো এখনই লিখে নিন — সার্ভারে সংরক্ষণ করা হয় না, '
+        + 'এই পাতা ছাড়লে আর দেখা যাবে না। ৭২ ঘণ্টা পর মেয়াদ শেষ।';
+      made.append(warn);
+      main.append(made);
+    }
+
     const form = d.createElement('div');
     form.className = 'card card-form';
     const nameBn = this.field('নাম (বাংলা) *', 'text', '');
     const phone = this.field('মোবাইল *', 'text', '', '+৮৮০১… ফরম্যাটে');
-    const role = this.select('ভূমিকা',
-      { principal: 'প্রধান শিক্ষক', school_owner: 'পরিচালক', it_admin: 'আইটি অ্যাডমিন' },
-      'principal');
+    const ROLES: Record<string, string> = {
+      principal: 'প্রধান শিক্ষক', school_owner: 'পরিচালক', it_admin: 'আইটি অ্যাডমিন',
+    };
+    // Suggest the role NOT yet made: after the principal, an IT admin is the
+    // likely next account, and defaulting to principal again invites a
+    // duplicate.
+    const madeRoles = new Set(this.adminsMade.map((a) => a.roleCode));
+    const suggested = madeRoles.has('principal') && !madeRoles.has('it_admin')
+      ? 'it_admin' : 'principal';
+    const role = this.select('ভূমিকা', ROLES, suggested);
     form.append(nameBn.wrap, phone.wrap, role.wrap);
 
     const note = d.createElement('p');
     note.className = 'page-sub';
     note.textContent = 'অ্যাক্টিভেশন কোড একবারই দেখানো হবে। কোডটি সংরক্ষণ করা হয় না — '
-      + 'প্রধান শিক্ষককে সরাসরি বা ফোনে দিন, ইমেইলে নয়।';
+      + 'সরাসরি বা ফোনে দিন, ইমেইলে নয়।';
     form.append(note);
     main.append(form);
 
-    if (this.activationCode) {
-      const code = d.createElement('p');
-      code.className = 'platform-code';
-      code.textContent = this.activationCode;
-      main.append(code);
-    }
-
-    this.nav(main, async () => {
+    /**
+     * Create, and stay.
+     *
+     * The first version of this advanced to the next screen on the primary
+     * button, which set the activation code and then navigated away from the
+     * only screen that renders it — so the account was created and its code
+     * was never seen. A code is shown once and stored nowhere; losing one
+     * means the person it belongs to cannot log in, and the only repair is to
+     * issue another.
+     *
+     * So the primary action creates and stays. Moving on is a separate,
+     * explicit click, available once at least one account exists.
+     */
+    const create = async (): Promise<void> => {
       const p = phone.input.value.trim();
       if (!nameBn.input.value.trim()) { this.error = 'নাম দিন।'; this.render(); return; }
       if (!/^\+8801[3-9]\d{8}$/.test(p)) {
@@ -1138,13 +1396,39 @@ class Console_ {
           }),
         });
         this.activationCode = r.activationCode;
+        this.adminsMade.push({
+          nameBn: nameBn.input.value.trim(),
+          roleCode: role.input.value,
+          roleBn: ROLES[role.input.value] ?? role.input.value,
+          code: r.activationCode,
+        });
         this.notice = r.reused
           ? 'এই নম্বরের ব্যবহারকারী আগেই ছিল — নতুন অ্যাকাউন্ট না বানিয়ে ভূমিকা দেওয়া হয়েছে।'
-          : 'প্রশাসক অ্যাকাউন্ট তৈরি হয়েছে।';
-        this.step = 7;
+          : 'প্রশাসক অ্যাকাউন্ট তৈরি হয়েছে — কোডটি নিচে দেখুন।';
       } catch (e) { this.error = (e as Error).message; }
       finally { this.busy = false; this.render(); }
-    }, 'অ্যাকাউন্ট তৈরি করুন');
+    };
+
+    const made = this.adminsMade.length > 0;
+    this.nav(main, () => create(), made
+      ? 'আরেকজন তৈরি করুন' : 'অ্যাকাউন্ট তৈরি করুন');
+    const row = main.lastElementChild;
+    (row?.lastElementChild as HTMLElement | null)?.setAttribute('data-action', 'create-admin');
+
+    if (made) {
+      // Only offered once an account exists, because a school cannot be
+      // activated without one — `canActivate` gates on exactly this.
+      const done = d.createElement('button');
+      done.type = 'button';
+      done.className = 'btn-primary btn-inline';
+      done.textContent = 'পরবর্তী →';
+      done.disabled = this.busy;
+      done.dataset.action = 'admins-done';
+      done.addEventListener('click', () => {
+        this.step = 7; this.error = ''; this.notice = ''; this.render();
+      });
+      row?.append(done);
+    }
   }
 
   /**
@@ -1158,7 +1442,19 @@ class Console_ {
     const d = this.doc;
     const state = (this as unknown as {
       _imp?: Record<string, { digest: string; valid: number; rejected: number;
-                              read: number; errorCsv: string | null; errors: unknown[] }>;
+                              read: number; errorCsv: string | null; errors: unknown[];
+                              // The exact text the dry run judged. Held because
+                              // `render()` rebuilds the file input, so by the time
+                              // the operator presses Import the file they chose is
+                              // no longer attached to anything — the commit read
+                              // an empty input and answered "choose a CSV file",
+                              // one click after validating that very file.
+                              //
+                              // Keeping it is also what `digest` was always for:
+                              // the bytes imported are now provably the bytes
+                              // that were checked, rather than whatever is in the
+                              // picker at the second click.
+                              csv: string }>;
     });
     state._imp = state._imp ?? {};
     const prior = state._imp[kind];
@@ -1249,6 +1545,8 @@ class Console_ {
         state._imp![kind] = {
           digest: r.digest, valid: r.rowsValid, rejected: r.rowsRejected,
           read: r.rowsRead, errorCsv: r.errorCsv, errors: r.errors,
+          // The text that was actually judged — see the note on `csv` above.
+          csv,
         };
         this.notice = r.rowsRejected === 0
           ? 'সব সারি ঠিক আছে — এখন আমদানি করুন।'
@@ -1267,7 +1565,9 @@ class Console_ {
         : `${bnNum(prior.valid)}টি আমদানি করুন`;
       commit.disabled = this.busy;
       commit.addEventListener('click', async () => {
-        const csv = await readFile();
+        // Re-selecting is still allowed: a picked file wins, so an operator who
+        // deliberately chooses a corrected file gets the corrected file.
+        const csv = (file.files?.length ? await readFile() : prior.csv) ?? null;
         if (csv === null) return;
         this.busy = true; this.error = ''; this.render();
         try {
@@ -1314,8 +1614,19 @@ function applyTheme(): void {
   const dark = matchMedia('(prefers-color-scheme: dark)').matches;
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 }
-applyTheme();
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
-const root = document.getElementById('root');
-if (root) new Console_(root);
+/**
+ * Boot only in a browser.
+ *
+ * This file used to call `matchMedia` and `getElementById` at module scope,
+ * which made it impossible to import outside a browser — so the nine screens
+ * that are the only way an institution comes into existence had no test file
+ * at all, and a college spent a phase being listed as a madrasa. The guard
+ * costs one condition and buys the suite.
+ */
+if (typeof document !== 'undefined' && typeof matchMedia !== 'undefined') {
+  applyTheme();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  const root = document.getElementById('root');
+  if (root) new Console_(root);
+}

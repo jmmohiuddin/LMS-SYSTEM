@@ -82,6 +82,21 @@ describe('the three errors §10.2 draws', () => {
     assert.equal(three.errors.length, 0);
     assert.equal(three.valid[0].optionalSubjectId, null);
   });
+
+  test('R-7 — the Bangla headers the onboarding console tells operators to write', () => {
+    // The console's student-import hint reads "কলাম: রোল, নাম, শ্রেণি, শাখা,
+    // অভিভাবকের মোবাইল". A CSV written by following that instruction was
+    // rejected with "ফাইলে আবশ্যক কলাম নেই: guardian_phone" — naming a column
+    // the instruction never mentioned. Found by walking the wizard in a
+    // browser; no test covered the Bangla header spellings.
+    const r = readStudents(
+      ['রোল,নাম,শ্রেণি,শাখা,অভিভাবকের মোবাইল,চতুর্থ_বিষয়',
+       '1,রাফিয়া ইসলাম,9,ক,01712345678,উচ্চতর গণিত', ''].join('\n'),
+      snapshot());
+    assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+    assert.equal(r.valid.length, 1);
+    assert.equal(r.valid[0].guardianPhone, '+8801712345678');
+  });
 });
 
 describe('partial import — §10.2 permits it, loudly', () => {

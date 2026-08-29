@@ -1347,6 +1347,94 @@ received and **decrypted back to `{"title":"নথি বিদ্যালয�
 
 ---
 
+## 9m. R-7 completion pass — onboarding that reaches attendance (closed)
+
+§9j records R-7 as closed. It was not: the wizard built a school correctly and
+the school could not then be used. This pass walked the whole documented path —
+onboard, activate, sign in as five roles, take attendance — and closed seven
+defects, three of them older than R-7.
+
+### What was wrong
+
+| # | Defect | Age |
+|---|---|---|
+| 1 | Screen 1 asked for "প্রতিষ্ঠানের ধরন" and offered teaching **mediums**. The four supported types were not selectable; মোহাম্মদপুর কলেজ was stored `stream=madrasah` and listed as মাদ্রাসা | R-7 |
+| 2 | Screen 7 created **one** admin and advanced — a school needing a principal *and* an IT admin needed SQL | R-7 |
+| 3 | The wizard was **not resumable**: its only entry cleared `tenantId` and started a new school | R-7 |
+| 4 | Import lost the chosen file between "যাচাই করুন" and "আমদানি করুন" — `render()` rebuilt the input | R-7 |
+| 5 | The importer rejected `অভিভাবকের মোবাইল`, the exact column its own hint asks for | R-7 |
+| 6 | **A College could not take a single student.** The NCTB catalogue stopped at class 10, so classes 11–12 provisioned with zero subjects and every import row failed the fourth-subject rule | migration 012 |
+| 7 | **No real user could save attendance.** The screen carried a hardcoded `academicYearId: 'yr-2026'`; sync rejected every save with `invalid input syntax for type uuid`, and `/sync/push` returns 200 with the rejection in the body | pre-R-7 |
+
+Defect 1 survived because `apps/pwa/src/platform.ts` — the nine screens that are
+the only way an institution comes into existence — **had no test file**, and
+could not have one: it called `matchMedia` at module scope. It has 21 tests now.
+
+### What was added
+
+- `apps/pwa/src/institution-type.ts` — the four types **derived** from
+  `stream` + `level` rather than stored, since those two columns already carry
+  the fact.
+- Migration **048**, seeding higher-secondary subjects (compulsory, the three
+  groups, and an আলিম core). Reference data only — `provision_tenant` already
+  reads this table by stream/level/group.
+- `POST /api/v1/platform/plan` — plan, cap and trial end were writable once, at
+  creation. A school that outgrew its cap needed SQL, and the over-cap refusal
+  named a limit nothing in the console could raise. A cap below current
+  enrolment is refused with both numbers.
+- **Activation codes for staff** on the users screen. `activation_issue_scope`
+  always allowed it and only the student roster offered it, so the IT admin the
+  console had just created could not be given a code through any UI —
+  *Backend complete, UI absent*, on the account a new school needs first.
+- **The activation door is always offered.** It rendered only when OTP was off;
+  with OTP on, a principal holding a printed code had no way in — R-7's own exit
+  criterion, failing wherever OTP works.
+- `resumeStepFor()` — the way back into the wizard, naming the step that is
+  actually missing.
+
+### Verified in a browser
+
+Two institutions onboarded through the console, no SQL after the wizard began:
+**মনিপুর স্কুল** (বিদ্যালয়, secondary, `#1b5e20`, 5 classes / 10 sections / 36
+subjects / 10 students) and **মোহাম্মদপুর কলেজ** (কলেজ, higher_secondary,
+`#7b1fa2`, 2 / 2 / 13 / 3) — different type, level, colour, head teacher,
+structure and roll.
+
+Five roles signed in with codes issued through UI surfaces (principal, IT admin,
+teacher, student, guardian — the guardian seeing **both** children who shared one
+phone number in the CSV), and the teacher saved attendance:
+`applied · records: 2 · smsQueued: 1`, in Tenant A only.
+
+Cross-tenant, attempted rather than assumed: platform API 403 even **with** the
+platform key; B's section and student by id → 404 (not 403 — no existence
+disclosure); name search → 0 results; `x-tenant-id` header ignored; `?tid=<B>`
+leaves the session in A; a sync push naming B → `TENANT_MISMATCH`.
+
+Student cap enforced and **recoverable through the UI**: over-cap import refused
+with both numbers and nothing partial written; lowering the cap below the roll
+refused; raising it let the blocked import complete.
+
+### Known limitations
+
+- The higher-secondary catalogue is a **starting set**, not the full syllabus,
+  and its `nctb_code` values are ours rather than the board's — the subject set
+  and group structure are stateable, the exact paper codes are not, and the
+  existing codes in that table are SSC papers that a `combined` school would
+  collide with.
+- The student-cap refusal reaches the operator **in English**, raw from the
+  database trigger.
+- The console's admin endpoint grants a role to an existing phone number and
+  reports `reused: true`. That is how a code is reissued, and it also means
+  typing a teacher's number with "principal" selected quietly promotes them. It
+  should name the person and ask.
+- Teacher→subject assignment is still per-section by hand.
+- `has_branding` measures `logoUrl`, which the wizard cannot set; the checklist
+  row is now labelled **লোগো** so it says what it measures.
+- Wildcard DNS/TLS, operator SSO, trial-expiry automation and plan feature
+  gating remain open from R-7.
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The

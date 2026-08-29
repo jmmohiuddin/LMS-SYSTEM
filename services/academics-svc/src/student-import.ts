@@ -44,8 +44,16 @@ const COLUMNS = {
   birthRegNo:      ['brn', 'birth_reg_no', 'জন্ম_নিবন্ধন'],
   religion:        ['religion', 'ধর্ম'],
   optionalSubject: ['optional_subject', 'fourth_subject', 'চতুর্থ_বিষয়'],
-  guardianNameBn:  ['guardian_name', 'guardian', 'অভিভাবক'],
-  guardianPhone:   ['guardian_phone', 'phone', 'মোবাইল'],
+  guardianNameBn:  ['guardian_name', 'guardian', 'অভিভাবক', 'অভিভাবকের নাম'],
+  // 'অভিভাবকের মোবাইল' is what the onboarding console's own hint tells an
+  // operator to write, and it is the phrase a school office would write
+  // unprompted. It was not accepted, so a CSV prepared by following the
+  // instructions on screen was rejected with "required column missing:
+  // guardian_phone" — naming a column the instructions never mentioned.
+  // `mapHeaders` folds whitespace to underscores, so the spaced and
+  // underscored spellings are the same header.
+  guardianPhone:   ['guardian_phone', 'phone', 'মোবাইল', 'অভিভাবকের মোবাইল',
+                    'অভিভাবকের ফোন', 'guardian_mobile'],
   guardianRelation:['relation', 'সম্পর্ক'],
 } as const;
 

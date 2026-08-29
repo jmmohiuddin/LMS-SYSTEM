@@ -22,6 +22,12 @@ export interface SectionSummary {
   studentCount: number;
   className: { bn: string; en: string };
   levelNo: number;
+  /**
+   * The year this section belongs to. Carried because the attendance screen
+   * needs it and previously had a hardcoded placeholder — see
+   * `services/academics-svc/api/sections.ts` for what that cost.
+   */
+  academicYearId: string;
 }
 
 export interface RosterStudent {
@@ -33,6 +39,8 @@ export interface RosterStudent {
 
 const SECTIONS_CACHE_KEY = 'shikhon_sections_cache';
 const LAST_SECTION_KEY = 'shikhon_last_section';
+/** The chosen section's full descriptor — class label and academic year. */
+export const LAST_SECTION_META_KEY = 'shikhon_last_section_meta';
 const LAST_ROSTER_KEY = 'shikhon_last_roster';
 
 function rosterCacheKey(sectionId: string): string {
@@ -124,6 +132,10 @@ export class RosterView {
       this.writeCache(rosterCacheKey(sectionId), this.roster);
       localStorage.setItem(LAST_SECTION_KEY, sectionId);
       localStorage.setItem(LAST_ROSTER_KEY, JSON.stringify(this.roster));
+      // The whole descriptor, so the attendance screen can name the class and
+      // the year instead of guessing at both.
+      const picked = this.sections.find((x) => x.id === sectionId);
+      if (picked) localStorage.setItem(LAST_SECTION_META_KEY, JSON.stringify(picked));
     } catch {
       this.offline = this.roster.length > 0;
       if (this.roster.length === 0) this.errorMsg = 'শিক্ষার্থী তালিকা আনা যায়নি।';

@@ -284,6 +284,28 @@ export class LoginView {
       input.addEventListener('input', () => { this.phone = input.value.trim(); });
       label.append(input);
       form.append(label);
+
+      // R-7. The activation-code door, offered even when OTP works.
+      //
+      // It used to appear ONLY when OTP was switched off, as a fallback for
+      // the missing aggregator. But an activation code is how EVERY newly
+      // onboarded school gets in: the platform console hands the operator a
+      // code for the head teacher, and the school issues codes to its own
+      // teachers, students and guardians from the roster. With OTP enabled
+      // that door vanished, so a principal holding the printed code the
+      // console had just given them had no way to use it — which is R-7's
+      // own exit criterion, failing on a deployment where OTP works.
+      //
+      // Secondary here, because a person who has a phone should use it; the
+      // code path is for the first login and for anyone without SMS.
+      const useCode = d.createElement('button');
+      useCode.type = 'button';
+      useCode.className = 'btn-secondary login-activate-entry';
+      useCode.textContent = 'সক্রিয়ন কোড দিয়ে প্রবেশ করুন';
+      useCode.addEventListener('click', () => {
+        this.step = 'activate'; this.error = ''; this.render();
+      });
+      form.append(useCode);
     } else {
       const label = d.createElement('label');
       label.className = 'login-label';

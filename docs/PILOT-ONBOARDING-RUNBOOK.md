@@ -327,7 +327,35 @@ Give the school:
 
 ---
 
-## 11. What to write down for R-7
+## 11. The console does this now — read this first
+
+**R-7 shipped, and its completion pass closed the gaps that made this document
+still necessary.** A shikhonBD operator onboards a School, College, Madrasa or
+School & College through the platform console at `/platform`, without SQL:
+nine screens, resumable, with the teacher and student CSV imports built in.
+See §9m of [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md).
+
+**This runbook remains the manual fallback** for a deployment where
+`PLATFORM_API_KEY` / `PLATFORM_DATABASE_URL` are not configured, and as the
+explanation of what the console does underneath. Everything below still works.
+
+Three corrections to what it says, learned by walking the console path:
+
+1. **Step 3's provisioning does not give classes 11–12 any subjects** unless
+   migration 048 is applied. Before it, a College provisioned with classes and
+   sections and zero subjects, and could not import a single student — the
+   fourth-subject rule from class 9 upwards had nothing to name. Check
+   `SELECT count(*) FROM subject_catalogue WHERE min_level_no >= 11` before
+   onboarding anything above class 10.
+2. **A school needs its academic year AND grading bands AND one administrator**
+   before it can be activated. The console blocks activation on exactly those
+   three; doing it by hand, they are equally required and the failure from
+   missing grading bands arrives months later, when the first result
+   publication returns NULL grades.
+3. **The activation code is the way in even where OTP works.** The login
+   screen offers "সক্রিয়ন কোড দিয়ে প্রবেশ করুন" alongside the phone field.
+
+## 12. What to write down from each pilot school
 
 After each pilot school, record:
 
@@ -337,5 +365,7 @@ After each pilot school, record:
 - Any step done **out of order**, and why that was more natural
 - Anything you had to explain twice
 
-That list is what makes R-7's wizard fit the work instead of fitting this
-document.
+That list is what makes the wizard fit the work instead of fitting this
+document — and it is the R-9 pilot gate's actual purpose. Section chat, the
+content authoring workspace, trend charts and photo submission are all waiting
+on exactly these notes.

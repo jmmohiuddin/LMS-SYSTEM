@@ -1317,7 +1317,15 @@ async function handler(req, res) {
       { tenantId: claims.tid, userId: claims.sub, role: claims.role },
       async (client) => {
         const r = await client.query(
-          `SELECT s.id, s.name, s.shift, s.student_count,
+          // `academic_year_id` is returned because attendance needs it and had
+          // no way to learn it. The attendance screen was mounted with a
+          // hardcoded `academicYearId: 'yr-2026'` left over from early
+          // development, so every save a real teacher made was rejected by
+          // sync with `invalid input syntax for type uuid: "yr-2026"` — a 200
+          // response carrying a rejection the screen could only render as
+          // "১টি পাঠানো যায়নি". A section already knows its year; it simply
+          // was not being told.
+          `SELECT s.id, s.name, s.shift, s.student_count, s.academic_year_id,
                   c.name_bn AS class_name_bn, c.name_en AS class_name_en, c.level_no
              FROM sections s
              JOIN classes c ON c.id = s.class_id
@@ -1329,7 +1337,8 @@ async function handler(req, res) {
           shift: row.shift,
           studentCount: row.student_count,
           className: { bn: row.class_name_bn, en: row.class_name_en },
-          levelNo: row.level_no
+          levelNo: row.level_no,
+          academicYearId: row.academic_year_id
         }));
       }
     );
@@ -3198,8 +3207,22 @@ var COLUMNS = {
   birthRegNo: ["brn", "birth_reg_no", "\u099C\u09A8\u09CD\u09AE_\u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8"],
   religion: ["religion", "\u09A7\u09B0\u09CD\u09AE"],
   optionalSubject: ["optional_subject", "fourth_subject", "\u099A\u09A4\u09C1\u09B0\u09CD\u09A5_\u09AC\u09BF\u09B7\u09AF\u09BC"],
-  guardianNameBn: ["guardian_name", "guardian", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995"],
-  guardianPhone: ["guardian_phone", "phone", "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2"],
+  guardianNameBn: ["guardian_name", "guardian", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995", "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09A8\u09BE\u09AE"],
+  // 'অভিভাবকের মোবাইল' is what the onboarding console's own hint tells an
+  // operator to write, and it is the phrase a school office would write
+  // unprompted. It was not accepted, so a CSV prepared by following the
+  // instructions on screen was rejected with "required column missing:
+  // guardian_phone" — naming a column the instructions never mentioned.
+  // `mapHeaders` folds whitespace to underscores, so the spaced and
+  // underscored spellings are the same header.
+  guardianPhone: [
+    "guardian_phone",
+    "phone",
+    "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2",
+    "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09AE\u09CB\u09AC\u09BE\u0987\u09B2",
+    "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09AB\u09CB\u09A8",
+    "guardian_mobile"
+  ],
   guardianRelation: ["relation", "\u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995"]
 };
 var RELATIONS = /* @__PURE__ */ new Set([

@@ -42,7 +42,7 @@ Tests:                661 passing, 0 failing (node --test, verified 2026-08-29)
                       sync-svc 23 · pwa 201 · netlify 8
                       + 18 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
-Build:                npm run build ok · tsc ×3 exit 0 · app.js 74 KB gz / 180 KB budget
+Build:                npm run build ok · tsc ×3 exit 0 · app.js 78 KB gz / 180 KB budget
 Migrations:           40 applied, 40/40 probed by scripts/migration-status.mjs
 Known Blockers:       none open.
                       CLOSED in R-2-FINAL:
@@ -1653,15 +1653,17 @@ node --test  (11 workspaces)              661 passing, 0 failing
 db/tests/schema_lint.sql                  PASS · 0 advisories
 db/tests/invariants.sql                   PASS
 db/tests/tenant_branding.sql              10/10 PASS
-db/tests/notices.sql                      13/13 PASS
+db/tests/notices.sql                      14/14 PASS (13 assertions + teardown)
 db/tests/e2e_academic_cycle.sql           PASS
-migrations, second application            0 errors, 0 rows added (idempotent)
+the 4 re-runnable suites, second pass      0 errors, 0 rows left behind
+  (the migrations themselves are NOT re-runnable and never claimed to be —
+   migrate.sh refuses a non-empty schema; CI re-runs the suites, not the DDL)
 rollback, descending                      0 objects left in schema public
 up → down → up                            clean
 RLS coverage guard                        0 violations
 scripts/migration-status.mjs              40/40 applied, 0 unprobed
 tsc --noEmit ×3                           exit 0
-npm run build                             ok · app.js 74 KB gz / 180 KB
+npm run build                             ok · app.js 78 KB gz / 180 KB
 ```
 
 Auto-emitters, verified end to end against the same database:
@@ -1703,7 +1705,7 @@ and `uq_notice_receipt` did not lead with `tenant_id`.
 ### Build / typecheck results
 
 `npm run build` ok; `tsc --noEmit` clean in all three configurations;
-`app.js` 74 KB gzipped against the 180 KB budget; `git status` clean after a
+`app.js` 78 KB gzipped against the 180 KB budget; `git status` clean after a
 rebuild, so the committed `api/` bundles match their sources.
 
 ### Security validation

@@ -2,7 +2,7 @@
  * Dynamic-route dispatcher for
  * /api/v1/ops/{maintenance,events,branding,brand,manifest,notices,inbox,
  *              dashboard,assign,enrol,rollover,settings,users,
- *              structure,guardians,audit}
+ *              structure,guardians,audit,calendar}
  * — one Vercel function (api/v1/ops/[action].js) instead of sixteen. See
  * services/identity-svc/api/index.ts for the Hobby-cap rationale.
  *
@@ -30,13 +30,15 @@ import users from './users.ts';
 import structure from './structure.ts';
 import guardians from './guardians.ts';
 import audit from './audit.ts';
+// R-4 — the academic calendar.
+import calendar from './calendar.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
   dashboard, assign, enrol, rollover, settings, users,
-  structure, guardians, audit,
+  structure, guardians, audit, calendar,
 };
 
 /**
@@ -64,13 +66,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // Publishing a notice fans out to hundreds of receipt rows and can queue
     // SMS, so it is the heaviest mutation on this dispatcher. Marking one read
     // is a mutation too — cheap, but a write.
-    const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
+    const isWrite = req.method === 'POST' || req.method === 'PUT'
+      || req.method === 'PATCH' || req.method === 'DELETE';
     // R-3's writes are the heaviest on this dispatcher: a bulk move touches
     // 200 enrolment rows and a rollover commit touches every student in the
     // school. They belong in the mutation bucket without exception.
     const WRITE_ROUTES = new Set(['events', 'notices', 'inbox', 'branding',
       'assign', 'enrol', 'rollover', 'settings', 'users',
-      'structure', 'guardians']);
+      'structure', 'guardians', 'calendar']);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? 'mutation' : 'read';
     if (!(await enforceRateLimit(req, res, corsHeaders(), bucket))) return;
   }

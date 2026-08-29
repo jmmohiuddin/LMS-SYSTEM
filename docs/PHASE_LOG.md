@@ -25,9 +25,8 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-3 FULLY complete, R-4 not started
-Last Completed Phase: R-3 — Principal & IT admin portals, incl. the completion pass
-                      that closed its own three named gaps
+Current Phase:        none in progress — R-4 complete, R-5 not started
+Last Completed Phase: R-4 — Academic calendar (per-tenant holidays, events, weekends)
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -37,20 +36,24 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                738 passing, 0 failing (node --test, verified 2026-08-29)
+Tests:                768 passing, 0 failing (node --test, verified 2026-08-29)
                       offline 46 · server-core 92 · ui-core 108 · academics-svc 78
                       identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13
-                      sync-svc 23 · pwa 272 · netlify 8
-                      + 20 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      sync-svc 23 · pwa 302 · netlify 8
+                      + 21 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
-Migrations:           42 applied, 42/42 probed by scripts/migration-status.mjs
+Migrations:           43 applied, 43/43 probed by scripts/migration-status.mjs
 Known Blockers:       none open. No capability is "Backend complete — UI pending".
-                      CLOSED in R-3: the notice-SMS cap, publish results, generate
-                      invoices, and the routine solver (documented, not changed).
-                      CLOSED in R-3-COMPLETION: class and section creation, guardian
-                      linking, can_pay_fees, and the audit viewer — plus the write-scope
-                      gap those screens exposed (migration 042).
+                      CLOSED in R-4: the academic calendar — plus the write-scope gap
+                      it exposed on calendar_days (043), where any student could have
+                      declared a holiday and silenced the day's attendance SMS.
+
+Carried backlog       Recorded, not blocking, from earlier phases:
+(R-3, not lost):      · class/section EDIT UI (042 permits the UPDATE; no screen)
+                      · guardian unlink workflow (delete is USING(false) by design)
+                      · audit viewer: export, and entity-id → name resolution
+                      · POST /rms/solve stays API-only by an explicit decision
                       CLOSED in R-2-FINAL:
                         · DB-backed suites never executed — run, and they found 5 real bugs
                         · migration 038 had no probe — probed; 40/40, none unprobed
@@ -64,7 +67,7 @@ Deferred, not blocking:
                       · SMS send is stubbed until an aggregator contract (R-8)
                       · no real-time push; the bell refreshes on navigation
                       · scripts/test-all.mjs cannot run on Windows (pre-existing)
-Next Step:            R-4 — Calendar & schedule surfacing (docs/11-MASTER-PLAN.md).
+Next Step:            R-5 — Branded print & document engine (docs/11-MASTER-PLAN.md).
                       Not started.
 ```
 
@@ -2464,3 +2467,296 @@ None outstanding.
 ### Next recommended step
 
 **R-4 — Calendar & schedule surfacing.** Not started.
+
+
+---
+
+# 2026-08-29 · R-4 · The academic calendar
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-4 |
+| **Phase name** | Calendar & schedule surfacing |
+| **Status** | ✅ Complete. No applicable D13 cell is incomplete. |
+| **Migration number** | **043** — `db/migrations/043_calendar.sql` |
+| **Rollback status** | ✅ `db/rollback/043_calendar.down.sql`. Loses `description_bn` and `created_by` on every entry, collapses any day holding two entries of one kind (oldest kept, deterministically), and — the dangerous part — returns `calendar_days` to tenant-isolated-but-not-role-scoped. Safe only if ops-svc/api/calendar.ts is rolled back with it. Stated in the file. Verified up → down → up, 0 objects left. |
+| **Git commit** | `git log -1 --format=%H -- db/migrations/043_calendar.sql` |
+
+### Objective
+
+প্রতিটি প্রতিষ্ঠান তার নিজের শিক্ষাপঞ্জি চালাবে — ছুটি, অনুষ্ঠান, পরীক্ষা — এবং সব
+ভূমিকা সেটা দেখবে। One deployment, and Monipur's Friday-Saturday weekend
+alongside a Madrasah's Friday-only one.
+
+### What was already existing
+
+- **`calendar_days`**, since migration 003: tenant, academic year, day, kind
+  (holiday / exam / event / ramadan_schedule / working_weekend), `title_bn`,
+  `applies_to_shifts`. **Never had a screen.**
+- It was already load-bearing. `services/sms-svc/src/dispatch.ts` reads it
+  **twice** to suppress attendance and notice SMS on holidays. A row in this
+  table already stops messages reaching nine hundred guardians.
+- **`tenants.weekend_days smallint[]`** (0=Sun … 6=Sat, default {5,6}), with a
+  comment noting many Madrasah run {5}. The per-tenant weekend the brief asks
+  to reuse, and it already existed.
+- `exams.starts_on/ends_on` and `exam_subjects.exam_date` — the authoritative
+  exam dates.
+- R-2's `app.emit_auto_notice()`, idempotent on (tenant, source_kind,
+  source_ref).
+
+So: **no new table**, and the feature is mostly a read path over things that
+were already true.
+
+### The gap the screen exposed
+
+The same shape R-3 found on `classes` and R-3's completion pass found on
+`guardianships`: `calendar_days` carried only the PERMISSIVE
+`tenant_isolation` policy that 010 applies in a loop, plus the blanket GRANT.
+Complete tenant isolation, **no role scope**.
+
+Here it is worse than it was for classes. **A student could have inserted one
+row with kind='holiday' and silently suppressed the whole school's attendance
+SMS for that day** — the suppression query does not care who wrote the row.
+Nothing had exercised it because nothing in the product wrote to the table.
+
+That is now three phases in a row where adding a screen revealed a table with
+no write scope. The pattern is worth naming: migration 010's loop gives every
+tenant table isolation, and role scope is added per-table by whoever builds
+the feature — so any table the product only ever READ has been sitting
+unscoped. R-5 should assume the same is true of whatever it touches first.
+
+### What was implemented
+
+**Migration 043:** `description_bn`, `created_by`, `created_at/updated_at`;
+the UNIQUE constraint gains `title_bn` so two events can share a day;
+RESTRICTIVE INSERT/UPDATE/DELETE scopes; `notices_source_kind_check` widened
+by one value.
+
+**`services/ops-svc/api/calendar.ts`:** GET (range + filter), POST, PATCH,
+DELETE. Reads open to every role; writes to the four structural roles.
+
+**`apps/pwa/src/calendar-view.ts`:** month grid, day panel, upcoming list,
+kind filter, create/edit form, delete confirmation.
+
+### Important architectural decisions
+
+1. **Exams are read, never copied.** The response merges `calendar_days` with
+   `exams` and `exam_subjects` at read time, flagged `editable: false`. A
+   calendar row per exam would be a second source of truth that goes stale the
+   first time a coordinator moves a paper. `db/tests/calendar.sql` #9 asserts
+   that `calendar_days` holds **zero** rows of kind 'exam' while an exam
+   exists.
+
+2. **No start/end time columns, deliberately.** The brief asks for them "where
+   supported". Every consumer of this table is date-grained: the SMS
+   suppression asks "is this day a holiday", attendance asks the same, the
+   grid draws a day cell. A `start_time` nothing reads would be a field the
+   office fills in and no part of the product honours — worse than its
+   absence, because they would plan around it.
+
+3. **No audience column either.** `applies_to_shifts` already exists and is
+   the audience this schema has; a morning-shift-only holiday is a real
+   Bangladeshi case. Addressing a subset of PEOPLE is what notices are for,
+   and R-2 already does it properly.
+
+4. **The academic year is derived from the date, not trusted from the
+   client.** A misfiled holiday is a day the school thinks is a holiday and
+   the system does not. A date outside every year is refused with "create the
+   year first" rather than guessed at.
+
+5. **DELETE is permitted here and forbidden on classes/sections (042).** A
+   calendar entry is a PLAN: nothing references it, no history hangs off it,
+   and a holiday on the wrong date must be withdrawable without a support
+   request. The audit log keeps who removed it.
+
+6. **Notifying goes through `app.emit_auto_notice`** — the same function the
+   exam-routine, results and invoice emitters use, idempotent on
+   (kind, ref), so a double-submitted form announces nothing twice. Not a
+   second pipeline. `notices.source_kind` gained 'calendar' as one deliberate
+   value; the allowlist stays an allowlist, and it caught this very insert
+   during development when the value was unrecognised.
+
+7. **Deleting a holiday warns that the day's SMS resumes.** The screen names a
+   consequence nobody would guess from "delete".
+
+### Offline
+
+**Reads are offline-readable; writes are online-only, deliberately.**
+
+The service worker caches `/api/v1/ops/calendar` stale-while-revalidate,
+exactly like the inbox and the routine — a teacher opening the calendar on a
+dead link sees the month they last loaded.
+
+Writes are NOT queued through the IndexedDB outbox. That outbox exists for
+attendance and marks, which a teacher genuinely takes in a room with no
+signal. An IT admin declaring next month's holiday from a corridor with no
+bars, to be applied whenever the phone reconnects, is not a workflow — and a
+queued holiday is one that silently suppresses SMS on a day nobody has agreed
+to yet. Documented rather than claimed either way.
+
+### Real-time
+
+**Not implemented, and there is no infrastructure to reuse.** The brief says
+"use the existing event/WebSocket infrastructure where practical"; there is
+none — R-2's own entry records that the notice bell refreshes on navigation
+for the same reason (a polling timer on 2G costs more than the freshness is
+worth). A calendar entry created while a guardian has the app open appears on
+their next navigation. Consistent with the rest of the product rather than a
+one-screen exception.
+
+### Database changes
+
+Columns, one constraint swap, three policies, one CHECK widened. No new table.
+`schema_lint.sql` passes with 0 advisories.
+
+### API changes
+
+One new route on the existing `ops` dispatcher — still 10 of 12 Vercel
+functions. DELETE was added to the dispatcher's write-bucket rate limiting.
+
+### UI changes
+
+One new view, one route registered for **every** role, a dashboard card on all
+five dashboards, a More entry, a `calendar` glyph added to `icon.ts`, and the
+`.cal-*` block in app.css.
+
+### Files created
+
+- `db/migrations/043_calendar.sql`, `db/rollback/043_calendar.down.sql`
+- `db/tests/calendar.sql`
+- `services/ops-svc/api/calendar.ts`
+- `apps/pwa/src/calendar-view.ts`, `apps/pwa/test/calendar-ui.test.ts`
+
+### Files modified
+
+- `packages/server-core/src/audit.ts` (3 actions)
+- `services/ops-svc/api/index.ts`
+- `apps/pwa/src/{app,demo,sw-router,icon}.ts`, `apps/pwa/public/app.css`
+- `scripts/migration-status.mjs`, `.github/workflows/database.yml`
+- `docs/{07-IMPLEMENTATION-STATUS,11-MASTER-PLAN,PHASE_LOG}.md`
+- `api/v1/*.js` (rebuilt)
+
+### Files removed
+
+None.
+
+### Tests added
+
+- **`apps/pwa/test/calendar-ui.test.ts` — 30 tests**, passing on the first
+  run. The weekend group is the multi-tenant property: Fri+Sat for one school
+  and Friday only for a Madrasah, from the same code.
+- **`db/tests/calendar.sql` — 14 assertions**, re-runnable. #1 is the one
+  that matters: a student cannot declare a holiday.
+
+### Tests executed
+
+```
+node --test  (11 workspaces)              768 passing, 0 failing
+db/tests/calendar.sql                     14/14 PASS · re-runnable
+21 SQL suites, run twice                  all green both passes
+every R-4 endpoint query vs real schema   executed, 0 errors
+rollback, descending                      0 objects left, app schema gone
+up → down → up                            clean
+scripts/migration-status.mjs              43/43 applied, 0 unprobed
+schema lint                               0 advisories
+tsc --noEmit ×3                           exit 0
+npm run build                             ok · app.js 107 KB gz / 180 KB
+D11 brand boundary                        green both directions
+```
+
+### Test results
+
+**768 passing, 0 failing**, up from 738. pwa 272 → **302**.
+
+Running the endpoint's SQL against the real schema found **two defects**, as
+every pass since R-2 has:
+
+1. `exam_status` has no value 'scheduled' (it is planned / ongoing / marking /
+   moderation / published / locked) — in the test fixture.
+2. **`notices.source_kind` rejected 'calendar'.** R-2 constrained it to three
+   values, so the entire notify feature would have thrown at runtime. The
+   constraint doing its job, and the argument for keeping it an allowlist.
+
+The build's own View-tree-shake guard caught a third: the route wiring did not
+land (a CRLF mismatch in a scripted edit), so `CalendarView` was absent from
+the bundle. That guard exists because exactly this shipped once before — see
+the `guardian` route comment in app.ts.
+
+### Security validation
+
+- 043's write scopes are asserted from a student's and a teacher's session,
+  not reasoned about: the student's INSERT raises, the teacher's UPDATE and
+  DELETE match zero rows, and both can still READ.
+- Reads are deliberately open to every role including guardians; there is no
+  `requireStaff` on the GET, and that is a decision, not an omission.
+- The description is rendered with `textContent`, never `innerHTML`.
+- The range is bounded at 400 days so one request cannot scan a decade.
+
+### Tenant isolation
+
+Executed. `db/tests/calendar.sql` #5 and #6: tenant B reads zero of tenant A's
+entries, cannot read A's entry **by id**, and its UPDATE and DELETE against
+that id both match zero rows — then A's entry is verified unchanged from A's
+own context. Two tenants also hold two different weekends (#4).
+
+### Browser acceptance
+
+Run at `/app?demo=1` with two demo tenants.
+
+- **Tenant A (Fri+Sat):** grid shades শুক্র and শনি; holiday ১০ অক্টোবর with a
+  rule and an amber dot; **two events on ১৫** both listed; exams merged in
+  from the exam tables.
+- **Tenant B (Friday only):** shades **শুক্র only**, shows its own ঈদে
+  মিলাদুন্নবী, and **none of tenant A's entries**.
+- An exam entry has no edit/delete control and says "পরীক্ষার রুটিনে যান".
+- Create form: no time field, shift checkboxes (two-shift school), SMS
+  disabled until notify is ticked, validation in place, notify confirmation
+  focused on Cancel.
+- class_teacher, student and guardian: can read, no create button, no edit
+  controls.
+- Mobile 375×812: no horizontal scroll, 48px tap targets, 31 cells.
+
+Looking at it found one real defect the tests did not: the holiday marker was
+an inset box-shadow, which follows the border-radius and rendered as a curved
+"U" rather than a rule — decoration where a marker was intended. Now a
+square-cornered `border-bottom`.
+
+### Known limitations
+
+1. **No real-time push** — see above; there is no infrastructure to reuse and
+   R-2 made the same call.
+2. **Calendar writes are online-only**, by the reasoning above.
+3. **No recurring events.** ঈদ moves every year and a school enters it once a
+   year anyway; a recurrence rule would be a lot of machinery for a table
+   whose rows are typically entered in one sitting each January.
+4. **`working_weekend` is storable and not yet honoured** by the attendance
+   or SMS readers, which only ask about `kind = 'holiday'`. The kind predates
+   R-4 and R-4 did not add the reader. It appears in the form because it is a
+   real thing a school records; it does not yet change behaviour. **Backend
+   partial — reader pending**, and worth an R-5 or R-6 item.
+5. **No import of national holidays.** Every school types its own ঈদ dates.
+6. **The month view fetches one month at a time**, so a year overview is
+   twelve requests. Fine on the SWR cache, wasteful on a first load.
+
+### Carried backlog from R-3 (recorded, not blocking)
+
+- class/section **edit** UI — 042 permits the UPDATE, no screen uses it
+- guardian **unlink** workflow — DELETE is `USING (false)` by design
+- audit viewer: **export**, and entity-id → name resolution
+- `POST /rms/solve` stays API-only by the explicit R-3 decision
+
+### Unresolved bugs / issues
+
+None open.
+
+### Decisions that require owner input
+
+- **`working_weekend`** (limitation 4): should a "working weekend" row make
+  attendance and SMS treat that Friday as a school day? It is a small reader
+  change and a real Bangladeshi case (make-up days after floods), but it
+  changes when SMS goes out, so it is the owner's call.
+
+### Next recommended step
+
+**R-5 — Branded print & document engine.** Not started.

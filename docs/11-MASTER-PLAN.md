@@ -18,8 +18,8 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৭৩৮ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-3 সম্পূর্ণ শেষে; এর সাথে
-২০টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
+এবং টেস্টেড (**৭৬৮ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-4 শেষে; এর সাথে
+২১টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
 যা নেই, সেটাই এই প্ল্যান — অগ্রাধিকার অনুযায়ী:
@@ -557,6 +557,28 @@ R-3-COMPLETION.
 
 **Exit:** each school maintains its own calendar; ছুটি/ইভেন্ট সব পোর্টালে দেখা যায়।
 
+**Status: DONE** (2026-08-29). No new table: `calendar_days` has existed since
+migration 003 and was already load-bearing (sms-svc reads it to suppress holiday
+SMS). Migration **043** added `description_bn`, relaxed the UNIQUE so two events can
+share a day, and — the important part — added the RESTRICTIVE write scope the table
+had always lacked, under which **any student could have declared a holiday and
+silenced the day's attendance SMS**. That is the third phase running where adding a
+screen revealed an unscoped table; 010's loop gives every tenant table isolation and
+leaves role scope to whoever builds the feature, so any table the product only ever
+READ is still unscoped. R-5 should check first.
+
+Exams are merged from `exams` and `exam_subjects` at read time and marked
+non-editable, so there is one source of truth for when a paper is. The weekend comes
+from `tenants.weekend_days` — Monipur {5,6}, a Madrasah {5} — and nothing hardcodes
+Friday. Notices reuse `app.emit_auto_notice`; `notices.source_kind` gained
+'calendar' as one deliberate value.
+
+Reads are offline-readable (service-worker SWR, like the inbox); writes are
+online-only by decision, not omission — a queued holiday is one that suppresses SMS
+on a day nobody agreed to. No real-time push: there is no such infrastructure to
+reuse and R-2 made the same call. 768 tests, 0 failing; `db/tests/calendar.sql`
+14/14.
+
 ### R-5 — Branded print & document engine *(completes owner priority #1)*
 
 **Goal:** every printed/PDF output carries the institution's identity via the R-1
@@ -1043,8 +1065,8 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-1 | White-label branding | M | — | **done** (+ R-1-A surfaces) |
 | R-2 | Notices + notifications | M–L | R-1 (branded shell) | **done 2026-08-29** |
 | R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** (+ completion pass) |
-| R-4 | Calendar UI | S | R-2 (notify hooks) | next |
-| R-5 | Branded print engine | M | R-1 | planned |
+| R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** |
+| R-5 | Branded print engine | M | R-1 | next |
 | R-6 | Search + history | S–M | — | planned |
 | R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |
 | R-8 | Go-live unlocks | external-blocked | any | blocked externally |

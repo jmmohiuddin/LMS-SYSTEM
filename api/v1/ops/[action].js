@@ -3851,6 +3851,376 @@ async function handler16(req, res) {
   }
 }
 
+// services/ops-svc/api/calendar.ts
+var CALENDAR_WRITERS = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var KINDS = /* @__PURE__ */ new Set(["holiday", "exam", "event", "ramadan_schedule", "working_weekend"]);
+var SHIFTS2 = /* @__PURE__ */ new Set(["morning", "day", "evening", "single"]);
+var MAX_TITLE = 120;
+var MAX_DESCRIPTION = 2e3;
+var MAX_RANGE_DAYS = 400;
+function parseDay(raw, field) {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996 \u09A6\u09BF\u09A8", "bad_date", { field });
+  }
+  const d = /* @__PURE__ */ new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) {
+    throw new HttpError(400, "\u098F\u0987 \u09A4\u09BE\u09B0\u09BF\u0996\u099F\u09BF \u09A8\u09C7\u0987", "bad_date", { field });
+  }
+  return raw;
+}
+async function handler17(req, res) {
+  const cors = corsHeaders([], "GET, POST, PATCH, DELETE, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      json(res, 200, await read(db, ctx, req), cors);
+      return;
+    }
+    requireRole(claims, CALENDAR_WRITERS);
+    if (req.method === "POST") {
+      json(res, 200, await create2(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "PATCH") {
+      json(res, 200, await update(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "DELETE") {
+      json(res, 200, await remove(db, ctx, req), cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    const e = err;
+    if (e.code === "23505") {
+      json(res, 409, {
+        error: "duplicate",
+        message: "\u098F\u0987 \u09A6\u09BF\u09A8\u09C7 \u098F\u0987 \u09A8\u09BE\u09AE\u09C7\u09B0 \u098F\u0995\u099F\u09BF \u098F\u09A8\u09CD\u099F\u09CD\u09B0\u09BF \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u0986\u099B\u09C7\u0964"
+      }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function read(db, ctx, req) {
+  const q = query(req);
+  const kindFilter = (q.get("kind") ?? "").trim();
+  if (kindFilter && !KINDS.has(kindFilter)) {
+    throw new HttpError(400, "unknown kind", "bad_kind", { field: "kind" });
+  }
+  const today = /* @__PURE__ */ new Date();
+  const defFrom = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+  const defTo = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+  const from = q.get("from") ? parseDay(q.get("from") ?? "", "from") : defFrom.toISOString().slice(0, 10);
+  const to = q.get("to") ? parseDay(q.get("to") ?? "", "to") : defTo.toISOString().slice(0, 10);
+  if (to < from) throw new HttpError(400, "\u09B6\u09C7\u09B7\u09C7\u09B0 \u09A4\u09BE\u09B0\u09BF\u0996 \u09B6\u09C1\u09B0\u09C1\u09B0 \u09AA\u09B0\u09C7 \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7", "bad_range", { field: "to" });
+  const span = (Date.parse(to) - Date.parse(from)) / 864e5;
+  if (span > MAX_RANGE_DAYS) {
+    throw new HttpError(400, "\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A \u098F\u0995 \u09AC\u099B\u09B0\u09C7\u09B0 \u09A4\u09A5\u09CD\u09AF \u09A6\u09C7\u0996\u09BE \u09AF\u09BE\u09AF\u09BC", "range_too_wide", { field: "to" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: tenant } = await c.query(
+      `SELECT weekend_days, shifts FROM tenants`
+    );
+    const { rows: years } = await c.query(
+      `SELECT id, label, is_current, starts_on::text, ends_on::text
+         FROM academic_years ORDER BY starts_on DESC`
+    );
+    const currentYear = years.find((y) => y.is_current) ?? years[0] ?? null;
+    const { rows: entries } = await c.query(
+      `SELECT cd.id, cd.day::text, cd.kind, cd.title_bn, cd.description_bn,
+              cd.applies_to_shifts::text[] AS applies_to_shifts,
+              cd.academic_year_id, ay.label AS year_label,
+              cd.created_by, u.full_name_bn AS created_by_name
+         FROM calendar_days cd
+         JOIN academic_years ay ON ay.id = cd.academic_year_id
+         LEFT JOIN users u ON u.id = cd.created_by
+        WHERE cd.day BETWEEN $1::date AND $2::date
+          AND ($3 = '' OR cd.kind = $3)
+        ORDER BY cd.day, cd.kind, cd.title_bn`,
+      [from, to, kindFilter]
+    );
+    const wantExams = !kindFilter || kindFilter === "exam";
+    const examEntries = [];
+    if (wantExams) {
+      const { rows: papers } = await c.query(
+        `SELECT es.id AS exam_subject_id, es.exam_date::text, sub.name_bn AS subject_bn,
+                e.name_bn AS exam_name_bn, s.name AS section_name, cl.name_bn AS class_bn
+           FROM exam_subjects es
+           JOIN exams e     ON e.id = es.exam_id
+           JOIN subjects sub ON sub.id = es.subject_id
+           LEFT JOIN sections s ON s.id = es.section_id
+           LEFT JOIN classes cl ON cl.id = s.class_id
+          WHERE es.exam_date BETWEEN $1::date AND $2::date
+          ORDER BY es.exam_date, sub.name_bn`,
+        [from, to]
+      );
+      for (const p of papers) {
+        examEntries.push({
+          id: `exam-subject:${p.exam_subject_id}`,
+          day: p.exam_date,
+          kind: "exam",
+          titleBn: `${p.exam_name_bn} \u2014 ${p.subject_bn}`,
+          descriptionBn: p.class_bn && p.section_name ? `${p.class_bn} \xB7 \u09B8\u09C7\u0995\u09B6\u09A8 ${p.section_name}` : null,
+          source: "exam",
+          editable: false,
+          appliesToShifts: null
+        });
+      }
+      const { rows: periods } = await c.query(
+        `SELECT id, name_bn, starts_on::text, ends_on::text, status::text AS status
+           FROM exams
+          WHERE starts_on <= $2::date AND ends_on >= $1::date`,
+        [from, to]
+      );
+      for (const p of periods) {
+        examEntries.push({
+          id: `exam:${p.id}`,
+          day: p.starts_on,
+          kind: "exam",
+          titleBn: p.name_bn,
+          descriptionBn: p.starts_on === p.ends_on ? null : `${p.starts_on} \u2014 ${p.ends_on}`,
+          source: "exam",
+          editable: false,
+          appliesToShifts: null
+        });
+      }
+    }
+    return {
+      range: { from, to },
+      // The tenant's own configuration, never a constant in the client.
+      weekendDays: tenant[0]?.weekend_days ?? [5, 6],
+      shifts: tenant[0]?.shifts ?? ["single"],
+      years: years.map((y) => ({
+        id: y.id,
+        label: y.label,
+        isCurrent: y.is_current,
+        startsOn: y.starts_on,
+        endsOn: y.ends_on
+      })),
+      currentYearId: currentYear?.id ?? null,
+      entries: [
+        ...entries.map((e) => ({
+          id: e.id,
+          day: e.day,
+          kind: e.kind,
+          titleBn: e.title_bn,
+          descriptionBn: e.description_bn,
+          appliesToShifts: e.applies_to_shifts,
+          academicYearId: e.academic_year_id,
+          yearLabel: e.year_label,
+          createdByNameBn: e.created_by_name,
+          source: "calendar",
+          editable: true
+        })),
+        ...examEntries
+      ].sort((a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : 0)
+    };
+  });
+}
+function validate(b, partial = false) {
+  const out = {};
+  if (!partial || b.day !== void 0) out.day = parseDay(b.day, "day");
+  if (!partial || b.kind !== void 0) {
+    const kind = (b.kind ?? "").trim();
+    if (!KINDS.has(kind)) throw new HttpError(400, "\u09A7\u09B0\u09A8 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_kind", { field: "kind" });
+    out.kind = kind;
+  }
+  if (!partial || b.titleBn !== void 0) {
+    const title = (b.titleBn ?? "").trim();
+    if (!title) throw new HttpError(400, "\u09B6\u09BF\u09B0\u09CB\u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_title", { field: "titleBn" });
+    if (title.length > MAX_TITLE) {
+      throw new HttpError(400, `\u09B6\u09BF\u09B0\u09CB\u09A8\u09BE\u09AE \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_TITLE} \u0985\u0995\u09CD\u09B7\u09B0`, "bad_title", { field: "titleBn" });
+    }
+    out.titleBn = title;
+  }
+  if (b.descriptionBn !== void 0) {
+    const d = (b.descriptionBn ?? "").trim();
+    if (d.length > MAX_DESCRIPTION) {
+      throw new HttpError(400, "\u09AC\u09BF\u09AC\u09B0\u09A3 \u0996\u09C1\u09AC \u09AC\u09A1\u09BC", "bad_description", { field: "descriptionBn" });
+    }
+    out.descriptionBn = d || null;
+  }
+  if (b.appliesToShifts !== void 0) {
+    const shifts = b.appliesToShifts;
+    if (shifts === null || shifts.length === 0) {
+      out.shifts = null;
+    } else {
+      for (const s of shifts) {
+        if (!SHIFTS2.has(s)) throw new HttpError(400, "\u09B6\u09BF\u09AB\u099F \u09AD\u09C1\u09B2", "bad_shift", { field: "appliesToShifts" });
+      }
+      out.shifts = shifts;
+    }
+  }
+  return out;
+}
+async function yearFor(c, day2, requested) {
+  const { rows } = await c.query(
+    `SELECT id FROM academic_years
+      WHERE $1::date BETWEEN starts_on AND ends_on
+      ORDER BY is_current DESC, starts_on DESC LIMIT 1`,
+    [day2]
+  );
+  if (rows[0]) return rows[0].id;
+  throw new HttpError(
+    400,
+    "\u098F\u0987 \u09A4\u09BE\u09B0\u09BF\u0996 \u0995\u09CB\u09A8\u09CB \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09AA\u09A1\u09BC\u09C7 \u09A8\u09BE \u2014 \u0986\u0997\u09C7 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8",
+    "no_academic_year",
+    { field: "day", requested: requested ?? null }
+  );
+}
+async function notifyAbout(c, entryId, kind, titleBn, descriptionBn, day2, sendSms) {
+  const category = kind === "exam" ? "exam" : "general";
+  const body = [descriptionBn, `\u09A4\u09BE\u09B0\u09BF\u0996: ${day2}`].filter(Boolean).join("\n\n");
+  const { rows } = await c.query(
+    `SELECT recipients FROM app.emit_auto_notice(
+       'calendar', $1::uuid, $2, $3, $4::notice_category, '{"type":"all"}'::jsonb, $5)`,
+    [entryId, titleBn, body, category, sendSms]
+  );
+  return rows[0]?.recipients ?? 0;
+}
+async function create2(db, ctx, req) {
+  const b = await readJson(req);
+  const v = validate(b);
+  return db.withTenant(ctx, async (c) => {
+    const yearId = await yearFor(c, v.day, b.academicYearId);
+    const { rows } = await c.query(
+      `INSERT INTO calendar_days
+         (tenant_id, academic_year_id, day, kind, title_bn, description_bn,
+          applies_to_shifts, created_by)
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7::shift_code[], $8)
+       RETURNING id`,
+      [
+        ctx.tenantId,
+        yearId,
+        v.day,
+        v.kind,
+        v.titleBn,
+        v.descriptionBn ?? null,
+        v.shifts ?? null,
+        ctx.userId
+      ]
+    );
+    const id = rows[0].id;
+    let notified = 0;
+    if (b.notify) {
+      notified = await notifyAbout(
+        c,
+        id,
+        v.kind,
+        v.titleBn,
+        v.descriptionBn ?? null,
+        v.day,
+        b.sendSms === true
+      );
+    }
+    await writeAudit(c, ctx, {
+      action: "academic.calendar.create",
+      entityType: "calendar_day",
+      entityId: id,
+      after: { day: v.day, kind: v.kind, titleBn: v.titleBn, notified }
+    });
+    return { id, day: v.day, kind: v.kind, titleBn: v.titleBn, notified };
+  });
+}
+async function update(db, ctx, req) {
+  const b = await readJson(req);
+  const id = (b.id ?? "").trim();
+  if (!id) throw new HttpError(400, "id is required", "bad_request", { field: "id" });
+  const v = validate(b, true);
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(
+      `SELECT day::text, kind, title_bn, description_bn FROM calendar_days WHERE id = $1`,
+      [id]
+    );
+    if (before.length === 0) throw new HttpError(404, "\u098F\u09A8\u09CD\u099F\u09CD\u09B0\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    const prev = before[0];
+    const day2 = v.day ?? prev.day;
+    const yearId = await yearFor(c, day2, b.academicYearId);
+    const { rows } = await c.query(
+      // COALESCE on the parameters, so a PATCH carrying one field does not
+      // blank the others. `descriptionBn` is deliberately handled by the
+      // separate $5 flag: null there means "clear it", absent means "leave it".
+      `UPDATE calendar_days
+          SET day = $2::date,
+              academic_year_id = $3,
+              kind = COALESCE($4, kind),
+              title_bn = COALESCE($5, title_bn),
+              description_bn = CASE WHEN $6 THEN $7 ELSE description_bn END,
+              applies_to_shifts = CASE WHEN $8 THEN $9::shift_code[] ELSE applies_to_shifts END
+        WHERE id = $1
+      RETURNING id`,
+      [
+        id,
+        day2,
+        yearId,
+        v.kind ?? null,
+        v.titleBn ?? null,
+        b.descriptionBn !== void 0,
+        v.descriptionBn ?? null,
+        b.appliesToShifts !== void 0,
+        v.shifts ?? null
+      ]
+    );
+    if (rows.length === 0) {
+      throw new HttpError(403, "\u098F\u0987 \u098F\u09A8\u09CD\u099F\u09CD\u09B0\u09BF \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987", "forbidden");
+    }
+    let notified = 0;
+    if (b.notify) {
+      notified = await notifyAbout(
+        c,
+        id,
+        v.kind ?? prev.kind,
+        v.titleBn ?? prev.title_bn,
+        v.descriptionBn ?? prev.description_bn,
+        day2,
+        b.sendSms === true
+      );
+    }
+    await writeAudit(c, ctx, {
+      action: "academic.calendar.update",
+      entityType: "calendar_day",
+      entityId: id,
+      before: { day: prev.day, kind: prev.kind, titleBn: prev.title_bn },
+      after: { day: day2, kind: v.kind ?? prev.kind, titleBn: v.titleBn ?? prev.title_bn, notified }
+    });
+    return { id, day: day2, notified };
+  });
+}
+async function remove(db, ctx, req) {
+  const id = (query(req).get("id") ?? "").trim();
+  if (!id) throw new HttpError(400, "id is required", "bad_request", { field: "id" });
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(
+      `SELECT day::text, kind, title_bn FROM calendar_days WHERE id = $1`,
+      [id]
+    );
+    if (before.length === 0) throw new HttpError(404, "\u098F\u09A8\u09CD\u099F\u09CD\u09B0\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    const { rowCount } = await c.query(`DELETE FROM calendar_days WHERE id = $1`, [id]);
+    if (!rowCount) {
+      throw new HttpError(403, "\u098F\u0987 \u098F\u09A8\u09CD\u099F\u09CD\u09B0\u09BF \u09AE\u09C1\u099B\u09C7 \u09AB\u09C7\u09B2\u09BE\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987", "forbidden");
+    }
+    await writeAudit(c, ctx, {
+      action: "academic.calendar.delete",
+      entityType: "calendar_day",
+      entityId: id,
+      before: { day: before[0].day, kind: before[0].kind, titleBn: before[0].title_bn }
+    });
+    return { id, deleted: true };
+  });
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -3868,9 +4238,10 @@ var ROUTES = {
   users: handler13,
   structure: handler14,
   guardians: handler15,
-  audit: handler16
+  audit: handler16,
+  calendar: handler17
 };
-async function handler17(req, res) {
+async function handler18(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -3879,7 +4250,7 @@ async function handler17(req, res) {
     return;
   }
   if (req.method !== "OPTIONS" && sub !== "maintenance") {
-    const isWrite = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
+    const isWrite = req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE";
     const WRITE_ROUTES = /* @__PURE__ */ new Set([
       "events",
       "notices",
@@ -3891,7 +4262,8 @@ async function handler17(req, res) {
       "settings",
       "users",
       "structure",
-      "guardians"
+      "guardians",
+      "calendar"
     ]);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
@@ -3899,5 +4271,5 @@ async function handler17(req, res) {
   return route(req, res);
 }
 export {
-  handler17 as default
+  handler18 as default
 };

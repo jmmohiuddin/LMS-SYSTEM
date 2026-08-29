@@ -100,6 +100,19 @@ export function route(request: { url: string; method: string; mode?: string }): 
   // teacher opening the bell on a dead link should see the notices they
   // already received, not a spinner. Writes (marking read, publishing) are
   // network-only — the method check above already sent them there.
+  // R-4. The calendar is reference data in the same sense the inbox is: a
+  // teacher opening it on a dead link should see the month they last loaded,
+  // not a spinner. Writes are network-only — the method check above already
+  // sent them there, and a queued holiday is one that silently suppresses
+  // SMS on a day nobody has agreed to yet.
+  if (path.startsWith('/api/v1/ops/calendar')) {
+    return {
+      strategy: 'stale-while-revalidate',
+      cache: CACHE_DATA,
+      reason: 'calendar — readable offline once loaded',
+    };
+  }
+
   if (path.startsWith('/api/v1/ops/inbox') || path.startsWith('/api/v1/ops/notices')) {
     return {
       strategy: 'stale-while-revalidate',

@@ -52,6 +52,11 @@ const PATHS: Record<string, string> = {
     '<rect x="8" y="2" width="8" height="4" rx="1"/>',
   message: '<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/>',
   clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+  // R-4. Feather's `calendar`, same 1.75 stroke and round caps as the rest.
+  calendar:
+    '<rect x="3" y="5" width="18" height="16" rx="2"/>' +
+    '<line x1="16" y1="3" x2="16" y2="7"/><line x1="8" y1="3" x2="8" y2="7"/>' +
+    '<line x1="3" y1="11" x2="21" y2="11"/>',
   wallet:
     '<path d="M20 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/>' +
     '<path d="M18 12a2 2 0 0 0 0 4h4v-4z"/>',

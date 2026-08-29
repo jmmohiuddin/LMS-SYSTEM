@@ -677,6 +677,8 @@ const DEMO_GATES: Record<string, string[]> = {
   // The narrowest gate in the product: the audit trail names every change
   // anybody made, so it is three roles and no others.
   '/api/v1/ops/audit':      ['principal', 'school_owner', 'it_admin'],
+  // R-4's calendar is deliberately absent from this map: every role reads it.
+  // Only its WRITES are gated, and the demo answers reads only.
   '/api/v1/finance/generate':  ['principal', 'school_owner', 'accountant'],
 };
 
@@ -748,6 +750,55 @@ const DEMO_AUDIT = [
 
 /** Mutable so the preview's fee-permission toggle actually holds. */
 let demoGuardianPays = true;
+
+/**
+ * R-4's calendar fixture.
+ *
+ * Two tenants with DIFFERENT weekends, because that is the property the
+ * feature exists to have: tenant A runs Fri+Sat, tenant B (a Madrasah) runs
+ * Friday only, and the grid must shade whatever it is told rather than a
+ * hardcoded pair of days.
+ */
+const DEMO_CALENDAR: Record<'a' | 'b', {
+  weekendDays: number[];
+  entries: {
+    id: string; day: string; kind: string; titleBn: string;
+    descriptionBn: string | null; appliesToShifts: string[] | null;
+    source: string; editable: boolean; createdByNameBn?: string | null;
+  }[];
+}> = {
+  a: {
+    weekendDays: [5, 6],
+    entries: [
+      { id: 'demo-cal-1', day: '2026-10-10', kind: 'holiday', titleBn: 'বিদ্যালয় ছুটি',
+        descriptionBn: 'দুর্গাপূজা উপলক্ষে বিদ্যালয় বন্ধ থাকবে।', appliesToShifts: null,
+        source: 'calendar', editable: true, createdByNameBn: 'প্রধান শিক্ষক' },
+      { id: 'demo-cal-2', day: '2026-10-15', kind: 'event', titleBn: 'ক্রীড়া দিবস',
+        descriptionBn: 'সকাল ৯টায় মাঠে।', appliesToShifts: null,
+        source: 'calendar', editable: true, createdByNameBn: 'প্রধান শিক্ষক' },
+      { id: 'demo-cal-3', day: '2026-10-15', kind: 'event', titleBn: 'অভিভাবক সভা',
+        descriptionBn: null, appliesToShifts: ['morning'],
+        source: 'calendar', editable: true, createdByNameBn: 'প্রধান শিক্ষক' },
+      // Read from the exam tables, not stored here — hence editable: false.
+      { id: 'exam:demo-exam1', day: '2026-10-20', kind: 'exam',
+        titleBn: 'অর্ধবার্ষিক পরীক্ষা', descriptionBn: '2026-10-20 — 2026-10-28',
+        appliesToShifts: null, source: 'exam', editable: false },
+      { id: 'exam-subject:demo-es1', day: '2026-10-21', kind: 'exam',
+        titleBn: 'অর্ধবার্ষিক পরীক্ষা — পদার্থবিজ্ঞান',
+        descriptionBn: 'নবম শ্রেণি · সেকশন F', appliesToShifts: null,
+        source: 'exam', editable: false },
+    ],
+  },
+  b: {
+    // Friday only. Different school, different week.
+    weekendDays: [5],
+    entries: [
+      { id: 'demo-cal-b1', day: '2026-10-12', kind: 'holiday', titleBn: 'ঈদে মিলাদুন্নবী',
+        descriptionBn: null, appliesToShifts: null,
+        source: 'calendar', editable: true, createdByNameBn: 'অধ্যক্ষ' },
+    ],
+  },
+};
 
 function demoRole(): string {
   const fromUrl = new URLSearchParams(location.search).get('role');
@@ -1110,6 +1161,36 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/finance/generate':
         return ok({ ok: true, billingPeriod: '2026-05', invoiceCount: 236, notified: 198 });
+
+      // ── R-4 ────────────────────────────────────────────────────────
+      case '/api/v1/ops/calendar': {
+        const tenant = DEMO_CALENDAR[demoTenantKey()];
+        if (init.method === 'POST' || init.method === 'PATCH') {
+          const req = JSON.parse(String(init.body ?? '{}')) as
+            { titleBn?: string; notify?: boolean };
+          return ok({ id: 'demo-cal-new', titleBn: req.titleBn,
+                      notified: req.notify ? 1240 : 0 });
+        }
+        if (init.method === 'DELETE') return ok({ id: 'demo-cal-1', deleted: true });
+
+        const from = url.searchParams.get('from') ?? '';
+        const to = url.searchParams.get('to') ?? '';
+        const kind = url.searchParams.get('kind') ?? '';
+        const entries = tenant.entries
+          .filter((e) => (!from || e.day >= from) && (!to || e.day <= to))
+          .filter((e) => !kind || e.kind === kind);
+        return ok({
+          range: { from, to },
+          weekendDays: tenant.weekendDays,
+          shifts: demoTenantKey() === 'a' ? ['morning', 'day'] : ['single'],
+          years: [
+            { id: 'demo-year', label: '২০২৬', isCurrent: true,
+              startsOn: '2026-01-01', endsOn: '2026-12-31' },
+          ],
+          currentYearId: 'demo-year',
+          entries,
+        });
+      }
 
       // ── R-3 completion pass ────────────────────────────────────────
       case '/api/v1/ops/structure': {

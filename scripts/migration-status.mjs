@@ -87,6 +87,9 @@ const SENTINELS = [
   // sentinel — a policy is not something this script has a probe kind for,
   // and inventing one for a single migration would be the wrong trade.
   ['042_structure_write_scope',       'function',   'app.set_guardian_permissions'],
+  // 043 adds columns and policies to an existing table; the UNIQUE
+  // constraint it swaps in is the one new named object.
+  ['043_calendar',                    'constraint', 'uq_calendar_entry'],
 ];
 
 /**
@@ -136,6 +139,7 @@ const MEANING = {
   '040_notices':                     'R-2 — the school can finally tell anybody anything',
   '041_assignment_history':          'R-3 — replacing a teacher stops erasing the last one',
   '042_structure_write_scope':       'R-3 — a teacher can no longer create a class or move a fee permission',
+  '043_calendar':                    'R-4 — the school calendar becomes editable, and only by the right people',
 };
 
 const QUERIES = {

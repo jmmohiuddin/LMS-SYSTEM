@@ -15,11 +15,12 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **738 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 272** · netlify 8. Plus 20 SQL assertion suites, all green, all idempotent |
-| Schema | 42 migrations (41 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 42/42 with no unprobed migration |
+| Tests | **768 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 302** · netlify 8. Plus 21 SQL assertion suites, all green, all idempotent |
+| Schema | 43 migrations (42 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
 | Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
+| Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
 | Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 and its completion pass closed every gap. **Nothing is "Backend complete — UI pending"**; `POST /rms/solve` stays API-only by an explicit documented decision, not by omission (PHASE_LOG R-3) |
 | Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
@@ -772,6 +773,85 @@ guardian removes the record that they were ever responsible.
   a support request.
 - **No audit export**, and the entity id is shown raw rather than resolved to a
   name ("section 9e52…" rather than "সেকশন F").
+
+---
+
+## 9g. R-4 — the academic calendar (closed)
+
+`calendar_days` has existed since migration 003 and had never had a screen —
+while already being load-bearing: `services/sms-svc/src/dispatch.ts` reads it
+twice to suppress attendance and notice SMS on holidays. A row in that table
+already stopped messages reaching nine hundred guardians.
+
+**No new table.** R-4 is mostly a read path over things that were already
+true. Migration **043** added `description_bn`, `created_by` and timestamps,
+relaxed the UNIQUE constraint (it was one entry per kind per day, so a school
+with a sports day and a parents' meeting on the same Thursday could record
+one of them), widened `notices.source_kind` by one value, and added the write
+scope the table had always lacked.
+
+### The gap, again
+
+Third phase running. `calendar_days` carried only the PERMISSIVE
+`tenant_isolation` policy migration 010 applies in a loop, plus the blanket
+GRANT: complete tenant isolation and **no role scope**. Here it was worse than
+on `classes` — **a student could have inserted one row with kind='holiday'
+and silently suppressed the whole school's attendance SMS for that day**, and
+the suppression query does not care who wrote the row.
+
+The pattern is worth naming rather than rediscovering: 010's loop gives every
+tenant table isolation, and role scope is added per-table by whoever builds
+the feature. **Any table the product has only ever READ is still unscoped.**
+R-5 should check before it writes.
+
+### Decisions
+
+**Exams are read, never copied.** The response merges `calendar_days` with
+`exams.starts_on/ends_on` and `exam_subjects.exam_date` at read time, flagged
+`editable: false`. A calendar row per exam would go stale the first time a
+coordinator moved a paper. `db/tests/calendar.sql` asserts `calendar_days`
+holds **zero** rows of kind 'exam' while an exam exists.
+
+**No start/end time, deliberately.** Every consumer of this table is
+date-grained — the SMS suppression asks "is this day a holiday", attendance
+asks the same, the grid draws a day cell. A `start_time` nothing reads would
+be a field the office fills in and no part of the product honours, which is
+worse than its absence because they would plan around it.
+
+**The weekend is `tenants.weekend_days`**, which already existed (0=Sun … 6=Sat,
+default {5,6}, many Madrasah {5}). Nothing in the endpoint or the view
+hardcodes Friday, and the browser test verifies two tenants shading two
+different sets of columns from the same code.
+
+**Deleting a holiday warns that the day's SMS resumes** — a consequence nobody
+would guess from "delete".
+
+### Offline, and real-time
+
+**Reads offline, writes online.** The service worker caches
+`/api/v1/ops/calendar` stale-while-revalidate, like the inbox and the routine.
+Writes are NOT queued through the IndexedDB outbox: that outbox exists for
+attendance and marks, which a teacher genuinely takes in a room with no
+signal, and a queued holiday is one that silently suppresses SMS on a day
+nobody has agreed to yet.
+
+**No real-time push, and no infrastructure to reuse.** R-2 made the same call
+for the notice bell — a polling timer on 2G costs more than the freshness is
+worth. A calendar entry created while a guardian has the app open appears on
+their next navigation.
+
+**Known limitations:**
+
+- **`working_weekend` is storable and not yet honoured.** The kind predates
+  R-4; the attendance and SMS readers only ask about `kind = 'holiday'`. It
+  appears in the form because it is a real thing a school records (make-up
+  days after floods), and it does not yet change behaviour. **Backend partial
+  — reader pending**, and it needs an owner decision because it changes when
+  SMS goes out.
+- No recurring events. ঈদ moves every year and a school enters its calendar in
+  one sitting each January.
+- No import of national holidays; every school types its own dates.
+- The month view fetches one month per request, so a year overview is twelve.
 
 ---
 

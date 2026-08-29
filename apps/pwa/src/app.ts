@@ -43,6 +43,7 @@ import { AdminSettingsView } from './admin-settings-view.ts';
 import { RolloverView } from './rollover-view.ts';
 import { UsersView } from './users-view.ts';
 import { AuditView } from './audit-view.ts';
+import { CalendarView } from './calendar-view.ts';
 import {
   applyBranding,
   cachedBranding,
@@ -129,6 +130,9 @@ const COMMIT_ROLLOVER  = new Set(['principal', 'school_owner']);
 const MANAGE_GUARDIANS = new Set(['principal', 'school_owner', 'it_admin']);
 /** Mirrors activity_read_scope in migration 041. */
 const READ_AUDIT       = new Set(['principal', 'school_owner', 'it_admin']);
+/** R-4. Mirrors calendar_{insert,update,delete}_scope in migration 043. */
+const MANAGE_CALENDAR  = new Set(
+  ['principal', 'school_owner', 'academic_coordinator', 'it_admin']);
 /** Mirrors finance-svc's BILLING_ROLES. */
 const GENERATE_INVOICES = new Set(['principal', 'school_owner', 'accountant']);
 
@@ -179,6 +183,7 @@ const CARD = {
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
   adminSettings: { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস',          subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
   audit:      { path: 'audit',      glyph: 'lock',         titleBn: 'কার্যবিবরণী',        subtitleBn: 'কে কখন কী পরিবর্তন করেছেন' },
+  calendar:   { path: 'calendar',   glyph: 'calendar',     titleBn: 'শিক্ষাপঞ্জি',         subtitleBn: 'ছুটি, পরীক্ষা ও অনুষ্ঠান' },
 } satisfies Record<string, DashboardItem>;
 
 // Home is an orientation surface, not an index. Each dashboard is trimmed to
@@ -196,7 +201,7 @@ function dashboardFor(role: string): DashCards {
       // one thing a student arrives worried about.
       return {
         primary: [CARD.subjects, CARD.homework],
-        secondary: [CARD.results, CARD.myAtt, CARD.inbox, CARD.shikho],
+        secondary: [CARD.results, CARD.myAtt, CARD.inbox, CARD.calendar],
       };
     case 'guardian':
       // The ward home leads — it is the guardian's whole reason for opening
@@ -204,7 +209,7 @@ function dashboardFor(role: string): DashCards {
       // payment one tap from home.
       return {
         primary: [CARD.wardHome, CARD.feesStu],
-        secondary: [CARD.results, CARD.inbox, CARD.routineStu, CARD.myAtt],
+        secondary: [CARD.results, CARD.inbox, CARD.routineStu, CARD.calendar],
       };
     case 'accountant':
       return {
@@ -218,7 +223,7 @@ function dashboardFor(role: string): DashCards {
       // what is waiting for this person.
       return {
         primary: [CARD.institution, CARD.academic],
-        secondary: [CARD.compose, CARD.publish, CARD.invoices, CARD.inbox],
+        secondary: [CARD.compose, CARD.publish, CARD.calendar, CARD.inbox],
       };
     case 'it_admin':
       // R-3. Structure and accounts, not teaching. An IT admin has no class,
@@ -232,7 +237,7 @@ function dashboardFor(role: string): DashCards {
       // not own money or accounts.
       return {
         primary: [CARD.academic, CARD.routine],
-        secondary: [CARD.institution, CARD.publish, CARD.compose, CARD.inbox],
+        secondary: [CARD.institution, CARD.calendar, CARD.compose, CARD.inbox],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -241,7 +246,7 @@ function dashboardFor(role: string): DashCards {
       // is one tap away in More.
       return {
         primary: [CARD.attendance, CARD.routine],
-        secondary: [CARD.homeworkT, CARD.marks, CARD.inbox, CARD.substitute],
+        secondary: [CARD.homeworkT, CARD.marks, CARD.inbox, CARD.calendar],
       };
   }
 }
@@ -483,6 +488,7 @@ async function main() {
               { path: 'users', glyph: 'users', titleBn: 'ব্যবহারকারী', subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট, নিষ্ক্রিয়করণ' },
               { path: 'rollover', glyph: 'repeat', titleBn: 'বার্ষিক উন্নয়ন', subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
               { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস', subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
+              { path: 'calendar', glyph: 'calendar', titleBn: 'শিক্ষাপঞ্জি', subtitleBn: 'ছুটি, পরীক্ষা ও অনুষ্ঠান — সব ভূমিকার জন্য' },
               { path: 'audit', glyph: 'lock', titleBn: 'কার্যবিবরণী', subtitleBn: 'কে কখন কী পরিবর্তন করেছেন — শুধু পড়ার জন্য' },
               { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
               { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
@@ -689,6 +695,22 @@ async function main() {
           new RolloverView({
             root: container, doc: document, auth,
             canCommit: COMMIT_ROLLOVER.has(auth.role),
+          });
+        },
+      },
+      {
+        // R-4. Registered for EVERY role: a school calendar a guardian cannot
+        // open is not a school calendar, and ঈদের ছুটি is exactly what a
+        // family plans around. Only the controls are gated, by canManage
+        // here and by migration 043's RESTRICTIVE policies underneath.
+        path: 'calendar',
+        labelBn: 'শিক্ষাপঞ্জি',
+        glyph: 'calendar',
+        hidden: true,
+        mount: (container) => {
+          new CalendarView({
+            root: container, doc: document, auth,
+            canManage: MANAGE_CALENDAR.has(auth.role),
           });
         },
       },

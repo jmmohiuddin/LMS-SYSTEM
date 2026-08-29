@@ -2213,3 +2213,61 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
                         color: var(--c-ink-2, var(--color-text-muted)); }
 .notice-confirm-line { margin: 0; font-size: var(--text-sm); font-weight: 600;
                        color: var(--c-ink); flex: 1; min-width: 0; }
+
+/* ── Academic calendar (R-4) ───────────────────────────────────────────
+   A month grid is tabular data, so it is a <table> and inherits
+   .data-table's scroll container and header rules. Only the cell itself
+   needs new styling.
+
+   Every marker here is a SHAPE or a BORDER as well as a colour: the
+   reference device is a 2 GB Android phone held in Dhaka daylight, where a
+   pale tint is the first thing to stop being visible, and a colour-blind
+   head teacher must still be able to see which day is the holiday. */
+.cal-grid { table-layout: fixed; width: 100%; }
+.cal-grid th { text-align: center; font-size: var(--text-3xs); padding: var(--s-1) 0; }
+.cal-grid td { padding: 1px; vertical-align: top; }
+
+.cal-day {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 100%; min-height: var(--tap-min);
+  padding: var(--s-1) 0;
+  border: 1px solid transparent; border-radius: var(--radius);
+  background: transparent; color: var(--c-ink);
+  font: inherit; font-size: var(--text-xs); cursor: pointer;
+}
+.cal-num { font-variant-numeric: tabular-nums; line-height: 1; }
+
+/* The weekend the TENANT configured — never a hardcoded Friday. */
+.cal-weekend { background: var(--c-surface-3); }
+.cal-weekend .cal-num { color: var(--c-ink-2); }
+
+/* A holiday is an underline as well as a tint, so it survives greyscale.
+   Square bottom corners: an inset shadow follows the border-radius and
+   renders as a curved "U" rather than a rule, which reads as decoration
+   instead of a marker. Found by looking at it on a 375px viewport. */
+.cal-holiday .cal-day {
+  border-bottom: 3px solid var(--c-warn);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  padding-bottom: calc(var(--s-1) - 2px);
+}
+
+/* Today is a ring, not a fill: a filled "today" competes with selection. */
+.cal-today .cal-day { border-color: var(--c-primary); font-weight: 700; }
+.cal-selected .cal-day { background: var(--c-primary); color: #fff; }
+.cal-selected .cal-num { color: inherit; }
+
+.cal-dots { display: flex; gap: 2px; }
+.cal-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--c-ink-3); }
+.cal-dot[data-kind='holiday'] { background: var(--c-warn); }
+.cal-dot[data-kind='exam']    { background: var(--c-primary); }
+.cal-dot[data-kind='event']   { background: var(--c-success); }
+.cal-selected .cal-dot { background: #fff; }
+
+/* 320px, 200% zoom: the grid must not push the page sideways (WCAG reflow).
+   .data-table's own overflow-x container already handles the extreme case;
+   this keeps it from being needed at ordinary phone widths. */
+@media (max-width: 360px) {
+  .cal-grid th { font-size: 9px; }
+  .cal-day { font-size: var(--text-2xs); }
+}

@@ -81,6 +81,11 @@ jobs:
       - name: Structure write scope and guardian links
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/guardian_links.sql
 
+      # ── 3f. R-4: who may declare a holiday (one row silences the day's
+      #        SMS), per-tenant weekends, and exams not duplicated.
+      - name: Calendar scope, isolation and weekend config
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -95,6 +100,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/assignment_history.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/guardian_links.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

@@ -57,7 +57,11 @@ export type AuditAction =
   | 'academic.class.create'
   | 'academic.section.create'
   | 'ops.guardian.link'
-  | 'ops.guardian.permissions';
+  | 'ops.guardian.permissions'
+  // R-4.
+  | 'academic.calendar.create'
+  | 'academic.calendar.update'
+  | 'academic.calendar.delete';
 
 export interface AuditEntry {
   action: AuditAction;

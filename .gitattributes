@@ -1,0 +1,39 @@
+# Line-ending and binary policy.
+#
+# Why this file exists: `scripts/build.mjs` writes the committed `api/`
+# bundles with LF, because esbuild always emits LF. With no rule pinning
+# them, a Windows clone running the default `core.autocrlf=true` wants those
+# ten files to be CRLF in the working tree — so `git status` reported all ten
+# as modified from the moment anyone ran `npm run build`, while `git diff`
+# showed no content change at all, because the bytes were byte-for-byte
+# identical to HEAD. A permanently dirty working tree gets ignored for the
+# same reason a permanently red CI check does, and it hides the real thing
+# `.github/workflows/frontend.yml` is watching for: bundles that have
+# genuinely drifted from their sources.
+#
+# After adding rules here, run `git add --renormalize .` once.
+
+# Baseline. Text files are stored LF in the repository; Git picks the
+# working-tree ending per platform unless a rule below pins it. Binary files
+# are detected and left untouched.
+* text=auto
+
+# ── Generated, committed, and required to match a fresh build byte for byte ──
+# `api/` is deliberately tracked (see .gitignore for why Vercel needs it in
+# the clone), and CI rebuilds it and fails on any diff. Pinning the working
+# tree to LF is what makes that check mean the same thing on a Windows
+# machine as it does on ubuntu-latest.
+api/**/*.js       text eol=lf
+
+# ── Consumed by tools that require LF ──
+# A CRLF shebang makes the kernel search for an interpreter literally named
+# "/usr/bin/env bash\r"; scripts/migrate.sh is run against production.
+*.sh              text eol=lf
+# psql feeds these into dollar-quoted function bodies, where a stray CR
+# becomes part of the SQL text rather than whitespace.
+*.sql             text eol=lf
+
+# ── Binary: never inspect, never convert ──
+*.png             binary
+*.webp            binary
+*.zip             binary

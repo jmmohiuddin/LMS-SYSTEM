@@ -15,8 +15,8 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **223 passing** — 172 unit (`node --test`) + 51 integration against a real PostgreSQL, plus 7 SQL assertion suites |
-| Schema | 23 migrations, verified by applying the full chain to an empty database in CI, then 7 SQL assertion suites |
+| Tests | **354 unit passing** (`node --test`, 0 failures, verified 2026-08-29) across `packages/offline` 46, `packages/server-core` 75, `packages/ui-core` 48, `services/academics-svc` 19, `services/rms-svc` 15, `apps/pwa` 143, `netlify` 8 — plus DB-backed integration suites in `identity-svc`, `ops-svc` and `sync-svc` that self-skip unless `DATABASE_URL` is set, and 16 SQL assertion suites |
+| Schema | 38 migrations (37 rollback files), verified by applying the full chain to an empty database in CI, then 16 SQL assertion suites |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Preview | **`https://shikhon-lms.vercel.app/?demo=1`** — every screen, sample data, no login (§6) |
 

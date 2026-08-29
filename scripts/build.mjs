@@ -114,7 +114,14 @@ const NETLIFY_ENTRIES = [
   // The dispatcher already falls back from ?path= to parsing the real
   // pathname, so no rewrite is needed on this host.
   ['services/identity-svc/api/index.ts',                'auth',            '/api/v1/auth/*'],
-  ['services/academics-svc/api/index.ts',               'academics',       '/api/v1/academics/:resource'],
+  // Two paths, one function. R-6's endpoints are documented in the master
+  // plan as /academics/students/search and /academics/students/history, which
+  // is two segments where ':resource' matches one. The dispatcher keys off
+  // the last segment either way, so declaring the second path is all it takes
+  // — no second function, no redirect table to drift. Vercel gets the
+  // equivalent as a rewrite in vercel.json.
+  ['services/academics-svc/api/index.ts',               'academics',
+   ['/api/v1/academics/:resource', '/api/v1/academics/students/:resource']],
   ['services/sms-svc/api/dispatch.ts',                  'sms-dispatch',    '/api/v1/sms/dispatch'],
   ['services/rms-svc/api/index.ts',                     'rms',             '/api/v1/rms/:action'],
   ['services/finance-svc/api/webhooks/[provider].ts',   'finance-webhook', '/api/v1/finance/webhooks/:provider'],

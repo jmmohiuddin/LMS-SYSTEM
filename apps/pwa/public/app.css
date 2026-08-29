@@ -2331,3 +2331,90 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 @media print {
   body > .shell { display: none; }
 }
+
+/* ── R-6 · student search and one child's history ─────────────────────
+   The screen is a list that becomes a record. Everything below is the
+   record half; the list reuses .system-list / .system-row, because a
+   search result and a settings row are the same shape and inventing a
+   second one would mean two things to keep aligned. */
+
+.stu-name { margin: 0; font-size: var(--text-xl); letter-spacing: -0.01em; }
+
+/* Tabs scroll sideways rather than wrap. Six labels wrap to two lines on a
+   360px phone, and a two-line tab strip pushes the content people came for
+   below the fold on the smallest screen the product supports. */
+.tab-row {
+  display: flex; gap: var(--s-1);
+  margin: 0 var(--s-4) var(--s-3);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  border-bottom: 1px solid var(--c-line);
+  scrollbar-width: none;
+}
+.tab-row::-webkit-scrollbar { display: none; }
+.tab {
+  flex: none;
+  min-height: var(--tap-min);
+  padding: 0 var(--s-3);
+  background: transparent; border: 0;
+  border-bottom: 2px solid transparent;
+  font-size: var(--text-sm); font-weight: 600;
+  color: var(--c-ink-2); cursor: pointer;
+  white-space: nowrap;
+}
+.tab.is-active {
+  color: var(--c-primary);
+  border-bottom-color: var(--c-primary);
+}
+.tab:focus-visible { outline: 2px solid var(--c-primary); outline-offset: -2px; }
+
+.stu-panel { display: flex; flex-direction: column; }
+
+/* The timeline. A year is a row, not a card: four to ten of them stack, and
+   cards would put nine borders between a person and the year they want. */
+.timeline-row {
+  display: grid; grid-template-columns: 4.5rem 1fr; gap: var(--s-3);
+  align-items: baseline;
+  margin: 0 var(--s-4);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--c-line);
+}
+.timeline-row:last-child { border-bottom: 0; }
+
+/* Current is marked by weight and a rule on the leading edge, never by
+   colour alone (F-812) — and the heading above it says "বর্তমান ভর্তি" in
+   words, so the distinction survives a monochrome screen entirely. */
+.timeline-row.is-current {
+  border-left: 3px solid var(--c-primary);
+  padding-left: var(--s-3);
+  margin-left: calc(var(--s-4) - 3px - var(--s-3));
+  background: var(--c-surface);
+}
+.timeline-row.is-current .timeline-year,
+.timeline-row.is-current .timeline-where { font-weight: 700; }
+
+.timeline-year {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-base); font-weight: 600; color: var(--c-ink);
+}
+.timeline-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.timeline-where { font-size: var(--text-sm); color: var(--c-ink); }
+.timeline-meta  { font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+/* Profile pairs. Two columns on anything wider than a small phone, one
+   column below it, because a label and a value squeezed side by side at
+   360px leaves neither readable. */
+.detail-list { margin: 0; padding: 0 var(--s-4); display: grid; gap: var(--s-2); }
+.detail-list > div { display: flex; gap: var(--s-2); align-items: baseline; }
+.detail-list dt { flex: none; min-width: 7.5rem; font-size: var(--text-2xs); color: var(--c-ink-2); }
+.detail-list dd { margin: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+@media (min-width: 480px) { .detail-list { grid-template-columns: 1fr 1fr; } }
+
+.plain-list { margin: 0 var(--s-4) var(--s-3); padding-left: var(--s-5); font-size: var(--text-sm); }
+
+/* `.page-sub` normally sits inside `.page-header`, which supplies the
+   horizontal padding. Used on its own — the result count, and the note
+   explaining a withheld field — it hugged the screen edge while the list
+   beside it was indented. Caught at 375px, where the misalignment is
+   obvious and on a wide screen it is not. */
+.stu-panel > .page-sub,
+main > .page-sub { padding-inline: var(--s-4); }

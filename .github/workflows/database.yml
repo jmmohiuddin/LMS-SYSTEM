@@ -92,6 +92,11 @@ jobs:
       - name: Branded documents — tenant, family and section isolation
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
 
+      # ── 3h. R-6: an old code finds the child, four years stay four
+      #        years, and no school ever sees another school.
+      - name: Student search, history and role scope
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -108,6 +113,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/guardian_links.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

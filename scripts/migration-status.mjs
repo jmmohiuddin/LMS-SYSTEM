@@ -90,6 +90,9 @@ const SENTINELS = [
   // 043 adds columns and policies to an existing table; the UNIQUE
   // constraint it swaps in is the one new named object.
   ['043_calendar',                    'constraint', 'uq_calendar_entry'],
+  // 044 adds exactly one object: the index that turns one student's
+  // multi-year timeline from a scan into a seek.
+  ['044_student_history_index',        'index',      'ix_enrolment_student_history'],
 ];
 
 /**
@@ -140,6 +143,7 @@ const MEANING = {
   '041_assignment_history':          'R-3 — replacing a teacher stops erasing the last one',
   '042_structure_write_scope':       'R-3 — a teacher can no longer create a class or move a fee permission',
   '043_calendar':                    'R-4 — the school calendar becomes editable, and only by the right people',
+  '044_student_history_index':       'R-6 — a student enrolment timeline becomes a seek, not a scan',
 };
 
 const QUERIES = {

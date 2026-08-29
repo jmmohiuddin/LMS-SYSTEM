@@ -815,6 +815,214 @@ const DEMO_CALENDAR: Record<'a' | 'b', {
 };
 
 /**
+ * R-6's student directory, answered locally.
+ *
+ * Twelve children, four academic years, and one of them — রাফি হাসান,
+ * STU-8F39A271 — is the master plan's own worked example, carried verbatim
+ * so the acceptance walk in the R-6 log can be repeated by anyone with the
+ * preview link. He moves class, section and roll every year and graduates,
+ * which is the case that breaks a timeline built from the current enrolment.
+ */
+interface DemoStudent {
+  id: string;
+  nameBn: string;
+  nameEn: string;
+  code: string;
+  status: string;
+  /** The section this child sits in TODAY, used for the teacher scope. */
+  sectionId: string;
+  guardianPhone: string;
+  phone: string;
+  years: { year: string; classBn: string; group: string; section: string; roll: number }[];
+}
+
+const DEMO_CLASSES = ['সপ্তম শ্রেণি', 'অষ্টম শ্রেণি', 'নবম শ্রেণি', 'দশম শ্রেণি'];
+
+const DEMO_STUDENTS: DemoStudent[] = NAMES.map(([bn, en], i) => {
+  // Deterministic, so the same id always renders the same child and two
+  // screenshots of "STU-8F39A271" are comparable.
+  const code = i === 10 ? 'STU-8F39A271' : `STU-${(0x1000_0000 + i * 0x2F41B7).toString(16).toUpperCase().slice(0, 8)}`;
+  // The worked example is carried verbatim — name AND code — so anyone can
+  // repeat the acceptance walk from the master plan's own text.
+  const isExample = i === 10;
+  const graduated = isExample || i % 5 === 0;
+  return {
+    id: `demo-stu-${i + 1}`,
+    nameBn: isExample ? 'রাফি হাসান' : bn,
+    nameEn: isExample ? 'Rafi Hasan' : en,
+    code,
+    status: graduated ? 'graduated' : 'enrolled',
+    sectionId: i % 2 === 0 ? 'demo-9a' : 'demo-9b',
+    guardianPhone: `+88017${String(11000000 + i).padStart(8, '0')}`,
+    phone: `+88018${String(11000000 + i).padStart(8, '0')}`,
+    years: DEMO_CLASSES.map((classBn, y) => ({
+      year: String(2024 + y),
+      classBn,
+      group: y >= 2 ? 'বিজ্ঞান' : 'সাধারণ',
+      // The section and the roll MOVE. A fixture where they did not would
+      // let a broken timeline look correct.
+      section: ['ক', 'খ', 'গ', 'ঘ'][(i + y) % 4],
+      roll: 1 + ((i * 7 + y * 13) % 40),
+    })),
+  };
+});
+
+/** The demo's own `app.can_see_student`, with the same four answers. */
+function demoCanSee(s: DemoStudent): boolean {
+  switch (demoRole()) {
+    case 'student':  return s.id === 'demo-stu-11';       // the signed-in child
+    case 'guardian': return s.id === 'demo-stu-11' || s.id === 'demo-stu-4';
+    case 'class_teacher':
+    case 'subject_teacher': return s.sectionId === 'demo-9a';
+    default: return true;                                  // management
+  }
+}
+
+function demoStudentSearch(q: URLSearchParams): Response {
+  const text = (q.get('q') ?? '').trim();
+  const status = (q.get('status') ?? '').trim();
+  const offset = Math.max(Number(q.get('offset')) || 0, 0);
+  const limit = 25;
+
+  if (!text && !status) {
+    return new Response(
+      JSON.stringify({ error: 'query_too_short', message: 'অনুসন্ধানের জন্য অন্তত ২টি অক্ষর লিখুন।' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (text && text.length < 2) {
+    return new Response(
+      JSON.stringify({ error: 'query_too_short', message: 'অনুসন্ধানের জন্য অন্তত ২টি অক্ষর লিখুন।' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const needle = text.toLowerCase();
+  const hits = DEMO_STUDENTS.filter((s) => {
+    if (!demoCanSee(s)) return false;
+    if (status && s.status !== status) return false;
+    if (!text) return true;
+    // The digits must be checked for emptiness first. `'সুমাইয়া'.replace(
+    // /[^\d]/g,'')` is '', and `String.includes('')` is true for every
+    // string — so the phone branch matched the whole school on any Bangla
+    // query. Caught in the browser, and worth recording: the real endpoint
+    // cannot have this bug because it classifies the query shape and only
+    // ever runs ONE branch, which is the reason it does that.
+    const digits = text.replace(/[^\d]/g, '');
+    return s.code.toLowerCase().includes(needle)
+      || s.nameBn.includes(text)
+      || s.nameEn.toLowerCase().includes(needle)
+      || (digits.length >= 4
+          && (s.phone.includes(digits) || s.guardianPhone.includes(digits)));
+  });
+
+  const page = hits.slice(offset, offset + limit);
+  return ok({
+    total: hits.length, limit, offset,
+    matchedOn: /^stu-/i.test(text) ? 'code' : 'name',
+    students: page.map((s) => {
+      const last = s.years[s.years.length - 1];
+      return {
+        id: s.id,
+        name: { bn: s.nameBn, en: s.nameEn },
+        studentCode: s.code,
+        lifecycleStatus: s.status,
+        latest: {
+          yearLabel: last.year, classBn: last.classBn, groupBn: last.group,
+          section: last.section, rollNo: last.roll,
+          // A graduate has no current enrolment, which is what puts the year
+          // in front of their row in the result list.
+          isCurrent: s.status !== 'graduated',
+        },
+      };
+    }),
+  });
+}
+
+function demoStudentHistory(q: URLSearchParams): Response {
+  const id = q.get('studentId') ?? '';
+  const s = DEMO_STUDENTS.find((x) => x.id === id);
+  // Invisible and absent give the same answer here too.
+  if (!s || !demoCanSee(s)) {
+    return new Response(
+      JSON.stringify({ error: 'not_found', message: 'শিক্ষার্থী পাওয়া যায়নি' }),
+      { status: 404, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const role = demoRole();
+  const maySeeFees = ['principal', 'school_owner', 'accountant', 'guardian', 'student'].includes(role);
+  const maySeeContact = ['principal', 'school_owner', 'academic_coordinator', 'it_admin',
+                         'class_teacher', 'accountant', 'guardian', 'student'].includes(role);
+  const printable = Object.entries(DOC_ACCESS)
+    .filter(([k, roles]) => k !== 'attendance_sheet' && roles.includes(role))
+    .map(([k]) => k);
+
+  return ok({
+    student: {
+      id: s.id,
+      name: { bn: s.nameBn, en: s.nameEn },
+      studentCode: s.code,
+      lifecycleStatus: s.status,
+      admissionDate: '2024-01-05',
+      graduatedOn: s.status === 'graduated' ? '2027-02-28' : null,
+      bloodGroup: maySeeContact ? 'B+' : null,
+      fatherNameBn: maySeeContact ? 'মোঃ আব্দুর রহিম' : null,
+      motherNameBn: maySeeContact ? 'রোকসানা বেগম' : null,
+      dateOfBirth: maySeeContact ? '2010-03-14' : null,
+      phone: maySeeContact ? s.phone : null,
+      boardRegistrationNo: maySeeContact ? 'BR-0000042' : null,
+      boardRollNo: maySeeContact ? 'BRN-000042' : null,
+    },
+    enrolments: s.years.map((y, i) => ({
+      yearLabel: y.year,
+      classBn: y.classBn, classEn: `Class ${7 + i}`, levelNo: 7 + i,
+      groupBn: y.group, section: y.section, shift: 'morning',
+      rollNo: y.roll,
+      status: i === s.years.length - 1 && s.status !== 'graduated' ? 'active' : 'promoted',
+      enrolledOn: `${y.year}-01-05`,
+      endedOn: i === s.years.length - 1 && s.status !== 'graduated' ? null : `${y.year}-12-20`,
+      isCurrent: i === s.years.length - 1 && s.status !== 'graduated',
+    })),
+    attendance: s.years.map((y, i) => {
+      const total = 200 - i * 3;
+      const absent = 6 + i;
+      const late = 3 + (i % 3);
+      const excused = 2;
+      const present = total - absent - late - excused;
+      return {
+        yearLabel: y.year, present, absent, late, excused, halfDay: 0, total,
+        percent: Math.round(((present + late) / total) * 1000) / 10,
+      };
+    }),
+    results: s.years.map((y) => ({
+      yearLabel: y.year,
+      examBn: 'বার্ষিক পরীক্ষা',
+      totalMarks: String(380 + (y.roll % 90)),
+      totalMax: '500',
+      percentage: String(Math.round(((380 + (y.roll % 90)) / 5) * 100) / 100),
+      gpa: (3 + (y.roll % 20) / 20).toFixed(2),
+      letterGrade: 'A',
+      isPass: true,
+      rankInSection: y.roll,
+    })),
+    fees: maySeeFees ? {
+      years: s.years.map((y) => ({
+        yearLabel: y.year, invoices: 12,
+        billed: '14400.00', paid: y.year === '2027' ? '13200.00' : '14400.00',
+        due: y.year === '2027' ? '1200.00' : '0.00',
+      })),
+      receipts: [
+        { id: 'demo-rcp-1', receiptNo: 'RCP-2026-00042', issuedAt: '2026-05-12T09:15:00Z',
+          amount: '1300.00', method: 'bkash', invoiceNo: 'INV-2026-05-00042' },
+        { id: 'demo-rcp-2', receiptNo: 'RCP-2026-00031', issuedAt: '2026-04-11T10:02:00Z',
+          amount: '1200.00', method: 'cash', invoiceNo: 'INV-2026-04-00031' },
+      ],
+    } : null,
+    documents: printable.filter((t) => t !== 'transfer_certificate'),
+    certificates: printable.filter((t) => t === 'transfer_certificate'),
+    permissions: { fees: maySeeFees, contact: maySeeContact },
+  });
+}
+
+/**
  * R-5's document endpoint, answered locally.
  *
  * `DOC_ACCESS` mirrors `services/ops-svc/api/document.ts` deliberately: a
@@ -1798,6 +2006,17 @@ export class DemoAuth extends Auth {
         };
         return ok(res);
       }
+
+      // ── R-6 ────────────────────────────────────────────────────────
+      // The role scoping is reproduced, not skipped. A demo where a
+      // guardian's search returned the whole school would be teaching the
+      // opposite of what the endpoint does, and §18's browser walk checks
+      // exactly this: teacher → own sections, guardian → own children,
+      // student → self.
+      case '/api/v1/academics/students/search':
+        return demoStudentSearch(url.searchParams);
+      case '/api/v1/academics/students/history':
+        return demoStudentHistory(url.searchParams);
 
       // ── R-5 ────────────────────────────────────────────────────────
       // The one demo endpoint that answers HTML rather than JSON, because

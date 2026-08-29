@@ -18,7 +18,7 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৮৩২ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-5 শেষে; এর সাথে
+এবং টেস্টেড (**৮৬৫ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-6 শেষে; এর সাথে
 ২১টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
@@ -362,7 +362,7 @@ no phase accidentally re-implements these):
 | এক্সাম রুটিন আপডেট | **Exists** | — (R-2 adds its notifications) |
 | ক্যালেন্ডার — ছুটি/ইভেন্ট, স্কুল-অনুযায়ী | Table exists; **API+UI missing** | R-4 |
 | অফলাইনেও অ্যাটেনডেন্স, নেট এলে সিংক | **Exists** | — |
-| ১০ বছর পরে আইডি দিয়ে ছাত্র খুঁজে পাওয়া | Modeled + indexed; **endpoint+UI missing** | R-6 |
+| ১০ বছর পরে আইডি দিয়ে ছাত্র খুঁজে পাওয়া | **Done (R-6)** — খোঁজ + বছরওয়ারি ইতিহাস | R-6 |
 | প্রতি বছর সহজে নতুন অ্যাসাইন (promotion) | **Done (R-3)** — পূর্বরূপ → পরিকল্পনা → নিশ্চিতকরণ | — |
 | সফটওয়্যার নাকি ওয়েব | **Decided: Web+PWA** (D3) | — |
 | সেকশন-ভিত্তিক কমন চ্যাট (ঐচ্ছিক) | Missing, deliberately | R-9 (optional) |
@@ -669,6 +669,44 @@ silently executing zero tests, is in the R-5 entry of [PHASE_LOG.md](PHASE_LOG.m
 
 **Exit:** principal types an old ID or a name; the student's full multi-year history
 appears in under a second.
+
+**Status: DONE** (2026-08-29). Exit criterion met and measured: a code search
+returns in **4.6 ms p50** and the full history loads in **10.6 ms p50** on a seeded
+school of 2,000 students × 4 years — end to end through the handlers, though
+localhost, so the wire to Neon Singapore will dominate in the field.
+
+**No history table.** `enrolments` has carried one row per student per academic year
+since migration 003; R-6 reads it. Migration **044** adds exactly one object — an
+index on `(tenant_id, student_id, academic_year_id)` — because `student_id` was the
+last column of the only existing index that mentioned it, so one child's timeline
+walked the whole school's history: 1.255 ms scanning 8,000 rows against **0.089 ms**
+seeking four. The scan grows every January; the seek does not.
+
+**No search engine.** The query is CLASSIFIED first (`STU-…`, a phone, a board
+number, a name) so each shape gets the predicate its own existing index answers.
+Every shape is under 12 ms end to end, so §15's condition for reaching for
+Elasticsearch was never met. Measuring also showed `uq_users_tenant_phone` is a
+PARTIAL index that PostgreSQL will not use unless the query carries
+`deleted_at IS NULL` — 0.292 ms against 0.026 ms.
+
+**Authorization supersedes one line above, deliberately.** The R-6 bullet said
+"staff-gated" and "RLS keeps student/guardian out of the search endpoint". R-6's
+brief asks in §13 and §18 for guardian and student access, scoped, so both endpoints
+route through `app.can_see_student` — the predicate the RLS policies already use.
+A guardian's search can only ever return their own children and a student's only
+themselves, which the tests assert directly. A teacher still gets no global search.
+
+The fee tab is **narrower than RLS**, the same pattern R-5 established:
+`invoice_scope` reads `... OR can_see_student(student_id)`, so RLS alone would show
+a class teacher every family's balance in their section.
+
+Six tabs, not §4's eight: a transfer IS an enrolment row with `status =
+'transferred'` and already appears in the timeline in the year it happened, and a
+certificate is generated on demand by R-5 and never stored. Two empty tabs to match
+a list would have been worse than saying so.
+
+Full detail, the measurements and the four defects found, in the R-6 entry of
+[PHASE_LOG.md](PHASE_LOG.md).
 
 ### R-7 — Onboarding & platform console
 
@@ -1116,7 +1154,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** (+ completion pass) |
 | R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** (+ R-4.1) |
 | R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
-| R-6 | Search + history | S–M | — | planned |
+| R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
 | R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |
 | R-8 | Go-live unlocks | external-blocked | any | blocked externally |
 | R-9 | Add-ons | — | pilot | — |

@@ -15,11 +15,12 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **832 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector). offline 46 · server-core 92 · **ui-core 153** · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22 · sync-svc 23 · **pwa 312** · netlify 8. Plus 22 SQL assertion suites, all green, all idempotent. R-5 found that on Windows the runner had been executing **zero** tests while printing a tick — see PHASE_LOG R-5 |
-| Schema | 43 migrations (42 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
+| Tests | **865 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector). offline 46 · server-core 92 · **ui-core 153** · academics-svc 111 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22 · sync-svc 23 · **pwa 312** · netlify 8. Plus 23 SQL assertion suites, all green, all idempotent. R-5 found that on Windows the runner had been executing **zero** tests while printing a tick — see PHASE_LOG R-5 |
+| Schema | 44 migrations (43 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
 | Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
+| Student record | R-6 (§9i): global search by permanent ID, name, phone or guardian phone, scoped by app.can_see_student; and one child multi-year enrolment timeline read from enrolments, with attendance, results, fees and printable documents |
 | Documents | R-5 (§9h): fee receipt, report card, admit card, ID card, transfer certificate and attendance sheet, all on the tenant own letterhead through ONE renderer. Print-first HTML — no stored PDF, because object storage is still stubbed |
 | Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied. R-4.1: a `working_weekend` row now overrides the weekly weekend for SMS |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
@@ -74,7 +75,7 @@ can never linger as extra functions.
 |---|---|---|---|
 | `auth.js` | `POST /api/v1/auth/{otp/request, otp/verify, refresh, logout}` | public / refresh token | OTP request **503 `otp_disabled` while the kill switch is on** (§5); verify issues EdDSA access (15 min) + rotating refresh (30 d) with reuse detection |
 | `sync/[action].js` | `POST /api/v1/sync/push`, `GET /api/v1/sync/pull` | JWT | Outbox op batches, idempotent on `opId`; entities: `attendance_session`, **`exam_mark`** (component marks with optimistic concurrency), `class_delivery_log`; cursor-based delta pull |
-| `academics/[resource].js` | `GET .../sections`, `GET .../roster`, `GET .../exams`, `GET .../marks`, `POST .../publish` | JWT (staff; publish: principal-level) | `exams` lists exam-subjects + component maxima per section; `marks` returns roster⋈existing marks + `rowVersion`. Mark **writes** go through sync/push, offline-first. `publish` runs the full result flow in one transaction: `compute_subject_grade` per mark → `compute_exam_gpa` → `exam_results` upsert → section ranks → marking locked + exam published (immutable after) |
+| `academics/[resource].js` | `GET .../sections`, `GET .../roster`, `GET .../exams`, `GET .../marks`, `POST .../publish`, **`GET .../students/search`**, **`GET .../students/history`** | JWT (staff; publish: principal-level) | `exams` lists exam-subjects + component maxima per section; `marks` returns roster⋈existing marks + `rowVersion`. Mark **writes** go through sync/push, offline-first. `publish` runs the full result flow in one transaction: `compute_subject_grade` per mark → `compute_exam_gpa` → `exam_results` upsert → section ranks → marking locked + exam published (immutable after). R-6: the two `students/*` routes are TWO SEGMENTS where both hosts route one — the dispatcher keys off the last segment and the documented URL is made to work by a rewrite in `vercel.json` and a second declared path on the Netlify function, not by a second function |
 | `rms/[action].js` | `GET .../routine`, `POST .../solve`, `POST .../substitute` | JWT / coordinator roles | `substitute`: free-period + subject-expertise candidate ranking per 02 §5 (find mode) and `routine_substitutions` insert (assign mode); the `check_substitute_free` DB trigger stays the hard guarantee |
 | `sms/dispatch.js` | `GET/POST /api/v1/sms/dispatch` | `CRON_SECRET` / `SERVICE_API_KEY` | Outbox drain; **send is a stub** — no aggregator credentials. Cron: daily `0 18 * * *` UTC = 00:00 BST |
 | `finance/webhooks/[provider].js` | `POST .../webhooks/{bkash,nagad,rocket}` | webhook signature | Shared processor per 03 §2.4; unknown provider → 404 |
@@ -938,6 +939,104 @@ reading ছবি. Neither falls back to another tenant's asset.
 - **No stored PDF and no student photos** until object storage lands.
 - **CSV export**, listed beside documents in the plan's R-5 section, was not
   built. `toCsv()` still exists unused.
+
+---
+
+## 9i. R-6 — student search and the multi-year record (closed)
+
+A principal types `STU-8F39A271` and gets রাফি হাসান, উত্তীর্ণ, with four
+years of enrolment — each year holding the class, section and roll he
+actually had that year.
+
+**The history already existed.** `enrolments` has carried one row per student
+per academic year since migration 003: section, roll, status, and the dates
+the year opened and closed. R-6 reads it. There is **no history table**,
+because a second copy of the truth would be a second thing to get wrong
+during a rollover — and rollover already writes these rows.
+
+**Migration 044 is one index and nothing else.** `student_id` was the last
+column of the only existing `enrolments` index that mentioned it, so one
+child's timeline walked the whole school's history. Measured on 2,000
+students × 4 years: a seq scan of 8,000 rows at 1.255 ms, against **0.089 ms**
+seeking four with `(tenant_id, student_id, academic_year_id)`. The scan grows
+with every year the school stays open; the seek does not.
+
+**Search is indexed because the query is classified first.** One `WHERE` with
+six `OR`s reads well and cannot use an index, so `classify()` decides what was
+typed and each shape gets the predicate its own index answers — the unique
+code index, `uq_users_tenant_phone`, the two trigram indexes on names, and a
+frank scan for board numbers, which have none. **No Elasticsearch**: every
+shape answers in under 12 ms end to end, so the condition for adding one was
+never met.
+
+Two things measuring taught that reading would not have:
+
+- `uq_users_tenant_phone` is a PARTIAL index (`WHERE phone_e164 IS NOT NULL
+  AND deleted_at IS NULL`), and PostgreSQL will not use a partial index unless
+  the query implies its predicate. Without `deleted_at IS NULL` the phone
+  lookup seq-scans — 0.292 ms against 0.026 ms.
+- `app.can_see_student` takes a row argument, so it costs a call per candidate
+  row: 10.7 ms on a name search matching 166 students. `app.has_role(...)`
+  takes none, evaluates once, and short-circuits the OR for management —
+  **2.8 ms, the same 166 rows**. `users_scope` in migration 010 is written the
+  same way for the same reason.
+
+**Authorization reuses `app.can_see_student`** rather than adding a model, so
+the role rules fall out instead of being enforced: management sees the school
+including alumni, a teacher their own sections, a guardian their wards, a
+student themselves. This **supersedes** the master plan's original R-6 line
+("RLS keeps student/guardian out of the search endpoint") because the phase
+brief asks for scoped guardian and student access — and scoping through the
+existing predicate satisfies both readings at once.
+
+**Fees are narrower than RLS**, the R-5 pattern again. `invoice_scope` reads
+`... OR can_see_student(student_id)`, so RLS alone shows a class teacher every
+family's balance in their section. The endpoint's list is tighter, and the fee
+tab is not rendered disabled for them — it is not rendered at all, because a
+greyed-out tab announces that a balance exists and they are not trusted with
+it. Contact details follow R-3's line: withheld at the server, never sent, and
+the screen says so rather than silently omitting fields.
+
+**Six tabs, not the eight the brief listed.** A transfer IS an enrolment row
+with `status = 'transferred'` and already appears in the timeline in the year
+it happened; a certificate is generated on demand by R-5 and never stored.
+Two empty tabs to match a list would have been worse than saying this.
+
+**Performance, measured** on a seeded school of 2,000 students, 8,000
+enrolments, 8,000 results, 15,240 attendance records, 200 graduates —
+end to end through the handlers, p50/p95 over 20 warm calls:
+
+| operation | p50 | p95 |
+|---|---|---|
+| search by student code | 4.6 ms | 6.3 ms |
+| search by name (broad) | 11.9 ms | 13.1 ms |
+| alumni filter, page 1 of 200 | 10.1 ms | 10.9 ms |
+| alumni filter, page 8 (offset 175) | 10.5 ms | 12.4 ms |
+| open one student, full history | 10.6 ms | 12.7 ms |
+
+Pagination stays flat from page 1 to page 8. These are localhost against a
+local PostgreSQL: they measure the database and the handler and nothing else,
+and the round trip to Neon Singapore over a 2G link will dominate completely.
+What they establish is that the queries are indexed and that more students and
+more years do not degrade them.
+
+**Known limitations:**
+
+- **Board numbers are not indexed** — that shape scans one school's student
+  table. Sub-millisecond at 2,000 students; a one-line migration if a school
+  leans on it, not added speculatively.
+- **The trigram indexes are not chosen at this size.** Verified usable with
+  `enable_seqscan = off`; at 2,000 rows a seq scan is genuinely cheaper and
+  the planner is right. They start winning as the table grows.
+- **Multi-year attendance lives in `attendance_records_default`.** The table is
+  range-partitioned by month with partitions only for 2026-08…2026-10, so
+  earlier years fall into the default. The per-student query is an index-only
+  scan there; worth knowing before someone adds partitions.
+- **No type-ahead.** Search is submit-driven: on 2G a request per keystroke is
+  a cost this product's own SMS-frugality argument says not to pay. The
+  request sequencing is already in place if that changes.
+- **No date-range filter on attendance** — per-academic-year totals are what a
+  person reading a history wants.
 
 ---
 

@@ -25,8 +25,8 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-5 complete, R-6 not started
-Last Completed Phase: R-5 — Branded print & the document engine (6 document types)
+Current Phase:        none in progress — R-6 complete, R-7 not started
+Last Completed Phase: R-6 — Student history & global search (old code → 4-year history)
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -36,18 +36,23 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                832 passing, 0 failing (node --test, verified 2026-08-29)
-                      offline 46 · server-core 92 · ui-core 153 · academics-svc 78
+Tests:                865 passing, 0 failing (node --test, verified 2026-08-29)
+                      offline 46 · server-core 92 · ui-core 153 · academics-svc 111
                       identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22
                       sync-svc 23 · pwa 312 · netlify 8
-                      + 22 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      + 23 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
                       NOTE: on Windows the runner silently ran ZERO tests until R-5
                       fixed it — see the R-5 entry, "The tooling was lying".
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
-Migrations:           43 applied, 43/43 probed by scripts/migration-status.mjs
-                      (R-5 needed none — branding was already R-1's `tenants.settings`)
+Migrations:           44 applied, 44/44 probed by scripts/migration-status.mjs
+                      (R-6 added ONE: 044, a single index. No new table — the
+                      multi-year history was already in `enrolments`.)
 Known Blockers:       none open. No capability is "Backend complete — UI pending".
+                      CLOSED in R-6: global student search and the multi-year student
+                      record — an old permanent ID now returns a graduated child and
+                      every year they were enrolled, read from `enrolments` rather
+                      than copied into a history table.
                       CLOSED in R-5: branded documents — plus the leak it exposed,
                       where a subject teacher could print a letterheaded admit card
                       or ID card for any child in the school, not just their own
@@ -3195,3 +3200,293 @@ rather than suppressed quietly.
 ## Next recommended step
 
 **R-6.** Not started. R-5 stopped here as instructed.
+
+---
+
+# 2026-08-29 · R-6 · Student history & global search
+
+**Status: complete.** A principal types `STU-8F39A271` and gets রাফি হাসান,
+উত্তীর্ণ, with four years of enrolment — each year holding the class, section
+and roll he actually had that year.
+
+## The history already existed; it had never been readable
+
+`enrolments` has carried one row per student per academic year since
+migration 003 — section, roll, status, the dates it opened and closed. That
+IS the multi-year history the master plan asks for, and R-6 reads it rather
+than denormalising a copy. §4 of the brief said not to build a history table
+unless truly necessary; it was not necessary, and a second copy of the truth
+would be a second thing to get wrong during a rollover, which already writes
+these rows.
+
+So R-6 added **no table, no column and no policy**. One migration, and it
+contains one index.
+
+## Migration 044 — one index, and the measurement that earned it
+
+`enrolments` had three indexes and all three answer "who is in this
+section/year". None answered "where has this child been": `student_id` is the
+LAST column of the only index that mentions it, so a per-student lookup walks
+every entry for the tenant and filters.
+
+Measured against a seeded school of 2,000 students × 4 years = 8,000 enrolment
+rows (PostgreSQL 16, EXPLAIN ANALYZE, warm):
+
+| plan | time |
+|---|---|
+| seq scan (what the planner chose) | 1.255 ms, 7,997 rows discarded |
+| forced index scan on the (tenant, year, student) unique index — a walk, not a seek | 0.712 ms |
+| `ix_enrolment_student_history` (tenant, student, year) | **0.089 ms**, 4 rows read |
+
+Fourteen times faster matters less than the shape: the scan is linear in the
+whole school's history, so a ten-year-old school pays 200,000 rows for one
+child's four, while the seek stays flat. The years are exactly what makes the
+old plan worse, and the years are the feature.
+
+The index carries `academic_year_id` third so it also supplies the timeline's
+ordering. `IF NOT EXISTS`, and the rollback drops it and loses nothing —
+verified down → up on a live database.
+
+## Search is indexed because the query is classified first
+
+The obvious endpoint is one `WHERE` with six `OR`s across code, two name
+columns, phone and two board numbers. It reads well and cannot use an index.
+
+So `classify()` decides what was typed and each shape gets the predicate its
+own index answers — `STU-…` → the unique code index, `01712…` → the phone
+index, Bangla or English text → the trigram indexes, `BR-…` → a scan, and
+said so. **No Elasticsearch**: §15 asked not to add one unless PostgreSQL
+could not do the job, and PostgreSQL does every shape in under 12 ms
+end-to-end.
+
+Two findings from measuring rather than assuming:
+
+1. **`uq_users_tenant_phone` is a PARTIAL index** — `WHERE phone_e164 IS NOT
+   NULL AND deleted_at IS NULL` — and PostgreSQL will not use a partial index
+   unless the query implies its predicate. Without `deleted_at IS NULL` the
+   phone lookup seq-scans: 0.292 ms against 0.026 ms. It is in the WHERE for
+   that reason as well as the obvious one.
+2. **`app.can_see_student` costs a call per row**, because it takes a row
+   argument. On a name search matching 166 students that dominated the query
+   at 10.7 ms. `app.has_role(...)` takes no row argument, so it evaluates once
+   and short-circuits the OR for management: **2.8 ms, identical 166 rows**.
+   Every role in the short-circuit list is one whose `can_see_student` falls
+   through to `ELSE true`, so this is a cheaper way to ask the same question
+   rather than a looser one — and `users_scope` in migration 010 is written
+   the same way for the same reason.
+
+## Authorization reuses `app.can_see_student`, and supersedes one plan line
+
+§13 said not to create a new authorization model, and none was created. Every
+row both endpoints return passes the predicate the RLS policies already use,
+so the role rules fall out instead of being enforced:
+
+- principal / owner / coordinator / dept head / accountant / IT admin → the
+  whole school, alumni included
+- class teacher / subject teacher → the children in their own sections
+- guardian → their own wards · student → themselves
+
+**This supersedes, and does not erase, the master plan's R-6 line** that said
+"staff-gated" and "RLS keeps student/guardian out of the search endpoint".
+R-6's brief asks in §13 and §18 for guardian and student access, scoped.
+Routing them through `can_see_student` satisfies both readings at once: they
+may call it, and it can only ever return themselves or their children — which
+the tests assert directly.
+
+A teacher does **not** get global search, per §13.
+
+## Privacy: tighter than RLS in one place, again
+
+The R-5 pattern repeats. `invoice_scope` (migration 010) reads
+`has_role(principal, owner, accountant) OR can_see_student(student_id)`, so
+RLS alone shows a **class teacher the fee balance of every child in their
+section**. A class teacher has no reason to know which families are behind on
+fees. `MAY_SEE_FEES` in the endpoint is narrower, and the fees tab is not
+rendered disabled for them — it is not rendered at all, because a greyed-out
+tab announces that a balance exists and they are not trusted with it.
+
+`db/tests/student_search.sql` test 9 records BOTH facts, so if someone later
+tightens the policy the test says the application gate became redundant
+rather than wrong.
+
+Contact details follow R-3's line: withheld at the SERVER, never sent, and
+the screen says `যোগাযোগ ও ব্যক্তিগত তথ্য দেখার অনুমতি আপনার নেই।` rather than
+silently omitting fields. Verified in the browser as a subject teacher: no
+phone, no parents' names, no blood group, no board registration in the
+payload at all.
+
+The result list carries only what tells two children with the same name
+apart — code, class, group, section, roll, status. Asserted by sweeping the
+serialised response for a phone number, a blood group and a parent's name.
+
+## The defects this phase found
+
+1. **A Latin digit inside a Bangla sentence.** The too-short message
+   interpolated `MIN_QUERY` and produced `অনুসন্ধানের জন্য অন্তত 2টি অক্ষর
+   লিখুন।` §17 specifies `২`. Caught by a test asserting the brief's own
+   wording — the same class of almost-Bangla R-5 refused in documents.
+2. **`Promise.all` over one pg client.** The history endpoint ran its four
+   loads "in parallel" on a single client inside a transaction. node-pg
+   serialises them anyway and warns; pg 9 removes the behaviour. The
+   parallelism was imaginary — the timings are unchanged after making it
+   sequential. Found by reading a deprecation warning during the performance
+   run, not by a failing test.
+3. **A demo fixture that matched the whole school on any Bangla query.**
+   `'সুমাইয়া'.replace(/[^\d]/g,'')` is `''`, and `String.includes('')` is
+   true for every string, so the phone branch matched everyone. Worth
+   recording because the real endpoint **cannot** have this bug: it
+   classifies the query and runs exactly one branch, which is the reason it
+   does that. The demo had OR'd everything — the naive design, demonstrating
+   its own failure mode.
+4. **A note flush against the screen edge.** `.page-sub` gets its horizontal
+   padding from `.page-header`; used standalone it hugged the edge while the
+   list beside it was indented. Visible at 375px, invisible on a wide screen.
+
+## The brief's status list is not the column's
+
+§1 listed *Active, Transferred, Withdrawn, Graduated, Archived, Alumni*. The
+`lifecycle_status` CHECK permits *enrolled, promoted, transferred_out,
+dropped_out, graduated, alumni*. The brief also says to reuse the existing
+model, so the filter offers the column's six, in Bangla:
+
+`অধ্যয়নরত · উন্নীত · ছাড়পত্র নিয়েছে · ঝরে পড়েছে · উত্তীর্ণ · প্রাক্তন শিক্ষার্থী`
+
+"Withdrawn" maps to `dropped_out`; **"Archived" has no equivalent and was not
+invented**; `promoted` has no name in the brief's list at all. A DB test
+asserts that every status the endpoint offers is one the column permits, so
+the two cannot drift.
+
+## Tabs, and the two §4 asked for that do not exist as data
+
+§4 listed eight tabs. Six are built: পরিচিতি · ভর্তির ইতিহাস · হাজিরা ·
+ফলাফল · ফি · নথি.
+
+**Transfers** and **Certificates** were not built as separate tabs, because
+neither is a separate thing in this schema. A transfer IS an enrolment row
+whose status is `transferred` plus a `lifecycle_status` of `transferred_out`
+— it already appears in the timeline, in the year it happened, which is where
+someone looks for it. A certificate is generated on demand by R-5 and never
+stored, so a Certificates tab would list one item that the নথি tab already
+lists. Inventing two empty tabs to match a list would have been worse than
+saying this.
+
+The নথি tab lists what this viewer may **print**, and hands out no URLs — R-5
+generates on demand, there is no object store, so §10's rule is satisfied by
+there being nothing to leak. Asserted by sweeping the payload for `http`.
+
+## Tests
+
+- **33 endpoint tests** (`services/academics-svc/test/student-search.test.ts`)
+  against a real PostgreSQL: the classifier and phone normaliser as pure
+  functions, every search field, the lifecycle filter, alumni, pagination
+  arithmetic across three pages, the four role scopes with signed tokens,
+  privacy sweeps, and 404-not-403 for an id that exists but is invisible —
+  with the assertion that a real-but-hidden id and a nonexistent one give the
+  *same* answer.
+- **13 SQL assertions** (`db/tests/student_search.sql`), wired into
+  `.github/workflows/database.yml` including the idempotency re-run.
+  Pre-cleans as well as tears down. The three hostile cases §12 names are one
+  test each — Tenant B's code, a name that matches a Tenant B student, and
+  Tenant B's guardian phone — plus the id named directly. The fixture gives
+  **both schools a child called রাফি হাসান**, so a leak changes a count from
+  1 to 2 and the test fails rather than passing on an empty table.
+- Full gate: **865 tests across 11 workspaces, all passing** against a real
+  PostgreSQL 16. All ten SQL suites green. `tsc` clean, `npm run build` ok,
+  migration 044 verified down → up, 44/44 probed.
+
+## Performance — measured, on 2,000 students
+
+A seeded school: 2,000 students, 8,000 enrolments, 8,000 results, 15,240
+attendance records, four academic years, 200 graduates.
+
+End-to-end through the real handlers (p50 / p95 over 20 calls, warm):
+
+| operation | p50 | p95 |
+|---|---|---|
+| search by student code | 4.6 ms | 6.3 ms |
+| search by name (broad) | 11.9 ms | 13.1 ms |
+| alumni filter, page 1 of 200 | 10.1 ms | 10.9 ms |
+| alumni filter, page 8 (offset 175) | 10.5 ms | 12.4 ms |
+| open one student, full history | 10.6 ms | 12.7 ms |
+
+Pagination stays flat from page 1 to page 8. The master plan's exit criterion
+is "under a second"; this is two orders under it.
+
+**The honest caveat**: these are localhost against a local PostgreSQL. They
+measure the database and the handler and nothing else. A school in Bangladesh
+adds the round trip to Neon Singapore and a 2G/3G link, which will dominate
+completely — the ~10 ms of work here is not what a person will wait for. What
+the numbers do establish is that the queries are indexed and that adding
+years and students does not degrade them.
+
+## Browser verification
+
+Demo preview, both the search and the record, at desktop and 375×812.
+
+- **The brief's example, exactly**: `STU-8F39A271` → ১ জন পাওয়া গেছে → রাফি
+  হাসান, উত্তীর্ণ → four years, ২০২৪ সপ্তম ক, ২০২৫ অষ্টম ঘ, ২০২৬ নবম ক, ২০২৭
+  দশম খ, each with its own roll.
+- **§6 current vs historical**: a currently-enrolled child renders under two
+  headings — **বর্তমান ভর্তি** and **পূর্ববর্তী বছরসমূহ** — with the current
+  year carrying a leading rule and bold weight. Three signals, never colour
+  alone. A graduate correctly gets NO current section, because the flag comes
+  from `enrolments.status` rather than from being last in the array.
+- **All six tabs** render real content: profile, timeline, per-year attendance
+  with percentages, per-year results, per-year fees plus receipts, and the
+  printable-document list.
+- **Role scope**, same broad query each time: principal → all matches,
+  class teacher → 3 (their section), guardian → 1 (their child), student → 1
+  (themselves).
+- **Privacy**: as a subject teacher, no fees tab at all, and the profile ends
+  with the sentence explaining the withheld fields.
+- **States**: empty `কোনো শিক্ষার্থী পাওয়া যায়নি।`, too-short
+  `অনুসন্ধানের জন্য অন্তত ২টি অক্ষর লিখুন।`, skeleton while loading, and a
+  count line `N জন পাওয়া গেছে` with `aria-live`.
+- **375×812**: zero horizontal page overflow; the six-tab strip scrolls
+  sideways inside itself rather than wrapping to two lines.
+
+## Known limitations
+
+1. **Board numbers are not indexed.** `board_registration_no` and
+   `board_roll_no` have no index, so that shape is a scan of one school's
+   student table. Sub-millisecond at 2,000 students; a one-line migration if
+   a school leans on it. Not added speculatively.
+2. **The trigram indexes exist but the planner does not use them at this
+   size.** Verified usable with `enable_seqscan = off` (bitmap index scan on
+   `ix_users_name_trgm`); at 2,000 rows a seq scan is genuinely cheaper and
+   the planner is right. They start winning as the table grows.
+3. **Attendance history all lives in the DEFAULT partition.**
+   `attendance_records` is range-partitioned by month with partitions only for
+   2026-08…2026-10, so every earlier year falls into
+   `attendance_records_default`. The per-student query is an index-only scan
+   there and is fine; it is worth knowing before someone adds partitions.
+4. **No date-range filter on the attendance tab.** §7 said "where practical";
+   per-academic-year totals are what a person reading a history wants, and an
+   arbitrary range picker on a summary view is a control without a question.
+5. **No type-ahead suggestions.** §2 said "as the user types where
+   appropriate". Search is submit-driven: on 2G, a request per keystroke is a
+   cost the product's own SMS-frugality argument says not to pay. The request
+   sequencing is already in place (`seq`) if this changes.
+6. **The student-search tile is a fifth secondary card** on five staff
+   dashboards, where the comment budgets "~6 tiles". Hiding R-6's main screen
+   behind More would have failed D13's spirit and §18's own walk, which
+   starts on it.
+
+## Carried backlog — preserved per §22, none of it closed by R-6
+
+class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision ·
+**R-5: object storage** (no stored PDFs or student photos) ·
+**R-5: CSV export** (`toCsv()` still unused) ·
+**R-5: multi-card ID-card layout** (one card per A4 sheet) ·
+**R-5: money formatting decision** (`৳ 1,300.00` in Latin digits beside
+Bangla rolls — still open, still needs a call).
+
+## Unresolved bugs / issues
+
+None open.
+
+## Next recommended step
+
+**R-7 — Onboarding & platform console.** Not started. R-6 stopped here as
+instructed.

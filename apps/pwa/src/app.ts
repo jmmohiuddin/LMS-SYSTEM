@@ -45,6 +45,7 @@ import { UsersView } from './users-view.ts';
 import { AuditView } from './audit-view.ts';
 import { CalendarView } from './calendar-view.ts';
 import { DocumentsView, type DocKind } from './documents-view.ts';
+import { StudentsView } from './students-view.ts';
 import {
   applyBranding,
   cachedBranding,
@@ -209,6 +210,7 @@ const CARD = {
   audit:      { path: 'audit',      glyph: 'lock',         titleBn: 'কার্যবিবরণী',        subtitleBn: 'কে কখন কী পরিবর্তন করেছেন' },
   calendar:   { path: 'calendar',   glyph: 'calendar',     titleBn: 'শিক্ষাপঞ্জি',         subtitleBn: 'ছুটি, পরীক্ষা ও অনুষ্ঠান' },
   documents:  { path: 'documents',  glyph: 'book',         titleBn: 'নথি ও ছাপা',          subtitleBn: 'রসিদ, প্রগতি পত্র, প্রবেশপত্র' },
+  students:   { path: 'students',   glyph: 'search',       titleBn: 'শিক্ষার্থী খুঁজুন',    subtitleBn: 'আইডি বা নাম দিয়ে — প্রাক্তনসহ' },
 } satisfies Record<string, DashboardItem>;
 
 // Home is an orientation surface, not an index. Each dashboard is trimmed to
@@ -239,7 +241,7 @@ function dashboardFor(role: string): DashCards {
     case 'accountant':
       return {
         primary: [CARD.fees, CARD.ledger],
-        secondary: [CARD.roster, CARD.documents, CARD.inbox, CARD.calendar],
+        secondary: [CARD.students, CARD.roster, CARD.documents, CARD.inbox],
       };
     case 'principal':
     case 'school_owner':
@@ -248,21 +250,21 @@ function dashboardFor(role: string): DashCards {
       // what is waiting for this person.
       return {
         primary: [CARD.institution, CARD.academic],
-        secondary: [CARD.compose, CARD.publish, CARD.calendar, CARD.documents],
+        secondary: [CARD.students, CARD.publish, CARD.calendar, CARD.documents],
       };
     case 'it_admin':
       // R-3. Structure and accounts, not teaching. An IT admin has no class,
       // so a "take attendance" card would be an invitation to a 403.
       return {
         primary: [CARD.academic, CARD.users],
-        secondary: [CARD.institution, CARD.branding, CARD.adminSettings, CARD.audit],
+        secondary: [CARD.students, CARD.institution, CARD.adminSettings, CARD.audit],
       };
     case 'academic_coordinator':
       // Between the two: owns the academic programme and the timetable, does
       // not own money or accounts.
       return {
         primary: [CARD.academic, CARD.routine],
-        secondary: [CARD.institution, CARD.calendar, CARD.documents, CARD.inbox],
+        secondary: [CARD.students, CARD.institution, CARD.calendar, CARD.documents],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -271,7 +273,7 @@ function dashboardFor(role: string): DashCards {
       // is one tap away in More.
       return {
         primary: [CARD.attendance, CARD.routine],
-        secondary: [CARD.homeworkT, CARD.marks, CARD.calendar, CARD.documents],
+        secondary: [CARD.students, CARD.marks, CARD.calendar, CARD.documents],
       };
   }
 }
@@ -514,6 +516,7 @@ async function main() {
               { path: 'rollover', glyph: 'repeat', titleBn: 'বার্ষিক উন্নয়ন', subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
               { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস', subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
               { path: 'documents', glyph: 'book', titleBn: 'নথি ও ছাপা', subtitleBn: 'প্রতিষ্ঠানের লোগো, সিল ও স্বাক্ষরসহ ছাপার নথি' },
+              { path: 'students', glyph: 'search', titleBn: 'শিক্ষার্থী খুঁজুন', subtitleBn: 'স্থায়ী আইডি বা নাম — বছরওয়ারি পূর্ণ ইতিহাসসহ' },
               { path: 'calendar', glyph: 'calendar', titleBn: 'শিক্ষাপঞ্জি', subtitleBn: 'ছুটি, পরীক্ষা ও অনুষ্ঠান — সব ভূমিকার জন্য' },
               { path: 'audit', glyph: 'lock', titleBn: 'কার্যবিবরণী', subtitleBn: 'কে কখন কী পরিবর্তন করেছেন — শুধু পড়ার জন্য' },
               { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
@@ -722,6 +725,21 @@ async function main() {
             root: container, doc: document, auth,
             canCommit: COMMIT_ROLLOVER.has(auth.role),
           });
+        },
+      },
+      {
+        // R-6. Registered for EVERY role, and scoped by the server rather
+        // than by this list: `app.can_see_student` means a guardian's search
+        // reaches their own children, a student's reaches themselves, and a
+        // teacher's reaches their own sections. There is nothing to gate
+        // here, because there is no version of this screen that shows one
+        // role another role's students.
+        path: 'students',
+        labelBn: 'শিক্ষার্থী খুঁজুন',
+        glyph: 'search',
+        hidden: true,
+        mount: (container) => {
+          new StudentsView({ root: container, doc: document, auth });
         },
       },
       {

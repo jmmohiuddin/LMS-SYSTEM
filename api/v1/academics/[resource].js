@@ -4627,6 +4627,474 @@ async function studentDetail(db, ctx, studentId) {
   });
 }
 
+// services/academics-svc/api/search.ts
+var LIFECYCLE = [
+  "enrolled",
+  "promoted",
+  "transferred_out",
+  "dropped_out",
+  "graduated",
+  "alumni"
+];
+var MIN_QUERY = 2;
+var MIN_QUERY_BN = "\u09E8";
+var MAX_LIMIT = 50;
+var DEFAULT_LIMIT = 25;
+var VISIBLE = `(app.has_role('principal','school_owner','academic_coordinator',
+                               'dept_head','accountant','it_admin')
+                  OR app.can_see_student(u.id))`;
+function classify(raw) {
+  const q = raw.trim();
+  if (/^(STU-)?[0-9A-Fa-f]{6,12}$/.test(q) && /[0-9]/.test(q) && !/^\d+$/.test(q)) return "code";
+  if (/^STU-/i.test(q)) return "code";
+  if (/^BRN?-/i.test(q)) return "board";
+  if (/^[+\d][\d\s-]{5,}$/.test(q)) return "phone";
+  return "name";
+}
+function toE164(raw) {
+  const digits = raw.replace(/[^\d]/g, "");
+  if (/^01\d{9}$/.test(digits)) return `+88${digits}`;
+  if (/^8801\d{9}$/.test(digits)) return `+${digits}`;
+  if (/^1\d{9}$/.test(digits)) return `+880${digits}`;
+  return null;
+}
+function codeCandidates(raw) {
+  const q = raw.trim();
+  const up = q.toUpperCase();
+  const set = /* @__PURE__ */ new Set([q, up]);
+  if (!/^STU-/i.test(q)) set.add(`STU-${up}`);
+  return [...set];
+}
+async function handler20(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const q = query(req);
+    const text = (q.get("q") ?? "").trim();
+    const status = (q.get("status") ?? "").trim();
+    const yearId = (q.get("yearId") ?? "").trim();
+    const limit = Math.min(Math.max(Number(q.get("limit")) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+    const offset = Math.max(Number(q.get("offset")) || 0, 0);
+    if (status && !LIFECYCLE.includes(status)) {
+      throw new HttpError(400, "unknown status filter", "bad_status", { field: "status" });
+    }
+    if (text && text.length < MIN_QUERY) {
+      throw new HttpError(
+        400,
+        `\u0985\u09A8\u09C1\u09B8\u09A8\u09CD\u09A7\u09BE\u09A8\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0985\u09A8\u09CD\u09A4\u09A4 ${MIN_QUERY_BN}\u099F\u09BF \u0985\u0995\u09CD\u09B7\u09B0 \u09B2\u09BF\u0996\u09C1\u09A8\u0964`,
+        "query_too_short",
+        { field: "q" }
+      );
+    }
+    if (!text && !status && !yearId) {
+      throw new HttpError(
+        400,
+        "\u0985\u09A8\u09C1\u09B8\u09A8\u09CD\u09A7\u09BE\u09A8\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0985\u09A8\u09CD\u09A4\u09A4 \u09E8\u099F\u09BF \u0985\u0995\u09CD\u09B7\u09B0 \u09B2\u09BF\u0996\u09C1\u09A8\u0964",
+        "query_too_short",
+        { field: "q" }
+      );
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const payload = await db.withTenant(ctx, async (c) => {
+      const shape = text ? classify(text) : null;
+      const { where, params } = predicateFor(shape, text, status, yearId);
+      const { rows } = await c.query(
+        `WITH matched AS (
+           SELECT u.id
+             FROM users u
+             JOIN student_profiles sp ON sp.user_id = u.id
+            WHERE u.deleted_at IS NULL
+              AND ${VISIBLE}
+              AND ${where}
+         ),
+         counted AS (SELECT count(*) AS total FROM matched)
+         SELECT u.id,
+                u.full_name_bn AS name_bn,
+                u.full_name_en AS name_en,
+                sp.student_code,
+                sp.lifecycle_status,
+                latest.year_label,
+                latest.class_bn,
+                latest.group_bn,
+                latest.section_name,
+                latest.roll_no,
+                latest.is_current,
+                (SELECT total FROM counted)::text AS total
+           FROM matched m
+           JOIN users u ON u.id = m.id
+           JOIN student_profiles sp ON sp.user_id = u.id
+           LEFT JOIN LATERAL (
+             -- The LATEST enrolment, not the ACTIVE one. A graduated child
+             -- has no active row, and showing them with a blank class would
+             -- make the one population R-6 exists for look like corrupt data.
+             SELECT ay.label AS year_label, cl.name_bn AS class_bn,
+                    cl."group"::text AS group_bn, s.name AS section_name,
+                    e.roll_no, (e.status = 'active') AS is_current
+               FROM enrolments e
+               JOIN sections s        ON s.id = e.section_id
+               JOIN classes cl        ON cl.id = s.class_id
+               JOIN academic_years ay ON ay.id = e.academic_year_id
+              WHERE e.student_id = u.id
+              ORDER BY ay.starts_on DESC
+              LIMIT 1
+           ) latest ON true
+          ORDER BY u.full_name_bn, sp.student_code
+          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      );
+      const total = rows.length > 0 ? Number(rows[0].total) : await countOnly(c, where, params);
+      return {
+        total,
+        limit,
+        offset,
+        matchedOn: shape,
+        students: rows.map((r) => ({
+          id: r.id,
+          name: { bn: r.name_bn, en: r.name_en },
+          studentCode: r.student_code,
+          lifecycleStatus: r.lifecycle_status,
+          latest: r.year_label === null ? null : {
+            yearLabel: r.year_label,
+            classBn: r.class_bn,
+            groupBn: r.group_bn,
+            section: r.section_name,
+            rollNo: r.roll_no,
+            isCurrent: r.is_current
+          }
+        }))
+      };
+    });
+    json(res, 200, payload, cors);
+  } catch (err) {
+    const e = err instanceof HttpError ? err : new HttpError(500, "internal_error", "internal_error");
+    json(res, e.status, { error: e.code, message: e.message, ...e.detail ?? {} }, cors);
+  }
+}
+async function countOnly(c, where, params) {
+  const { rows } = await c.query(
+    `SELECT count(*)::text AS total
+       FROM users u JOIN student_profiles sp ON sp.user_id = u.id
+      WHERE u.deleted_at IS NULL AND ${VISIBLE} AND ${where}`,
+    params
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+function predicateFor(shape, text, status, yearId) {
+  const parts = [];
+  const params = [];
+  if (shape === "code") {
+    params.push(codeCandidates(text));
+    parts.push(`sp.student_code = ANY($${params.length}::text[])`);
+  } else if (shape === "phone") {
+    const e164 = toE164(text);
+    if (!e164) {
+      parts.push("false");
+    } else {
+      params.push(e164);
+      const p = `$${params.length}`;
+      parts.push(`(u.phone_e164 = ${p}
+                   OR EXISTS (SELECT 1 FROM guardianships g
+                                JOIN users gu ON gu.id = g.guardian_id
+                               WHERE g.student_id = u.id
+                                 AND gu.phone_e164 = ${p}
+                                 AND gu.deleted_at IS NULL))`);
+    }
+  } else if (shape === "board") {
+    params.push(text.toUpperCase());
+    const p = `$${params.length}`;
+    parts.push(`(upper(sp.board_registration_no) = ${p} OR upper(sp.board_roll_no) = ${p})`);
+  } else if (shape === "name") {
+    params.push(`%${text}%`);
+    const p = `$${params.length}`;
+    parts.push(`(u.full_name_bn ILIKE ${p} OR u.full_name_en ILIKE ${p})`);
+  }
+  if (status) {
+    params.push(status);
+    parts.push(`sp.lifecycle_status = $${params.length}`);
+  }
+  if (yearId) {
+    params.push(yearId);
+    parts.push(`EXISTS (SELECT 1 FROM enrolments e
+                         WHERE e.student_id = u.id
+                           AND e.academic_year_id = $${params.length}::uuid)`);
+  }
+  return { where: parts.length ? parts.join(" AND ") : "true", params };
+}
+
+// services/academics-svc/api/studenthistory.ts
+var UUID_RE17 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var MAY_SEE_FEES = ["principal", "school_owner", "accountant", "guardian", "student"];
+var MAY_SEE_CONTACT = [
+  "principal",
+  "school_owner",
+  "academic_coordinator",
+  "it_admin",
+  "class_teacher",
+  "accountant",
+  "guardian",
+  "student"
+];
+var DOCUMENT_ACCESS = {
+  fee_receipt: ["principal", "school_owner", "accountant", "student", "guardian"],
+  report_card: [
+    "principal",
+    "school_owner",
+    "academic_coordinator",
+    "dept_head",
+    "class_teacher",
+    "subject_teacher",
+    "student",
+    "guardian"
+  ],
+  admit_card: [
+    "principal",
+    "school_owner",
+    "academic_coordinator",
+    "dept_head",
+    "class_teacher",
+    "subject_teacher",
+    "student",
+    "guardian"
+  ],
+  id_card: ["principal", "school_owner", "academic_coordinator", "it_admin", "class_teacher"],
+  transfer_certificate: ["principal", "school_owner"]
+};
+var CERTIFICATE_TYPES = /* @__PURE__ */ new Set(["transfer_certificate"]);
+async function handler21(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const q = query(req);
+    const studentId = (q.get("studentId") ?? "").trim();
+    if (!UUID_RE17.test(studentId)) {
+      throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const role = claims.role;
+    const payload = await db.withTenant(ctx, async (c) => {
+      const profile = await loadProfile(c, studentId, MAY_SEE_CONTACT.includes(role));
+      if (!profile) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+      const enrolments = await loadEnrolments(c, studentId);
+      const attendance = await loadAttendance2(c, studentId);
+      const results = await loadResults(c, studentId);
+      const fees = MAY_SEE_FEES.includes(role) ? await loadFees2(c, studentId) : null;
+      const printable = Object.entries(DOCUMENT_ACCESS).filter(([, roles]) => roles.includes(role)).map(([type]) => type);
+      return {
+        student: profile,
+        enrolments,
+        attendance,
+        results,
+        fees,
+        documents: printable.filter((t) => !CERTIFICATE_TYPES.has(t)),
+        certificates: printable.filter((t) => CERTIFICATE_TYPES.has(t)),
+        // Said plainly rather than left for the UI to infer from a null: a
+        // tab that is empty because there is nothing and a tab that is empty
+        // because this person may not see it are different sentences.
+        permissions: { fees: MAY_SEE_FEES.includes(role), contact: MAY_SEE_CONTACT.includes(role) }
+      };
+    });
+    json(res, 200, payload, cors);
+  } catch (err) {
+    const e = err instanceof HttpError ? err : new HttpError(500, "internal_error", "internal_error");
+    json(res, e.status, { error: e.code, message: e.message, ...e.detail ?? {} }, cors);
+  }
+}
+async function loadProfile(c, studentId, maySeeContact) {
+  const { rows } = await c.query(
+    `SELECT u.id, u.full_name_bn AS name_bn, u.full_name_en AS name_en,
+            sp.student_code, sp.lifecycle_status,
+            sp.admission_date::text, sp.graduated_on::text,
+            sp.blood_group, u.father_name_bn AS father_bn,
+            u.mother_name_bn AS mother_bn, u.date_of_birth::text AS dob,
+            u.phone_e164 AS phone,
+            sp.board_registration_no, sp.board_roll_no
+       FROM users u
+       JOIN student_profiles sp ON sp.user_id = u.id
+      WHERE u.id = $1 AND u.deleted_at IS NULL AND app.can_see_student(u.id)`,
+    [studentId]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id,
+    name: { bn: r.name_bn, en: r.name_en },
+    studentCode: r.student_code,
+    lifecycleStatus: r.lifecycle_status,
+    admissionDate: r.admission_date,
+    graduatedOn: r.graduated_on,
+    // Withheld at the SERVER, not hidden in the UI. A role that may not see
+    // contact details never receives them, so nothing leaks to anyone who
+    // opens the network tab.
+    bloodGroup: maySeeContact ? r.blood_group : null,
+    fatherNameBn: maySeeContact ? r.father_bn : null,
+    motherNameBn: maySeeContact ? r.mother_bn : null,
+    dateOfBirth: maySeeContact ? r.dob : null,
+    phone: maySeeContact ? r.phone : null,
+    boardRegistrationNo: maySeeContact ? r.board_registration_no : null,
+    boardRollNo: maySeeContact ? r.board_roll_no : null
+  };
+}
+async function loadEnrolments(c, studentId) {
+  const { rows } = await c.query(
+    `SELECT ay.label AS year_label, ay.starts_on::text,
+            cl.name_bn AS class_bn, cl.name_en AS class_en, cl.level_no,
+            cl."group"::text AS group_bn,
+            s.name AS section_name, s.shift::text AS shift,
+            e.roll_no, e.status,
+            e.enrolled_on::text, e.ended_on::text
+       FROM enrolments e
+       JOIN sections s        ON s.id = e.section_id
+       JOIN classes cl        ON cl.id = s.class_id
+       JOIN academic_years ay ON ay.id = e.academic_year_id
+      WHERE e.student_id = $1
+      ORDER BY ay.starts_on ASC`,
+    [studentId]
+  );
+  return rows.map((r) => ({
+    yearLabel: r.year_label,
+    classBn: r.class_bn,
+    classEn: r.class_en,
+    levelNo: r.level_no,
+    groupBn: r.group_bn,
+    section: r.section_name,
+    shift: r.shift,
+    rollNo: r.roll_no,
+    status: r.status,
+    enrolledOn: r.enrolled_on,
+    endedOn: r.ended_on,
+    // §6. 'active' is the school's own word for the enrolment that is
+    // running, and it survives a child leaving: the last row of a graduate's
+    // timeline is 'promoted' or 'left', and none of their rows is current.
+    isCurrent: r.status === "active"
+  }));
+}
+async function loadAttendance2(c, studentId) {
+  const { rows } = await c.query(
+    `SELECT ay.label AS year_label,
+            count(*) FILTER (WHERE ar.status = 'present')::text  AS present,
+            count(*) FILTER (WHERE ar.status = 'absent')::text   AS absent,
+            count(*) FILTER (WHERE ar.status = 'late')::text     AS late,
+            count(*) FILTER (WHERE ar.status = 'excused')::text  AS excused,
+            count(*) FILTER (WHERE ar.status = 'half_day')::text AS half_day,
+            count(*)::text AS total
+       FROM attendance_records ar
+       JOIN academic_years ay
+         ON ay.tenant_id = ar.tenant_id
+        AND ar.taken_on BETWEEN ay.starts_on AND ay.ends_on
+      WHERE ar.student_id = $1
+      GROUP BY ay.label, ay.starts_on
+      ORDER BY ay.starts_on ASC`,
+    [studentId]
+  );
+  return rows.map((r) => {
+    const total = Number(r.total);
+    const present = Number(r.present);
+    const late = Number(r.late);
+    const half = Number(r.half_day);
+    return {
+      yearLabel: r.year_label,
+      present,
+      absent: Number(r.absent),
+      late,
+      excused: Number(r.excused),
+      halfDay: half,
+      total,
+      // A late arrival is a day attended; an excused absence is not counted
+      // against the child but is not a day present either, so it is excluded
+      // from the denominator rather than scored as attendance.
+      percent: total === 0 ? null : Math.round((present + late + half * 0.5) / total * 1e3) / 10
+    };
+  });
+}
+async function loadResults(c, studentId) {
+  const { rows } = await c.query(
+    `SELECT ay.label AS year_label, ex.name_bn AS exam_bn,
+            er.total_marks::text, er.total_max::text, er.percentage::text,
+            er.gpa::text, er.letter_grade, er.is_pass, er.rank_in_section,
+            er.published_at::text
+       FROM exam_results er
+       JOIN exams ex          ON ex.id = er.exam_id
+       JOIN academic_years ay ON ay.id = er.academic_year_id
+      WHERE er.student_id = $1 AND er.published_at IS NOT NULL
+      ORDER BY ay.starts_on ASC, ex.starts_on ASC`,
+    [studentId]
+  );
+  return rows.map((r) => ({
+    yearLabel: r.year_label,
+    examBn: r.exam_bn,
+    totalMarks: r.total_marks,
+    totalMax: r.total_max,
+    percentage: r.percentage,
+    gpa: r.gpa,
+    letterGrade: r.letter_grade,
+    isPass: r.is_pass,
+    rankInSection: r.rank_in_section
+  }));
+}
+async function loadFees2(c, studentId) {
+  const { rows: years } = await c.query(
+    `SELECT ay.label AS year_label, count(*)::text AS invoices,
+            COALESCE(sum(i.total_amount), 0)::text  AS billed,
+            COALESCE(sum(i.paid_amount), 0)::text   AS paid,
+            COALESCE(sum(i.balance_amount), 0)::text AS due
+       FROM invoices i
+       JOIN academic_years ay ON ay.id = i.academic_year_id
+      WHERE i.student_id = $1
+      GROUP BY ay.label, ay.starts_on
+      ORDER BY ay.starts_on ASC`,
+    [studentId]
+  );
+  const { rows: receipts } = await c.query(
+    `SELECT pr.id, pr.receipt_no, pr.issued_at::text, pr.amount::text,
+            pr.method::text AS method, i.invoice_no
+       FROM payment_receipts pr
+       JOIN invoices i ON i.id = pr.invoice_id
+      WHERE pr.student_id = $1
+      ORDER BY pr.issued_at DESC
+      LIMIT 50`,
+    [studentId]
+  );
+  return {
+    years: years.map((y) => ({
+      yearLabel: y.year_label,
+      invoices: Number(y.invoices),
+      billed: y.billed,
+      paid: y.paid,
+      due: y.due
+    })),
+    // The receipt id is here so the Documents tab can print one through R-5's
+    // endpoint, which re-authorises it. It is an id, not a URL.
+    receipts: receipts.map((r) => ({
+      id: r.id,
+      receiptNo: r.receipt_no,
+      issuedAt: r.issued_at,
+      amount: r.amount,
+      method: r.method,
+      invoiceNo: r.invoice_no
+    }))
+  };
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -4647,9 +5115,17 @@ var ROUTES = {
   ward: handler16,
   subjectchoice: handler17,
   classperf: handler18,
-  hierarchy: handler19
+  hierarchy: handler19,
+  // R-6. The master plan writes these as /academics/students/search and
+  // /academics/students/history — two segments, where both hosts route a
+  // single ':resource'. The dispatcher below keys off the LAST segment, so
+  // the handlers answer either shape; the platform rewrites that make the
+  // documented two-segment URL work live in vercel.json and in the Netlify
+  // path list in scripts/build.mjs.
+  search: handler20,
+  history: handler21
 };
-async function handler20(req, res) {
+async function handler22(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -4664,5 +5140,5 @@ async function handler20(req, res) {
   return route(req, res);
 }
 export {
-  handler20 as default
+  handler22 as default
 };

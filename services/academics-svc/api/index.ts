@@ -26,6 +26,8 @@ import subjectchoice from './subjectchoice.ts';
 import classperf from './classperf.ts';
 // R-3 — the class -> group -> section -> student drill-down.
 import hierarchy from './hierarchy.ts';
+import search from './search.ts';
+import studenthistory from './studenthistory.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -34,6 +36,13 @@ const ROUTES: Record<string, Handler> = {
   assignments, practice, next, subjects, attendance,
   import: importStudents,
   ward, subjectchoice, classperf, hierarchy,
+  // R-6. The master plan writes these as /academics/students/search and
+  // /academics/students/history — two segments, where both hosts route a
+  // single ':resource'. The dispatcher below keys off the LAST segment, so
+  // the handlers answer either shape; the platform rewrites that make the
+  // documented two-segment URL work live in vercel.json and in the Netlify
+  // path list in scripts/build.mjs.
+  search, history: studenthistory,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

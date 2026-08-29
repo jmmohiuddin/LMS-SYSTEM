@@ -1756,6 +1756,14 @@ async function resolvePublicTenant(key) {
   }
 }
 
+// packages/server-core/src/go-live.ts
+function enabled(name, env = process.env) {
+  return (env[name] ?? "").trim().toLowerCase() === "true";
+}
+function otpSendingEnabled(env = process.env) {
+  return enabled("OTP_SENDING_ENABLED", env);
+}
+
 // services/ops-svc/api/brand.ts
 async function handler4(req, res) {
   const cors = corsHeaders();
@@ -1769,15 +1777,20 @@ async function handler4(req, res) {
     return;
   }
   const resolved = await resolvePublicTenant(tenantKey(req));
+  const otpLogin = otpSendingEnabled();
   json(res, 200, resolved ? {
     tenantId: resolved.tenantId,
     slug: resolved.slug,
-    branding: publicBranding(resolved.branding)
+    branding: publicBranding(resolved.branding),
+    otpLogin
   } : {
     // Neutral fallback — see the header on why this is not a 404.
     tenantId: null,
     slug: "",
-    branding: publicBranding(DEFAULT_BRANDING)
+    branding: publicBranding(DEFAULT_BRANDING),
+    // On both branches, or a school whose key is unknown gets a login
+    // screen that disagrees with the server about whether OTP works.
+    otpLogin
   }, cors);
 }
 

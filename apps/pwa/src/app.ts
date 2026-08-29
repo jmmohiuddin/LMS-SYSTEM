@@ -14,7 +14,7 @@ import { AttendanceView } from './attendance-view.ts';
 import { FetchTransport } from './transport.ts';
 import { Auth } from './auth.ts';
 import { DemoAuth } from './demo.ts';
-import { LoginView, LOGIN_DISABLED } from './login-view.ts';
+import { LoginView } from './login-view.ts';
 import { Shell, type ShellRoute } from './shell.ts';
 import { RosterView } from './roster-view.ts';
 import { RoutineView } from './routine-view.ts';
@@ -52,6 +52,9 @@ import {
   fetchFullBranding,
   fetchPublicBranding,
   tenantKeyFromHost,
+  cachedOtpLogin,
+  otpLoginAnswered,
+  type Branding,
 } from './branding.ts';
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
 import { Tracker } from './track.ts';
@@ -332,7 +335,24 @@ async function main() {
   // moment LOGIN_DISABLED flips back to false, the automatic path turns
   // itself off and session-less visitors see the login form again.
   const realAuth = new Auth({ apiBase, deviceId: deviceId('d') });
-  const demoMode = params.get('demo') === '1' || (LOGIN_DISABLED && !realAuth.isLoggedIn());
+
+  // R-8. A device that has never reached the server has no answer about
+  // whether OTP login works, and the two possible readings are not equally
+  // safe HERE. On the login screen an unknown answer means "offer the
+  // activation-code path", which works either way. At this gate it would
+  // mean demo mode — so the first person at a newly live school would be
+  // dropped into a sample school instead of a login form.
+  //
+  // So a cold device asks once, and falls back to demo only if nothing
+  // answers. Every later boot reads the cached answer synchronously, which
+  // is what keeps the 2G/offline start immediate.
+  let coldBrand: Promise<Branding> | null = null;
+  if (!realAuth.isLoggedIn() && !otpLoginAnswered()) {
+    coldBrand = fetchPublicBranding(tenantId);
+    await coldBrand;
+  }
+
+  const demoMode = params.get('demo') === '1' || (!cachedOtpLogin() && !realAuth.isLoggedIn());
   const auth = demoMode ? new DemoAuth() : realAuth;
   // F-1503. One tracker for the session; flushed on boot (draining
   // whatever a previous offline session queued) and after login.
@@ -378,7 +398,9 @@ async function main() {
     // Signed in: fetch the full letterhead, since documents need the
     // contact block a public read deliberately withholds.
     ? fetchFullBranding((path, init) => auth.authedFetch(path, init), brandingKey)
-    : fetchPublicBranding(brandingKey);
+    // Reuse the cold-start fetch above rather than repeating it: on a first
+    // visit it has already asked this exact question of this exact tenant.
+    : (coldBrand && brandingKey === tenantId ? coldBrand : fetchPublicBranding(brandingKey));
 
   function startShell(): Shell {
     const { students, sectionId } = loadRosterStudents();

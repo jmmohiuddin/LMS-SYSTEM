@@ -2,29 +2,41 @@
  * POST /api/v1/auth/otp/request
  * Body: { tenantId, phone, purpose }
  *
- * Currently disabled — see OTP_SENDING_ENABLED below. Real SMS sending was
- * never wired to a real aggregator (no credentials yet); the code was only
- * logged server-side (vercel logs) and, when the caller presented
- * SERVICE_API_KEY via X-Debug-Otp, echoed back in the response for testing.
- * That plumbing is left in place below the kill switch for when it's
- * re-enabled.
+ * Off by default — see OTP_SENDING_ENABLED below.
+ *
+ * Until R-8 the code was only written to the server log, and, when the caller
+ * presented SERVICE_API_KEY via X-Debug-Otp, echoed back in the response for
+ * testing. It now goes to `sms_outbox` in the same transaction as the
+ * challenge, so the ordinary dispatcher → provider → aggregator path carries
+ * it and a delivery report comes back against it. The debug echo is kept: it
+ * is how the acceptance run reads a code without a phone, and it still
+ * requires the service key.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, header, HttpError } from '../../../packages/server-core/src/http.ts';
 import { randomOtpCode, sha256Buf } from '../../../packages/server-core/src/crypto.ts';
 import { enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+import { otpSendingEnabled } from '../../../packages/server-core/src/go-live.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 const PURPOSES = new Set(['login', 'enrol_device', 'reset_password', 'verify_phone']);
 const MIN_RESEND_INTERVAL_SECONDS = 45;
 const OTP_TTL_MINUTES = 5;
+/** The same number for a reader rather than for an interval. */
+const OTP_TTL_MINUTES_BN = '৫';
 
-// Kill switch: flip to `true` and redeploy to resume issuing OTP codes.
-// While `false`, no challenge row is created and nothing is logged — the
-// rest of the auth system (verify/refresh/logout, existing sessions) is
-// untouched, so already-logged-in teachers keep working.
-const OTP_SENDING_ENABLED = false;
+// R-8: this was a hardcoded `const … = false`, so resuming OTP login meant
+// editing this file, rebuilding and redeploying — on the day a school is
+// waiting to log in, with a code change in the path. It is now
+// `OTP_SENDING_ENABLED` in the environment, read per request so the switch
+// takes effect on the next invocation rather than the next deploy.
+//
+// It still fails CLOSED: unset, misspelt, or anything other than the exact
+// string "true" leaves OTP off. While off, no challenge row is created and
+// nothing is logged — the rest of the auth system (verify/refresh/logout,
+// existing sessions) is untouched, so already-logged-in teachers keep working
+// and activation-code login is unaffected.
 
 interface OtpRequestBody {
   tenantId?: string;
@@ -44,7 +56,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     return;
   }
 
-  if (!OTP_SENDING_ENABLED) {
+  if (!otpSendingEnabled()) {
     json(res, 503, { error: 'otp_disabled', message: 'OTP login is temporarily unavailable' }, cors);
     return;
   }
@@ -91,8 +103,51 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         [tenantId, phone, codeHash, purpose, OTP_TTL_MINUTES],
       );
 
-      // Stub SMS send — real aggregator integration is a follow-up.
-      console.log(`[otp-request] tenant=${tenantId} phone=${phone} purpose=${purpose} code=${code}`);
+      // R-8. This was `console.log(code)` and a comment saying the aggregator
+      // was a follow-up — which meant that turning OTP_SENDING_ENABLED on, on
+      // a deployment with a fully configured aggregator, produced a challenge
+      // whose code reached nobody. The readiness screen would have shown OTP
+      // and SMS both green while login was impossible for every real user,
+      // which is the exact failure this phase exists to prevent.
+      //
+      // The code now goes into `sms_outbox`, in the SAME transaction as the
+      // challenge: if the queue insert fails the challenge is rolled back
+      // with it, so there is never a code the product believes it sent.
+      const org = await client.query<{ name_bn: string | null }>(
+        `SELECT name_bn FROM tenants WHERE id = $1`, [tenantId],
+      );
+      // Signed with the SCHOOL's name. A parent receiving "— ShikhonBD" would
+      // be reading their software vendor's brand on a message from their
+      // child's school; D11 puts the platform brand nowhere near a guardian.
+      // The fallback is a neutral word, never the platform's name.
+      const orgName = org.rows[0]?.name_bn ?? 'বিদ্যালয়';
+      // The two numbers in this message are deliberately in different digits.
+      // The duration is prose and takes Bangla numerals like every other
+      // number the product shows a parent. The CODE stays in Latin digits
+      // because it is not prose — it is a literal to be typed back into a
+      // field, and a person reading ৯৯৫৯৪৭ off an SMS has to transliterate it
+      // before they can enter it.
+      const smsBody = `আপনার লগইন কোড ${code}। ${OTP_TTL_MINUTES_BN} মিনিটের মধ্যে ব্যবহার করুন। কাউকে জানাবেন না। — ${orgName}`;
+
+      await client.query(
+        `INSERT INTO sms_outbox
+           (tenant_id, msisdn, template_code, locale, body, encoding, segments,
+            priority, dedupe_key, context)
+         VALUES ($1, $2, 'auth.otp.v1', 'bn', $3, 'unicode', $4, 1, $5, $6)`,
+        [
+          tenantId, phone, smsBody,
+          // Bangla forces UCS-2: 70 characters to a segment, not 160.
+          Math.max(1, Math.ceil(smsBody.length / 70)),
+          // Keyed on the CHALLENGE, not on the phone and the day. A person
+          // who did not receive the first code asks for another one, and the
+          // daily dedupe index would have swallowed every retry after the
+          // first — locking them out for the rest of the day.
+          `otp:${inserted.rows[0].id}`,
+          // The code itself is never put in `context`: that column is read
+          // by the dispatcher's logs and by support.
+          JSON.stringify({ purpose, challengeId: inserted.rows[0].id }),
+        ],
+      );
 
       const debugKey = header(req, 'x-debug-otp');
       const isDebugAuthorized = !!process.env.SERVICE_API_KEY && debugKey === process.env.SERVICE_API_KEY;

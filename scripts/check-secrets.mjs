@@ -93,6 +93,36 @@ const SECRETS = [
     blastRadius: 'every stored national ID and birth-registration number',
     rotate: 'add the next version; retire an old one only after the sweep reports zero rows on it',
   },
+  // ── R-7 ──────────────────────────────────────────────────────────
+  {
+    name: 'PLATFORM_API_KEY',
+    required: false,          // the console is a separate deployment
+    kind: 'bearer',
+    minEntropyBits: 128,
+    blastRadius: 'onboarding, suspension and the tenant list for EVERY school — '
+      + 'the widest key in the product, and the only one that is not scoped to one tenant',
+    rotate: 'generate 32 random bytes, update the console deployment; operators re-authenticate',
+  },
+  // ── R-8: the two secrets a live SMS aggregator needs ─────────────
+  {
+    name: 'SMS_API_TOKEN',
+    required: false,          // absent = the stub provider; see services/sms-svc/src/provider.ts
+    kind: 'bearer',
+    minEntropyBits: 64,       // set by the aggregator, not by us — we cannot demand 128
+    blastRadius: 'sends SMS billed to our aggregator account, from our sender id',
+    rotate: 'issue a new token in the aggregator portal, update env, then revoke the old one',
+  },
+  {
+    name: 'SMS_DLR_SECRET',
+    required: false,
+    kind: 'bearer',
+    minEntropyBits: 128,
+    // Deliberately NOT SERVICE_API_KEY: this one is handed to a vendor, and
+    // the service key would make every internal endpoint reachable by them.
+    blastRadius: 'lets a caller mark our messages delivered or failed — it cannot '
+      + 'read a message, name a tenant, or reach any other endpoint',
+    rotate: 'generate 32 random bytes, give the aggregator the new value, then update env',
+  },
 ];
 
 /* ─────────────────────────────────────────────────────── helpers */

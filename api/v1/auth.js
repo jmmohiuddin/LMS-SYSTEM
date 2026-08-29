@@ -234,12 +234,20 @@ function constantTimeEqualHex(a, b) {
   return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 }
 
+// packages/server-core/src/go-live.ts
+function enabled(name, env = process.env) {
+  return (env[name] ?? "").trim().toLowerCase() === "true";
+}
+function otpSendingEnabled(env = process.env) {
+  return enabled("OTP_SENDING_ENABLED", env);
+}
+
 // services/identity-svc/api/otp-request.ts
 var PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 var PURPOSES = /* @__PURE__ */ new Set(["login", "enrol_device", "reset_password", "verify_phone"]);
 var MIN_RESEND_INTERVAL_SECONDS = 45;
 var OTP_TTL_MINUTES = 5;
-var OTP_SENDING_ENABLED = false;
+var OTP_TTL_MINUTES_BN = "\u09EB";
 async function handler(req, res) {
   const cors = corsHeaders();
   if (req.method === "OPTIONS") {
@@ -251,7 +259,7 @@ async function handler(req, res) {
     json(res, 405, { error: "method_not_allowed" }, cors);
     return;
   }
-  if (!OTP_SENDING_ENABLED) {
+  if (!otpSendingEnabled()) {
     json(res, 503, { error: "otp_disabled", message: "OTP login is temporarily unavailable" }, cors);
     return;
   }
@@ -287,7 +295,33 @@ async function handler(req, res) {
          RETURNING id, expires_at`,
         [tenantId, phone, codeHash2, purpose, OTP_TTL_MINUTES]
       );
-      console.log(`[otp-request] tenant=${tenantId} phone=${phone} purpose=${purpose} code=${code}`);
+      const org = await client.query(
+        `SELECT name_bn FROM tenants WHERE id = $1`,
+        [tenantId]
+      );
+      const orgName = org.rows[0]?.name_bn ?? "\u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC";
+      const smsBody = `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B2\u0997\u0987\u09A8 \u0995\u09CB\u09A1 ${code}\u0964 ${OTP_TTL_MINUTES_BN} \u09AE\u09BF\u09A8\u09BF\u099F\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8\u0964 \u0995\u09BE\u0989\u0995\u09C7 \u099C\u09BE\u09A8\u09BE\u09AC\u09C7\u09A8 \u09A8\u09BE\u0964 \u2014 ${orgName}`;
+      await client.query(
+        `INSERT INTO sms_outbox
+           (tenant_id, msisdn, template_code, locale, body, encoding, segments,
+            priority, dedupe_key, context)
+         VALUES ($1, $2, 'auth.otp.v1', 'bn', $3, 'unicode', $4, 1, $5, $6)`,
+        [
+          tenantId,
+          phone,
+          smsBody,
+          // Bangla forces UCS-2: 70 characters to a segment, not 160.
+          Math.max(1, Math.ceil(smsBody.length / 70)),
+          // Keyed on the CHALLENGE, not on the phone and the day. A person
+          // who did not receive the first code asks for another one, and the
+          // daily dedupe index would have swallowed every retry after the
+          // first — locking them out for the rest of the day.
+          `otp:${inserted.rows[0].id}`,
+          // The code itself is never put in `context`: that column is read
+          // by the dispatcher's logs and by support.
+          JSON.stringify({ purpose, challengeId: inserted.rows[0].id })
+        ]
+      );
       const debugKey = header(req, "x-debug-otp");
       const isDebugAuthorized = !!process.env.SERVICE_API_KEY && debugKey === process.env.SERVICE_API_KEY;
       return {

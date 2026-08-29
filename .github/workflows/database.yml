@@ -102,6 +102,11 @@ jobs:
       - name: Platform console, provisioning and the student cap
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
 
+      # ── 3j. R-8: an SMS aggregator can report an outcome and change
+      #        nothing else, and the AI budget is reserved before it is spent.
+      - name: Go-live unlocks — delivery reports and the AI budget
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/go_live.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -120,6 +125,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/go_live.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

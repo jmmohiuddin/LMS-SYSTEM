@@ -23,15 +23,19 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
+import { mfsPaymentsEnabled } from '../../../packages/server-core/src/go-live.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Kill switch: flip to `true` once real bKash/Nagad/Rocket merchant
-// credentials exist in env and the initiation calls below are wired to the
-// live gateways. While `false`, no mfs_transactions row is created.
-const MFS_PAYMENTS_ENABLED = false;
+// R-8: this was a hardcoded `const … = false`. It is now MFS_PAYMENTS_ENABLED
+// in the environment, read per request, failing closed on anything but the
+// exact string "true". While off, no mfs_transactions row is created.
+//
+// The WEBHOOKS are unaffected and stay open either way: a settlement for a
+// payment made before the switch was thrown must still land, and a gateway
+// that cannot deliver a callback will retry it into next week.
 
 async function invoices(req: IncomingMessage, res: ServerResponse, cors: Record<string, string>): Promise<void> {
   if (req.method !== 'GET') {
@@ -117,7 +121,7 @@ async function pay(req: IncomingMessage, res: ServerResponse, cors: Record<strin
   }
   void claims;
 
-  if (!MFS_PAYMENTS_ENABLED) {
+  if (!mfsPaymentsEnabled()) {
     json(res, 503, {
       error: 'mfs_disabled',
       message: 'online fee payment is not yet available — pay at the school office',

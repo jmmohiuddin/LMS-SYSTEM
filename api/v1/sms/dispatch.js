@@ -181,10 +181,79 @@ function sendIfRefused(res, cors, verdict) {
   return false;
 }
 
-// packages/server-core/src/crypto.ts
-import { randomBytes, randomInt, createHash, timingSafeEqual } from "node:crypto";
-function randomOpaqueToken(bytes = 32) {
-  return randomBytes(bytes).toString("base64url");
+// services/sms-svc/src/provider.ts
+var StubProvider = class {
+  name = "stub";
+  live = false;
+  async send(msisdn, body, csmsId) {
+    const providerMsgId = `stub_${csmsId}`;
+    console.log(`[sms-dispatch] STUB SEND to=${msisdn} id=${providerMsgId} body=${JSON.stringify(body)}`);
+    return { providerMsgId, provider: "stub", costBdt: null };
+  }
+};
+var SslWirelessProvider = class {
+  name = "ssl_wireless";
+  live = true;
+  endpoint;
+  token;
+  sid;
+  constructor(o) {
+    this.endpoint = o.endpoint;
+    this.token = o.token;
+    this.sid = o.sid;
+  }
+  async send(msisdn, body, csmsId) {
+    const res = await fetch(this.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_token: this.token,
+        sid: this.sid,
+        msisdn: msisdn.replace(/^\+/, ""),
+        sms: body,
+        csms_id: csmsId
+      }),
+      // A school's cron must not hang on an aggregator having a bad night.
+      // The row stays 'queued' and the next run retries it.
+      signal: AbortSignal.timeout(15e3)
+    });
+    if (!res.ok) {
+      throw new Error(`ssl_wireless HTTP ${res.status}`);
+    }
+    const payload = await res.json().catch(() => ({}));
+    if (payload.status && payload.status.toUpperCase() !== "SUCCESS") {
+      throw new Error(`ssl_wireless ${payload.status}: ${payload.error_message ?? "no detail"}`);
+    }
+    const reference = payload.smsinfo?.[0]?.reference_id;
+    return {
+      providerMsgId: reference ?? csmsId,
+      provider: this.name,
+      // Not reported per-message by this API; billing is reconciled from the
+      // provider's own statement. NULL rather than a guess.
+      costBdt: null
+    };
+  }
+};
+function resolveProvider(env = process.env) {
+  const name = (env.SMS_PROVIDER ?? "").trim().toLowerCase();
+  if (!name || name === "stub") return new StubProvider();
+  if (name === "ssl_wireless") {
+    const token = env.SMS_API_TOKEN ?? "";
+    const sid = env.SMS_SENDER_ID ?? "";
+    const endpoint = env.SMS_ENDPOINT ?? "";
+    const missing = [
+      !endpoint && "SMS_ENDPOINT",
+      !token && "SMS_API_TOKEN",
+      !sid && "SMS_SENDER_ID"
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      throw new Error(
+        `SMS_PROVIDER=ssl_wireless but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set`
+      );
+    }
+    return new SslWirelessProvider({ endpoint, token, sid });
+  }
+  throw new Error(`unknown SMS_PROVIDER "${name}" \u2014 expected 'stub' or 'ssl_wireless'`);
 }
 
 // services/sms-svc/src/dispatch.ts
@@ -224,12 +293,14 @@ var SmsDispatchWorker = class {
   enqueueBatchSize;
   dispatchBatchSize;
   now;
+  provider;
   constructor(db, opts = {}) {
     this.db = db;
     this.graceMinutes = opts.graceMinutes ?? 20;
     this.enqueueBatchSize = opts.enqueueBatchSize ?? 200;
     this.dispatchBatchSize = opts.dispatchBatchSize ?? 200;
     this.now = opts.now ?? Date.now;
+    this.provider = opts.provider ?? resolveProvider();
   }
   async run(tenantId) {
     const ctx = { tenantId, userId: "", role: "system_ingest" };
@@ -495,23 +566,43 @@ var SmsDispatchWorker = class {
     );
     let dispatched = 0;
     for (const row of queued.rows) {
-      const providerMsgId = await this.sendStub(row.msisdn, row.body);
+      let sent;
+      try {
+        sent = await this.provider.send(row.msisdn, row.body, row.id);
+      } catch (err) {
+        await client.query(
+          `UPDATE sms_outbox
+              SET attempts = attempts + 1,
+                  error_code = left($4, 120),
+                  status = CASE WHEN attempts + 1 >= 5 THEN 'failed' ELSE 'queued' END
+            WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
+          [
+            tenantId,
+            row.created_on,
+            row.id,
+            err instanceof Error ? err.message : "send failed"
+          ]
+        );
+        continue;
+      }
       await client.query(
         `UPDATE sms_outbox
-            SET status = 'sent', sent_at = now(), provider = 'stub',
-                provider_msg_id = $4, attempts = attempts + 1
+            SET status = 'sent', sent_at = now(), provider = $5,
+                provider_msg_id = $4, attempts = attempts + 1,
+                cost_bdt = COALESCE($6, cost_bdt)
           WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
-        [tenantId, row.created_on, row.id, providerMsgId]
+        [
+          tenantId,
+          row.created_on,
+          row.id,
+          sent.providerMsgId,
+          sent.provider,
+          sent.costBdt ?? null
+        ]
       );
       dispatched++;
     }
     return dispatched;
-  }
-  /** Stand-in for a real SMS aggregator call — no credentials exist yet. */
-  async sendStub(msisdn, body) {
-    const providerMsgId = `stub_${randomOpaqueToken(8)}`;
-    console.log(`[sms-dispatch] STUB SEND to=${msisdn} id=${providerMsgId} body=${JSON.stringify(body)}`);
-    return providerMsgId;
   }
 };
 

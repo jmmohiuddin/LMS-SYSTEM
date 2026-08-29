@@ -179,7 +179,7 @@ guard. Migrations must apply with **zero output** — a warning fails the build.
 | [`packages/ui-core`](packages/ui-core) | **Built and tested** — attendance state machine, Bangla/Latin numerals, SMS cost model. 36 assertions, zero runtime deps. |
 | [`apps/pwa`](apps/pwa) | **Built and tested** — login (phone + OTP), navigation shell, attendance grid, roster view, routine day/week view, **offline marks entry (নম্বর tab)**, service-worker policy, `?demo=1` preview mode. 27 assertions in jsdom. |
 | [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push` + `GET /sync/pull` (entities incl. `exam_mark` with optimistic concurrency), 23 assertions against a real database, including the full DOM→database vertical slice. |
-| [`services/identity-svc`](services/identity-svc) | **Built and deployed** — OTP request/verify (EdDSA JWT, rotating refresh with reuse detection), logout. OTP issuance currently behind a kill switch — [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md). |
+| [`services/identity-svc`](services/identity-svc) | **Built and deployed** — OTP request/verify (EdDSA JWT, rotating refresh with reuse detection), logout, activation codes. Since R-8 the OTP is queued to `sms_outbox` in the challenge's own transaction and sent by the ordinary dispatcher; issuance is gated on `OTP_SENDING_ENABLED` — [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md). |
 | [`services/academics-svc`](services/academics-svc) | **Built and deployed** — sections, roster, **exams and marks** read endpoints (mark writes ride the offline outbox). |
 | [`services/rms-svc`](services/rms-svc) | **Built and deployed** — greedy-heuristic routine solver, teacher day/week routine endpoint, **substitution finder** (free-period + subject-expertise ranking; DB exclusion constraints guarantee clash-freedom regardless). |
 | [`services/sms-svc`](services/sms-svc) | **Built and deployed** — outbox enqueue + cron-driven dispatch worker; **send is stubbed** pending an aggregator contract. |
@@ -234,9 +234,15 @@ provisioning; three SQL test suites; rollback migrations; the offline sync engin
 service directories compiled into 9 Vercel functions (exams/marks, fee engine, AI gateway,
 ANS hooks, substitution finder included); and CI.
 
-**Currently disabled by design** (kill switches, [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)):
-OTP login (no SMS aggregator), MFS payment initiation (no merchant credentials), the AI
-engines (no `ANTHROPIC_API_KEY` set). Use `?demo=1` to preview the UI meanwhile.
+**Currently off by configuration, not by code** ([docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)):
+OTP login (`OTP_SENDING_ENABLED`), real SMS sending (`SMS_PROVIDER` and its
+credentials), delivery reports (`SMS_DLR_SECRET`), MFS payment initiation
+(`MFS_PAYMENTS_ENABLED`) and the AI engines (`ANTHROPIC_API_KEY`). Since R-8
+these are environment variables read per request — turning one on is an env
+change, not an edit-and-redeploy — and the platform console's গো-লাইভ অবস্থা
+screen reports which of them a given deployment actually has. What remains
+genuinely blocked is commercial: an SMS aggregator contract and MFS merchant
+credentials. Use `?demo=1` to preview the UI meanwhile.
 
 **Follow-on work:** result publication & report cards, invoice generation,
 guardian/principal UI surfaces, NCTB corpus ingestion for grounded RAG — gap list with

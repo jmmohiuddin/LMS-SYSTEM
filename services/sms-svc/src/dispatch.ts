@@ -31,6 +31,7 @@
 import type pg from 'pg';
 import type { Db, TenantContext } from '../../../packages/server-core/src/db.ts';
 import { randomOpaqueToken } from '../../../packages/server-core/src/crypto.ts';
+import { resolveProvider, type SmsProvider } from './provider.ts';
 
 interface AttendanceMarkedPayload {
   studentId: string;
@@ -45,6 +46,12 @@ export interface DispatchOptions {
   enqueueBatchSize?: number;
   dispatchBatchSize?: number;
   now?: () => number;
+  /**
+   * R-8. The seam a real aggregator plugs into. Absent, the environment
+   * decides — and with no SMS_PROVIDER set that is still the stub, which is
+   * every deployment until an aggregator contract lands.
+   */
+  provider?: SmsProvider;
 }
 
 /**
@@ -219,6 +226,7 @@ export class SmsDispatchWorker {
   private readonly enqueueBatchSize: number;
   private readonly dispatchBatchSize: number;
   private readonly now: () => number;
+  private readonly provider: SmsProvider;
 
   constructor(db: Db, opts: DispatchOptions = {}) {
     this.db = db;
@@ -226,6 +234,7 @@ export class SmsDispatchWorker {
     this.enqueueBatchSize = opts.enqueueBatchSize ?? 200;
     this.dispatchBatchSize = opts.dispatchBatchSize ?? 200;
     this.now = opts.now ?? Date.now;
+    this.provider = opts.provider ?? resolveProvider();
   }
 
   async run(tenantId: string): Promise<DispatchResult> {
@@ -564,23 +573,40 @@ export class SmsDispatchWorker {
 
     let dispatched = 0;
     for (const row of queued.rows) {
-      const providerMsgId = await this.sendStub(row.msisdn, row.body);
+      // The outbox row's own id is the provider's idempotency key, so a cron
+      // that fires twice cannot text a parent the same message twice.
+      let sent;
+      try {
+        sent = await this.provider.send(row.msisdn, row.body, row.id);
+      } catch (err) {
+        // One message failing must not abandon the rest of the batch, and it
+        // must certainly not be marked sent. The row stays queued with the
+        // reason recorded and the attempt counted, so the next run retries it
+        // — and after five attempts it stops, because a row that keeps
+        // failing should not cost money on every cron tick forever.
+        await client.query(
+          `UPDATE sms_outbox
+              SET attempts = attempts + 1,
+                  error_code = left($4, 120),
+                  status = CASE WHEN attempts + 1 >= 5 THEN 'failed' ELSE 'queued' END
+            WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
+          [tenantId, row.created_on, row.id,
+           err instanceof Error ? err.message : 'send failed'],
+        );
+        continue;
+      }
+
       await client.query(
         `UPDATE sms_outbox
-            SET status = 'sent', sent_at = now(), provider = 'stub',
-                provider_msg_id = $4, attempts = attempts + 1
+            SET status = 'sent', sent_at = now(), provider = $5,
+                provider_msg_id = $4, attempts = attempts + 1,
+                cost_bdt = COALESCE($6, cost_bdt)
           WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
-        [tenantId, row.created_on, row.id, providerMsgId],
+        [tenantId, row.created_on, row.id,
+         sent.providerMsgId, sent.provider, sent.costBdt ?? null],
       );
       dispatched++;
     }
     return dispatched;
-  }
-
-  /** Stand-in for a real SMS aggregator call — no credentials exist yet. */
-  private async sendStub(msisdn: string, body: string): Promise<string> {
-    const providerMsgId = `stub_${randomOpaqueToken(8)}`;
-    console.log(`[sms-dispatch] STUB SEND to=${msisdn} id=${providerMsgId} body=${JSON.stringify(body)}`);
-    return providerMsgId;
   }
 }

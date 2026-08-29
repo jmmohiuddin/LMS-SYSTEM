@@ -134,30 +134,47 @@ npx tsc --noEmit && npx tsc --noEmit -p apps/pwa/tsconfig.json && npx tsc --noEm
 
 ## 5. Kill switches (what is deliberately off, and how to turn it on)
 
-Three features are dark behind explicit switches, all following the same pattern: fail
-closed with a specific error code, before any side effect.
+**Since R-8 these are environment variables, not constants in source.** They were
+`const`s that had to be edited, rebuilt and redeployed — and the login switch was
+*two* constants, one server-side and one in the browser bundle, with a comment
+asking that they be kept in sync. Two things that must be edited together do not
+stay in sync. `packages/server-core/src/go-live.ts` is now the single reader.
 
-| Feature | Where | Off because | To enable |
+All follow the same pattern: fail closed with a specific error code, before any
+side effect. Only the word `true` enables anything (case-insensitively); `1`,
+`yes`, `on` and `enabled` all resolve **off**, because a switch that stayed off
+gets reported by an operator and a switch that turned itself on gets reported by
+a parent.
+
+| Feature | Environment variable | Off because | To enable |
 |---|---|---|---|
-| OTP login | `OTP_SENDING_ENABLED` in `services/identity-svc/api/otp-request.ts` + `LOGIN_DISABLED` in `apps/pwa/src/login-view.ts` (two-sided, flip together) | No SMS aggregator | Flip both constants, rebuild, redeploy |
-| MFS payment initiation | `MFS_PAYMENTS_ENABLED` in `services/finance-svc/api/index.ts` | No live merchant credentials | Wire gateway calls + credentials, flip the constant |
-| AI engines | Presence of `ANTHROPIC_API_KEY` env var (`services/ai-svc/api/index.ts`) | No API key configured | Set the key in Vercel env, redeploy |
+| OTP login | `OTP_SENDING_ENABLED` | No SMS aggregator contract | Set it to `true`. **No rebuild** — the browser learns it from `GET /api/v1/ops/brand` |
+| MFS payment initiation | `MFS_PAYMENTS_ENABLED` | No live merchant credentials | Wire gateway calls + credentials, then set it to `true` |
+| AI engines | `ANTHROPIC_API_KEY` (presence) | No API key configured | Set the key. Per-tenant budget enforcement (R-8) is live and applies immediately |
+| Real SMS sending | `SMS_PROVIDER` + `SMS_ENDPOINT` + `SMS_API_TOKEN` + `SMS_SENDER_ID` | No aggregator contract | Set all four. Naming a provider **without** the other three throws at startup rather than silently reverting to the stub |
+| Delivery reports | `SMS_DLR_SECRET` | No aggregator to send them | Set it and give the aggregator the value. Unset, `POST /api/v1/sms/dlr` answers **503**, not 401 |
 
-The login switch specifically (disabled 2026-08-07):
+The login switch is now one-sided. `apps/pwa/src/login-view.ts` reads
+`isLoginDisabled()`, which reads a value cached from the server's `otpLogin` — so
+the browser cannot disagree with the server about whether login works. A device
+that has never reached the server reads it as OFF, which offers the
+activation-code path and therefore cannot strand anybody.
 
-| Side | File | Constant | Effect while off |
-|---|---|---|---|
-| Backend | `services/identity-svc/api/otp-request.ts` | `OTP_SENDING_ENABLED = false` | `POST /auth/otp/request` returns `503 { error: "otp_disabled" }` before any DB write or log |
-| Frontend | `apps/pwa/src/login-view.ts` | `LOGIN_DISABLED = true` | Login screen renders "লগইন সাময়িকভাবে বন্ধ আছে" instead of the phone form — no wasted round-trip |
+While OTP is off, `POST /auth/otp/request` returns `503 { error: "otp_disabled" }`
+before any DB write. Everything else is untouched: verify/refresh/logout still
+work, so **already-logged-in sessions keep working**, and activation-code login is
+unaffected.
 
-Everything else is untouched: verify/refresh/logout still work, so **already-logged-in
-sessions keep working** for their refresh-token lifetime; all data endpoints are unaffected.
+**When enabled, a real SMS is now sent** — the code is queued to `sms_outbox` in
+the same transaction as the challenge and carried by the ordinary dispatcher. It
+reaches a phone only if an aggregator is also configured; with `SMS_PROVIDER`
+unset it goes to the stub, which logs. The `X-Debug-Otp` echo (gated on
+`SERVICE_API_KEY`) is kept for testing without a phone.
 
-**To re-enable:** set `OTP_SENDING_ENABLED = true` and `LOGIN_DISABLED = false`, then
-`node scripts/build.mjs`, commit, `vercel --prod`. Note that even when enabled, no real SMS
-is sent — the OTP code is written to the function log (`vercel logs`) and, when the caller
-presents `SERVICE_API_KEY` via the `X-Debug-Otp` header, echoed in the response. Real
-delivery awaits an aggregator contract (03 §3).
+**Which of these a deployment actually has is not something to work out by
+reading env vars:** the platform console's গো-লাইভ অবস্থা screen
+(`GET /api/v1/platform/readiness`) reports all of it, marking each item blocking
+or advisory, and reports presence without ever echoing a value.
 
 ---
 
@@ -1152,6 +1169,87 @@ school's web address.
   Same division for `import_batches.started_by`.
 - **platform-svc is the 11th of 12 functions.** One spare.
 
+## 9k. R-8 — go-live unlocks (code closed; contracts open)
+
+R-8 is the phase that turns things on. The surprise was how much of what it was
+meant to turn on **did not exist yet**: the plan describes everything as "built
+and dark", and three of its items had no implementation behind them at all.
+
+- **There was no provider interface.** `sms_outbox` has had `provider`,
+  `provider_msg_id`, `delivered_at`, `error_code` and `cost_bdt` since migration
+  004, and the dispatcher had a `sendStub` that logged. Adding an aggregator's
+  token to the environment would have changed nothing.
+- **Nothing had ever written `delivered_at`.** In any deployment, ever. The
+  product knew it had HANDED a message to a provider, which is not what a school
+  is asking when it rings.
+- **The OTP endpoint logged the code to the console.** With the switch a
+  hardcoded `false` that was survivable. With the switch an environment variable
+  it would mean an operator could enable login, see the readiness screen go
+  green on OTP *and* SMS, and hand a school a login that delivered nothing.
+
+### As built
+
+| Piece | Where |
+|---|---|
+| `SmsProvider` seam — `StubProvider` (default), `SslWirelessProvider` | `services/sms-svc/src/provider.ts` |
+| Delivery-report webhook, own secret, no tenant from the caller | `services/sms-svc/api/dlr.ts` |
+| `app.record_sms_delivery` / `consume_ai_budget` / `settle_ai_budget` | `db/migrations/046_go_live_unlocks.sql` |
+| Every switch, read from the environment | `packages/server-core/src/go-live.ts` |
+| OTP queued to `sms_outbox` in the challenge's transaction | `services/identity-svc/api/otp-request.ts` |
+| Budget reserved before the provider call; 402 on refusal | `services/ai-svc/api/index.ts` |
+| `GET /api/v1/platform/readiness` + গো-লাইভ অবস্থা screen | `services/platform-svc/api/index.ts`, `apps/pwa/src/platform.ts` |
+
+`resolveProvider()` **throws** when a provider is named without credentials
+rather than falling back to the stub. A school that believes its messages are
+going out is worse off than one that knows they are not.
+
+The DLR has **its own** secret (`SMS_DLR_SECRET`), not `SERVICE_API_KEY`: a
+vendor calls this endpoint, and giving a vendor the service key would make every
+internal endpoint reachable by them. Unset it answers **503**, not 401 — an
+unconfigured webhook and a wrong password send an operator to different places.
+It takes no tenant from the caller; the row is found by provider message id and
+the tenant comes from the row, via a `SECURITY DEFINER` function that updates
+**only the four delivery columns**.
+
+The AI budget is **reserved before the provider call** and settled after. A
+check-then-record would let a school overshoot by however many requests are in
+flight, and an AI bill is the one cost here that can run away between two cron
+ticks. Refusal is 402, not 403: the school has done nothing wrong and the fix is
+commercial.
+
+### Verified, not asserted
+
+Two deployments of the same binary against one database, walked in a browser:
+switches off reports **৪ টি আবশ্যক সেটিং বাকি আছে**, switches on reports **সব
+আবশ্যক সেটিং প্রস্তুত**, with no rebuild between them. A principal then logged
+in for real — phone → code → `sms_outbox` → adapter → aggregator → session — and
+the delivery report came back and marked the row `delivered` with
+`cost_bdt = 0.3500`. That is the first time `delivered_at` has been written in
+this product.
+
+### Known limitations
+
+- **No aggregator contract**, so `SMS_PROVIDER` is unset on every real
+  deployment and the stub is what runs. The end-to-end proof used a fake
+  aggregator on localhost, which proves the adapter and not the vendor.
+- **`SslWirelessProvider` has never met the real endpoint.** It is written to
+  one vendor's documented shape; the `csms_id`/`reference_id` mapping and the
+  status vocabulary are the likeliest corrections on first contact, and both are
+  isolated to `provider.ts` and the DLR's status map.
+- **`cost_bdt` is only populated when a DLR reports it.** The send response
+  carries no per-message cost and none is invented.
+- **No SMS retry backoff.** A failed send stays `queued` with an `error_code`,
+  retried each dispatcher tick up to 5 attempts, then `failed`. The tick is the
+  interval.
+- **The AI soft limit notifies nobody.** `soft_limit_notified_at` is stamped at
+  80%; wiring it to R-2's notification infrastructure is not built, so a
+  principal learns of it by being refused.
+- **Operator SSO was expected here and is not built.** Console sign-in remains
+  two pasted secrets (carried from R-7).
+- **PII key, maintenance URL, MFS credentials, data residency and pilot schools
+  remain open.** All are reported as not-done on the readiness screen; none can
+  be closed by writing code.
+
 ---
 
 ## 10. Gap list → what's next
@@ -1162,8 +1260,8 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 
 | Gap | Blueprint ref | Phase |
 |---|---|---|
-| Real SMS aggregator credentials (send + DLR webhook); then re-enable login | 03 §3 | 1 |
-| Guardian absence-notification flow end-to-end (enqueue exists; send is stubbed) | 01 §3 events | 1 |
+| ~~Provider adapter + DLR webhook + the login switch~~ — **closed by R-8** (§9k). What remains is the **aggregator contract itself**, which no code can close | 03 §3 | 1 |
+| Guardian absence-notification flow end-to-end — enqueue, dispatch, provider adapter and delivery reports all ship (R-2, R-8); it reaches a real phone when an aggregator is configured | 01 §3 events | 1 |
 | Attendance correction flow + absence-SMS grace window | 01 §2.6 | 1 |
 | MFS merchant credentials + per-provider initiation calls + signature verification (endpoints + webhooks exist; `pay` kill-switched) | 03 §2 | 2 |
 | ~~Report-card rendering~~ — **closed by R-5** (§9h): prints on the tenant letterhead, singly or a section at a time | 05 Phase 2 | done |
@@ -1174,4 +1272,4 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 | `ANTHROPIC_API_KEY` + NCTB corpus ingestion + embedding service → upgrades AI from disabled/lexical to grounded hybrid RAG (gateway ships now) | 01 §6 | 3 |
 | ANS: register real endpoints (`ans_endpoints`), KMS for per-endpoint signing secrets (batch pull, dispatcher, inbound staging ship now) | 03 §4 | 4 |
 | Answer-script photo pipeline | 01 §2.7 | 2–3 |
-| AI per-tenant token budgets (`ai_budget_periods` enforcement) and answer-leak detector (needs embeddings) | 01 §6.3 | 3 |
+| ~~AI per-tenant token budgets (`ai_budget_periods` enforcement)~~ — **closed by R-8** (§9k): reserved before the call, 402 on refusal. Answer-leak detector still needs embeddings | 01 §6.3 | 3 |

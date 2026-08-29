@@ -15,6 +15,7 @@ import {
   applyCachedThenRefresh,
   fetchPublicBranding,
   cachedBranding,
+  cachedOtpLogin,
 } from './branding.ts';
 import { type Branding, brandName } from '../../../packages/ui-core/src/branding.ts';
 
@@ -38,12 +39,35 @@ export function cooldownMessage(secondsLeft: number): string {
   return `অনেকবার চেষ্টা হয়েছে। ${s} সেকেন্ড পর আবার চেষ্টা করুন।`;
 }
 
-// Mirrors OTP_SENDING_ENABLED in services/identity-svc/api/otp-request.ts —
-// keep both in sync. This one skips showing the phone form entirely instead
-// of making a teacher fill it in just to hit the 503 from that flag.
-// Exported: while true, app.ts also drops session-less visitors straight
-// into demo mode so every page stays viewable without a login.
-export const LOGIN_DISABLED = true;
+/**
+ * Whether OTP login is off, as the CLIENT currently believes.
+ *
+ * This used to be a hand-maintained mirror of `OTP_SENDING_ENABLED` in
+ * services/identity-svc — "keep both in sync", which is a comment that only
+ * ever appears above two things that will not stay in sync. Turning OTP on
+ * meant editing a server file, editing this one, and rebuilding the browser
+ * bundle, in that order, without forgetting either.
+ *
+ * R-8 makes the server the single source: `GET /api/v1/ops/brand` — the call
+ * the login screen already makes before anyone types anything — now carries
+ * `otpLogin`, and `branding.ts` caches the answer beside the branding.
+ *
+ * It is read from that cache rather than awaited, for the same reason the
+ * branding is: the boot has to decide what to draw before a 2G round-trip
+ * could possibly finish. A device that has never reached the server reads it
+ * as OFF, which is the reading that cannot strand anybody — the
+ * activation-code path works whether or not the aggregator does. Failing to
+ * reach the server is not evidence that OTP works.
+ *
+ * Read on every call rather than captured once at module load. The cold-start
+ * path in app.ts asks the server before deciding what to draw, and that answer
+ * lands AFTER this module is evaluated — a snapshot taken at import time would
+ * freeze a newly live school on "OTP login is temporarily off" until the
+ * visitor happened to reload. A localStorage read costs nothing next to that.
+ */
+export function isLoginDisabled(): boolean {
+  return !cachedOtpLogin();
+}
 
 export interface LoginViewOptions {
   root: HTMLElement;
@@ -161,7 +185,7 @@ export class LoginView {
     h1.textContent = institution;
     h1.className = 'visually-hidden';
 
-    if (LOGIN_DISABLED && this.step !== 'activate') {
+    if (isLoginDisabled() && this.step !== 'activate') {
       // F-202. The OTP kill switch used to be a dead end; now it is a
       // detour. The aggregator negotiation blocks SMS, not the school —
       // and the school can hand out activation codes on paper.
@@ -237,7 +261,7 @@ export class LoginView {
       label.append(input);
       form.append(label);
 
-      if (!LOGIN_DISABLED) {
+      if (!isLoginDisabled()) {
         // Only offer the way back when there IS a way back.
         const back = d.createElement('button');
         back.type = 'button';

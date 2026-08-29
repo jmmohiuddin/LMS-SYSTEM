@@ -338,7 +338,9 @@ no phase accidentally re-implements these):
 - **AI** — SikhokAI (teacher co-pilot) + ShikhoAI (Socratic tutor), PII redaction,
   session audit, budget tables. Dark until `ANTHROPIC_API_KEY`.
 - **SMS pipeline** — event → suppression (grace window, holidays, caps, consent) →
-  `sms_outbox` (dedupe, segments, cost) → cron drain. **Send is a stub** — Phase R-8.
+  `sms_outbox` (dedupe, segments, cost) → cron drain → **provider adapter** (R-8) →
+  **DLR webhook** writes `delivered_at`/`cost_bdt`. The stub remains the default
+  until an aggregator contract lands; the seam it plugs into now exists.
 
 ---
 
@@ -358,7 +360,7 @@ no phase accidentally re-implements these):
 | ছাত্র শুধু নিজেরটা দেখবে | **Exists** (RLS self-scoping) | — |
 | নোটিশ বোর্ড + টার্গেটেড নোটিশ (শিক্ষক/ছাত্র/গার্ডিয়ান আলাদা) | **Done (R-2)** | — |
 | নোটিফিকেশন বেল — সবার ড্যাশবোর্ডে পৌঁছাবে | **Done (R-2)** | — |
-| গার্ডিয়ানের ফোনে সরাসরি SMS | Pipeline built, provider stubbed | R-2 (wire-up) + R-8 (credentials) |
+| গার্ডিয়ানের ফোনে সরাসরি SMS | Pipeline + **provider adapter + delivery reports** (R-8) | aggregator contract |
 | এক্সাম রুটিন আপডেট | **Exists** | — (R-2 adds its notifications) |
 | ক্যালেন্ডার — ছুটি/ইভেন্ট, স্কুল-অনুযায়ী | Table exists; **API+UI missing** | R-4 |
 | অফলাইনেও অ্যাটেনডেন্স, নেট এলে সিংক | **Exists** | — |
@@ -1147,21 +1149,43 @@ session. Full detail in the R-7 entry of [PHASE_LOG.md](PHASE_LOG.md).
 
 ### R-8 — Go-live unlocks (credentials & production posture)
 
-Everything here is built and dark; this phase is contracts, credentials, and switches —
-run it in parallel with R-5…R-7 as vendor agreements land.
+**Done 2026-08-29 — the code half. The contract half is open and stays open.**
 
-- [ ] SMS aggregator contract (SSL Wireless / ADN / Robi) → implement the real provider
-      adapter behind the existing interface + DLR webhook; flip `sendStub`.
-- [ ] Re-enable login: `OTP_SENDING_ENABLED=true`, `LOGIN_DISABLED=false` (gate already
-      satisfied — F-102 rate limiting is live).
+This phase was written as "everything here is built and dark; contracts,
+credentials, and switches". That held for the schema and NOT for the code:
+**three things this list assumed were built and waiting for a credential did
+not exist at all** — there was no provider interface to plug a token into,
+nothing had ever received a delivery report, and the OTP endpoint logged the
+code to the console instead of sending it. Adding credentials would have
+changed nothing, and in the OTP case would have produced a login that silently
+delivered nothing while the readiness screen reported it green. See
+`docs/PHASE_LOG.md` § R-8.
+
+- [x] SMS aggregator **adapter** + DLR webhook — `services/sms-svc/src/provider.ts`
+      (`SmsProvider`, `StubProvider`, `SslWirelessProvider`) and
+      `POST /api/v1/sms/dlr` with its own `SMS_DLR_SECRET`. `sendStub` is gone.
+      Verified end to end against a fake aggregator; **the contract itself is
+      still open** — see the unchecked item below.
+- [x] Re-enable login — `OTP_SENDING_ENABLED` and the client's `LOGIN_DISABLED`
+      are one environment variable now, not two constants edited in lockstep.
+      The OTP is queued to `sms_outbox` in the challenge's own transaction.
+- [x] Per-tenant AI budget enforcement — `app.consume_ai_budget()` reserves
+      **before** the provider call; refusal is 402. This was the stated
+      prerequisite for enabling AI broadly.
+- [x] A readiness screen that reports which of these are actually configured —
+      `GET /api/v1/platform/readiness`, rendered in the platform console.
+- [ ] **SMS aggregator contract** (SSL Wireless / ADN / Robi). Commercial act;
+      no code can close it. The adapter is ready for the credentials.
 - [ ] Set `PII_MASTER_KEY_V1` (read `08-CREDENTIAL-ROTATION.md` §5 first — additive only).
+      Reported as a blocking item on the readiness screen.
 - [ ] Rotate the exposed `neondb_owner` password; revoke the stray MongoDB credential.
 - [ ] `DATABASE_MAINTENANCE_URL` in Vercel env → nightly partition/purge cron goes live.
+      Reported as a blocking item on the readiness screen.
 - [ ] Run `migration-status.mjs` against production; apply the tail; **migration 023 is
       what unbreaks student-facing reads** — verify it is in force.
-- [ ] MFS merchant credentials → per-provider initiation + signature verification, flip
-      `MFS_PAYMENTS_ENABLED`.
-- [ ] `ANTHROPIC_API_KEY` (+ per-tenant budget enforcement before enabling broadly).
+- [ ] MFS merchant credentials → per-provider initiation + signature verification.
+      The `MFS_PAYMENTS_ENABLED` switch is live; no gateway was invented.
+- [ ] `ANTHROPIC_API_KEY`. The budget gate it was waiting on is now built.
 - [ ] Data-residency decision (Singapore → BD) **before real student PII lands**.
 - [ ] Pilot: 3–5 institutions of different shapes (with/without groups, school+college,
       madrasah weekend config) per `05` Phase-1 exit criteria.
@@ -1187,7 +1211,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
 | R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
 | R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** (console + wizard; wildcard DNS/TLS is a deploy step) |
-| R-8 | Go-live unlocks | external-blocked | any | blocked externally |
+| R-8 | Go-live unlocks | M | any | **code done 2026-08-29** (provider adapter + DLR, switches, AI budget, readiness screen); contracts, PII key, MFS and pilot remain externally blocked |
 | R-9 | Add-ons | — | pilot | — |
 
 Recommended execution order: **R-0 → R-1 → R-2 → R-3 → R-4 → R-5 → R-6 → R-7**, with

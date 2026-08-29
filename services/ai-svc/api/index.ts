@@ -85,6 +85,65 @@ async function retrieve(
   });
 }
 
+/**
+ * The per-tenant token budget, reserved BEFORE the model call.  (R-8)
+ *
+ * `ai_budget_periods` has existed since migration 008 with `token_budget`,
+ * `tokens_used`, `soft_limit_notified_at` and `hard_limit_hit_at`, and
+ * `tenants.ai_monthly_token_budget` since 001. Nothing had ever read either:
+ * this gateway recorded token counts on `ai_turns` and never once looked at
+ * what a school was allowed to spend. The master plan names budget
+ * enforcement as the prerequisite for enabling AI broadly, so R-8 is where it
+ * becomes real — the same shape as `student_cap` in R-7, a limit only the
+ * price list knew about.
+ *
+ * Reserving BEFORE the call is the point. A check that only recorded usage
+ * afterwards would let a school overshoot by however many requests are in
+ * flight, and an AI bill is the one cost in this product that can run away
+ * between two cron ticks.
+ *
+ * A refusal is a 402, not a 403: the school has not done anything wrong and
+ * the fix is commercial, not a permission.
+ */
+async function reserveBudget(
+  db: Awaited<ReturnType<typeof sharedDb>>,
+  ctx: { tenantId: string; userId: string; role: string },
+  estimate: number,
+): Promise<void> {
+  const row = await db.withTenant(ctx, async (c) => {
+    const r = await c.query<{ allowed: boolean; used: string; budget: string | null }>(
+      `SELECT allowed, used, budget FROM app.consume_ai_budget($1)`, [estimate]);
+    return r.rows[0];
+  });
+  if (row && row.allowed === false) {
+    throw new HttpError(402,
+      'এই মাসের এআই সীমা শেষ — পরের মাসে আবার চালু হবে, অথবা প্রতিষ্ঠানের সীমা বাড়ান',
+      'ai_budget_exhausted');
+  }
+}
+
+/**
+ * Correct the reservation to what was actually spent.
+ *
+ * Never throws: a settlement that fails must not take a successful answer
+ * away from a teacher. The worst case is that the school stays charged the
+ * estimate for the month, which is the safe direction to be wrong in.
+ */
+async function settleBudget(
+  db: Awaited<ReturnType<typeof sharedDb>>,
+  ctx: { tenantId: string; userId: string; role: string },
+  estimate: number,
+  actual: number,
+): Promise<void> {
+  try {
+    await db.withTenant(ctx, async (c) => {
+      await c.query(`SELECT app.settle_ai_budget($1, $2, NULL)`, [estimate, actual]);
+    });
+  } catch (err) {
+    console.error('[ai] budget settlement failed', err);
+  }
+}
+
 async function logSession(
   db: Awaited<ReturnType<typeof sharedDb>>,
   ctx: { tenantId: string; userId: string; role: string },
@@ -180,6 +239,11 @@ async function sikhok(req: IncomingMessage, res: ServerResponse, cors: Record<st
     grounding,
   );
 
+  // Reserved as the WORST case — max_tokens plus a prompt allowance — so a
+  // long answer cannot push a school past its budget after the fact.
+  const estimate = 4096 + 2000;
+  await reserveBudget(db, ctx, estimate);
+
   const started = Date.now();
   const msg = await client().messages.create({
     model: MODEL_SIKHOK,
@@ -189,10 +253,15 @@ async function sikhok(req: IncomingMessage, res: ServerResponse, cors: Record<st
   });
 
   if (msg.stop_reason === 'refusal') {
+    // Settle before returning. A refusal still spent input tokens, and
+    // leaving the reservation standing would charge a school the full worst
+    // case for an answer it never received.
+    await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
     json(res, 200, { ok: false, error: 'ai_refused', message: 'the model declined this request' }, cors);
     return;
   }
   const text = extractText(msg.content);
+  await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
   await logSession(db, ctx, {
     engine: 'sikhok', taskType, locale, model: msg.model,
     inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens,
@@ -241,6 +310,12 @@ async function shikho(req: IncomingMessage, res: ServerResponse, cors: Record<st
       ? `\n\nRelevant NCTB textbook passages:\n${chunks.map((c) => c.content).join('\n\n')}`
       : '');
 
+  // The worst case, so a long answer cannot push a school past its budget
+  // after the fact. Haiku answers are short; the reservation is corrected
+  // to the real figure by settleBudget below.
+  const estimate = 1024 + 1500;
+  await reserveBudget(db, ctx, estimate);
+
   const started = Date.now();
   const msg = await client().messages.create({
     model: MODEL_SHIKHO,
@@ -250,10 +325,15 @@ async function shikho(req: IncomingMessage, res: ServerResponse, cors: Record<st
   });
 
   if (msg.stop_reason === 'refusal') {
+    // Settle before returning. A refusal still spent input tokens, and
+    // leaving the reservation standing would charge a school the full worst
+    // case for an answer it never received.
+    await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
     json(res, 200, { ok: false, error: 'ai_refused', message: 'the model declined this request' }, cors);
     return;
   }
   const text = extractText(msg.content);
+  await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
   await logSession(db, ctx, {
     engine: 'shikho', taskType: 'tutor_chat', locale, model: msg.model,
     inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens,

@@ -10,6 +10,7 @@
  *   POST /api/v1/platform/import          → teacher or student CSV
  *   POST /api/v1/platform/status          → activate · suspend · restore
  *   GET  /api/v1/platform/audit?tenantId= → the platform audit trail
+ *   GET  /api/v1/platform/readiness      → R-8 go-live posture
  *
  * This is NOT a tenant application. It is the one service that can see more
  * than one school, and everything about it is arranged so that a school
@@ -58,6 +59,7 @@ import {
 import {
   generateCode, codeHash, activationConfigured,
 } from '../../identity-svc/src/activation.ts';
+import { goLiveChecks } from '../../../packages/server-core/src/go-live.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,62}$/;
@@ -152,6 +154,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       case 'POST import':   return json(res, 200, await runImport(db, op, req), cors);
       case 'POST status':   return json(res, 200, await setStatus(db, op, req), cors);
       case 'GET audit':     return json(res, 200, await readAudit(db, req), cors);
+      // R-8. Deliberately does NOT touch the database: it reports what this
+      // deployment is configured to do, which is a property of the process,
+      // not of any school.
+      case 'GET readiness': return json(res, 200, readiness(), cors);
       default:
         return json(res, 404, { error: 'not_found' }, cors);
     }
@@ -647,5 +653,38 @@ async function readAudit(db: Db, req: IncomingMessage) {
       id: String(r.id), actorId: r.admin_id, tenantId: r.tenant_id,
       reason: r.reason, statement: r.statement, at: r.created_at,
     })),
+  };
+}
+
+// ── R-8: go-live readiness ──────────────────────────────────────────────
+
+/**
+ * What this deployment is actually configured to do.
+ *
+ * Every line is DERIVED from the environment, never ticked by a person. A
+ * hand-maintained go-live checklist is wrong the first time a variable is
+ * renamed, and the operator who most needs this screen is the one who has
+ * just changed something.
+ *
+ * It reads no database and names no tenant: readiness is a property of the
+ * process, identical for every school on it. That is also why it is safe for
+ * it to be the one platform endpoint with no tenant parameter at all.
+ *
+ * The values themselves never leave the process — only whether each is
+ * present, plus the two that are not secret (the provider name and the
+ * sender id, both of which appear on every message a school sends). §24: no
+ * platform secret in browser code, and none in a browser response either.
+ */
+function readiness() {
+  const checks = goLiveChecks();
+  const blocking = checks.filter((c) => c.severity === 'blocking');
+  return {
+    checks,
+    // "Ready" means every BLOCKING item passes. Advisory items are posture
+    // worth fixing before a pilot, not before a login, and folding them in
+    // would leave the screen permanently red — and a permanently red check
+    // is one nobody reads.
+    ready: blocking.every((c) => c.ready),
+    blockingRemaining: blocking.filter((c) => !c.ready).length,
   };
 }

@@ -136,6 +136,14 @@ var HttpError = class extends Error {
   }
 };
 
+// packages/server-core/src/go-live.ts
+function enabled(name, env = process.env) {
+  return (env[name] ?? "").trim().toLowerCase() === "true";
+}
+function mfsPaymentsEnabled(env = process.env) {
+  return enabled("MFS_PAYMENTS_ENABLED", env);
+}
+
 // node_modules/jose/dist/node/esm/runtime/base64url.js
 import { Buffer as Buffer2 } from "node:buffer";
 
@@ -1293,7 +1301,6 @@ function sendIfRefused(res, cors, verdict) {
 
 // services/finance-svc/api/index.ts
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var MFS_PAYMENTS_ENABLED = false;
 async function invoices(req, res, cors) {
   if (req.method !== "GET") {
     json(res, 405, { error: "method_not_allowed" }, cors);
@@ -1365,7 +1372,7 @@ async function pay(req, res, cors) {
   if (!PAY_PROVIDERS.has(provider)) {
     throw new HttpError(400, `provider must be one of ${[...PAY_PROVIDERS].join(", ")}`, "invalid_provider");
   }
-  if (!MFS_PAYMENTS_ENABLED) {
+  if (!mfsPaymentsEnabled()) {
     json(res, 503, {
       error: "mfs_disabled",
       message: "online fee payment is not yet available \u2014 pay at the school office"

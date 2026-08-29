@@ -31,6 +31,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { corsHeaders, json } from '../../../packages/server-core/src/http.ts';
 import { publicBranding, DEFAULT_BRANDING } from '../../../packages/ui-core/src/branding.ts';
 import { tenantKey, resolvePublicTenant } from '../src/public-branding.ts';
+import { otpSendingEnabled } from '../../../packages/server-core/src/go-live.ts';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const cors = corsHeaders();
@@ -39,16 +40,28 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
   const resolved = await resolvePublicTenant(tenantKey(req));
 
+  // R-8. Whether OTP login is available is not a secret — the login screen
+  // has to say one thing or the other either way, and this is the pre-auth
+  // call it already makes. Carrying it here means flipping
+  // OTP_SENDING_ENABLED on the server flips the login screen on the next
+  // page load, rather than on the next rebuild: LOGIN_DISABLED used to be a
+  // second constant in browser code that had to be edited to match.
+  const otpLogin = otpSendingEnabled();
+
   json(res, 200, resolved
     ? {
         tenantId: resolved.tenantId,
         slug: resolved.slug,
         branding: publicBranding(resolved.branding),
+        otpLogin,
       }
     : {
         // Neutral fallback — see the header on why this is not a 404.
         tenantId: null,
         slug: '',
         branding: publicBranding(DEFAULT_BRANDING),
+        // On both branches, or a school whose key is unknown gets a login
+        // screen that disagrees with the server about whether OTP works.
+        otpLogin,
       }, cors);
 }

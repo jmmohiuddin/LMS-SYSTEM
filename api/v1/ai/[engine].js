@@ -13904,6 +13904,31 @@ async function retrieve(db, ctx, q) {
     return r.rows;
   });
 }
+async function reserveBudget(db, ctx, estimate) {
+  const row = await db.withTenant(ctx, async (c) => {
+    const r = await c.query(
+      `SELECT allowed, used, budget FROM app.consume_ai_budget($1)`,
+      [estimate]
+    );
+    return r.rows[0];
+  });
+  if (row && row.allowed === false) {
+    throw new HttpError(
+      402,
+      "\u098F\u0987 \u09AE\u09BE\u09B8\u09C7\u09B0 \u098F\u0986\u0987 \u09B8\u09C0\u09AE\u09BE \u09B6\u09C7\u09B7 \u2014 \u09AA\u09B0\u09C7\u09B0 \u09AE\u09BE\u09B8\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09BE\u09B2\u09C1 \u09B9\u09AC\u09C7, \u0985\u09A5\u09AC\u09BE \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u09B8\u09C0\u09AE\u09BE \u09AC\u09BE\u09A1\u09BC\u09BE\u09A8",
+      "ai_budget_exhausted"
+    );
+  }
+}
+async function settleBudget(db, ctx, estimate, actual) {
+  try {
+    await db.withTenant(ctx, async (c) => {
+      await c.query(`SELECT app.settle_ai_budget($1, $2, NULL)`, [estimate, actual]);
+    });
+  } catch (err) {
+    console.error("[ai] budget settlement failed", err);
+  }
+}
 async function logSession(db, ctx, row) {
   try {
     await db.withTenant(ctx, async (c) => {
@@ -13977,6 +14002,8 @@ ${c.content}`).join("\n\n")}` : "\n\n(\u0995\u09CB\u09A8\u09CB \u09AA\u09BE\u09A
 ${taskBn[taskType]}
 ${body.instructions ? `\u0985\u09A4\u09BF\u09B0\u09BF\u0995\u09CD\u09A4 \u09A8\u09BF\u09B0\u09CD\u09A6\u09C7\u09B6\u09A8\u09BE: ${body.instructions.slice(0, 2e3)}` : ""}` + grounding
   );
+  const estimate = 4096 + 2e3;
+  await reserveBudget(db, ctx, estimate);
   const started = Date.now();
   const msg = await client().messages.create({
     model: MODEL_SIKHOK,
@@ -13985,10 +14012,12 @@ ${body.instructions ? `\u0985\u09A4\u09BF\u09B0\u09BF\u0995\u09CD\u09A4 \u09A8\u
     messages: [{ role: "user", content: user }]
   });
   if (msg.stop_reason === "refusal") {
+    await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
     json(res, 200, { ok: false, error: "ai_refused", message: "the model declined this request" }, cors);
     return;
   }
   const text = extractText(msg.content);
+  await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
   await logSession(db, ctx, {
     engine: "sikhok",
     taskType,
@@ -14025,6 +14054,8 @@ async function shikho(req, res, cors) {
 
 Relevant NCTB textbook passages:
 ${chunks.map((c) => c.content).join("\n\n")}` : "");
+  const estimate = 1024 + 1500;
+  await reserveBudget(db, ctx, estimate);
   const started = Date.now();
   const msg = await client().messages.create({
     model: MODEL_SHIKHO,
@@ -14033,10 +14064,12 @@ ${chunks.map((c) => c.content).join("\n\n")}` : "");
     messages: [{ role: "user", content: redact(message2) }]
   });
   if (msg.stop_reason === "refusal") {
+    await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
     json(res, 200, { ok: false, error: "ai_refused", message: "the model declined this request" }, cors);
     return;
   }
   const text = extractText(msg.content);
+  await settleBudget(db, ctx, estimate, msg.usage.input_tokens + msg.usage.output_tokens);
   await logSession(db, ctx, {
     engine: "shikho",
     taskType: "tutor_chat",

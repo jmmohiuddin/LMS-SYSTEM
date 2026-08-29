@@ -2342,6 +2342,92 @@ function activationConfigured() {
   return !!p && p.length >= 16;
 }
 
+// packages/server-core/src/go-live.ts
+function enabled(name, env = process.env) {
+  return (env[name] ?? "").trim().toLowerCase() === "true";
+}
+function otpSendingEnabled(env = process.env) {
+  return enabled("OTP_SENDING_ENABLED", env);
+}
+function mfsPaymentsEnabled(env = process.env) {
+  return enabled("MFS_PAYMENTS_ENABLED", env);
+}
+function aiEnabled(env = process.env) {
+  return !!env.ANTHROPIC_API_KEY;
+}
+function smsProviderConfigured(env = process.env) {
+  const name = (env.SMS_PROVIDER ?? "").trim().toLowerCase();
+  if (!name || name === "stub") return false;
+  if (name === "ssl_wireless") {
+    return !!env.SMS_ENDPOINT && !!env.SMS_API_TOKEN && !!env.SMS_SENDER_ID;
+  }
+  return false;
+}
+function goLiveChecks(env = process.env) {
+  const smsReady = smsProviderConfigured(env);
+  const otp = otpSendingEnabled(env);
+  return [
+    {
+      key: "sms_provider",
+      labelBn: "\u098F\u09B8\u098F\u09AE\u098F\u09B8 \u0985\u09CD\u09AF\u09BE\u0997\u09CD\u09B0\u09BF\u0997\u09C7\u099F\u09B0",
+      ready: smsReady,
+      detailBn: smsReady ? `${env.SMS_PROVIDER} \u2014 \u09AA\u09CD\u09B0\u09C7\u09B0\u0995 \u0986\u0987\u09A1\u09BF ${env.SMS_SENDER_ID}` : (env.SMS_PROVIDER ?? "").trim() && (env.SMS_PROVIDER ?? "").trim() !== "stub" ? "\u09AA\u09CD\u09B0\u09CB\u09AD\u09BE\u0987\u09A1\u09BE\u09B0 \u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09BF\u09A4, \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u0995\u09CD\u09B0\u09C7\u09A1\u09C7\u09A8\u09B6\u09BF\u09AF\u09BC\u09BE\u09B2 \u0985\u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE" : "\u0995\u09CB\u09A8\u09CB \u0985\u09CD\u09AF\u09BE\u0997\u09CD\u09B0\u09BF\u0997\u09C7\u099F\u09B0 \u09A8\u09C7\u0987 \u2014 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09B2\u0997\u09C7 \u09AF\u09BE\u09AF\u09BC, \u09AB\u09CB\u09A8\u09C7 \u09A8\u09AF\u09BC",
+      severity: "blocking"
+    },
+    {
+      key: "sms_dlr",
+      labelBn: "\u09A1\u09C7\u09B2\u09BF\u09AD\u09BE\u09B0\u09BF \u09B0\u09BF\u09AA\u09CB\u09B0\u09CD\u099F",
+      ready: !!env.SMS_DLR_SECRET,
+      detailBn: env.SMS_DLR_SECRET ? "\u0985\u09CD\u09AF\u09BE\u0997\u09CD\u09B0\u09BF\u0997\u09C7\u099F\u09B0 \u09A1\u09C7\u09B2\u09BF\u09AD\u09BE\u09B0\u09BF \u099C\u09BE\u09A8\u09BE\u09A4\u09C7 \u09AA\u09BE\u09B0\u09AC\u09C7" : "SMS_DLR_SECRET \u09A8\u09C7\u0987 \u2014 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AA\u09CC\u0981\u099B\u09C7\u099B\u09C7 \u0995\u09BF \u09A8\u09BE \u099C\u09BE\u09A8\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE",
+      severity: "advisory"
+    },
+    {
+      key: "otp_login",
+      labelBn: "\u0993\u099F\u09BF\u09AA\u09BF \u09B2\u0997\u0987\u09A8",
+      ready: otp,
+      detailBn: otp ? smsReady ? "\u099A\u09BE\u09B2\u09C1" : "\u099A\u09BE\u09B2\u09C1 \u2014 \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u0985\u09CD\u09AF\u09BE\u0997\u09CD\u09B0\u09BF\u0997\u09C7\u099F\u09B0 \u099B\u09BE\u09A1\u09BC\u09BE \u0993\u099F\u09BF\u09AA\u09BF \u09AA\u09CC\u0981\u099B\u09BE\u09AC\u09C7 \u09A8\u09BE" : "\u09AC\u09A8\u09CD\u09A7 \u2014 \u0985\u09CD\u09AF\u09BE\u0995\u09CD\u099F\u09BF\u09AD\u09C7\u09B6\u09A8 \u0995\u09CB\u09A1 \u09A6\u09BF\u09AF\u09BC\u09C7 \u09B2\u0997\u0987\u09A8 \u099A\u09B2\u099B\u09C7",
+      severity: "blocking"
+    },
+    {
+      key: "pii_key",
+      labelBn: "\u09AA\u09BF\u0986\u0987\u0986\u0987 \u098F\u09A8\u0995\u09CD\u09B0\u09BF\u09AA\u09B6\u09A8 \u0995\u09C0",
+      ready: !!env.PII_MASTER_KEY_V1,
+      detailBn: env.PII_MASTER_KEY_V1 ? "\u099C\u09A8\u09CD\u09AE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u0993 \u098F\u09A8\u0986\u0987\u09A1\u09BF \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7" : "\u09A8\u09C7\u0987 \u2014 \u099C\u09A8\u09CD\u09AE \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u09A8\u09AE\u09CD\u09AC\u09B0\u09B8\u09B9 \u09B8\u09BE\u09B0\u09BF \u0986\u09AE\u09A6\u09BE\u09A8\u09BF\u09A4\u09C7 \u09AC\u09BE\u09A6 \u09AA\u09A1\u09BC\u09AC\u09C7",
+      severity: "blocking"
+    },
+    {
+      key: "mfs",
+      labelBn: "\u0985\u09A8\u09B2\u09BE\u0987\u09A8 \u09AB\u09BF (\u098F\u09AE\u098F\u09AB\u098F\u09B8)",
+      ready: mfsPaymentsEnabled(env),
+      detailBn: mfsPaymentsEnabled(env) ? "\u099A\u09BE\u09B2\u09C1" : "\u09AC\u09A8\u09CD\u09A7 \u2014 \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995 \u0985\u09AB\u09BF\u09B8\u09C7 \u09AB\u09BF \u09A6\u09C7\u09AC\u09C7\u09A8",
+      severity: "advisory"
+    },
+    {
+      key: "ai",
+      labelBn: "\u098F\u0986\u0987 \u09B8\u09B9\u09BE\u09AF\u09BC\u0995",
+      ready: aiEnabled(env),
+      detailBn: aiEnabled(env) ? "\u099A\u09BE\u09B2\u09C1 \u2014 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09AD\u09BF\u09A4\u09CD\u09A4\u09BF\u0995 \u099F\u09CB\u0995\u09C7\u09A8 \u09B8\u09C0\u09AE\u09BE \u09AA\u09CD\u09B0\u09AF\u09CB\u099C\u09CD\u09AF" : "\u09AC\u09A8\u09CD\u09A7 \u2014 ANTHROPIC_API_KEY \u09A8\u09C7\u0987",
+      severity: "advisory"
+    },
+    {
+      key: "maintenance_cron",
+      labelBn: "\u09B0\u09BE\u09A4\u09CD\u09B0\u09BF\u0995\u09BE\u09B2\u09C0\u09A8 \u09B0\u0995\u09CD\u09B7\u09A3\u09BE\u09AC\u09C7\u0995\u09CD\u09B7\u09A3",
+      ready: !!env.DATABASE_MAINTENANCE_URL,
+      detailBn: env.DATABASE_MAINTENANCE_URL ? "\u09AA\u09BE\u09B0\u09CD\u099F\u09BF\u09B6\u09A8 \u0993 \u09AA\u09C1\u09B0\u09A8\u09CB \u09A4\u09A5\u09CD\u09AF \u09AA\u09B0\u09BF\u09B7\u09CD\u0995\u09BE\u09B0 \u09B9\u09AC\u09C7" : "DATABASE_MAINTENANCE_URL \u09A8\u09C7\u0987 \u2014 \u09AA\u09BE\u09B0\u09CD\u099F\u09BF\u09B6\u09A8 \u09A4\u09C8\u09B0\u09BF \u09B9\u09AC\u09C7 \u09A8\u09BE",
+      severity: "blocking"
+    },
+    {
+      key: "platform_console",
+      labelBn: "\u09AA\u09CD\u09B2\u09CD\u09AF\u09BE\u099F\u09AB\u09B0\u09CD\u09AE \u0995\u09A8\u09B8\u09CB\u09B2",
+      // If this is false the operator is not reading this screen, but it
+      // belongs in the list so the list is the whole posture.
+      ready: !!env.PLATFORM_API_KEY && !!env.PLATFORM_DATABASE_URL,
+      detailBn: env.PLATFORM_API_KEY && env.PLATFORM_DATABASE_URL ? "\u09A8\u09A4\u09C1\u09A8 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8 \u09AF\u09CB\u0997 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7" : "\u0985\u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 \u0985\u09A8\u09AC\u09CB\u09B0\u09CD\u09A1\u09BF\u0982 \u09AE\u09CD\u09AF\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B2 \u09B0\u09BE\u09A8\u09AC\u09C1\u0995\u09C7 \u09AB\u09BF\u09B0\u09C7 \u09AF\u09BE\u09AC\u09C7",
+      severity: "advisory"
+    }
+  ];
+}
+
 // services/platform-svc/api/index.ts
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var SLUG_RE = /^[a-z0-9][a-z0-9-]{2,62}$/;
@@ -2425,6 +2511,8 @@ async function handler(req, res) {
         return json(res, 200, await setStatus(db, op, req), cors);
       case "GET audit":
         return json(res, 200, await readAudit(db, req), cors);
+      case "GET readiness":
+        return json(res, 200, readiness(), cors);
       default:
         return json(res, 404, { error: "not_found" }, cors);
     }
@@ -2831,6 +2919,19 @@ async function readAudit(db, req) {
       statement: r.statement,
       at: r.created_at
     }))
+  };
+}
+function readiness() {
+  const checks = goLiveChecks();
+  const blocking = checks.filter((c) => c.severity === "blocking");
+  return {
+    checks,
+    // "Ready" means every BLOCKING item passes. Advisory items are posture
+    // worth fixing before a pilot, not before a login, and folding them in
+    // would leave the screen permanently red — and a permanently red check
+    // is one nobody reads.
+    ready: blocking.every((c) => c.ready),
+    blockingRemaining: blocking.filter((c) => !c.ready).length
   };
 }
 export {

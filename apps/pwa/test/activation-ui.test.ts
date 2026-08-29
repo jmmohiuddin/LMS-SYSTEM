@@ -15,7 +15,7 @@ import { test, describe, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-import { LoginView, LOGIN_DISABLED } from '../src/login-view.ts';
+import { LoginView, isLoginDisabled } from '../src/login-view.ts';
 import { RosterView } from '../src/roster-view.ts';
 
 let dom: JSDOM;
@@ -59,7 +59,13 @@ describe('the login screen (F-202 door)', () => {
     // This suite is written against the dark-OTP state; if the aggregator
     // ever lands and the switch flips, the entry moves inline and this
     // assertion should be revisited rather than deleted.
-    assert.equal(LOGIN_DISABLED, true);
+    //
+    // R-8 turned the hardcoded LOGIN_DISABLED constant into an answer the
+    // SERVER gives, cached beside the branding. A test DOM has no cached
+    // answer, so this now also asserts the fail-closed default: a client that
+    // has never heard from the server offers the activation-code path rather
+    // than a phone form that would 503.
+    assert.equal(isLoginDisabled(), true);
 
     const r = mountLogin();
     const entry = [...r.querySelectorAll('button')]

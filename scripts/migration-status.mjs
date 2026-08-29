@@ -96,6 +96,10 @@ const SENTINELS = [
   // 045's headline object is the function that is the ONLY way a tenant
   // comes into existence. If it is missing, onboarding is back to SQL.
   ['045_platform_console',             'function',   'app.create_tenant'],
+  // 046 adds no table and no column — three functions, of which this is the
+  // one an outside party reaches. Absent, delivery reports 500 and the
+  // product is back to not knowing whether a parent was ever texted.
+  ['046_go_live_unlocks',              'function',   'app.record_sms_delivery'],
 ];
 
 /**
@@ -148,6 +152,7 @@ const MEANING = {
   '043_calendar':                    'R-4 — the school calendar becomes editable, and only by the right people',
   '044_student_history_index':       'R-6 — a student enrolment timeline becomes a seek, not a scan',
   '045_platform_console':            'R-7 — the platform can create a school, and only the platform can',
+  '046_go_live_unlocks':             'R-8 — a delivery report can be recorded, and the AI budget is spent before it is billed',
 };
 
 const QUERIES = {

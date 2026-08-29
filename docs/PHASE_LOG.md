@@ -3828,3 +3828,365 @@ None open.
 R-7 stopped here as instructed. R-8 is where the SMS aggregator, the object
 storage credential, operator SSO and the wildcard certificate land — and where
 `LOGIN_DISABLED` is finally flipped, which R-7 deliberately did not touch.
+
+---
+
+# 2026-08-29 · R-8 · Go-live unlocks
+
+**Status: complete, with an honest boundary.** Four capabilities the master
+plan lists under R-8 are now real code, tested and walked in a browser: a
+**live SMS provider** behind an adapter with delivery reports, **environment
+switches** replacing three hardcoded `const`s, **AI budget enforcement**, and a
+**readiness screen** that reports the deployment's actual state.
+
+The rest of the master plan's R-8 list is not code and could not be closed by
+writing any: an aggregator contract, an MFS merchant agreement, a
+data-residency decision, and pilot schools. Those are named on the readiness
+screen itself, under a heading saying that screen cannot tick them — see
+"What R-8 could not close" below. Reporting them done because a switch exists
+for them is precisely the failure this phase was supposed to prevent.
+
+The first real OTP login in the product's history happened during this phase's
+browser acceptance: a principal signed in with a code that travelled through
+`sms_outbox`, an SSL Wireless adapter, an aggregator, and back as a delivery
+report.
+
+## What was actually dark, and it was worse than "unconfigured"
+
+The master plan describes R-8 as "contracts, credentials, and switches —
+everything here is built and dark". That is true of the schema. It was not true
+of the code, and the gap ran in the dangerous direction: **three things the
+plan assumed were built and waiting for a credential did not exist at all.**
+
+### 1. There was no provider to configure
+
+`sms_outbox` has carried `provider`, `provider_msg_id`, `delivered_at`,
+`error_code` and `cost_bdt` since migration 004. The dispatcher had a
+`sendStub` that logged. There was no seam — no interface, no adapter, nothing a
+credential could have been plugged into. "Add the aggregator's token to the
+environment" would have changed nothing at all.
+
+`services/sms-svc/src/provider.ts` is that seam: an `SmsProvider` interface, a
+`StubProvider` that stays the default, and an `SslWirelessProvider`.
+`resolveProvider()` **throws** when a provider is named without credentials
+rather than falling back to the stub — a school that believes its messages are
+going out is worse off than one that knows they are not.
+
+### 2. Nothing had ever received a delivery report
+
+`delivered_at` had never been written by anything, in any deployment, ever. The
+product knew only that it had HANDED a message to a provider, which is not what
+a school is asking when it rings to ask whether the SMS went out.
+
+`POST /api/v1/sms/dlr` closes that. It has **its own secret**,
+`SMS_DLR_SECRET`, not `SERVICE_API_KEY`: this endpoint is called by a vendor,
+and handing a vendor the service key would make every internal endpoint
+reachable by them. Unset, it answers **503, not 401** — an unconfigured webhook
+and a wrong password send an operator to two different places.
+
+It takes **no tenant from the caller**. A DLR carries a provider message id and
+nothing else we can trust; the row is found by that id and the tenant comes
+from the row. That needs a cross-tenant read the runtime role rightly cannot
+do, so `app.record_sms_delivery()` (migration 046) is `SECURITY DEFINER` for
+exactly that, and updates **only the four delivery columns**. A provider cannot
+change a message's body, its recipient, or which school it belongs to.
+`db/tests/go_live.sql` asserts that by comparing every other column before and
+after.
+
+### 3. The OTP switch turned on a login that delivered nothing
+
+This is the one that would have hurt. `services/identity-svc/api/otp-request.ts`
+wrote the code to `console.log` under a comment reading *"Stub SMS send — real
+aggregator integration is a follow-up."*
+
+Survivable while the switch was a hardcoded `false`. Not survivable once the
+switch became an environment variable: an operator could set
+`OTP_SENDING_ENABLED=true`, watch the readiness screen go green on both OTP and
+SMS, hand a school a login — and **no code would reach anybody**. The screen
+would have been lying in the exact way this phase exists to prevent.
+
+The code now goes into `sms_outbox` in the **same transaction as the
+challenge**, so there is never a code the product believes it sent. It is
+queued at `priority = 1`, because a login code behind a queue of attendance
+notices is a login code that arrives after it has expired.
+
+Two details are tested because both would otherwise be discovered one school at
+a time:
+
+- **The dedupe key is the challenge, not the phone and the day.**
+  `uq_sms_dedupe` is `UNIQUE (tenant_id, created_on, dedupe_key)`. Keyed on
+  phone+day, the person who did not receive the first code could not be sent
+  another until tomorrow — the exact person who needs one.
+- **The message is signed with the SCHOOL's name** (D11), falling back to the
+  neutral `বিদ্যালয়` and never to the platform's. A guardian must not read
+  their software vendor's brand on a message from their child's school.
+
+## The switches
+
+`packages/server-core/src/go-live.ts` is the single source. Three hardcoded
+constants became environment reads:
+
+| was | now |
+|---|---|
+| `login-view.ts`: `export const LOGIN_DISABLED = true` | `isLoginDisabled()` ← the server's `otpLogin` |
+| `otp-request.ts`: `const OTP_SENDING_ENABLED = false` | `otpSendingEnabled()` |
+| `finance-svc`: `const MFS_PAYMENTS_ENABLED = false` | `mfsPaymentsEnabled()` |
+
+Only the word `true` enables anything — case-insensitively, because `TRUE` is
+unambiguously somebody deciding, while `1`, `yes`, `on` and `enabled` all
+resolve **off**. That is the safe direction to be wrong in: a switch that
+stayed off gets reported by an operator; a switch that turned itself on gets
+reported by a parent who received a text at midnight.
+
+The client no longer carries its own copy of the OTP flag.
+`GET /api/v1/ops/brand` — the call the login screen already makes before anyone
+types anything — now carries `otpLogin` on **both** branches, and `branding.ts`
+caches it. What used to be "edit a server file, edit a browser file, rebuild,
+redeploy, in that order, without forgetting either" is now one environment
+variable.
+
+## AI budget: a table nobody read
+
+`ai_budget_periods` has existed since migration 008 with `token_budget`,
+`tokens_used`, `soft_limit_notified_at` and `hard_limit_hit_at`, and
+`tenants.ai_monthly_token_budget` since 001. **Nothing in ai-svc referenced
+either.** It recorded `input_tokens`/`output_tokens` on `ai_turns` and never
+looked at what a school was allowed to spend — the same shape as `student_cap`
+before R-7: a limit only the price list knew about.
+
+`app.consume_ai_budget()` **reserves before the call** and
+`app.settle_ai_budget()` corrects it after. Reserving first is the point: a
+check-then-record would let a school overshoot by however many requests are in
+flight, and an AI bill is the one cost in this product that can run away
+between two cron ticks. Both are `SECURITY INVOKER` — a school's own budget is
+not a cross-tenant concern, and making them DEFINER would have handed one
+school a lever on another's counter.
+
+Refusal is **402, not 403**. The school has not done anything wrong and the fix
+is commercial.
+
+Verified by hand against real PostgreSQL before any UI existed, then pinned in
+`db/tests/go_live.sql`: 8,500 of 10,000 allowed and the soft limit stamped; the
+next call refused, the hard limit stamped, and `tokens_used` still 8,500 —
+**a refused call is not charged.**
+
+## The readiness screen
+
+`GET /api/v1/platform/readiness` computes eight checks from the environment;
+`apps/pwa/src/platform.ts` renders them under আবশ্যক / ঐচ্ছিক. Same binary, two
+environments, verified in a browser:
+
+- default deployment → **৪ টি আবশ্যক সেটিং বাকি আছে** (`blockingRemaining: 4`)
+- switches set → **সব আবশ্যক সেটিং প্রস্তুত** (`blockingRemaining: 0`)
+
+No rebuild between them. It reports **presence, never values** — a test asserts
+that no secret's value appears anywhere in the response; the sender id and
+provider name do appear, because they are not secret.
+
+It distinguishes *broken* from *off*: a provider named with incomplete
+credentials reads `ক্রেডেনশিয়াল অসম্পূর্ণ`, which is a mistake, not a decision.
+
+## What R-8 could not close
+
+The screen carries a card headed **এই পর্দা যা জানে না** naming what no
+environment variable can answer:
+
+1. **The aggregator contract.** A masking sender id and a rate need a signed
+   agreement with SSL Wireless or a competitor. The adapter is written and
+   tested against a fake aggregator; the contract is a commercial act.
+2. **The MFS merchant agreement.** bKash/Nagad merchant onboarding. The switch
+   exists; no gateway was invented, per the phase's own constraint.
+3. **The data-residency decision.** Where a Bangladeshi school's student data
+   physically sits is a policy decision with legal weight, not a config value.
+4. **Pilot schools.** Real institutions with real children.
+
+These are reported as **not done**. A tick beside any of them would be the lie
+this phase was written to prevent.
+
+## Migration 046
+
+Three functions, no tables, no columns. Rollback
+`db/rollback/046_go_live_unlocks.down.sql` loses no data — a message reported
+delivered keeps its `delivered_at` and its `cost_bdt`. Full cycle exercised:
+**up → 12 assertions pass → down → the suite correctly fails (functions gone) →
+up → 12 assertions pass.** Suite re-run twice for idempotency, and wired into
+`.github/workflows/database.yml` in both the main and re-run passes.
+
+`scripts/migration-status.mjs` probes `app.record_sms_delivery` for 046.
+
+## Secrets
+
+`scripts/check-secrets.mjs` did not know `PLATFORM_API_KEY` (R-7) or R-8's
+`SMS_API_TOKEN` and `SMS_DLR_SECRET`. Registering the secrets a go-live needs
+is this phase's own job, so all three were added with blast radius and rotation
+notes. `SMS_API_TOKEN`'s entropy floor is 64 bits rather than 128: it is set by
+the aggregator, and demanding more of somebody else's key would fail every real
+deployment.
+
+## Tests
+
+**932 across 12 workspaces with a database attached, 693 without, all passing.**
+New in R-8:
+
+| suite | what it holds |
+|---|---|
+| `services/sms-svc/test/provider.test.ts` (9) | the stub stays the default; a named provider without credentials **throws**; HTTP 200 with a failure body is a failure |
+| `services/sms-svc/test/dlr.test.ts` (11) | 503-vs-401; the service key does **not** open this door; an unknown status is not guessed at |
+| `packages/server-core/test/go-live.test.ts` (12) | only `true` enables; no secret **value** in the readiness report |
+| `services/identity-svc/test/otp-request.test.ts` (10) | the code is queued, not logged; signed with the school; a resend is not swallowed |
+| `db/tests/go_live.sql` (12) | a report changes only the four delivery columns; a refused AI call is not charged |
+
+Three fixture defects were fixed rather than worked around, and two are lessons
+earlier phases already learned:
+
+- **RLS ate a cleanup again.** `DELETE FROM tenants WHERE id = ANY([T, OTHER])`
+  under tenant T's context deletes only T — the other row is invisible, the
+  DELETE matches nothing, and the next run fails on a duplicate key from a
+  fixture it believes it deleted. Third time this pattern has bitten (twice in
+  R-7).
+- **F-102 is real in tests.** OTP requests are capped at 3/hour per phone and
+  the buckets live in the database, outliving the process. The suite now uses a
+  fresh number per test and a fresh series per run — the policy was not
+  weakened to accommodate it.
+- **An open pool failed a whole file.** `dlr.test.ts` stops before its own
+  query, but the rate limiter runs first and really connects when
+  `DATABASE_URL` is set; the singleton pool kept the process alive and the
+  runner reported the file as failed with no assertion to point at.
+
+## Browser verification
+
+Two deployments of the same binary, one database, verified in a real browser:
+
+1. **Readiness, switches off** — 4 blocking items, each with a reason.
+2. **Readiness, switches on** — all blocking items green, `ssl_wireless` and
+   sender id `SHIKHON` shown, token not.
+3. **Mobile (375×812)** — both columns wrap, `scrollWidth === clientWidth`, no
+   horizontal overflow.
+4. **App, switches off** — demo mode, exactly as before R-8.
+5. **App, switches on, cold device** — the real OTP login screen.
+6. **A full login** — phone → code → dispatched through a fake aggregator →
+   `প্রধান` signed into নথি বিদ্যালয় with the school's own branding.
+7. **The refusal path** — a number with no account gets
+   `এই নম্বরে কোনো অ্যাকাউন্ট পাওয়া যায়নি` at verification, while the
+   *request* step deliberately does not reveal whether a number is registered.
+8. **A delivery report** — `{"ok":true,"matched":true}`, row `delivered`,
+   `cost_bdt = 0.3500`.
+
+### Two defects the browser found that the tests did not
+
+Both were mine, and both were invisible to unit tests:
+
+1. **`fetchPublicBranding` returned early when the URL named no tenant**, so
+   `otpLogin` was never learned on a bare domain and the app stayed in demo
+   mode however the server was configured. The switch is a property of the
+   DEPLOYMENT, not of a school, so it is now fetched on both paths.
+2. **A cold device could not know the answer in time.** The demo-mode gate
+   reads a cache a first-ever visitor has never filled. Reading "unknown" as
+   "off" is safe on the login screen — it offers the activation-code path — and
+   is *not* safe at that gate, where it drops a real visitor into a sample
+   school. `otpLoginAnswered()` distinguishes "cached false" from "never
+   asked", and a cold device now asks once before deciding. Every later boot is
+   synchronous, which is what keeps the 2G start immediate.
+
+A third, smaller: `isLoginDisabled()` was a module-level `const`, captured
+before the cold fetch resolved — it froze a newly live school on "OTP login is
+temporarily off" until someone reloaded. Now read per call.
+
+And a fourth, the same bug R-6 shipped, one funnel-step earlier: `5 মিনিটের` —
+a Latin digit in Bangla prose. The duration is now `৫`. The **code** stays in
+Latin digits deliberately: it is not prose, it is a literal to be typed back,
+and a person reading `৯৯৫৯৪৭` off an SMS has to transliterate it first.
+
+## Offline classification
+
+Deliberate and recorded: **none of R-8's four capabilities is offline-capable,
+and none should be.**
+
+- The **readiness screen** reports a live server environment. A cached answer
+  would be a stale claim about production posture, which is worse than no
+  answer.
+- The **DLR** is inbound from a vendor to the server; a browser is not
+  involved.
+- **OTP request/verify** require the network by definition — the code travels
+  over a network the device must also be on.
+- The **AI budget** must be reserved server-side before the call. A
+  client-side reservation is not a reservation.
+
+The activation-code path remains the offline-tolerant way into the product, and
+is untouched by this phase.
+
+## Known limitations
+
+1. **No aggregator contract**, so `SMS_PROVIDER` is unset on every real
+   deployment and the stub is what runs. Verified end to end against a fake
+   aggregator on localhost, which proves the adapter and not the vendor.
+2. **`SslWirelessProvider` is written to one vendor's documented shape and has
+   never met the real endpoint.** The `csms_id`/`reference_id` mapping and the
+   status vocabulary are the two things most likely to need a correction on
+   first contact; both are isolated to `provider.ts` and the DLR's status map.
+3. **Cost is recorded only when the DLR reports it.** The send response does
+   not carry a per-message cost and none is invented, so `cost_bdt` stays NULL
+   on a deployment whose aggregator does not send delivery reports.
+4. **No SMS retry backoff.** A failed send stays `queued` with an `error_code`
+   and is retried on the next dispatcher tick, up to 5 attempts, then `failed`.
+   The tick is the interval; there is no exponential backoff.
+5. **The AI soft limit stamps a timestamp and notifies nobody.**
+   `soft_limit_notified_at` is set at 80%; wiring it to R-2's notification
+   infrastructure is not built. A principal learns of it by being refused.
+6. **Trial expiry still moves nothing** (carried from R-7.4).
+7. **Operator sign-in is still two pasted secrets** (carried from R-7.2). R-8
+   was expected to own operator SSO; it does not, and that is stated here
+   rather than quietly dropped.
+8. **Wildcard DNS and TLS remain unprovisioned** (carried from R-7.1).
+
+## Carried backlog — preserved, none of it closed by R-8
+
+**R-3:** class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision.
+
+**R-5:** object storage (no stored PDFs or student photos) · CSV export
+(`toCsv()` still unused) · multi-card ID-card layout (one card per A4 sheet) ·
+**money-formatting decision** (`৳ 1,300.00` in Latin digits beside Bangla
+rolls — still open, still needs a call).
+
+**R-6:** an index on the board registration/roll columns if a school leans on
+that search shape · an attendance date-range filter · type-ahead suggestions.
+
+**R-7:** operator SSO and key rotation · trial expiry automation · per-class
+group configuration in the wizard · logo/favicon/watermark upload in the
+wizard.
+
+**R-8 (new):** SMS retry backoff · soft-limit notification wired to R-2 ·
+per-message cost when an aggregator reports it on send rather than on delivery.
+
+## Unresolved bugs / issues
+
+**1. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+calls it.**
+
+Flagged for the record, and deliberately **not** pulled into R-8: R-8 touches
+nothing in the sync path, and the master plan does not name this as an R-8
+dependency.
+
+The state, precisely: `services/sync-svc/api/pull.ts` implements the
+delta-cursor protocol, `index.ts` mounts it, and sync-svc's suites cover it.
+The only mention anywhere in the client is a service-worker **routing rule**
+declaring the caching strategy (`network-only`) for a URL nothing requests,
+plus that rule's test. `transport.ts` calls `/api/v1/sync/push` and nothing
+else.
+
+So the outbox pushes, and the client never pulls. Every read the app performs
+comes from ordinary REST endpoints with their own caching, which is why nothing
+is visibly broken — the delta protocol is simply unused. Two honest resolutions
+exist and this phase chose neither: wire the client to it, or delete the
+endpoint and its documentation. Leaving it is a third option and the worst one,
+because `docs/01-ARCHITECTURE.md` and `docs/03-API-SPECIFICATIONS.md` both
+describe it as the product's sync mechanism.
+
+## Next recommended step
+
+**R-9.** Not started. R-8 stopped here as instructed.
+
+The two things that would most change the product's readiness are not R-9 work
+and are not code: the aggregator contract, which makes every SMS path in this
+phase real rather than rehearsed, and a pilot school.

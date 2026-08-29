@@ -34,6 +34,55 @@ export type { Branding, PublicBranding };
 export { DEFAULT_BRANDING, brandName };
 
 const CACHE_PREFIX = 'shikhon_branding_';
+
+/**
+ * Whether OTP login is available, as last reported by the server.  (R-8)
+ *
+ * Cached beside the branding and for the same reason: app.ts has to decide at
+ * BOOT whether a session-less visitor goes to the login screen or to demo
+ * mode, and it cannot wait for a network round-trip to do it — that is the
+ * whole argument branding.ts already makes about painting from cache on 2G.
+ *
+ * So the boot reads the cached answer and the fetch corrects it for next
+ * time. An unvisited device has no cached value and reads it as OFF, which
+ * is the reading that cannot strand anybody: it offers the activation-code
+ * path, which works whether or not the aggregator does.
+ */
+const OTP_CACHE_KEY = 'shikhon_otp_login';
+
+export function cachedOtpLogin(): boolean {
+  try {
+    return localStorage.getItem(OTP_CACHE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this device has ever had an ANSWER, as opposed to having cached a
+ * `false`. The two are the same to the login screen — both mean "offer the
+ * activation-code path", which works either way — and they are emphatically
+ * not the same to the demo-mode gate in app.ts, where an unanswered device
+ * treated as OFF drops a real visitor into a sample school on their first
+ * ever visit. That gate waits for a real answer; this is how it tells.
+ */
+export function otpLoginAnswered(): boolean {
+  try {
+    return localStorage.getItem(OTP_CACHE_KEY) !== null;
+  } catch {
+    // No storage at all (private mode). Nothing can be learned and nothing
+    // can be remembered, so the caller should not block waiting for it.
+    return true;
+  }
+}
+
+function cacheOtpLogin(on: boolean): void {
+  try {
+    localStorage.setItem(OTP_CACHE_KEY, on ? 'true' : 'false');
+  } catch {
+    /* private mode — the next boot just reads it as off, which is safe */
+  }
+}
 /**
  * R-7.12 — the school's door, resolved from the hostname.
  *
@@ -196,14 +245,27 @@ export async function fetchPublicBranding(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Branding> {
   const base = cachedBranding(tenantKey);
-  if (!tenantKey) return base;
   try {
+    // Asked even with no tenant key. `otpLogin` is a property of the
+    // DEPLOYMENT, not of a school — one environment variable decides it for
+    // everybody — and skipping the request when the URL names no tenant left
+    // the app permanently in demo mode on a bare domain, however the server
+    // was configured. Branding is the part that needs a tenant; the switch
+    // is not, so the two are no longer fetched on the same condition.
     const res = await fetchImpl(
-      `/api/v1/ops/brand?tid=${encodeURIComponent(tenantKey)}`,
+      tenantKey
+        ? `/api/v1/ops/brand?tid=${encodeURIComponent(tenantKey)}`
+        : '/api/v1/ops/brand',
       { headers: { accept: 'application/json' } },
     );
     if (!res.ok) return base;
-    const body = (await res.json()) as { branding?: unknown };
+    const body = (await res.json()) as { branding?: unknown; otpLogin?: boolean };
+    // R-8: the server is the single source for whether OTP login works. The
+    // client used to carry its own `LOGIN_DISABLED` constant that had to be
+    // edited in lockstep with the server's, which is a pair that does not
+    // stay in lockstep.
+    cacheOtpLogin(body.otpLogin === true);
+    if (!tenantKey) return base;
     const merged = parseBranding(body.branding, base);
     cacheBranding(tenantKey, merged);
     return merged;

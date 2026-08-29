@@ -82,6 +82,15 @@ interface TenantRow {
   trialEndsOn: string | null; createdAt: string;
 }
 
+/** R-8. One line of the go-live posture, as the server computes it. */
+interface GoLiveCheck {
+  key: string;
+  labelBn: string;
+  ready: boolean;
+  detailBn: string;
+  severity: 'blocking' | 'advisory';
+}
+
 interface OnboardingState {
   years: number; gradingBands: number; classes: number; sections: number;
   subjects: number; feeHeads: number; teachers: number; students: number;
@@ -125,7 +134,7 @@ class Console_ {
   private token = sessionStorage.getItem('shikhon_platform_token') ?? '';
   private key = sessionStorage.getItem('shikhon_platform_key') ?? '';
 
-  private view: 'list' | 'wizard' | 'detail' = 'list';
+  private view: 'list' | 'wizard' | 'detail' | 'readiness' = 'list';
   private tenants: TenantRow[] = [];
   private loading = false;
   private error = '';
@@ -145,6 +154,9 @@ class Console_ {
                     state: OnboardingState; canActivate: boolean } | null = null;
   private activationCode = '';
   private busy = false;
+
+  /** R-8. Null until the readiness screen is opened. */
+  private goLive: { checks: GoLiveCheck[]; ready: boolean; blockingRemaining: number } | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -184,6 +196,17 @@ class Console_ {
     } catch (e) {
       this.error = (e as Error).message;
       this.tenants = [];
+    } finally {
+      this.loading = false; this.render();
+    }
+  }
+
+  private async loadReadiness(): Promise<void> {
+    this.loading = true; this.error = ''; this.goLive = null; this.render();
+    try {
+      this.goLive = await this.call('readiness');
+    } catch (e) {
+      this.error = (e as Error).message;
     } finally {
       this.loading = false; this.render();
     }
@@ -236,6 +259,7 @@ class Console_ {
     this.root.append(main);
 
     if (!this.token || !this.key) { this.renderSignIn(main); return; }
+    if (this.view === 'readiness') { this.renderReadiness(main); return; }
     if (this.view === 'wizard') { this.renderWizard(main); return; }
     if (this.view === 'detail') { this.renderDetail(main); return; }
     this.renderList(main);
@@ -298,7 +322,16 @@ class Console_ {
       };
       this.view = 'wizard'; this.error = ''; this.render();
     });
-    head.append(h, add);
+    // R-8. The posture screen sits beside "new institution" because the
+    // operator who is about to onboard a school is exactly the person who
+    // needs to know whether its SMS will actually send.
+    const posture = d.createElement('button');
+    posture.type = 'button'; posture.className = 'btn-secondary btn-inline';
+    posture.textContent = 'গো-লাইভ অবস্থা';
+    posture.addEventListener('click', () => {
+      this.view = 'readiness'; this.error = ''; void this.loadReadiness();
+    });
+    head.append(h, posture, add);
     main.append(head);
 
     const searchForm = d.createElement('form');
@@ -377,6 +410,100 @@ class Console_ {
     act.append(open);
     tr.append(act);
     return tr;
+  }
+
+  // ── R-8: go-live readiness ────────────────────────────────────────────
+
+  /**
+   * What this deployment is configured to do, and what is still dark.
+   *
+   * Every line is computed by the server from its own environment — this
+   * screen ticks nothing and remembers nothing. A go-live checklist somebody
+   * maintains by hand is wrong the first time a variable is renamed, and the
+   * operator reading this is usually the person who just renamed one.
+   *
+   * Blocking and advisory are separated because folding them together would
+   * leave the screen permanently amber over things like MFS, which a pilot
+   * school does not need and may never turn on. A permanently amber screen is
+   * one nobody reads.
+   */
+  private renderReadiness(main: HTMLElement): void {
+    const d = this.doc;
+
+    const back = d.createElement('button');
+    back.type = 'button'; back.className = 'btn-secondary';
+    back.textContent = '← তালিকায় ফিরুন';
+    back.addEventListener('click', () => {
+      this.view = 'list'; this.goLive = null; this.error = ''; void this.loadList();
+    });
+    main.append(back);
+
+    const h = d.createElement('h1');
+    h.className = 'platform-title';
+    h.textContent = 'গো-লাইভ অবস্থা';
+    main.append(h);
+
+    if (this.loading) { main.append(skeleton(d, 6)); return; }
+    if (this.error) {
+      main.append(errorState(d, this.error, () => void this.loadReadiness()));
+      return;
+    }
+    const g = this.goLive;
+    if (!g) return;
+
+    const summary = d.createElement('p');
+    summary.className = 'page-sub';
+    summary.setAttribute('aria-live', 'polite');
+    summary.textContent = g.ready
+      ? 'সব আবশ্যক সেটিং প্রস্তুত — বাস্তব শিক্ষার্থীদের জন্য চালু করা যায়।'
+      : `${bnNum(g.blockingRemaining)} টি আবশ্যক সেটিং বাকি আছে।`;
+    main.append(summary);
+
+    for (const [severity, heading] of [
+      ['blocking', 'আবশ্যক'], ['advisory', 'ঐচ্ছিক'],
+    ] as Array<['blocking' | 'advisory', string]>) {
+      const rows = g.checks.filter((c) => c.severity === severity);
+      if (rows.length === 0) continue;
+
+      const card = d.createElement('div');
+      card.className = 'card platform-state';
+      const ch = d.createElement('h2');
+      ch.className = 'section-heading';
+      ch.textContent = heading;
+      card.append(ch);
+
+      const dl = d.createElement('dl');
+      dl.className = 'detail-list';
+      for (const c of rows) {
+        const wrap = d.createElement('div');
+        const dt = d.createElement('dt');
+        dt.textContent = c.labelBn;
+        const dd = d.createElement('dd');
+        // The glyph, the state word AND the reason — never colour alone
+        // (F-812), and never a bare tick that leaves an operator guessing
+        // which variable is missing.
+        dd.textContent = `${c.ready ? '✓' : '⚠'} ${c.detailBn}`;
+        dd.className = c.ready ? 'state-ok' : 'state-pending';
+        wrap.append(dt, dd);
+        dl.append(wrap);
+      }
+      card.append(dl);
+      main.append(card);
+    }
+
+    // The half of R-8 no environment variable can answer.
+    const note = d.createElement('div');
+    note.className = 'card platform-state';
+    const nh = d.createElement('h2');
+    nh.className = 'section-heading';
+    nh.textContent = 'এই পর্দা যা জানে না';
+    const np = d.createElement('p');
+    np.className = 'page-sub';
+    np.textContent = 'অ্যাগ্রিগেটরের চুক্তি, এমএফএস মার্চেন্ট চুক্তি, তথ্য কোথায় রাখা হবে '
+      + 'সেই সিদ্ধান্ত, এবং পাইলট স্কুলগুলো — এগুলো কনফিগারেশন নয়, তাই এখানে টিক দেওয়া যায় না। '
+      + 'docs/11-MASTER-PLAN.md §R-8 দেখুন।';
+    note.append(nh, np);
+    main.append(note);
   }
 
   // ── One institution ───────────────────────────────────────────────────

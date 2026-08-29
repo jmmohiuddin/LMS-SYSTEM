@@ -302,7 +302,7 @@ describe('academic hierarchy', () => {
   };
 
   test('the tree shows counts at every level', async () => {
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true, canManageGuardians: true });
     await settle();
     assert.match(text(), /নবম শ্রেণি/);
     assert.match(text(), /বিজ্ঞান/);
@@ -310,7 +310,7 @@ describe('academic hierarchy', () => {
   });
 
   test('a section with no class teacher is marked, not left to be read', async () => {
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true, canManageGuardians: true });
     await settle();
     clickRow(0);   // into Class 9, where section E has no class teacher
     await settle();
@@ -333,7 +333,7 @@ describe('academic hierarchy', () => {
   });
 
   test('a subject nobody teaches is shown as empty, not omitted', async () => {
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true, canManageGuardians: true });
     await settle();
     await openSectionF();
     // The most useful thing this screen tells a principal in January.
@@ -342,7 +342,7 @@ describe('academic hierarchy', () => {
   });
 
   test('the replacement record is visible on the section', async () => {
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true, canManageGuardians: true });
     await settle();
     await openSectionF();
     assert.match(text(), /জামাল স্যার/, 'the replaced teacher stays on the record');
@@ -350,7 +350,7 @@ describe('academic hierarchy', () => {
   });
 
   test('a teacher sees no management controls', async () => {
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: false });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: false, canManageGuardians: false });
     await settle();
     await openSectionF();
     assert.doesNotMatch(text(), /শিক্ষক বদল করুন/);
@@ -358,7 +358,7 @@ describe('academic hierarchy', () => {
   });
 
   test('THE ONE THAT MATTERS — replacement states that the old record is kept', async () => {
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(routes) as never, canManage: true, canManageGuardians: true });
     await settle();
     await openSectionF();
     clickLabel('শিক্ষক বদল করুন');
@@ -386,8 +386,20 @@ describe('academic hierarchy', () => {
         guardians: [{ nameBn: 'আব্দুল করিম', relation: 'father', isPrimary: true, canPayFees: true }],
         attendance90d: { present: 74, total: 80 },
       },
+      // R-3 completion: the drawer's guardian block is now a live panel with
+      // its own endpoint, so the stub has to answer it. The phone is null
+      // because the SERVER withholds it from anyone who may not edit it —
+      // this stub models the answer a coordinator would get.
+      '/api/v1/ops/guardians': {
+        student: { id: 's1', nameBn: 'শিক্ষার্থী ১' },
+        guardians: [{
+          linkId: 'l1', guardianId: 'g1', nameBn: 'আব্দুল করিম', phone: null,
+          relation: 'father', isPrimary: true, receivesSms: true,
+          canPayFees: true, otherWards: 0,
+        }],
+      },
     };
-    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(withStudent) as never, canManage: true });
+    new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(withStudent) as never, canManage: true, canManageGuardians: true });
     await settle();
     await openSectionF();
     [...root().querySelectorAll('.roster-name')][0].dispatchEvent(new dom.window.Event('click'));
@@ -491,7 +503,7 @@ describe('SMS notice settings', () => {
   const settings = { sms: { noticeMaxChars: 180, default: 180, min: 70, max: 480, charsPerSegment: 70 } };
 
   test('the limits come from the server, not from a constant in the browser', async () => {
-    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true });
+    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
     const input = root().querySelector('input[type=number]') as HTMLInputElement;
     assert.equal(input.min, '70');
@@ -500,13 +512,13 @@ describe('SMS notice settings', () => {
   });
 
   test('cost is shown in segments, because that is the unit the bill arrives in', async () => {
-    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true });
+    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
     assert.match(text(), new RegExp(`${bnNum(3)} টি এসএমএস`), '180 chars ÷ 70 = 3 Bangla segments');
   });
 
   test('going over the recommendation warns in multiples of the bill', async () => {
-    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true });
+    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
     const input = root().querySelector('input[type=number]') as HTMLInputElement;
     input.value = '420';
@@ -517,7 +529,7 @@ describe('SMS notice settings', () => {
   });
 
   test('an out-of-range value cannot be saved', async () => {
-    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true });
+    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
     const input = root().querySelector('input[type=number]') as HTMLInputElement;
     input.value = '9000';
@@ -527,14 +539,14 @@ describe('SMS notice settings', () => {
   });
 
   test('the policy is stated: SMS is an alert, the app holds the notice', async () => {
-    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true });
+    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
     assert.match(text(), /পুরো নোটিশ সবসময় অ্যাপে থাকবে/);
     assert.match(text(), /প্রতিষ্ঠানের নাম/);
   });
 
   test('a caller who may not change it gets a disabled form and a reason', async () => {
-    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: false });
+    new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: false, canManageGuardians: false });
     await settle();
     assert.equal((root().querySelector('input[type=number]') as HTMLInputElement).disabled, true);
     assert.match(text(), /অনুমতি কেবল/);
@@ -624,7 +636,7 @@ describe('user management', () => {
   };
 
   test('there is no delete, and deactivation says the record is kept', async () => {
-    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: true });
+    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: true, canManageGuardians: true });
     await settle();
     assert.doesNotMatch(text(), /মুছে ফেলুন/);
     [...root().querySelectorAll('button')]
@@ -634,13 +646,13 @@ describe('user management', () => {
   });
 
   test('a capped list never reads as a complete one', async () => {
-    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: true });
+    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: true, canManageGuardians: true });
     await settle();
     assert.match(text(), /প্রথম ৫০ জন/);
   });
 
   test('creating an account never offers a password', async () => {
-    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: true });
+    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: true, canManageGuardians: true });
     await settle();
     [...root().querySelectorAll('button')]
       .find((b) => b.textContent?.includes('নতুন শিক্ষক'))!
@@ -650,7 +662,7 @@ describe('user management', () => {
   });
 
   test('a read-only caller is offered no controls', async () => {
-    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: false });
+    new UsersView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/users': users }) as never, canManage: false, canManageGuardians: false });
     await settle();
     assert.equal([...root().querySelectorAll('button')]
       .filter((b) => b.textContent === 'নিষ্ক্রিয় করুন').length, 0);

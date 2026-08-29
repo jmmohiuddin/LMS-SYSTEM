@@ -1,8 +1,9 @@
 /**
  * Dynamic-route dispatcher for
  * /api/v1/ops/{maintenance,events,branding,brand,manifest,notices,inbox,
- *              dashboard,assign,enrol,rollover,settings,users}
- * — one Vercel function (api/v1/ops/[action].js) instead of thirteen. See
+ *              dashboard,assign,enrol,rollover,settings,users,
+ *              structure,guardians,audit}
+ * — one Vercel function (api/v1/ops/[action].js) instead of sixteen. See
  * services/identity-svc/api/index.ts for the Hobby-cap rationale.
  *
  * The vercel.json cron still hits /api/v1/ops/maintenance; the dynamic
@@ -25,12 +26,17 @@ import enrol from './enrol.ts';
 import rollover from './rollover.ts';
 import settings from './settings.ts';
 import users from './users.ts';
+// R-3 completion pass — the three gaps R-3's own report named.
+import structure from './structure.ts';
+import guardians from './guardians.ts';
+import audit from './audit.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
   dashboard, assign, enrol, rollover, settings, users,
+  structure, guardians, audit,
 };
 
 /**
@@ -63,7 +69,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // 200 enrolment rows and a rollover commit touches every student in the
     // school. They belong in the mutation bucket without exception.
     const WRITE_ROUTES = new Set(['events', 'notices', 'inbox', 'branding',
-      'assign', 'enrol', 'rollover', 'settings', 'users']);
+      'assign', 'enrol', 'rollover', 'settings', 'users',
+      'structure', 'guardians']);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? 'mutation' : 'read';
     if (!(await enforceRateLimit(req, res, corsHeaders(), bucket))) return;
   }

@@ -359,8 +359,8 @@ var decode = (input) => new Uint8Array(Buffer2.from(normalize(input), "base64url
 var JOSEError = class extends Error {
   static code = "ERR_JOSE_GENERIC";
   code = "ERR_JOSE_GENERIC";
-  constructor(message2, options) {
-    super(message2, options);
+  constructor(message2, options2) {
+    super(message2, options2);
     this.name = this.constructor.name;
     Error.captureStackTrace?.(this, this.constructor);
   }
@@ -410,8 +410,8 @@ var JWTInvalid = class extends JOSEError {
 var JWSSignatureVerificationFailed = class extends JOSEError {
   static code = "ERR_JWS_SIGNATURE_VERIFICATION_FAILED";
   code = "ERR_JWS_SIGNATURE_VERIFICATION_FAILED";
-  constructor(message2 = "signature verification failed", options) {
-    super(message2, options);
+  constructor(message2 = "signature verification failed", options2) {
+    super(message2, options2);
   }
 };
 
@@ -706,11 +706,11 @@ var parse = (key) => {
 var jwk_to_key_default = parse;
 
 // node_modules/jose/dist/node/esm/key/import.js
-async function importSPKI(spki, alg, options) {
+async function importSPKI(spki, alg, options2) {
   if (typeof spki !== "string" || spki.indexOf("-----BEGIN PUBLIC KEY-----") !== 0) {
     throw new TypeError('"spki" must be SPKI formatted string');
   }
-  return fromSPKI(spki, alg, options);
+  return fromSPKI(spki, alg, options2);
 }
 async function importJWK(jwk, alg) {
   if (!isObject(jwk)) {
@@ -918,7 +918,7 @@ function keyForCrypto(alg, key) {
         throw new TypeError("Invalid key for this operation, its kty must be RSA, OKP, or EC");
     }
   }
-  let options;
+  let options2;
   switch (alg) {
     case "Ed25519":
       if (asymmetricKeyType !== "ed25519") {
@@ -954,7 +954,7 @@ function keyForCrypto(alg, key) {
         throw new TypeError("Invalid key for this operation, its asymmetricKeyType must be rsa or rsa-pss");
       }
       check_key_length_default(key, alg);
-      options = {
+      options2 = {
         padding: constants.RSA_PKCS1_PSS_PADDING,
         saltLength: constants.RSA_PSS_SALTLEN_DIGEST
       };
@@ -971,16 +971,16 @@ function keyForCrypto(alg, key) {
       if (actual !== expected) {
         throw new TypeError(`Invalid key curve for the algorithm, its curve must be ${expected}, got ${actual}`);
       }
-      options = { dsaEncoding: "ieee-p1363" };
+      options2 = { dsaEncoding: "ieee-p1363" };
       break;
     }
     default:
       throw new JOSENotSupported(`alg ${alg} is not supported either by JOSE or your javascript runtime`);
   }
   if (isJWK2) {
-    return { format: "jwk", key, ...options };
+    return { format: "jwk", key, ...options2 };
   }
-  return options ? { ...options, key } : key;
+  return options2 ? { ...options2, key } : key;
 }
 
 // node_modules/jose/dist/node/esm/runtime/sign.js
@@ -1063,7 +1063,7 @@ var verify2 = async (alg, key, signature, data) => {
 var verify_default = verify2;
 
 // node_modules/jose/dist/node/esm/jws/flattened/verify.js
-async function flattenedVerify(jws, key, options) {
+async function flattenedVerify(jws, key, options2) {
   if (!isObject(jws)) {
     throw new JWSInvalid("Flattened JWS must be an object");
   }
@@ -1098,7 +1098,7 @@ async function flattenedVerify(jws, key, options) {
     ...parsedProt,
     ...jws.header
   };
-  const extensions = validate_crit_default(JWSInvalid, /* @__PURE__ */ new Map([["b64", true]]), options?.crit, parsedProt, joseHeader);
+  const extensions = validate_crit_default(JWSInvalid, /* @__PURE__ */ new Map([["b64", true]]), options2?.crit, parsedProt, joseHeader);
   let b64 = true;
   if (extensions.has("b64")) {
     b64 = parsedProt.b64;
@@ -1110,7 +1110,7 @@ async function flattenedVerify(jws, key, options) {
   if (typeof alg !== "string" || !alg) {
     throw new JWSInvalid('JWS "alg" (Algorithm) Header Parameter missing or invalid');
   }
-  const algorithms = options && validate_algorithms_default("algorithms", options.algorithms);
+  const algorithms = options2 && validate_algorithms_default("algorithms", options2.algorithms);
   if (algorithms && !algorithms.has(alg)) {
     throw new JOSEAlgNotAllowed('"alg" (Algorithm) Header Parameter value not allowed');
   }
@@ -1169,7 +1169,7 @@ async function flattenedVerify(jws, key, options) {
 }
 
 // node_modules/jose/dist/node/esm/jws/compact/verify.js
-async function compactVerify(jws, key, options) {
+async function compactVerify(jws, key, options2) {
   if (jws instanceof Uint8Array) {
     jws = decoder.decode(jws);
   }
@@ -1180,7 +1180,7 @@ async function compactVerify(jws, key, options) {
   if (length !== 3) {
     throw new JWSInvalid("Invalid Compact JWS");
   }
-  const verified = await flattenedVerify({ payload, protected: protectedHeader, signature }, key, options);
+  const verified = await flattenedVerify({ payload, protected: protectedHeader, signature }, key, options2);
   const result = { payload: verified.payload, protectedHeader: verified.protectedHeader };
   if (typeof key === "function") {
     return { ...result, key: verified.key };
@@ -1259,7 +1259,7 @@ var checkAudiencePresence = (audPayload, audOption) => {
   }
   return false;
 };
-var jwt_claims_set_default = (protectedHeader, encodedPayload, options = {}) => {
+var jwt_claims_set_default = (protectedHeader, encodedPayload, options2 = {}) => {
   let payload;
   try {
     payload = JSON.parse(decoder.decode(encodedPayload));
@@ -1268,11 +1268,11 @@ var jwt_claims_set_default = (protectedHeader, encodedPayload, options = {}) => 
   if (!isObject(payload)) {
     throw new JWTInvalid("JWT Claims Set must be a top-level JSON object");
   }
-  const { typ } = options;
+  const { typ } = options2;
   if (typ && (typeof protectedHeader.typ !== "string" || normalizeTyp(protectedHeader.typ) !== normalizeTyp(typ))) {
     throw new JWTClaimValidationFailed('unexpected "typ" JWT header value', payload, "typ", "check_failed");
   }
-  const { requiredClaims = [], issuer, subject, audience, maxTokenAge } = options;
+  const { requiredClaims = [], issuer, subject, audience, maxTokenAge } = options2;
   const presenceCheck = [...requiredClaims];
   if (maxTokenAge !== void 0)
     presenceCheck.push("iat");
@@ -1297,12 +1297,12 @@ var jwt_claims_set_default = (protectedHeader, encodedPayload, options = {}) => 
     throw new JWTClaimValidationFailed('unexpected "aud" claim value', payload, "aud", "check_failed");
   }
   let tolerance;
-  switch (typeof options.clockTolerance) {
+  switch (typeof options2.clockTolerance) {
     case "string":
-      tolerance = secs_default(options.clockTolerance);
+      tolerance = secs_default(options2.clockTolerance);
       break;
     case "number":
-      tolerance = options.clockTolerance;
+      tolerance = options2.clockTolerance;
       break;
     case "undefined":
       tolerance = 0;
@@ -1310,7 +1310,7 @@ var jwt_claims_set_default = (protectedHeader, encodedPayload, options = {}) => 
     default:
       throw new TypeError("Invalid clockTolerance option type");
   }
-  const { currentDate } = options;
+  const { currentDate } = options2;
   const now = epoch_default(currentDate || /* @__PURE__ */ new Date());
   if ((payload.iat !== void 0 || maxTokenAge) && typeof payload.iat !== "number") {
     throw new JWTClaimValidationFailed('"iat" claim must be a number', payload, "iat", "invalid");
@@ -1345,12 +1345,12 @@ var jwt_claims_set_default = (protectedHeader, encodedPayload, options = {}) => 
 };
 
 // node_modules/jose/dist/node/esm/jwt/verify.js
-async function jwtVerify(jwt, key, options) {
-  const verified = await compactVerify(jwt, key, options);
+async function jwtVerify(jwt, key, options2) {
+  const verified = await compactVerify(jwt, key, options2);
   if (verified.protectedHeader.crit?.includes("b64") && verified.protectedHeader.b64 === false) {
     throw new JWTInvalid("JWTs MUST NOT use unencoded payload");
   }
-  const payload = jwt_claims_set_default(verified.protectedHeader, verified.payload, options);
+  const payload = jwt_claims_set_default(verified.protectedHeader, verified.payload, options2);
   const result = { payload, protectedHeader: verified.protectedHeader };
   if (typeof key === "function") {
     return { ...result, key: verified.key };
@@ -1394,6 +1394,12 @@ async function authenticate(req) {
     return await verifyAccessToken(token);
   } catch {
     throw new HttpError(401, "invalid or expired access token", "unauthorized");
+  }
+}
+var STAFF_BLOCKLIST = /* @__PURE__ */ new Set(["student", "guardian"]);
+function requireStaff(claims) {
+  if (STAFF_BLOCKLIST.has(claims.role)) {
+    throw new HttpError(403, "this endpoint is restricted to staff", "forbidden");
   }
 }
 function requireRole(claims, allowed) {
@@ -3215,6 +3221,636 @@ async function setStatus(db, ctx, req) {
   });
 }
 
+// services/ops-svc/api/structure.ts
+var STRUCTURE_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var STREAMS = /* @__PURE__ */ new Set([
+  "bangla_medium",
+  "english_version",
+  "english_medium",
+  "madrasah",
+  "technical"
+]);
+var GROUPS = /* @__PURE__ */ new Set([
+  "none",
+  "science",
+  "humanities",
+  "business_studies",
+  "vocational",
+  "general"
+]);
+var SHIFTS = /* @__PURE__ */ new Set(["morning", "day", "evening", "single"]);
+async function handler14(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireStaff(claims);
+      json(res, 200, await options(db, ctx), cors);
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    requireRole(claims, STRUCTURE_ROLES);
+    const body = await readJson(req);
+    switch (body.kind) {
+      case "class":
+        json(res, 200, await createClass(db, ctx, body), cors);
+        return;
+      case "section":
+        json(res, 200, await createSection(db, ctx, body), cors);
+        return;
+      case "year":
+        json(res, 200, await createYear(db, ctx, body), cors);
+        return;
+      default:
+        throw new HttpError(400, "kind must be class, section or year", "bad_kind", { field: "kind" });
+    }
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    const e = err;
+    if (e.code === "23505") {
+      json(res, 409, {
+        error: "duplicate",
+        message: e.constraint?.includes("sections") ? "\u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u098F\u0987 \u09A8\u09BE\u09AE\u09C7\u09B0 \u09B8\u09C7\u0995\u09B6\u09A8 \u098F\u0987 \u09B6\u09BF\u09AB\u099F\u09C7 \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u0986\u099B\u09C7\u0964" : e.constraint?.includes("academic_years") ? "\u098F\u0987 \u09A8\u09BE\u09AE\u09C7\u09B0 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u0986\u099B\u09C7\u0964" : "\u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u0993 \u09AC\u09BF\u09AD\u09BE\u0997\u09C7\u09B0 \u09B8\u09AE\u09A8\u09CD\u09AC\u09AF\u09BC \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u0986\u099B\u09C7\u0964"
+      }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function options(db, ctx) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: tenant } = await c.query(
+      `SELECT stream::text AS stream FROM tenants`
+    );
+    const { rows: years } = await c.query(
+      `SELECT id, label, is_current FROM academic_years ORDER BY starts_on DESC`
+    );
+    const { rows: classes } = await c.query(
+      `SELECT id, level_no, name_bn, "group"::text AS "group"
+         FROM classes ORDER BY level_no, display_order, "group"`
+    );
+    return {
+      defaultStream: tenant[0]?.stream ?? "bangla_medium",
+      years: years.map((y) => ({ id: y.id, label: y.label, isCurrent: y.is_current })),
+      classes: classes.map((cl) => ({
+        id: cl.id,
+        levelNo: cl.level_no,
+        nameBn: cl.name_bn,
+        group: cl.group
+      })),
+      streams: [...STREAMS],
+      groups: [...GROUPS],
+      shifts: [...SHIFTS]
+    };
+  });
+}
+async function createClass(db, ctx, b) {
+  const levelNo = Number(b.levelNo);
+  if (!Number.isInteger(levelNo) || levelNo < 1 || levelNo > 12) {
+    throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09E7 \u09A5\u09C7\u0995\u09C7 \u09E7\u09E8-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7", "bad_level", { field: "levelNo" });
+  }
+  const nameBn = (b.nameBn ?? "").trim();
+  if (!nameBn) throw new HttpError(400, "\u09AC\u09BE\u0982\u09B2\u09BE \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_name", { field: "nameBn" });
+  const stream = (b.stream ?? "").trim();
+  if (!STREAMS.has(stream)) {
+    throw new HttpError(400, "\u09A7\u09BE\u09B0\u09BE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_stream", { field: "stream" });
+  }
+  const group = (b.group ?? "none").trim();
+  if (!GROUPS.has(group)) {
+    throw new HttpError(400, "\u09AC\u09BF\u09AD\u09BE\u0997 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_group", { field: "group" });
+  }
+  const nameEn = (b.nameEn ?? "").trim() || nameBn;
+  const displayOrder = Number.isFinite(Number(b.displayOrder)) ? Number(b.displayOrder) : levelNo;
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      `INSERT INTO classes (tenant_id, level_no, name_bn, name_en, stream, "group", display_order)
+       VALUES ($1, $2, $3, $4, $5::institution_stream, $6::academic_group, $7)
+       RETURNING id`,
+      [ctx.tenantId, levelNo, nameBn, nameEn, stream, group, displayOrder]
+    );
+    const id = rows[0].id;
+    await writeAudit(c, ctx, {
+      action: "academic.class.create",
+      entityType: "class",
+      entityId: id,
+      after: { levelNo, nameBn, stream, group }
+    });
+    return { id, kind: "class", levelNo, nameBn, nameEn, stream, group };
+  });
+}
+async function createSection(db, ctx, b) {
+  const classId = (b.classId ?? "").trim();
+  const yearId = (b.academicYearId ?? "").trim();
+  const name = (b.name ?? "").trim();
+  if (!classId) throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_class", { field: "classId" });
+  if (!yearId) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_year", { field: "academicYearId" });
+  if (!name) throw new HttpError(400, "\u09B8\u09C7\u0995\u09B6\u09A8\u09C7\u09B0 \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_name", { field: "name" });
+  if (name.length > 20) {
+    throw new HttpError(400, "\u09A8\u09BE\u09AE \u0996\u09C1\u09AC \u09AC\u09A1\u09BC", "bad_name", { field: "name" });
+  }
+  const shift = (b.shift ?? "morning").trim();
+  if (!SHIFTS.has(shift)) throw new HttpError(400, "\u09B6\u09BF\u09AB\u099F \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_shift", { field: "shift" });
+  const capacity = Number(b.capacity ?? 60);
+  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 300) {
+    throw new HttpError(400, "\u09A7\u09BE\u09B0\u09A3\u0995\u09CD\u09B7\u09AE\u09A4\u09BE \u09E7 \u09A5\u09C7\u0995\u09C7 \u09E9\u09E6\u09E6-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8", "bad_capacity", { field: "capacity" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: cls } = await c.query(
+      `SELECT name_bn, "group"::text AS "group" FROM classes WHERE id = $1`,
+      [classId]
+    );
+    if (cls.length === 0) throw new HttpError(404, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "class_not_found");
+    const { rows } = await c.query(
+      `INSERT INTO sections (tenant_id, class_id, academic_year_id, name, shift, capacity)
+       VALUES ($1, $2, $3, $4, $5::shift_code, $6)
+       RETURNING id`,
+      [ctx.tenantId, classId, yearId, name, shift, capacity]
+    );
+    const id = rows[0].id;
+    await writeAudit(c, ctx, {
+      action: "academic.section.create",
+      entityType: "section",
+      entityId: id,
+      after: { name, classId, yearId, shift, capacity }
+    });
+    return {
+      id,
+      kind: "section",
+      name,
+      shift,
+      capacity,
+      classNameBn: cls[0].name_bn,
+      group: cls[0].group
+    };
+  });
+}
+async function createYear(db, ctx, b) {
+  const label = (b.label ?? "").trim();
+  if (!label) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7\u09B0 \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_label", { field: "label" });
+  const startsOn = (b.startsOn ?? "").trim();
+  const endsOn = (b.endsOn ?? "").trim();
+  for (const [v, field] of [[startsOn, "startsOn"], [endsOn, "endsOn"]]) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+      throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996 \u09A6\u09BF\u09A8", "bad_date", { field });
+    }
+  }
+  if (endsOn <= startsOn) {
+    throw new HttpError(400, "\u09B6\u09C7\u09B7\u09C7\u09B0 \u09A4\u09BE\u09B0\u09BF\u0996 \u09B6\u09C1\u09B0\u09C1\u09B0 \u09AA\u09B0\u09C7 \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7", "bad_range", { field: "endsOn" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    if (b.isCurrent) {
+      await c.query(`UPDATE academic_years SET is_current = false WHERE is_current`);
+    }
+    const { rows } = await c.query(
+      `INSERT INTO academic_years (tenant_id, label, starts_on, ends_on, is_current)
+       VALUES ($1, $2, $3::date, $4::date, $5)
+       RETURNING id`,
+      [ctx.tenantId, label, startsOn, endsOn, b.isCurrent === true]
+    );
+    const id = rows[0].id;
+    await writeAudit(c, ctx, {
+      action: "academic.year.create",
+      entityType: "academic_year",
+      entityId: id,
+      after: { label, startsOn, endsOn, isCurrent: b.isCurrent === true }
+    });
+    return { id, kind: "year", label, startsOn, endsOn, isCurrent: b.isCurrent === true };
+  });
+}
+
+// services/ops-svc/api/guardians.ts
+var GUARDIAN_ADMIN = ["principal", "school_owner", "it_admin"];
+var RELATIONS = /* @__PURE__ */ new Set([
+  "father",
+  "mother",
+  "brother",
+  "sister",
+  "uncle",
+  "aunt",
+  "grandparent",
+  "legal_guardian",
+  "other"
+]);
+function normalisePhone2(raw) {
+  const digits = raw.replace(/[^\d+]/g, "");
+  if (/^\+8801[3-9]\d{8}$/.test(digits)) return digits;
+  if (/^8801[3-9]\d{8}$/.test(digits)) return `+${digits}`;
+  if (/^01[3-9]\d{8}$/.test(digits)) return `+88${digits}`;
+  throw new HttpError(400, "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2 \u09A8\u09AE\u09CD\u09AC\u09B0\u099F\u09BF \u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "bad_phone", { field: "phone" });
+}
+async function handler15(req, res) {
+  const cors = corsHeaders([], "GET, POST, PATCH, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireStaff(claims);
+      const mayEdit = GUARDIAN_ADMIN.includes(claims.role);
+      const q = query(req);
+      const studentId = q.get("studentId");
+      const term = (q.get("q") ?? "").trim();
+      if (studentId) {
+        json(res, 200, await forStudent(db, ctx, studentId, mayEdit), cors);
+        return;
+      }
+      if (term) {
+        requireRole(claims, GUARDIAN_ADMIN);
+        json(res, 200, await search2(db, ctx, term), cors);
+        return;
+      }
+      throw new HttpError(400, "studentId or q is required", "bad_request");
+    }
+    if (req.method === "POST") {
+      requireRole(claims, GUARDIAN_ADMIN);
+      json(res, 200, await link(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "PATCH") {
+      requireRole(claims, GUARDIAN_ADMIN);
+      json(res, 200, await permissions(db, ctx, req), cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function forStudent(db, ctx, studentId, mayEdit) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: stu } = await c.query(
+      `SELECT full_name_bn AS name_bn FROM users WHERE id = $1`,
+      [studentId]
+    );
+    if (stu.length === 0) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    const { rows } = await c.query(
+      `SELECT gs.id, gs.guardian_id, g.full_name_bn AS name_bn, g.phone_e164 AS phone,
+              gs.relation, gs.is_primary, gs.receives_sms, gs.can_pay_fees,
+              -- How many other children this person is guardian to. The
+              -- office needs it before they "create" a guardian who is
+              -- already in the school under another child.
+              (SELECT count(*)::int FROM guardianships x
+                WHERE x.guardian_id = gs.guardian_id AND x.student_id <> gs.student_id)
+                AS other_wards
+         FROM guardianships gs
+         JOIN users g ON g.id = gs.guardian_id
+        WHERE gs.student_id = $1
+        ORDER BY gs.is_primary DESC, g.full_name_bn`,
+      [studentId]
+    );
+    return {
+      student: { id: studentId, nameBn: stu[0].name_bn },
+      guardians: rows.map((r) => ({
+        linkId: r.id,
+        guardianId: r.guardian_id,
+        nameBn: r.name_bn,
+        // Withheld unless the caller may edit it. See the header of the GET
+        // branch: the office corrects the number, a subject teacher does not
+        // need it, and the same drawer serves both.
+        phone: mayEdit ? r.phone : null,
+        relation: r.relation,
+        isPrimary: r.is_primary,
+        receivesSms: r.receives_sms,
+        canPayFees: r.can_pay_fees,
+        otherWards: r.other_wards
+      }))
+    };
+  });
+}
+async function search2(db, ctx, term) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      `SELECT u.id, u.full_name_bn AS name_bn, u.phone_e164 AS phone,
+              (SELECT count(*)::int FROM guardianships g WHERE g.guardian_id = u.id) AS wards
+         FROM users u
+        WHERE u.deleted_at IS NULL
+          AND u.status <> 'deleted'
+          AND (u.full_name_bn ILIKE '%' || $1 || '%' OR u.phone_e164 = $1)
+          -- Anyone in the school may be linked as a guardian: an older
+          -- sibling who is also a student, a teacher whose child attends.
+          -- Excluding non-guardians here would force a duplicate person.
+        ORDER BY (SELECT count(*) FROM guardianships g WHERE g.guardian_id = u.id) DESC,
+                 u.full_name_bn
+        LIMIT 20`,
+      [term]
+    );
+    return {
+      candidates: rows.map((r) => ({
+        id: r.id,
+        nameBn: r.name_bn,
+        phone: r.phone,
+        wardCount: r.wards
+      }))
+    };
+  });
+}
+async function link(db, ctx, req) {
+  const b = await readJson(req);
+  const studentId = (b.studentId ?? "").trim();
+  if (!studentId) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09A8 \u0995\u09B0\u09C1\u09A8", "bad_request", { field: "studentId" });
+  const relation = (b.relation ?? "").trim();
+  if (!RELATIONS.has(relation)) {
+    throw new HttpError(400, "\u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_relation", { field: "relation" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: stu } = await c.query(
+      `SELECT id FROM users WHERE id = $1`,
+      [studentId]
+    );
+    if (stu.length === 0) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    let guardianId = (b.guardianId ?? "").trim();
+    let created = false;
+    let reusedExisting = false;
+    if (!guardianId) {
+      const nameBn = (b.nameBn ?? "").trim();
+      if (!nameBn) throw new HttpError(400, "\u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u09C7\u09B0 \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_name", { field: "nameBn" });
+      const phone = normalisePhone2(b.phone ?? "");
+      const { rows: existing } = await c.query(
+        `SELECT id FROM users WHERE phone_e164 = $1 AND deleted_at IS NULL`,
+        [phone]
+      );
+      if (existing.length > 0) {
+        guardianId = existing[0].id;
+        reusedExisting = true;
+      } else {
+        const { rows: rows2 } = await c.query(
+          `INSERT INTO users (tenant_id, full_name_bn, full_name_en, phone_e164, status)
+           VALUES ($1, $2, $3, $4, 'invited') RETURNING id`,
+          [ctx.tenantId, nameBn, (b.nameEn ?? "").trim() || nameBn, phone]
+        );
+        guardianId = rows2[0].id;
+        created = true;
+        await c.query(
+          `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES ($1, $2, 'guardian')
+           ON CONFLICT DO NOTHING`,
+          [ctx.tenantId, guardianId]
+        );
+      }
+    }
+    if (guardianId === studentId) {
+      throw new HttpError(400, "\u098F\u0995\u099C\u09A8 \u09A8\u09BF\u099C\u09C7\u09B0 \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE", "self_link", { field: "guardianId" });
+    }
+    const { rows } = await c.query(
+      `SELECT app.set_guardian_permissions($1, $2, $3, $4, $5, $6) AS id`,
+      [
+        studentId,
+        guardianId,
+        relation,
+        b.isPrimary === true,
+        b.receivesSms !== false,
+        b.canPayFees !== false
+      ]
+    );
+    await writeAudit(c, ctx, {
+      action: "ops.guardian.link",
+      entityType: "guardianship",
+      entityId: rows[0].id,
+      after: {
+        studentId,
+        guardianId,
+        relation,
+        isPrimary: b.isPrimary === true,
+        receivesSms: b.receivesSms !== false,
+        canPayFees: b.canPayFees !== false,
+        createdGuardian: created
+      }
+    });
+    return {
+      linkId: rows[0].id,
+      guardianId,
+      created,
+      // The office needs to be told when their "new" guardian was matched to
+      // somebody already here — otherwise they will not understand why the
+      // name on screen is not the one they typed.
+      reusedExisting
+    };
+  });
+}
+async function permissions(db, ctx, req) {
+  const b = await readJson(req);
+  const studentId = (b.studentId ?? "").trim();
+  const guardianId = (b.guardianId ?? "").trim();
+  if (!studentId || !guardianId) {
+    throw new HttpError(400, "studentId and guardianId are required", "bad_request");
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(
+      `SELECT gs.relation, gs.is_primary, gs.receives_sms, gs.can_pay_fees,
+              g.full_name_bn AS name_bn
+         FROM guardianships gs JOIN users g ON g.id = gs.guardian_id
+        WHERE gs.student_id = $1 AND gs.guardian_id = $2`,
+      [studentId, guardianId]
+    );
+    if (before.length === 0) throw new HttpError(404, "\u09B8\u0982\u09AF\u09CB\u0997 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    const prev = before[0];
+    const relation = (b.relation ?? prev.relation).trim();
+    if (!RELATIONS.has(relation)) {
+      throw new HttpError(400, "\u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_relation", { field: "relation" });
+    }
+    const isPrimary = b.isPrimary ?? prev.is_primary;
+    const receivesSms = b.receivesSms ?? prev.receives_sms;
+    const canPayFees = b.canPayFees ?? prev.can_pay_fees;
+    if (prev.is_primary && !isPrimary) {
+      const { rows: others } = await c.query(
+        `SELECT count(*)::int AS n FROM guardianships
+          WHERE student_id = $1 AND guardian_id <> $2`,
+        [studentId, guardianId]
+      );
+      if ((others[0]?.n ?? 0) === 0) {
+        throw new HttpError(
+          400,
+          "\u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u0995\u09C7 \u09AA\u09CD\u09B0\u09A7\u09BE\u09A8 \u09A5\u09C7\u0995\u09C7 \u09B8\u09B0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u0986\u0997\u09C7 \u0986\u09B0\u09C7\u0995\u099C\u09A8 \u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8",
+          "last_primary",
+          { field: "isPrimary" }
+        );
+      }
+    }
+    const { rows } = await c.query(
+      `SELECT app.set_guardian_permissions($1, $2, $3, $4, $5, $6) AS id`,
+      [studentId, guardianId, relation, isPrimary, receivesSms, canPayFees]
+    );
+    await writeAudit(c, ctx, {
+      action: "ops.guardian.permissions",
+      entityType: "guardianship",
+      entityId: rows[0].id,
+      before: {
+        relation: prev.relation,
+        isPrimary: prev.is_primary,
+        receivesSms: prev.receives_sms,
+        canPayFees: prev.can_pay_fees
+      },
+      after: { relation, isPrimary, receivesSms, canPayFees }
+    });
+    return {
+      linkId: rows[0].id,
+      guardianId,
+      nameBn: prev.name_bn,
+      relation,
+      isPrimary,
+      receivesSms,
+      canPayFees,
+      // Say out loud that this reaches the notice system, so the office knows
+      // the setting did something.
+      feeNoticesChanged: prev.can_pay_fees !== canPayFees
+    };
+  });
+}
+
+// services/ops-svc/api/audit.ts
+var AUDIT_READERS = ["principal", "school_owner", "it_admin"];
+var PAGE = 50;
+var SENSITIVE_KEY = /(phone|mobile|email|nid|brc|password|secret|token|otp|dob|birth|account)/i;
+function maskValue(v) {
+  if (typeof v !== "string" || v.length === 0) return "\u2022\u2022\u2022";
+  const tail = v.slice(-2);
+  return /^\d+$/.test(tail) ? `\u2022\u2022\u2022${tail}` : "\u2022\u2022\u2022";
+}
+function redact(value, depth = 0) {
+  if (depth > 6 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => redact(v, depth + 1));
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = SENSITIVE_KEY.test(k) ? maskValue(v) : redact(v, depth + 1);
+  }
+  return out;
+}
+async function handler16(req, res) {
+  const cors = corsHeaders([], "GET, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, AUDIT_READERS);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const q = query(req);
+    const action = (q.get("action") ?? "").trim();
+    const entityType = (q.get("entityType") ?? "").trim();
+    const actorId = (q.get("actorId") ?? "").trim();
+    const from = (q.get("from") ?? "").trim();
+    const to = (q.get("to") ?? "").trim();
+    const offset = Math.max(0, Number(q.get("offset") ?? 0) || 0);
+    for (const [v, name] of [[from, "from"], [to, "to"]]) {
+      if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996 YYYY-MM-DD \u0986\u0995\u09BE\u09B0\u09C7 \u09A6\u09BF\u09A8", "bad_date", { field: name });
+      }
+    }
+    const body = await db.withTenant(ctx, async (c) => {
+      const { rows } = await c.query(
+        `SELECT a.id::text, a.created_at::text, a.actor_id, a.actor_role,
+                u.full_name_bn AS actor_name, a.action, a.entity_type,
+                a.entity_id::text, a.before_state, a.after_state
+           FROM audit.activity_log a
+           LEFT JOIN users u ON u.id = a.actor_id
+          -- The uuid and date filters are passed as NULL, not as an empty
+          -- string. PostgreSQL evaluates a constant cast at plan time, so
+          -- comparing an empty string cast to uuid throws "invalid input
+          -- syntax for type uuid" even though the OR would short-circuit --
+          -- and the no-filter case is the DEFAULT view of this screen, so
+          -- every first load would have been a 500. Found by running the
+          -- query rather than by reading it.
+          WHERE ($1 = '' OR a.action = $1)
+            AND ($2 = '' OR a.entity_type = $2)
+            AND ($3::uuid IS NULL OR a.actor_id = $3::uuid)
+            AND ($4::date IS NULL OR a.created_at >= $4::date)
+            -- The upper bound is inclusive of the whole day: a person
+            -- filtering "to the 5th" means the end of the 5th, not its
+            -- first instant.
+            AND ($5::date IS NULL OR a.created_at < ($5::date + 1))
+          ORDER BY a.created_at DESC, a.id DESC
+          LIMIT $6 OFFSET $7`,
+        // Empty string means "no filter" to the caller and NULL to postgres.
+        [action, entityType, actorId || null, from || null, to || null, PAGE + 1, offset]
+      );
+      const { rows: facets } = await c.query(
+        `SELECT 'action' AS kind, action AS value, count(*)::int AS n
+           FROM audit.activity_log GROUP BY action
+          UNION ALL
+         SELECT 'entity_type', entity_type, count(*)::int
+           FROM audit.activity_log WHERE entity_type IS NOT NULL GROUP BY entity_type
+          ORDER BY kind, value`
+      );
+      const { rows: actors } = await c.query(
+        `SELECT a.actor_id::text AS id, u.full_name_bn AS name_bn, count(*)::int AS n
+           FROM audit.activity_log a
+           LEFT JOIN users u ON u.id = a.actor_id
+          WHERE a.actor_id IS NOT NULL
+          GROUP BY a.actor_id, u.full_name_bn
+          ORDER BY count(*) DESC
+          LIMIT 25`
+      );
+      const page = rows.slice(0, PAGE);
+      return {
+        entries: page.map((r) => ({
+          id: r.id,
+          at: r.created_at,
+          actor: {
+            id: r.actor_id,
+            // A deleted or foreign actor id shows as the id rather than as
+            // blank: "who did this" with no answer is the one thing an audit
+            // entry must not say.
+            nameBn: r.actor_name ?? (r.actor_id ? "(\u0985\u099C\u09BE\u09A8\u09BE)" : "(\u09B8\u09BF\u09B8\u09CD\u099F\u09C7\u09AE)"),
+            role: r.actor_role
+          },
+          action: r.action,
+          entityType: r.entity_type,
+          entityId: r.entity_id,
+          before: redact(r.before_state),
+          after: redact(r.after_state)
+        })),
+        hasMore: rows.length > PAGE,
+        offset,
+        pageSize: PAGE,
+        facets: {
+          actions: facets.filter((f) => f.kind === "action").map((f) => ({ value: f.value, count: f.n })),
+          entityTypes: facets.filter((f) => f.kind === "entity_type").map((f) => ({ value: f.value, count: f.n })),
+          actors: actors.map((a) => ({
+            id: a.id,
+            nameBn: a.name_bn ?? "(\u0985\u099C\u09BE\u09A8\u09BE)",
+            count: a.n
+          }))
+        }
+      };
+    });
+    json(res, 200, body, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -3229,9 +3865,12 @@ var ROUTES = {
   enrol: handler10,
   rollover: handler11,
   settings: handler12,
-  users: handler13
+  users: handler13,
+  structure: handler14,
+  guardians: handler15,
+  audit: handler16
 };
-async function handler14(req, res) {
+async function handler17(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -3250,7 +3889,9 @@ async function handler14(req, res) {
       "enrol",
       "rollover",
       "settings",
-      "users"
+      "users",
+      "structure",
+      "guardians"
     ]);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
@@ -3258,5 +3899,5 @@ async function handler14(req, res) {
   return route(req, res);
 }
 export {
-  handler14 as default
+  handler17 as default
 };

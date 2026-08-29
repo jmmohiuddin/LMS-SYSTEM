@@ -18,8 +18,8 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৭০৯ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-3 শেষে; এর সাথে
-১৯টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
+এবং টেস্টেড (**৭৩৮ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-3 সম্পূর্ণ শেষে; এর সাথে
+২০টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
 যা নেই, সেটাই এই প্ল্যান — অগ্রাধিকার অনুযায়ী:
@@ -529,11 +529,21 @@ routine-solver discrepancy was investigated and documented rather than changed
 not duplicates, and `solve` stays API-only rather than gaining a second entry
 point). 709 tests, 0 failing; `db/tests/assignment_history.sql` 13/13.
 
-**What R-3 did NOT deliver, and should be scheduled:** creating classes and sections
-from the UI (a school opening a seventh section mid-year still needs the pilot
-runbook), guardian linking and `can_pay_fees` editing, and the audit VIEWER — the
-log is now written and readable, but F-1603's screen is not built. See
-`docs/PHASE_LOG.md` R-3 for the full list.
+**The R-3 completion pass (2026-08-29) closed all three of those gaps:** creating
+academic years, classes and sections from the UI; guardian linking with relationship,
+SMS and `can_pay_fees`; and F-1603's audit viewer with filters, a changed-fields-only
+diff and server-side redaction.
+
+Building them exposed a real authorization gap underneath: `classes`, `sections` and
+`guardianships` had complete tenant isolation and **no role scope**, so any session in
+a school could have created a class or changed who pays a child's fees. Migration
+**042** adds the RESTRICTIVE write policies they had always lacked; of twenty SQL
+suites exactly one noticed, which is the measure of how unexercised that path was.
+
+R-3 is now fully complete: 738 tests, 0 failing; 20 SQL suites; nothing in the phase
+is "Backend complete — UI pending". Remaining adjacent gaps — editing an existing
+class or section, and an audit export — are listed in `docs/PHASE_LOG.md`
+R-3-COMPLETION.
 
 ### R-4 — Calendar & schedule surfacing
 
@@ -1032,7 +1042,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-0 | Hygiene | XS | — | **done** |
 | R-1 | White-label branding | M | — | **done** (+ R-1-A surfaces) |
 | R-2 | Notices + notifications | M–L | R-1 (branded shell) | **done 2026-08-29** |
-| R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** |
+| R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** (+ completion pass) |
 | R-4 | Calendar UI | S | R-2 (notify hooks) | next |
 | R-5 | Branded print engine | M | R-1 | planned |
 | R-6 | Search + history | S–M | — | planned |

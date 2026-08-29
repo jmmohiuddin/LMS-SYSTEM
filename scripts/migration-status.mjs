@@ -83,6 +83,10 @@ const SENTINELS = [
   ['039_tenant_branding',             'function',   'app.public_branding'],
   ['040_notices',                     'table',      'public.notice_receipts'],
   ['041_assignment_history',          'table',      'public.class_teacher_assignments'],
+  // 042 adds only RLS policies and one function, so the function is the
+  // sentinel — a policy is not something this script has a probe kind for,
+  // and inventing one for a single migration would be the wrong trade.
+  ['042_structure_write_scope',       'function',   'app.set_guardian_permissions'],
 ];
 
 /**
@@ -131,6 +135,7 @@ const MEANING = {
   '039_tenant_branding':             'R-1 — a school sees its own name on its own login screen',
   '040_notices':                     'R-2 — the school can finally tell anybody anything',
   '041_assignment_history':          'R-3 — replacing a teacher stops erasing the last one',
+  '042_structure_write_scope':       'R-3 — a teacher can no longer create a class or move a fee permission',
 };
 
 const QUERIES = {

@@ -28,6 +28,10 @@ import { iconSvg } from './icon.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum, bnDate,
 } from './view-states.ts';
+import {
+  structureForm, createdNote, type StructureOptions, type StructureKind,
+} from './structure-forms.ts';
+import { GuardianPanel } from './guardian-panel.ts';
 
 // ── Shapes returned by /api/v1/academics/hierarchy ──────────────────────
 
@@ -104,6 +108,12 @@ export interface AcademicViewOptions {
   auth: Auth;
   /** Whether this caller may change structure. Advisory: the server decides. */
   canManage: boolean;
+  /**
+   * Narrower than canManage: who may pay a child's fees is a statement about
+   * a family, so coordinators are excluded. Mirrors guardianship_insert_scope
+   * in migration 042.
+   */
+  canManageGuardians: boolean;
 }
 
 type Depth =
@@ -125,8 +135,12 @@ export class AcademicView {
   private notice = '';
   /** Which panel is open inside a section: assignment, bulk move, or neither. */
   private panel: 'none' | 'assign' | 'move' = 'none';
+  /** R-3 completion: which create form is open, if any. */
+  private creating: StructureKind | null = null;
+  private structureOptions: StructureOptions | null = null;
   private selected = new Set<string>();
   private busy = false;
+  private created: Record<string, unknown> | null = null;
 
   constructor(options: AcademicViewOptions) {
     this.o = options;
@@ -180,6 +194,51 @@ export class AcademicView {
       this.error = 'শিক্ষার্থীর তথ্য আনা যায়নি।';
     } finally {
       this.loading = false; this.render();
+    }
+  }
+
+  /**
+   * The lists a create form needs. Fetched lazily, on the first time a form
+   * is opened, rather than with the tree: most visits to this screen are
+   * navigation, and the options only matter to the four roles that may
+   * create anything.
+   */
+  private async loadStructureOptions(): Promise<void> {
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/ops/structure');
+      if (!res.ok) throw new Error(String(res.status));
+      this.structureOptions = (await res.json()) as StructureOptions;
+    } catch {
+      this.error = 'তালিকা আনা যায়নি — সংযোগ দেখুন।';
+    } finally {
+      this.render();
+    }
+  }
+
+  private async submitStructure(payload: Record<string, unknown>): Promise<void> {
+    this.busy = true; this.error = ''; this.render();
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/ops/structure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json() as {
+        kind?: string; label?: string; nameBn?: string; name?: string;
+        classNameBn?: string; message?: string;
+      };
+      if (!res.ok) { this.error = body.message ?? 'তৈরি করা যায়নি।'; return; }
+      this.created = body;
+      this.creating = null;
+      // The options list is now stale — the new class must be selectable as a
+      // section's parent immediately.
+      this.structureOptions = null;
+      await this.loadTree();
+      if (this.depth.at === 'level') this.render();
+    } catch {
+      this.error = 'সংযোগ নেই — তৈরি করা যায়নি।';
+    } finally {
+      this.busy = false; this.render();
     }
   }
 
@@ -265,6 +324,7 @@ export class AcademicView {
 
     root.append(this.header());
     if (this.notice) root.append(successNote(d, this.notice));
+    if (this.created) root.append(createdNote(d, this.created));
     if (this.error) {
       root.append(errorState(d, this.error,
         this.error.includes('অনুমতি') ? undefined : () => void this.loadTree()));
@@ -274,6 +334,27 @@ export class AcademicView {
       if (this.error.includes('অনুমতি')) return;
     }
     if (this.loading) { root.append(skeleton(d, 4)); return; }
+
+    // The create forms sit above whatever level is on screen, so the office
+    // stays where they were when the new thing appears below.
+    if (this.creating) {
+      if (!this.structureOptions) {
+        void this.loadStructureOptions();
+        root.append(skeleton(d, 2));
+      } else {
+        root.append(structureForm({
+          doc: d,
+          kind: this.creating,
+          options: this.structureOptions,
+          // Narrowed into a local first: TS does not carry the discriminant
+          // through the property access inside the object literal.
+          presetClassId: this.presetClassId(),
+          busy: this.busy,
+          onSubmit: (payload) => void this.submitStructure(payload),
+          onCancel: () => { this.creating = null; this.render(); },
+        }));
+      }
+    }
 
     switch (this.depth.at) {
       case 'tree':    this.renderTree(root); break;
@@ -344,12 +425,63 @@ export class AcademicView {
     return year ? `শিক্ষাবর্ষ ${year}` : '';
   }
 
+  /**
+   * When the office opens the section form from inside a class, that class is
+   * pre-selected — they are already looking at the thing that needs a section.
+   */
+  private presetClassId(): string | undefined {
+    if (this.depth.at !== 'level') return undefined;
+    const levelNo = this.depth.levelNo;
+    return this.tree?.classes.find((c) => c.levelNo === levelNo)?.groups[0]?.classId;
+  }
+
+  /** The create bar. Only drawn for the roles that may actually create. */
+  private createBar(kinds: StructureKind[]): HTMLElement | null {
+    if (!this.o.canManage || this.creating) return null;
+    const d = this.o.doc;
+    const bar = d.createElement('div');
+    bar.className = 'action-row';
+    bar.style.padding = '0 var(--s-4) var(--s-3)';
+    const labels: Record<StructureKind, string> = {
+      year: 'শিক্ষাবর্ষ তৈরি', class: 'নতুন শ্রেণি', section: 'নতুন সেকশন',
+    };
+    for (const k of kinds) {
+      const b = d.createElement('button');
+      b.type = 'button';
+      b.className = 'btn-secondary btn-small';
+      b.textContent = labels[k];
+      b.addEventListener('click', () => {
+        this.creating = k; this.created = null;
+        if (!this.structureOptions) void this.loadStructureOptions(); else this.render();
+      });
+      bar.append(b);
+    }
+    return bar;
+  }
+
   private renderTree(root: HTMLElement): void {
     const d = this.o.doc;
     const levels = this.tree?.classes ?? [];
+    const noYear = (this.tree?.years.length ?? 0) === 0;
+
+    const bar = this.createBar(noYear ? ['year'] : ['year', 'class', 'section']);
+    if (bar) root.append(bar);
+
     if (levels.length === 0) {
       root.append(emptyState(d, {
-        message: 'এই শিক্ষাবর্ষে কোনো শ্রেণি তৈরি হয়নি। শ্রেণি ও সেকশন তৈরি হলে এখানে দেখা যাবে।',
+        message: noYear
+          ? 'এখনো কোনো শিক্ষাবর্ষ তৈরি হয়নি। শিক্ষাবর্ষ দিয়েই প্রতিষ্ঠান শুরু হয় — ' +
+            'এরপর শ্রেণি, তারপর সেকশন।'
+          : 'এই শিক্ষাবর্ষে কোনো শ্রেণি তৈরি হয়নি। শ্রেণি তৈরি করে তার সেকশন যোগ করুন।',
+        action: this.o.canManage
+          ? {
+              label: noYear ? 'শিক্ষাবর্ষ তৈরি করুন' : 'শ্রেণি তৈরি করুন',
+              onClick: () => {
+                this.creating = noYear ? 'year' : 'class';
+                if (!this.structureOptions) void this.loadStructureOptions(); else this.render();
+              },
+            }
+          : undefined,
       }));
       return;
     }
@@ -380,6 +512,9 @@ export class AcademicView {
     const lvl = this.tree?.classes.find((c) => c.levelNo === levelNo);
     if (!lvl) { this.depth = { at: 'tree' }; this.render(); return; }
 
+    const bar = this.createBar(['section']);
+    if (bar) root.append(bar);
+
     for (const g of lvl.groups) {
       const h = d.createElement('h2');
       h.className = 'section-heading';
@@ -389,6 +524,12 @@ export class AcademicView {
       if (g.sections.length === 0) {
         root.append(emptyState(d, {
           message: `${lvl.nameBn} ${g.groupBn}-এ এখনো কোনো সেকশন তৈরি হয়নি।`,
+          action: this.o.canManage
+            ? { label: 'সেকশন তৈরি করুন', onClick: () => {
+                this.creating = 'section'; this.created = null;
+                if (!this.structureOptions) void this.loadStructureOptions(); else this.render();
+              } }
+            : undefined,
         }));
         continue;
       }
@@ -831,31 +972,18 @@ export class AcademicView {
       : 'এই সময়ে কোনো হাজিরা নেওয়া হয়নি।';
     root.append(attP);
 
-    const gh = d.createElement('h2');
-    gh.className = 'section-heading';
-    gh.textContent = 'অভিভাবক';
-    root.append(gh);
-    if (s.guardians.length === 0) {
-      root.append(emptyState(d, { message: 'কোনো অভিভাবক যুক্ত করা হয়নি।' }));
-    } else {
-      const list = d.createElement('div');
-      list.className = 'system-list';
-      for (const g of s.guardians) {
-        const row = d.createElement('div');
-        row.className = 'system-row';
-        const t = d.createElement('span');
-        t.className = 'system-title';
-        t.textContent = g.nameBn;
-        const desc = d.createElement('span');
-        desc.className = 'system-desc';
-        // Relationship and authority only. A phone number on a screen every
-        // teacher can open is a phone number on every teacher's device.
-        desc.textContent = `${g.relation}${g.isPrimary ? ' · প্রধান' : ''}${g.canPayFees ? ' · ফি পরিশোধ করতে পারেন' : ''}`;
-        row.append(t, desc);
-        list.append(row);
-      }
-      root.append(list);
-    }
+    // R-3 completion: the guardian block is now a live panel — linking,
+    // relationship, SMS and fee permission — with its own loading, empty and
+    // error states. It mounts into its own container so re-rendering it does
+    // not rebuild the whole student drawer under the user's finger.
+    const guardianHost = d.createElement('section');
+    root.append(guardianHost);
+    new GuardianPanel({
+      root: guardianHost, doc: d, auth: this.o.auth,
+      studentId: s.student.id,
+      studentNameBn: s.student.nameBn,
+      canManage: this.o.canManageGuardians,
+    });
 
     const hh = d.createElement('h2');
     hh.className = 'section-heading';

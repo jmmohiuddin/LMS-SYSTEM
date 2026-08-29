@@ -671,6 +671,12 @@ const DEMO_GATES: Record<string, string[]> = {
   '/api/v1/ops/rollover':  ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
   '/api/v1/ops/users':     ['principal', 'school_owner', 'it_admin', 'academic_coordinator'],
   '/api/v1/academics/publish': ['principal', 'school_owner', 'academic_coordinator'],
+  '/api/v1/ops/structure':  ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
+  '/api/v1/ops/guardians':  ['principal', 'school_owner', 'it_admin', 'academic_coordinator',
+                             'class_teacher', 'subject_teacher', 'dept_head', 'accountant'],
+  // The narrowest gate in the product: the audit trail names every change
+  // anybody made, so it is three roles and no others.
+  '/api/v1/ops/audit':      ['principal', 'school_owner', 'it_admin'],
   '/api/v1/finance/generate':  ['principal', 'school_owner', 'accountant'],
 };
 
@@ -689,6 +695,59 @@ function demoForbidden(pathname: string): Response | null {
   }
   return null;
 }
+
+/**
+ * The audit fixture. Includes the redacted case — a phone number in a diff —
+ * so the preview shows what the server's masking does rather than only
+ * claiming it happens.
+ */
+const DEMO_AUDIT = [
+  {
+    id: '5', at: '2026-08-28T09:12:00Z',
+    actor: { id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', role: 'principal' },
+    action: 'ops.guardian.permissions', entityType: 'guardianship', entityId: 'demo-link-1',
+    before: { canPayFees: true, receivesSms: true, phone: '•••11' },
+    after: { canPayFees: false, receivesSms: true, phone: '•••11' },
+  },
+  {
+    id: '4', at: '2026-08-27T14:40:00Z',
+    actor: { id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', role: 'principal' },
+    action: 'academic.class_teacher.assign', entityType: 'section', entityId: 'demo-sec-F',
+    before: { teacherId: 'demo-t1', nameBn: 'রহিম স্যার' },
+    after: { teacherId: 'demo-t2', nameBn: 'করিম স্যার', reason: 'বদলি হয়েছেন' },
+  },
+  {
+    id: '3', at: '2026-08-26T11:05:00Z',
+    actor: { id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', role: 'principal' },
+    action: 'academic.section.create', entityType: 'section', entityId: 'demo-sec-G',
+    before: null,
+    after: { name: 'G', capacity: 55, shift: 'morning' },
+  },
+  {
+    id: '2', at: '2026-08-25T08:30:00Z',
+    actor: { id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', role: 'principal' },
+    action: 'exam.results.publish', entityType: 'exam', entityId: 'demo-exam0',
+    before: null, after: { resultsPublished: 236, notified: 472 },
+  },
+  {
+    // The masked case: a phone number that CHANGED, so the redaction is
+    // visible rather than merely claimed. The server masks to the last two
+    // digits — enough to recognise a number, not enough to dial it.
+    id: '1b', at: '2026-08-24T17:10:00Z',
+    actor: { id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', role: 'principal' },
+    action: 'ops.user.create', entityType: 'user', entityId: 'demo-new-user',
+    before: null, after: { nameBn: 'নতুন শিক্ষক', roleCode: 'subject_teacher', phone: '•••47' },
+  },
+  {
+    id: '1', at: '2026-08-24T16:00:00Z',
+    actor: { id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', role: 'principal' },
+    action: 'ops.settings.update', entityType: 'tenant', entityId: 'demo-tenant',
+    before: { noticeMaxChars: 180 }, after: { noticeMaxChars: 240 },
+  },
+];
+
+/** Mutable so the preview's fee-permission toggle actually holds. */
+let demoGuardianPays = true;
 
 function demoRole(): string {
   const fromUrl = new URLSearchParams(location.search).get('role');
@@ -1051,6 +1110,95 @@ export class DemoAuth extends Auth {
 
       case '/api/v1/finance/generate':
         return ok({ ok: true, billingPeriod: '2026-05', invoiceCount: 236, notified: 198 });
+
+      // ── R-3 completion pass ────────────────────────────────────────
+      case '/api/v1/ops/structure': {
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as {
+            kind?: string; label?: string; nameBn?: string; name?: string;
+          };
+          if (req.kind === 'year')  return ok({ id: 'demo-new-year', kind: 'year', label: req.label });
+          if (req.kind === 'class') return ok({ id: 'demo-new-class', kind: 'class', nameBn: req.nameBn });
+          return ok({ id: 'demo-new-section', kind: 'section', name: req.name,
+                      classNameBn: 'নবম শ্রেণি', group: 'science' });
+        }
+        return ok({
+          defaultStream: 'bangla_medium',
+          years: [
+            { id: 'demo-year', label: '২০২৬', isCurrent: true },
+            { id: 'demo-year-prev', label: '২০২৫', isCurrent: false },
+          ],
+          classes: [
+            { id: 'demo-cls-9sci', levelNo: 9, nameBn: 'নবম শ্রেণি', group: 'science' },
+            { id: 'demo-cls-9hum', levelNo: 9, nameBn: 'নবম শ্রেণি', group: 'humanities' },
+            { id: 'demo-cls-10sci', levelNo: 10, nameBn: 'দশম শ্রেণি', group: 'science' },
+          ],
+          streams: ['bangla_medium', 'english_version', 'english_medium', 'madrasah', 'technical'],
+          groups: ['none', 'science', 'humanities', 'business_studies', 'vocational', 'general'],
+          shifts: ['morning', 'day', 'evening', 'single'],
+        });
+      }
+
+      case '/api/v1/ops/guardians': {
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { guardianId?: string; phone?: string };
+          // The duplicate-guardian case, reproduced: this number is already
+          // in the demo school, so a "create" links the existing person.
+          const reused = !req.guardianId && (req.phone ?? '').includes('01700000011');
+          return ok({ linkId: 'demo-link-new', guardianId: req.guardianId ?? 'demo-g1',
+                      created: !req.guardianId && !reused, reusedExisting: reused });
+        }
+        if (init.method === 'PATCH') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { canPayFees?: boolean };
+          demoGuardianPays = req.canPayFees ?? demoGuardianPays;
+          return ok({ linkId: 'demo-link-1', guardianId: 'demo-g1', nameBn: 'মোঃ আব্দুল করিম',
+                      relation: 'father', isPrimary: true, receivesSms: true,
+                      canPayFees: demoGuardianPays,
+                      feeNoticesChanged: req.canPayFees !== undefined });
+        }
+        if (url.searchParams.get('q')) {
+          return ok({ candidates: [
+            { id: 'demo-g1', nameBn: 'মোঃ আব্দুল করিম', phone: '+8801700000011', wardCount: 2 },
+            { id: 'demo-g3', nameBn: 'করিমা বেগম', phone: '+8801700000013', wardCount: 0 },
+          ] });
+        }
+        // The server withholds the phone from anyone who may not edit it;
+        // the demo must not be the one place a teacher sees the school's
+        // contact list.
+        const mayEdit = ['principal', 'school_owner', 'it_admin'].includes(demoRole());
+        return ok({
+          student: { id: url.searchParams.get('studentId') ?? 'demo-s1', nameBn: 'শিক্ষার্থী ১' },
+          guardians: [
+            { linkId: 'demo-link-1', guardianId: 'demo-g1', nameBn: 'মোঃ আব্দুল করিম',
+              phone: mayEdit ? '+8801700000011' : null, relation: 'father', isPrimary: true,
+              receivesSms: true, canPayFees: demoGuardianPays, otherWards: 2 },
+            { linkId: 'demo-link-2', guardianId: 'demo-g2', nameBn: 'রোকসানা বেগম',
+              phone: mayEdit ? '+8801700000012' : null, relation: 'mother', isPrimary: false,
+              receivesSms: true, canPayFees: false, otherWards: 0 },
+          ],
+        });
+      }
+
+      case '/api/v1/ops/audit': {
+        const all = DEMO_AUDIT;
+        const action = url.searchParams.get('action') ?? '';
+        const entries = action ? all.filter((a) => a.action === action) : all;
+        return ok({
+          entries,
+          hasMore: false,
+          offset: 0,
+          pageSize: 50,
+          facets: {
+            actions: [...new Set(all.map((a) => a.action))].map((v) => ({
+              value: v, count: all.filter((a) => a.action === v).length,
+            })),
+            entityTypes: [...new Set(all.map((a) => a.entityType))].map((v) => ({
+              value: v as string, count: all.filter((a) => a.entityType === v).length,
+            })),
+            actors: [{ id: 'demo-p1', nameBn: 'প্রধান শিক্ষক', count: all.length }],
+          },
+        });
+      }
 
       // R-2. The inbox differs by ROLE, because that is the whole point: a
       // student must not see the staff-only notice. In the real product the

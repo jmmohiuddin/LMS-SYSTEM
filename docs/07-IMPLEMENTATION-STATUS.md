@@ -15,13 +15,13 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **709 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 243** · netlify 8. Plus 19 SQL assertion suites, all green, all idempotent |
-| Schema | 41 migrations (40 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 41/41 with no unprobed migration |
+| Tests | **738 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 272** · netlify 8. Plus 20 SQL assertion suites, all green, all idempotent |
+| Schema | 42 migrations (41 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 42/42 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
-| Portals | R-3 (§9e): principal dashboard, academic drill-down, teacher assignment + replacement with history, bulk moves, rollover, users, SMS settings |
+| Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
-| Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 closed all four of D13's gaps. Still **Backend complete — UI pending**: the audit viewer (F-1603), and `POST /rms/solve` which stays API-only by design (see PHASE_LOG R-3) |
+| Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 and its completion pass closed every gap. **Nothing is "Backend complete — UI pending"**; `POST /rms/solve` stays API-only by an explicit documented decision, not by omission (PHASE_LOG R-3) |
 | Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
 
 What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their
@@ -687,6 +687,91 @@ the first teacher a Bangla-medium office added.
 - Invoice generation has no dry run, because the endpoint has none and a
   client-side estimate would be a second implementation of fee structures and
   waivers, disagreeing on exactly the students whose fees are unusual.
+
+---
+
+## 9f. R-3 completion pass — the three gaps R-3 named (closed)
+
+R-3's own report listed three things it had not delivered. This pass delivered
+them, and found something underneath.
+
+**Class and section creation.** A school opening a seventh section mid-year no
+longer needs the pilot runbook and a psql prompt. `GET/POST /ops/structure`
+creates academic years, classes and sections; the forms live inside the
+drill-down, so you create a section while looking at the class that needs one.
+
+The class form deliberately offers **no academic year and no active flag**,
+because `classes` has neither column — a class is a rung on a ladder ("নবম
+শ্রেণি, বিজ্ঞান") and the year belongs to the section. The form says so, since
+an absent field with no explanation sends an office hunting for it, and a
+disabled field for a value nothing stores is worse: it tells them they set
+something.
+
+**Guardian linking and `can_pay_fees`.** The student drawer's read-only list
+became a panel that links guardians, sets the relationship, and controls the
+two permissions — which are not the same permission: `receives_sms` is who is
+TOLD, `can_pay_fees` is who is ASKED FOR MONEY. The second is the column R-2's
+`guardians_payers` audience resolves through, so
+`db/tests/guardian_links.sql` asserts the wire itself: revoking it drops that
+audience from 1 to 0, restoring it brings it back. Without that assertion the
+screen could be a light switch wired to nothing, and nobody would find out
+until a parent said they were never told about a fee.
+
+The panel searches before it offers to create, and the server independently
+links an existing person when a "new" guardian's phone is already in the
+school. The failure it prevents is three rows for one father, one per child:
+three SMS for every notice on the channel that is 80% of the bill.
+
+**The audit viewer** (F-1603). Read-only, and structurally so — UPDATE and
+DELETE stay revoked from the application role, so there is no write path to
+expose. Filters are built from what the school has actually done rather than
+from every action the code can emit. The diff shows **only the fields that
+changed**, because twelve identical values with one difference among them is
+how a reader misses the difference. Sensitive values are masked server-side on
+the way out, to their last two digits — "changed to a number ending 47" is
+what makes an entry useful.
+
+### The gap the screens exposed
+
+`classes`, `sections` and `guardianships` carried only the PERMISSIVE
+`tenant_isolation` policy migration 010 applies in a loop to every table with
+a `tenant_id`, plus a blanket GRANT. Complete tenant isolation, **no role
+scope**: any authenticated session in a school could have inserted a class or
+set `can_pay_fees` on somebody else's guardian.
+
+It was harmless only because nothing wrote to those tables — sections came
+from the runbook, guardianships from the importer. Migration **042** adds the
+RESTRICTIVE write policies. Of twenty SQL suites exactly one noticed, which is
+the measure of how unexercised that path was; that suite's fixture was
+corrected rather than the policy widened.
+
+DELETE is `USING (false)` for everybody on all three tables: a class or
+section carries enrolment history and a cascade would take it, and unlinking a
+guardian removes the record that they were ever responsible.
+
+### What running it found
+
+- The audit list's actor filter used `($3 = '' OR a.actor_id = $3::uuid)`.
+  PostgreSQL evaluates the constant cast at plan time, so an empty filter threw
+  *invalid input syntax for type uuid* — and the no-filter case is the DEFAULT
+  view of that screen, so **every first load would have been a 500**. It
+  typechecked; reading it did not reveal it.
+- The full regression caught a genuine conflict rather than a broken test: the
+  guardian panel showed phone numbers in a drawer any staff member can open,
+  contradicting R-3's own privacy assertion. Fixed at the server — the
+  endpoint now returns `phone: null` outside the three roles that may edit it,
+  because returning it and hiding it in the UI leaves it in the response body.
+
+**Known limitations:**
+
+- **Editing an existing class or section is not in the UI.** 042 permits the
+  UPDATE and no screen uses it; renaming a section or changing its capacity
+  after creation still needs SQL. The largest remaining gap in this area.
+- **Unlinking a guardian is impossible by design.** Correcting the permissions
+  and the primary flag covers the real cases; a genuine data-entry error needs
+  a support request.
+- **No audit export**, and the entity id is shown raw rather than resolved to a
+  name ("section 9e52…" rather than "সেকশন F").
 
 ---
 

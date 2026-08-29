@@ -25,8 +25,9 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-3 complete, R-4 not started
-Last Completed Phase: R-3 — Principal & IT admin portals (first phase under D13)
+Current Phase:        none in progress — R-3 FULLY complete, R-4 not started
+Last Completed Phase: R-3 — Principal & IT admin portals, incl. the completion pass
+                      that closed its own three named gaps
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -36,19 +37,20 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                709 passing, 0 failing (node --test, verified 2026-08-29)
+Tests:                738 passing, 0 failing (node --test, verified 2026-08-29)
                       offline 46 · server-core 92 · ui-core 108 · academics-svc 78
                       identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13
-                      sync-svc 23 · pwa 243 · netlify 8
-                      + 19 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      sync-svc 23 · pwa 272 · netlify 8
+                      + 20 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
-Migrations:           41 applied, 41/41 probed by scripts/migration-status.mjs
-Known Blockers:       none open.
-                      CLOSED in R-3: all four of D13's "Backend complete — UI pending"
-                      capabilities now have screens — notice-SMS cap, publish results,
-                      generate invoices, and the routine solver (documented as already
-                      covered by the generation UI, see the R-3 entry).
+Migrations:           42 applied, 42/42 probed by scripts/migration-status.mjs
+Known Blockers:       none open. No capability is "Backend complete — UI pending".
+                      CLOSED in R-3: the notice-SMS cap, publish results, generate
+                      invoices, and the routine solver (documented, not changed).
+                      CLOSED in R-3-COMPLETION: class and section creation, guardian
+                      linking, can_pay_fees, and the audit viewer — plus the write-scope
+                      gap those screens exposed (migration 042).
                       CLOSED in R-2-FINAL:
                         · DB-backed suites never executed — run, and they found 5 real bugs
                         · migration 038 had no probe — probed; 40/40, none unprobed
@@ -2192,6 +2194,272 @@ R-3's own SQL).
   school cannot do without the runbook, and it is small — a form over
   `sections` — but it was not in R-3's brief. Worth folding into R-4 or
   taking as a short R-3.1.
+
+### Next recommended step
+
+**R-4 — Calendar & schedule surfacing.** Not started.
+
+
+---
+
+# 2026-08-29 · R-3-COMPLETION · The three gaps R-3 named in its own report
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-3-COMPLETION |
+| **Phase name** | Class/section creation, guardian linking, `can_pay_fees`, audit viewer |
+| **Status** | ✅ Complete. R-3 is now fully closed; no capability is "Backend complete — UI pending". |
+| **Migration number** | **042** — `db/migrations/042_structure_write_scope.sql` |
+| **Rollback status** | ✅ `db/rollback/042_structure_write_scope.down.sql`. Loses SAFETY, not data: dropping these policies returns three tables to tenant-isolated-but-not-role-scoped. Safe only if the matching endpoints go with it, which a code deploy does and a database-only rollback does not. Stated in the file. Verified up → down → up with 0 objects left. |
+| **Git commit** | `git log -1 --format=%H -- db/migrations/042_structure_write_scope.sql` |
+
+### Objective
+
+R-3's report named three things it had not delivered. This pass delivers
+them, under the same D13 bar: class and section creation, guardian linking
+with `can_pay_fees`, and the audit viewer.
+
+### What was already existing
+
+- The whole schema. `classes`, `sections`, `guardianships` and
+  `audit.activity_log` all predate R-3; `uq_guardianship_primary` already
+  enforced one primary guardian per student.
+- 041's `activity_read_scope`, which made the audit log readable and which
+  nothing displayed.
+- R-2's `guardians_payers` audience, resolving through `can_pay_fees` — the
+  column this pass gives a screen.
+
+### The gap the screens exposed
+
+Building them found something R-3 had not looked for.
+
+`classes`, `sections` and `guardianships` carried **only** the PERMISSIVE
+`tenant_isolation` policy that migration 010 applies in a loop to every table
+with a `tenant_id`, plus the blanket
+`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public`.
+
+That is complete tenant isolation and **no role scope**. Any authenticated
+session in a school — a subject teacher's, a student's — could have inserted a
+class, renamed a section, or set `can_pay_fees` on somebody else's guardian.
+
+It had been harmless only because nothing in the product wrote to those
+tables: sections came from the pilot runbook and `guardianships` from the CSV
+importer. The moment there is a screen there is a request, and this codebase's
+rule is that RLS is the enforcement and `requireRole` is the clean 403 in
+front of it. A screen whose only gate is the endpoint is the frontend-hiding
+pattern D13 forbids, one layer down.
+
+Migration 042 adds the RESTRICTIVE write scopes, and `db/tests/guardian_links.sql`
+asserts them. The measure of how unexercised that write path was: of twenty
+SQL suites, exactly **one** noticed — `ai_human_review.sql` had seeded a class
+while `app.role` happened to be `subject_teacher`. The fixture was corrected,
+not the policy; a test does not get to set the security model.
+
+### What was implemented
+
+**Database (042):** RESTRICTIVE INSERT/UPDATE/DELETE policies on `classes`,
+`sections` and `guardianships`. SELECT is deliberately untouched —
+`guardianships` is read by `app.can_see_student()`, `app.my_ward_ids()` and
+the notice resolver on every guardian request, and narrowing it would break
+R-2's fan-out and the guardian's own ward view. DELETE is `USING (false)` for
+everybody: a class or section carries enrolment history, and a cascade would
+take it. Plus `app.set_guardian_permissions()`, which demotes the old primary
+and promotes the new one in one transaction.
+
+**API:** `GET/POST /ops/structure` (year, class, section),
+`GET/POST/PATCH /ops/guardians`, `GET /ops/audit`.
+
+**UI:** `structure-forms.ts` (three forms, rendered inside the drill-down),
+`guardian-panel.ts` (replacing R-3's read-only list), `audit-view.ts`.
+
+### Important architectural decisions
+
+1. **The class form does not offer an academic year, and says why.** The brief
+   asked for one; `classes` does not have the column, and that is right — a
+   class is a rung on a ladder ("নবম শ্রেণি, বিজ্ঞান") and the YEAR belongs to
+   the section. A school does not create Class 9 again every January. Drawing
+   a field for a value nothing stores is worse than its absence: it tells the
+   office they set something. So the year is on the section form, where the
+   column exists, and the class form carries a sentence explaining the split.
+
+2. **No `is_active` on a class either**, for the same reason: the column does
+   not exist. A class a school stops using simply stops having sections
+   created for the new year.
+
+3. **Search before create, on both sides.** The panel opens on a search box,
+   and the server independently links an existing person when a "new"
+   guardian's phone is already in the school. The default failure here is
+   three rows for one father, one per child: three SMS for every notice on the
+   channel that is 80% of the bill, and three logins each seeing one child.
+
+4. **The phone number is withheld server-side, not hidden in the UI.** R-3
+   established that a number on a screen every teacher can open is a number on
+   every teacher's device, and has a test asserting it. This panel feeds that
+   same drawer, so the endpoint returns `phone: null` to anyone outside the
+   three roles that may edit it. Returning it and hiding it would leave it in
+   the response body, one devtools tab away. The full-text SEARCH is
+   restricted outright — it is how you enumerate a contact list.
+
+5. **`can_pay_fees` states its consequence in words**, on the toggle and again
+   in the success message ("ফি ও ইনভয়েসের বার্তা পাবেন না"). A permission whose
+   effect is invisible is one nobody trusts and everybody works around.
+   `db/tests/guardian_links.sql` #6 asserts the wire itself: revoking it drops
+   the `guardians_payers` audience from 1 to 0 and restoring it brings it
+   back. Without that assertion the screen could be a light switch wired to
+   nothing, and nobody would find out until a parent said they were never told.
+
+6. **The last primary guardian cannot be demoted into nobody.** The endpoint
+   refuses when no other guardian exists. The primary is who the school rings.
+
+7. **The audit viewer's diff shows only what CHANGED.** Twelve identical
+   values with one difference buried among them is how a reader misses the
+   difference.
+
+8. **Redaction happens on the way out, not on the way in.** The log keeps what
+   happened; the screen shows what a reader may see. A phone is masked to its
+   last two digits rather than removed, because "changed to a number ending
+   47" is what makes the entry useful.
+
+### Database changes
+
+Policies and one function; no new tables, no new columns. `schema_lint.sql`
+passes with 0 advisories.
+
+### API changes
+
+3 new routes on the existing `ops` dispatcher. Still 10 of 12 Vercel
+functions.
+
+### UI changes
+
+3 new modules, the guardian block of the student drawer replaced, an
+`audit` route, a card and a More entry for the IT admin.
+
+### Files created
+
+- `db/migrations/042_structure_write_scope.sql`, `db/rollback/042_structure_write_scope.down.sql`
+- `db/tests/guardian_links.sql`
+- `services/ops-svc/api/{structure,guardians,audit}.ts`
+- `apps/pwa/src/{structure-forms,guardian-panel,audit-view}.ts`
+- `apps/pwa/test/completion-ui.test.ts`
+
+### Files modified
+
+- `packages/server-core/src/audit.ts` (5 new actions)
+- `services/ops-svc/api/index.ts`
+- `apps/pwa/src/{academic-view,app,demo,sw-router}.ts`
+- `apps/pwa/test/admin-ui.test.ts` (the drawer's guardian block moved endpoint)
+- `db/tests/ai_human_review.sql` (fixture seeded as principal — see above)
+- `scripts/migration-status.mjs`, `.github/workflows/database.yml`
+- `docs/{07-IMPLEMENTATION-STATUS,11-MASTER-PLAN,PHASE_LOG}.md`
+- `api/v1/*.js` (rebuilt)
+
+### Files removed
+
+None.
+
+### Tests added
+
+- **`apps/pwa/test/completion-ui.test.ts` — 29 tests.**
+- **`db/tests/guardian_links.sql` — 12 assertions**, re-runnable, leaving no
+  rows. Three of them are the write-scope gap: a subject teacher can create
+  neither a class nor a section, and cannot change a fee permission — while
+  still being able to READ the guardianship, because the notice resolver
+  depends on it.
+
+### Tests executed
+
+```
+node --test  (11 workspaces)              738 passing, 0 failing
+db/tests/guardian_links.sql               12/12 PASS · re-runnable
+20 SQL suites, run twice                  all green both passes
+every completion-pass query vs real schema executed, 0 errors
+rollback, descending                      0 objects left, app schema gone
+up → down → up                            clean
+scripts/migration-status.mjs              42/42 applied, 0 unprobed
+schema lint                               0 advisories
+tsc --noEmit ×3                           exit 0
+npm run build                             ok
+```
+
+### Test results
+
+**738 passing, 0 failing**, up from 709. pwa 243 → **272**.
+
+Running the endpoints' SQL against the real schema found **one real defect**,
+as it did in both previous passes: the audit list's actor filter was
+`($3 = '' OR a.actor_id = $3::uuid)`, and PostgreSQL evaluates the constant
+cast at plan time, so an empty filter threw *invalid input syntax for type
+uuid*. The no-filter case is the DEFAULT view of that screen — **every first
+load would have been a 500**. It typechecked, and reading it did not reveal
+it; running it did. Filters now pass NULL.
+
+The full regression also caught a genuine conflict rather than a broken test:
+the new guardian panel showed phone numbers in a drawer any staff member can
+open, contradicting R-3's own privacy assertion. Fixed at the server, not in
+the UI.
+
+### Security validation
+
+- 042's policies are asserted from a subject teacher's session, not reasoned
+  about: three separate attempts, all refused, with the READ still working.
+- `app.set_guardian_permissions()` is SECURITY INVOKER; the suite proves
+  tenant B cannot write a link into tenant A while naming real ids.
+- The audit endpoint is GET-only, over a table where UPDATE and DELETE stay
+  revoked; the UI test asserts no control offers to write.
+- Redaction is by key name, not by sniffing values — a sniffer misses a phone
+  stored as a number and mangles a roll number that looks like one.
+- Guardian phone numbers: withheld server-side outside three roles; the
+  candidate SEARCH is restricted outright.
+
+### Tenant-isolation validation
+
+Executed. `db/tests/guardian_links.sql` #7 and #8: tenant B reads zero of
+tenant A's guardian links, classes, sections (by id) and audit rows, cannot
+write a link into A, and A's records are then verified unchanged from A's own
+context.
+
+### Browser acceptance
+
+Run at `/app?demo=1` for it_admin, academic_coordinator, class_teacher and
+student.
+
+Verified working: creating a class (the Bangla name follows the level chosen,
+and stops once typed over) → creating a section → both appearing in the
+hierarchy; the guardian panel with its duplicate warning; revoking
+`can_pay_fees` and getting *"মোঃ আব্দুল করিম এখন থেকে ফি ও ইনভয়েসের বার্তা
+পাবেন না"*; the audit viewer with three data-built filters, a date range, a
+diff showing only the changed field, and a masked `•••47`.
+
+Authorization, in the browser: a class teacher gets no create bar, a refused
+audit page naming who may read it, guardian names but **no phone and no
+toggles**; a coordinator may create structure but the guardian panel is
+read-only for them — exactly matching 042.
+
+### Known limitations
+
+1. **Editing an existing class or section is not in the UI.** 042 permits the
+   UPDATE and no screen uses it: renaming a section, or changing its capacity
+   after creation, still needs SQL. Creation was the gap R-3 named; editing is
+   a smaller, adjacent one and is now the largest remaining.
+2. **Unlinking a guardian is impossible by design** (`USING (false)`). A
+   genuine data-entry error needs a support request. Correcting the
+   permissions and the primary flag covers the real cases.
+3. **The audit viewer has no export.** A school asked for a change history by
+   a board inspector reads it on screen.
+4. **The audit entity id is shown raw**, not resolved to a name — "section
+   9e52…" rather than "সেকশন F". Resolving would mean a join per entity type.
+5. `scripts/test-all.mjs` still cannot run on Windows (pre-existing).
+
+### Unresolved bugs / issues
+
+None open. Two pre-existing defects fixed: the missing write scope on three
+tables, and the audit filter's uuid cast.
+
+### Decisions that require owner input
+
+None outstanding.
 
 ### Next recommended step
 

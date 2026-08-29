@@ -42,6 +42,7 @@ import { InvoiceView } from './invoice-view.ts';
 import { AdminSettingsView } from './admin-settings-view.ts';
 import { RolloverView } from './rollover-view.ts';
 import { UsersView } from './users-view.ts';
+import { AuditView } from './audit-view.ts';
 import {
   applyBranding,
   cachedBranding,
@@ -124,6 +125,10 @@ const MANAGE_SETTINGS  = new Set(
   ['principal', 'school_owner', 'it_admin', 'academic_coordinator']);
 /** Moving every child in the school is deliberately narrower. */
 const COMMIT_ROLLOVER  = new Set(['principal', 'school_owner']);
+/** Mirrors guardianship_insert_scope / _update_scope in migration 042. */
+const MANAGE_GUARDIANS = new Set(['principal', 'school_owner', 'it_admin']);
+/** Mirrors activity_read_scope in migration 041. */
+const READ_AUDIT       = new Set(['principal', 'school_owner', 'it_admin']);
 /** Mirrors finance-svc's BILLING_ROLES. */
 const GENERATE_INVOICES = new Set(['principal', 'school_owner', 'accountant']);
 
@@ -173,6 +178,7 @@ const CARD = {
   users:      { path: 'users',      glyph: 'users',        titleBn: 'ব্যবহারকারী',        subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট' },
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
   adminSettings: { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস',          subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
+  audit:      { path: 'audit',      glyph: 'lock',         titleBn: 'কার্যবিবরণী',        subtitleBn: 'কে কখন কী পরিবর্তন করেছেন' },
 } satisfies Record<string, DashboardItem>;
 
 // Home is an orientation surface, not an index. Each dashboard is trimmed to
@@ -219,7 +225,7 @@ function dashboardFor(role: string): DashCards {
       // so a "take attendance" card would be an invitation to a 403.
       return {
         primary: [CARD.academic, CARD.users],
-        secondary: [CARD.institution, CARD.branding, CARD.adminSettings, CARD.inbox],
+        secondary: [CARD.institution, CARD.branding, CARD.adminSettings, CARD.audit],
       };
     case 'academic_coordinator':
       // Between the two: owns the academic programme and the timetable, does
@@ -477,6 +483,7 @@ async function main() {
               { path: 'users', glyph: 'users', titleBn: 'ব্যবহারকারী', subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট, নিষ্ক্রিয়করণ' },
               { path: 'rollover', glyph: 'repeat', titleBn: 'বার্ষিক উন্নয়ন', subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
               { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস', subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
+              { path: 'audit', glyph: 'lock', titleBn: 'কার্যবিবরণী', subtitleBn: 'কে কখন কী পরিবর্তন করেছেন — শুধু পড়ার জন্য' },
               { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
               { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
@@ -638,6 +645,7 @@ async function main() {
           new AcademicView({
             root: container, doc: document, auth,
             canManage: MANAGE_STRUCTURE.has(auth.role),
+            canManageGuardians: MANAGE_GUARDIANS.has(auth.role),
           });
         },
       },
@@ -683,6 +691,13 @@ async function main() {
             canCommit: COMMIT_ROLLOVER.has(auth.role),
           });
         },
+      },
+      {
+        path: 'audit',
+        labelBn: 'কার্যবিবরণী',
+        glyph: 'lock',
+        hidden: true,
+        mount: (container) => { new AuditView({ root: container, doc: document, auth }); },
       },
       {
         path: 'adminsettings',

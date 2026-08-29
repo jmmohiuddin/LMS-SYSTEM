@@ -51,7 +51,13 @@ export type AuditAction =
   | 'ops.settings.update'
   | 'ops.user.create'
   | 'ops.user.deactivate'
-  | 'ops.user.reactivate';
+  | 'ops.user.reactivate'
+  // R-3 completion pass.
+  | 'academic.year.create'
+  | 'academic.class.create'
+  | 'academic.section.create'
+  | 'ops.guardian.link'
+  | 'ops.guardian.permissions';
 
 export interface AuditEntry {
   action: AuditAction;

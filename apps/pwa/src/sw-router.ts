@@ -128,7 +128,10 @@ export function route(request: { url: string; method: string; mode?: string }): 
     || path.startsWith('/api/v1/ops/enrol')
     || path.startsWith('/api/v1/ops/rollover')
     || path.startsWith('/api/v1/ops/users')
-    || path.startsWith('/api/v1/ops/settings')) {
+    || path.startsWith('/api/v1/ops/settings')
+    || path.startsWith('/api/v1/ops/structure')
+    || path.startsWith('/api/v1/ops/guardians')
+    || path.startsWith('/api/v1/ops/audit')) {
     return {
       strategy: 'network-only',
       reason: 'management reads precede mutations — a stale one is acted on',

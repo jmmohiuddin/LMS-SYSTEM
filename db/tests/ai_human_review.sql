@@ -22,7 +22,13 @@ SET ROLE shikhon_app;
 
 BEGIN;
 SET LOCAL app.tenant_id = '9b000000-0000-4000-8000-00000000000b';
-SET LOCAL app.role      = 'subject_teacher';
+-- Seeded as principal, not as the subject teacher who owns the fixture user.
+-- This suite is about AI review staleness and never asserted anything about
+-- who may create a class; the role was incidental. Migration 042 gave
+-- `classes` the RESTRICTIVE write scope it had always lacked, and this seed
+-- was the only place in twenty suites that noticed — which is itself the
+-- measure of how unexercised that write path was.
+SET LOCAL app.role      = 'principal';
 SET LOCAL app.user_id   = '9b000000-0000-4000-8000-0000000000a1';
 
 INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)

@@ -108,6 +108,33 @@ export function route(request: { url: string; method: string; mode?: string }): 
     };
   }
 
+  // R-3. The management surface is deliberately NOT stale-served, and it is
+  // the one place in this table where that is a considered decision rather
+  // than a default.
+  //
+  // The dashboard's headline is today's attendance percentage. Yesterday's
+  // number rendered from cache with no indication of its age is worse than a
+  // spinner: a head teacher acts on it. The others (assignment candidates,
+  // the rollover preview, the user list, the SMS cap) are all read
+  // IMMEDIATELY BEFORE a mutation, and a stale read there means deciding
+  // against a picture of the school that is no longer true — replacing a
+  // teacher who was already replaced, promoting against counts that moved.
+  //
+  // The academic tree is the exception and stays cached below: it is
+  // navigation, it changes a few times a year, and drilling into it on a dead
+  // link is exactly the corridor case the offline story exists for.
+  if (path.startsWith('/api/v1/ops/dashboard')
+    || path.startsWith('/api/v1/ops/assign')
+    || path.startsWith('/api/v1/ops/enrol')
+    || path.startsWith('/api/v1/ops/rollover')
+    || path.startsWith('/api/v1/ops/users')
+    || path.startsWith('/api/v1/ops/settings')) {
+    return {
+      strategy: 'network-only',
+      reason: 'management reads precede mutations — a stale one is acted on',
+    };
+  }
+
   // R-1. The institution's identity is the most cacheable thing in the
   // product — it changes when a school rebrands, which is roughly never —
   // and it is needed at the very first paint, before login, on whatever

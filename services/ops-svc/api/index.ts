@@ -1,7 +1,8 @@
 /**
  * Dynamic-route dispatcher for
- * /api/v1/ops/{maintenance,events,branding,brand,manifest} — one Vercel
- * function (api/v1/ops/[action].js) instead of five. See
+ * /api/v1/ops/{maintenance,events,branding,brand,manifest,notices,inbox,
+ *              dashboard,assign,enrol,rollover,settings,users}
+ * — one Vercel function (api/v1/ops/[action].js) instead of thirteen. See
  * services/identity-svc/api/index.ts for the Hobby-cap rationale.
  *
  * The vercel.json cron still hits /api/v1/ops/maintenance; the dynamic
@@ -17,11 +18,19 @@ import brand from './brand.ts';
 import manifest from './manifest.ts';
 import notices from './notices.ts';
 import inbox from './inbox.ts';
+// R-3 — the principal and IT admin control centre.
+import dashboard from './dashboard.ts';
+import assign from './assign.ts';
+import enrol from './enrol.ts';
+import rollover from './rollover.ts';
+import settings from './settings.ts';
+import users from './users.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
+  dashboard, assign, enrol, rollover, settings, users,
 };
 
 /**
@@ -49,11 +58,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // Publishing a notice fans out to hundreds of receipt rows and can queue
     // SMS, so it is the heaviest mutation on this dispatcher. Marking one read
     // is a mutation too — cheap, but a write.
-    const isWrite = req.method === 'POST' || req.method === 'PUT';
-    const bucket = (sub === 'events' || sub === 'notices' || sub === 'inbox'
-      || sub === 'branding') && isWrite
-      ? 'mutation'
-      : 'read';
+    const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
+    // R-3's writes are the heaviest on this dispatcher: a bulk move touches
+    // 200 enrolment rows and a rollover commit touches every student in the
+    // school. They belong in the mutation bucket without exception.
+    const WRITE_ROUTES = new Set(['events', 'notices', 'inbox', 'branding',
+      'assign', 'enrol', 'rollover', 'settings', 'users']);
+    const bucket = WRITE_ROUTES.has(sub) && isWrite ? 'mutation' : 'read';
     if (!(await enforceRateLimit(req, res, corsHeaders(), bucket))) return;
   }
   return route(req, res);

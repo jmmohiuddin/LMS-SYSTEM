@@ -34,6 +34,14 @@ import { GuardianView } from './guardian-view.ts';
 import { BrandingView } from './branding-view.ts';
 import { InboxView } from './inbox-view.ts';
 import { NoticeComposeView } from './notice-compose-view.ts';
+// R-3 — the principal and IT admin control centre.
+import { PrincipalView } from './principal-view.ts';
+import { AcademicView } from './academic-view.ts';
+import { PublishView } from './publish-view.ts';
+import { InvoiceView } from './invoice-view.ts';
+import { AdminSettingsView } from './admin-settings-view.ts';
+import { RolloverView } from './rollover-view.ts';
+import { UsersView } from './users-view.ts';
 import {
   applyBranding,
   cachedBranding,
@@ -99,6 +107,26 @@ function deviceId(key: string): string {
  */
 type DashCards = { primary: DashboardItem[]; secondary: DashboardItem[] };
 
+/**
+ * R-3. Which roles are OFFERED a management control.
+ *
+ * These are orientation, not security, and the distinction is the whole point:
+ * each set mirrors an allowlist that the endpoint enforces and an RLS policy
+ * behind that. Editing one of these sets cannot grant anybody anything — it
+ * only decides whether a button is drawn, so a mistake here produces a clean
+ * 403 rather than an escalation. The comment on dashboardFor says the same
+ * thing about the dashboards, and it holds for exactly the same reason.
+ */
+const MANAGE_STRUCTURE = new Set(
+  ['principal', 'school_owner', 'academic_coordinator', 'it_admin']);
+const MANAGE_USERS     = new Set(['principal', 'school_owner', 'it_admin']);
+const MANAGE_SETTINGS  = new Set(
+  ['principal', 'school_owner', 'it_admin', 'academic_coordinator']);
+/** Moving every child in the school is deliberately narrower. */
+const COMMIT_ROLLOVER  = new Set(['principal', 'school_owner']);
+/** Mirrors finance-svc's BILLING_ROLES. */
+const GENERATE_INVOICES = new Set(['principal', 'school_owner', 'accountant']);
+
 // glyph is an icon name from ./icon.ts (rendered as inline SVG), never an
 // emoji: one drawn set, one stroke weight, tintable with currentColor.
 const CARD = {
@@ -135,6 +163,16 @@ const CARD = {
   // guardian dashboard; the glyph matches its More entry so the one control
   // reads the same in both places it appears.
   wardHome:   { path: 'guardian',   glyph: 'users',        titleBn: 'আমার সন্তান',        subtitleBn: 'হাজিরা, ফলাফল ও বকেয়া ফি' },
+  // R-3. The management surface. `institution` leads the principal's
+  // dashboard because it is the screen they open in the morning; the rest are
+  // reached from it and from More, so nothing here is the ONLY way in.
+  institution: { path: 'institution', glyph: 'trending-up', titleBn: 'প্রতিষ্ঠান',        subtitleBn: 'আজকের হাজিরা ও অপেক্ষমাণ কাজ' },
+  academic:   { path: 'academic',   glyph: 'layers',       titleBn: 'একাডেমিক কাঠামো',   subtitleBn: 'শ্রেণি → বিভাগ → সেকশন → শিক্ষার্থী' },
+  publish:    { path: 'publish',    glyph: 'award',        titleBn: 'ফলাফল প্রকাশ',       subtitleBn: 'যাচাই করে প্রকাশ করুন' },
+  invoices:   { path: 'invoices',   glyph: 'wallet',       titleBn: 'ইনভয়েস তৈরি',        subtitleBn: 'মাসিক বিল তৈরি করুন' },
+  users:      { path: 'users',      glyph: 'users',        titleBn: 'ব্যবহারকারী',        subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট' },
+  rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
+  adminSettings: { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস',          subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
 } satisfies Record<string, DashboardItem>;
 
 // Home is an orientation surface, not an index. Each dashboard is trimmed to
@@ -169,9 +207,26 @@ function dashboardFor(role: string): DashCards {
       };
     case 'principal':
     case 'school_owner':
+      // R-3. The institution overview leads: it is the only card whose
+      // contents are different from yesterday's, and the one that surfaces
+      // what is waiting for this person.
       return {
-        primary: [CARD.routine, CARD.compose],
-        secondary: [CARD.roster, CARD.inbox, CARD.ledger, CARD.branding],
+        primary: [CARD.institution, CARD.academic],
+        secondary: [CARD.compose, CARD.publish, CARD.invoices, CARD.inbox],
+      };
+    case 'it_admin':
+      // R-3. Structure and accounts, not teaching. An IT admin has no class,
+      // so a "take attendance" card would be an invitation to a 403.
+      return {
+        primary: [CARD.academic, CARD.users],
+        secondary: [CARD.institution, CARD.branding, CARD.adminSettings, CARD.inbox],
+      };
+    case 'academic_coordinator':
+      // Between the two: owns the academic programme and the timetable, does
+      // not own money or accounts.
+      return {
+        primary: [CARD.academic, CARD.routine],
+        secondary: [CARD.institution, CARD.publish, CARD.compose, CARD.inbox],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -415,6 +470,13 @@ async function main() {
               { path: 'ledger', glyph: 'book', titleBn: 'লেজার ও পুনর্মিলন', subtitleBn: 'দ্বৈত-এন্ট্রি · MFS পুনর্মিলন' },
               { path: 'inbox', glyph: 'bell', titleBn: 'নোটিশ', subtitleBn: 'বিদ্যালয়ের ঘোষণা ও বার্তা' },
               { path: 'compose', glyph: 'edit', titleBn: 'নোটিশ পাঠান', subtitleBn: 'শিক্ষক, শিক্ষার্থী বা অভিভাবক — কারা পাবে বেছে নিন' },
+              { path: 'institution', glyph: 'trending-up', titleBn: 'প্রতিষ্ঠান', subtitleBn: 'আজকের হাজিরা, অনুপস্থিত ও অপেক্ষমাণ কাজ' },
+              { path: 'academic', glyph: 'layers', titleBn: 'একাডেমিক কাঠামো', subtitleBn: 'শ্রেণি → বিভাগ → সেকশন → শিক্ষার্থী ও শিক্ষক' },
+              { path: 'publish', glyph: 'award', titleBn: 'ফলাফল প্রকাশ', subtitleBn: 'যাচাই করে প্রকাশ — প্রকাশের পর নম্বর অপরিবর্তনীয়' },
+              { path: 'invoices', glyph: 'wallet', titleBn: 'ইনভয়েস তৈরি', subtitleBn: 'মাসিক বিল — একই মাসে দুইবার হয় না' },
+              { path: 'users', glyph: 'users', titleBn: 'ব্যবহারকারী', subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট, নিষ্ক্রিয়করণ' },
+              { path: 'rollover', glyph: 'repeat', titleBn: 'বার্ষিক উন্নয়ন', subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
+              { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস', subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
               { path: 'branding', glyph: 'star', titleBn: 'প্রতিষ্ঠানের পরিচয়', subtitleBn: 'নাম, লোগো, রং ও ছাপা কাগজের শীর্ষভাগ' },
               { path: 'system', glyph: 'settings', titleBn: 'সিস্টেম ও ইন্টিগ্রেশন', subtitleBn: 'ওয়ার্কার · কিল-সুইচ · অদৃশ্য গ্যারান্টি' },
             ],
@@ -548,6 +610,91 @@ async function main() {
         glyph: 'award',
         hidden: true,
         mount: (container) => { new ResultsView({ root: container, doc: document, auth }); },
+      },
+      // ── R-3: the management surface ───────────────────────────────
+      // Every route stays REGISTERED for every role, as the comment on
+      // dashboardFor explains: the endpoints and RLS are the enforcement, and
+      // a route that 403s honestly is better than one that 404s confusingly.
+      // `canManage` below only decides whether a control is offered, never
+      // whether it is permitted.
+      {
+        path: 'institution',
+        labelBn: 'প্রতিষ্ঠান',
+        glyph: 'trending-up',
+        hidden: true,
+        mount: (container) => {
+          new PrincipalView({
+            root: container, doc: document, auth,
+            onNavigate: (path) => { location.hash = `#/${path}`; },
+          });
+        },
+      },
+      {
+        path: 'academic',
+        labelBn: 'একাডেমিক',
+        glyph: 'layers',
+        hidden: true,
+        mount: (container) => {
+          new AcademicView({
+            root: container, doc: document, auth,
+            canManage: MANAGE_STRUCTURE.has(auth.role),
+          });
+        },
+      },
+      {
+        path: 'publish',
+        labelBn: 'ফলাফল প্রকাশ',
+        glyph: 'award',
+        hidden: true,
+        mount: (container) => { new PublishView({ root: container, doc: document, auth }); },
+      },
+      {
+        path: 'invoices',
+        labelBn: 'ইনভয়েস',
+        glyph: 'wallet',
+        hidden: true,
+        mount: (container) => {
+          new InvoiceView({
+            root: container, doc: document, auth,
+            canGenerate: GENERATE_INVOICES.has(auth.role),
+          });
+        },
+      },
+      {
+        path: 'users',
+        labelBn: 'ব্যবহারকারী',
+        glyph: 'users',
+        hidden: true,
+        mount: (container) => {
+          new UsersView({
+            root: container, doc: document, auth,
+            canManage: MANAGE_USERS.has(auth.role),
+          });
+        },
+      },
+      {
+        path: 'rollover',
+        labelBn: 'বার্ষিক উন্নয়ন',
+        glyph: 'repeat',
+        hidden: true,
+        mount: (container) => {
+          new RolloverView({
+            root: container, doc: document, auth,
+            canCommit: COMMIT_ROLLOVER.has(auth.role),
+          });
+        },
+      },
+      {
+        path: 'adminsettings',
+        labelBn: 'সেটিংস',
+        glyph: 'settings',
+        hidden: true,
+        mount: (container) => {
+          new AdminSettingsView({
+            root: container, doc: document, auth,
+            canManage: MANAGE_SETTINGS.has(auth.role),
+          });
+        },
       },
       {
         path: 'roles',

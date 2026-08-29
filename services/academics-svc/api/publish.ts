@@ -36,6 +36,86 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     res.end();
     return;
   }
+  // R-3, Part H. The screen that calls POST needs to know what is publishable
+  // and how complete each exam's marks are, and that read belongs HERE rather
+  // than in exams.ts: exams.ts answers "what does this section sit, and what
+  // are the component maxima" for the marks-entry form, which is a different
+  // question with a different shape (it requires a sectionId). Publication
+  // readiness is institution-wide by nature.
+  if (req.method === 'GET') {
+    try {
+      const claims = await authenticate(req);
+      requireRole(claims, PUBLISH_ROLES);
+      const db = await sharedDb();
+      const exams = await db.withTenant(
+        { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+        async (client) => {
+          const r = await client.query<{
+            exam_id: string; name_bn: string; status: string;
+            starts_on: string | null; ends_on: string | null;
+            exam_subject_id: string | null; subject_bn: string | null;
+            section_name: string | null; enrolled: number; marked: number;
+          }>(
+            `SELECT e.id AS exam_id, e.name_bn, e.status::text AS status,
+                    e.starts_on::text, e.ends_on::text,
+                    es.id AS exam_subject_id, sub.name_bn AS subject_bn,
+                    s.name AS section_name,
+                    -- Enrolled is the denominator a head teacher checks
+                    -- against: how many children should have a mark here.
+                    COALESCE(s.student_count, 0)::int AS enrolled,
+                    (SELECT count(*)::int FROM exam_marks m
+                      WHERE m.exam_subject_id = es.id) AS marked
+               FROM exams e
+               LEFT JOIN exam_subjects es ON es.exam_id = e.id
+               LEFT JOIN subjects sub     ON sub.id = es.subject_id
+               LEFT JOIN sections s       ON s.id = es.section_id
+              WHERE e.academic_year_id = (
+                      SELECT id FROM academic_years
+                       ORDER BY is_current DESC, starts_on DESC LIMIT 1)
+              ORDER BY e.starts_on DESC NULLS LAST, sub.name_bn`,
+          );
+
+          const byExam = new Map<string, {
+            examId: string; examNameBn: string; status: string;
+            startsOn: string | null; endsOn: string | null;
+            subjects: { examSubjectId: string; subjectBn: string;
+                        sectionName: string | null; enrolled: number; marked: number }[];
+          }>();
+          for (const row of r.rows) {
+            let exam = byExam.get(row.exam_id);
+            if (!exam) {
+              exam = {
+                examId: row.exam_id, examNameBn: row.name_bn, status: row.status,
+                startsOn: row.starts_on, endsOn: row.ends_on, subjects: [],
+              };
+              byExam.set(row.exam_id, exam);
+            }
+            // LEFT JOIN: an exam with no subjects yet is a real state and
+            // must appear, marked as not ready, rather than vanishing.
+            if (row.exam_subject_id) {
+              exam.subjects.push({
+                examSubjectId: row.exam_subject_id,
+                subjectBn: row.subject_bn ?? '',
+                sectionName: row.section_name,
+                enrolled: row.enrolled,
+                marked: row.marked,
+              });
+            }
+          }
+          return [...byExam.values()];
+        },
+      );
+      json(res, 200, { exams }, cors);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        json(res, err.status, { error: err.code, message: err.message }, cors);
+        return;
+      }
+      json(res, 500, { error: 'internal_error' }, cors);
+    }
+    return;
+  }
+
   if (req.method !== 'POST') {
     json(res, 405, { error: 'method_not_allowed' }, cors);
     return;

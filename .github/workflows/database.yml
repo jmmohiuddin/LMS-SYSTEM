@@ -71,6 +71,11 @@ jobs:
       - name: Notice audience and isolation
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
 
+      # ── 3d. R-3: replacing a teacher preserves the one before them, and
+      #        no school can read or write another's structure.
+      - name: Assignment history, isolation and audit
+        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/assignment_history.sql
+
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
@@ -83,6 +88,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
           psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
+          psql -v ON_ERROR_STOP=1 -q -f db/tests/assignment_history.sql
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")

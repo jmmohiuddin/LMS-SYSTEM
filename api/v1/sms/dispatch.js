@@ -194,6 +194,7 @@ var TEMPLATES = {
 };
 var NOTICE_SMS_DEFAULT_MAX = 180;
 var NOTICE_SMS_HARD_CEILING = 480;
+var NOTICE_SMS_MIN = 70;
 function noticeSmsMaxChars(settings) {
   const raw = settings?.sms?.noticeMaxChars;
   let n;
@@ -201,7 +202,7 @@ function noticeSmsMaxChars(settings) {
   else if (typeof raw === "string" && raw.trim() !== "") n = Number(raw);
   else return NOTICE_SMS_DEFAULT_MAX;
   if (!Number.isFinite(n)) return NOTICE_SMS_DEFAULT_MAX;
-  return Math.max(70, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
+  return Math.max(NOTICE_SMS_MIN, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
 }
 function noticeSmsBody(title, body, org, maxChars = NOTICE_SMS_DEFAULT_MAX) {
   const head = title.trim();

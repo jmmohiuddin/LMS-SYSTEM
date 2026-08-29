@@ -1587,6 +1587,70 @@ async function handler5(req, res) {
     res.end();
     return;
   }
+  if (req.method === "GET") {
+    try {
+      const claims = await authenticate(req);
+      requireRole(claims, PUBLISH_ROLES);
+      const db = await sharedDb();
+      const exams = await db.withTenant(
+        { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+        async (client) => {
+          const r = await client.query(
+            `SELECT e.id AS exam_id, e.name_bn, e.status::text AS status,
+                    e.starts_on::text, e.ends_on::text,
+                    es.id AS exam_subject_id, sub.name_bn AS subject_bn,
+                    s.name AS section_name,
+                    -- Enrolled is the denominator a head teacher checks
+                    -- against: how many children should have a mark here.
+                    COALESCE(s.student_count, 0)::int AS enrolled,
+                    (SELECT count(*)::int FROM exam_marks m
+                      WHERE m.exam_subject_id = es.id) AS marked
+               FROM exams e
+               LEFT JOIN exam_subjects es ON es.exam_id = e.id
+               LEFT JOIN subjects sub     ON sub.id = es.subject_id
+               LEFT JOIN sections s       ON s.id = es.section_id
+              WHERE e.academic_year_id = (
+                      SELECT id FROM academic_years
+                       ORDER BY is_current DESC, starts_on DESC LIMIT 1)
+              ORDER BY e.starts_on DESC NULLS LAST, sub.name_bn`
+          );
+          const byExam = /* @__PURE__ */ new Map();
+          for (const row of r.rows) {
+            let exam = byExam.get(row.exam_id);
+            if (!exam) {
+              exam = {
+                examId: row.exam_id,
+                examNameBn: row.name_bn,
+                status: row.status,
+                startsOn: row.starts_on,
+                endsOn: row.ends_on,
+                subjects: []
+              };
+              byExam.set(row.exam_id, exam);
+            }
+            if (row.exam_subject_id) {
+              exam.subjects.push({
+                examSubjectId: row.exam_subject_id,
+                subjectBn: row.subject_bn ?? "",
+                sectionName: row.section_name,
+                enrolled: row.enrolled,
+                marked: row.marked
+              });
+            }
+          }
+          return [...byExam.values()];
+        }
+      );
+      json(res, 200, { exams }, cors);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        json(res, err.status, { error: err.code, message: err.message }, cors);
+        return;
+      }
+      json(res, 500, { error: "internal_error" }, cors);
+    }
+    return;
+  }
   if (req.method !== "POST") {
     json(res, 405, { error: "method_not_allowed" }, cors);
     return;
@@ -4234,6 +4298,335 @@ function bn(n) {
   return String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
 }
 
+// services/academics-svc/api/hierarchy.ts
+var GROUP_BN = {
+  none: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3",
+  science: "\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8",
+  humanities: "\u09AE\u09BE\u09A8\u09AC\u09BF\u0995",
+  business_studies: "\u09AC\u09CD\u09AF\u09AC\u09B8\u09BE\u09AF\u09BC \u09B6\u09BF\u0995\u09CD\u09B7\u09BE",
+  vocational: "\u09AD\u09CB\u0995\u09C7\u09B6\u09A8\u09BE\u09B2",
+  general: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3"
+};
+async function handler19(req, res) {
+  const cors = corsHeaders([], "GET, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireStaff(claims);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const q = query(req);
+    const sectionId = q.get("sectionId");
+    const studentId = q.get("studentId");
+    if (sectionId) {
+      json(res, 200, await sectionDetail(db, ctx, sectionId), cors);
+      return;
+    }
+    if (studentId) {
+      json(res, 200, await studentDetail(db, ctx, studentId), cors);
+      return;
+    }
+    json(res, 200, await tree(db, ctx, q.get("yearId")), cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function tree(db, ctx, yearId) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: years } = await c.query(
+      `SELECT id, label, is_current FROM academic_years ORDER BY starts_on DESC`
+    );
+    if (years.length === 0) return { years: [], year: null, classes: [] };
+    const year2 = years.find((y) => y.id === yearId) ?? years.find((y) => y.is_current) ?? years[0];
+    const { rows: classes } = await c.query(
+      `SELECT cl.id                                    AS class_id,
+              cl.level_no,
+              cl.name_bn,
+              cl.name_en,
+              cl."group"::text                         AS "group",
+              count(s.id)::int                         AS section_count,
+              COALESCE(sum(s.student_count), 0)::int   AS student_count
+         FROM classes cl
+         LEFT JOIN sections s
+                ON s.class_id = cl.id AND s.academic_year_id = $1
+        GROUP BY cl.id, cl.level_no, cl.name_bn, cl.name_en, cl."group", cl.display_order
+        ORDER BY cl.level_no, cl.display_order, cl."group"`,
+      [year2.id]
+    );
+    const { rows: sections } = await c.query(
+      `SELECT s.id                    AS section_id,
+              s.class_id,
+              s.name,
+              s.shift::text           AS shift,
+              s.capacity,
+              s.student_count,
+              s.class_teacher_id,
+              ct.full_name_bn         AS class_teacher_name,
+              (SELECT count(*)::int
+                 FROM section_subject_teachers sst
+                WHERE sst.section_id = s.id
+                  AND sst.ended_on IS NULL) AS subject_teacher_count
+         FROM sections s
+         LEFT JOIN users ct ON ct.id = s.class_teacher_id
+        WHERE s.academic_year_id = $1
+        ORDER BY s.name`,
+      [year2.id]
+    );
+    const byLevel = /* @__PURE__ */ new Map();
+    for (const cl of classes) {
+      const level = byLevel.get(cl.level_no) ?? {
+        levelNo: cl.level_no,
+        nameBn: cl.name_bn,
+        nameEn: cl.name_en,
+        sectionCount: 0,
+        studentCount: 0,
+        groups: []
+      };
+      level.sectionCount += cl.section_count;
+      level.studentCount += cl.student_count;
+      level.groups.push({
+        classId: cl.class_id,
+        group: cl.group,
+        groupBn: GROUP_BN[cl.group] ?? cl.group,
+        sectionCount: cl.section_count,
+        studentCount: cl.student_count,
+        sections: sections.filter((s) => s.class_id === cl.class_id).map((s) => ({
+          id: s.section_id,
+          name: s.name,
+          shift: s.shift,
+          capacity: s.capacity,
+          studentCount: s.student_count,
+          classTeacher: s.class_teacher_id ? { id: s.class_teacher_id, nameBn: s.class_teacher_name ?? "" } : null,
+          subjectTeacherCount: s.subject_teacher_count
+        }))
+      });
+      byLevel.set(cl.level_no, level);
+    }
+    return {
+      years: years.map((y) => ({ id: y.id, label: y.label, isCurrent: y.is_current })),
+      year: { id: year2.id, label: year2.label, isCurrent: year2.is_current },
+      classes: [...byLevel.values()].sort((a, b) => a.levelNo - b.levelNo)
+    };
+  });
+}
+async function sectionDetail(db, ctx, sectionId) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: head } = await c.query(
+      `SELECT s.id, s.name, s.shift::text AS shift, s.capacity, s.student_count,
+              cl.id AS class_id, cl.level_no, cl.name_bn AS class_name_bn,
+              cl."group"::text AS "group",
+              ay.id AS year_id, ay.label AS year_label,
+              s.class_teacher_id, ct.full_name_bn AS class_teacher_name,
+              cta.started_on::text AS class_teacher_since
+         FROM sections s
+         JOIN classes cl        ON cl.id = s.class_id
+         JOIN academic_years ay ON ay.id = s.academic_year_id
+         LEFT JOIN users ct     ON ct.id = s.class_teacher_id
+         LEFT JOIN class_teacher_assignments cta
+                ON cta.section_id = s.id AND cta.ended_on IS NULL
+        WHERE s.id = $1`,
+      [sectionId]
+    );
+    if (head.length === 0) throw new HttpError(404, "section not found", "not_found");
+    const s = head[0];
+    const { rows: subjectTeachers } = await c.query(
+      `SELECT sst.id AS assignment_id, sub.id AS subject_id,
+              sub.name_bn AS subject_bn, sub.name_en AS subject_en,
+              t.id AS teacher_id, t.full_name_bn AS teacher_bn,
+              sst.started_on::text AS started_on
+         FROM section_subject_teachers sst
+         JOIN subjects sub ON sub.id = sst.subject_id
+         JOIN users    t   ON t.id   = sst.teacher_id
+        WHERE sst.section_id = $1 AND sst.ended_on IS NULL
+        ORDER BY sub.name_bn`,
+      [sectionId]
+    );
+    const { rows: unassigned } = await c.query(
+      `SELECT sub.id AS subject_id, sub.name_bn AS subject_bn
+         FROM class_subjects cs
+         JOIN subjects sub ON sub.id = cs.subject_id
+        WHERE cs.class_id = $1
+          AND cs.academic_year_id = $2
+          AND NOT EXISTS (
+                SELECT 1 FROM section_subject_teachers sst
+                 WHERE sst.section_id = $3
+                   AND sst.subject_id = cs.subject_id
+                   AND sst.ended_on IS NULL)
+        ORDER BY sub.name_bn`,
+      [s.class_id, s.year_id, sectionId]
+    );
+    const { rows: roster } = await c.query(
+      `SELECT e.student_id, e.roll_no, u.full_name_bn AS name_bn,
+              sp.student_code, e.status
+         FROM enrolments e
+         JOIN users u             ON u.id = e.student_id
+         LEFT JOIN student_profiles sp ON sp.user_id = e.student_id
+        WHERE e.section_id = $1 AND e.status = 'active'
+        ORDER BY e.roll_no`,
+      [sectionId]
+    );
+    const { rows: history } = await c.query(
+      `SELECT 'class_teacher' AS kind, NULL::text AS subject_bn,
+              u.full_name_bn AS teacher_bn,
+              cta.started_on::text, cta.ended_on::text, cta.end_reason
+         FROM class_teacher_assignments cta
+         JOIN users u ON u.id = cta.teacher_id
+        WHERE cta.section_id = $1 AND cta.ended_on IS NOT NULL
+        UNION ALL
+       SELECT 'subject_teacher', sub.name_bn, u.full_name_bn,
+              sst.started_on::text, sst.ended_on::text, sst.end_reason
+         FROM section_subject_teachers sst
+         JOIN users u      ON u.id   = sst.teacher_id
+         JOIN subjects sub ON sub.id = sst.subject_id
+        WHERE sst.section_id = $1 AND sst.ended_on IS NOT NULL
+        ORDER BY ended_on DESC
+        LIMIT 50`,
+      [sectionId]
+    );
+    return {
+      section: {
+        id: s.id,
+        name: s.name,
+        shift: s.shift,
+        capacity: s.capacity,
+        studentCount: s.student_count,
+        classId: s.class_id,
+        levelNo: s.level_no,
+        classNameBn: s.class_name_bn,
+        group: s.group,
+        groupBn: GROUP_BN[s.group] ?? s.group,
+        yearId: s.year_id,
+        yearLabel: s.year_label
+      },
+      classTeacher: s.class_teacher_id ? { id: s.class_teacher_id, nameBn: s.class_teacher_name ?? "", since: s.class_teacher_since } : null,
+      subjectTeachers: subjectTeachers.map((r) => ({
+        assignmentId: r.assignment_id,
+        subject: { id: r.subject_id, nameBn: r.subject_bn, nameEn: r.subject_en },
+        teacher: { id: r.teacher_id, nameBn: r.teacher_bn },
+        startedOn: r.started_on
+      })),
+      unassignedSubjects: unassigned.map((r) => ({ id: r.subject_id, nameBn: r.subject_bn })),
+      roster: roster.map((r) => ({
+        studentId: r.student_id,
+        rollNo: r.roll_no,
+        nameBn: r.name_bn,
+        studentCode: r.student_code,
+        status: r.status
+      })),
+      history: history.map((h) => ({
+        kind: h.kind,
+        subjectBn: h.subject_bn,
+        teacherBn: h.teacher_bn,
+        startedOn: h.started_on,
+        endedOn: h.ended_on,
+        endReason: h.end_reason
+      }))
+    };
+  });
+}
+async function studentDetail(db, ctx, studentId) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: head } = await c.query(
+      `SELECT u.id, u.full_name_bn AS name_bn, u.full_name_en AS name_en,
+              sp.student_code, sp.admission_date::text AS admission_date,
+              sp.lifecycle_status, sp.blood_group, u.status::text AS status
+         FROM users u
+         LEFT JOIN student_profiles sp ON sp.user_id = u.id
+        WHERE u.id = $1`,
+      [studentId]
+    );
+    if (head.length === 0) throw new HttpError(404, "student not found", "not_found");
+    const u = head[0];
+    const { rows: enrolments } = await c.query(
+      `SELECT ay.label AS year_label, cl.level_no, cl.name_bn AS class_bn,
+              cl."group"::text AS "group", s.name AS section, e.roll_no,
+              e.status, e.enrolled_on::text, e.ended_on::text
+         FROM enrolments e
+         JOIN sections s        ON s.id  = e.section_id
+         JOIN classes  cl       ON cl.id = s.class_id
+         JOIN academic_years ay ON ay.id = e.academic_year_id
+        WHERE e.student_id = $1
+        ORDER BY ay.starts_on DESC`,
+      [studentId]
+    );
+    const { rows: guardians } = await c.query(
+      `SELECT g.full_name_bn AS name_bn, gs.relation,
+              gs.is_primary, gs.can_pay_fees AS can_pay
+         FROM guardianships gs
+         JOIN users g ON g.id = gs.guardian_id
+        WHERE gs.student_id = $1
+        ORDER BY gs.is_primary DESC`,
+      [studentId]
+    );
+    const { rows: att } = await c.query(
+      // 'late' and 'half_day' count as attended: a child who arrived is not
+      // absent, and a 90-day figure that says otherwise would have a teacher
+      // chasing a guardian about a child who was in the room.
+      `SELECT count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
+              count(*)::int AS total
+         FROM attendance_records ar
+        WHERE ar.student_id = $1
+          AND ar.taken_on >= CURRENT_DATE - INTERVAL '90 days'`,
+      [studentId]
+    );
+    return {
+      student: {
+        id: u.id,
+        nameBn: u.name_bn,
+        nameEn: u.name_en,
+        studentCode: u.student_code,
+        admissionDate: u.admission_date,
+        lifecycleStatus: u.lifecycle_status,
+        bloodGroup: u.blood_group,
+        status: u.status
+      },
+      current: enrolments[0] ? {
+        yearLabel: enrolments[0].year_label,
+        levelNo: enrolments[0].level_no,
+        classBn: enrolments[0].class_bn,
+        group: enrolments[0].group,
+        groupBn: GROUP_BN[enrolments[0].group] ?? enrolments[0].group,
+        section: enrolments[0].section,
+        rollNo: enrolments[0].roll_no,
+        status: enrolments[0].status
+      } : null,
+      history: enrolments.map((e) => ({
+        yearLabel: e.year_label,
+        levelNo: e.level_no,
+        classBn: e.class_bn,
+        groupBn: GROUP_BN[e.group] ?? e.group,
+        section: e.section,
+        rollNo: e.roll_no,
+        status: e.status,
+        enrolledOn: e.enrolled_on,
+        endedOn: e.ended_on
+      })),
+      guardians: guardians.map((g) => ({
+        nameBn: g.name_bn,
+        relation: g.relation,
+        isPrimary: g.is_primary,
+        canPayFees: g.can_pay
+      })),
+      attendance90d: {
+        present: att[0]?.present ?? 0,
+        total: att[0]?.total ?? 0
+      }
+    };
+  });
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -4253,9 +4646,10 @@ var ROUTES = {
   import: handler15,
   ward: handler16,
   subjectchoice: handler17,
-  classperf: handler18
+  classperf: handler18,
+  hierarchy: handler19
 };
-async function handler19(req, res) {
+async function handler20(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -4270,5 +4664,5 @@ async function handler19(req, res) {
   return route(req, res);
 }
 export {
-  handler19 as default
+  handler20 as default
 };

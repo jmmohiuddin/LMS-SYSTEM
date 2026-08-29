@@ -2177,6 +2177,1044 @@ async function handler7(req, res) {
   }
 }
 
+// services/ops-svc/api/dashboard.ts
+var DASHBOARD_ROLES = [
+  "principal",
+  "school_owner",
+  "academic_coordinator",
+  "it_admin"
+];
+var FINANCE_ROLES = /* @__PURE__ */ new Set(["principal", "school_owner"]);
+var ABSENT_LIST_CAP = 12;
+async function handler8(req, res) {
+  const cors = corsHeaders([], "GET, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, DASHBOARD_ROLES);
+    const showFinance = FINANCE_ROLES.has(claims.role);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const body = await db.withTenant(ctx, async (c) => {
+      const { rows: yearRows } = await c.query(
+        `SELECT id, label FROM academic_years
+          ORDER BY is_current DESC, starts_on DESC LIMIT 1`
+      );
+      const year2 = yearRows[0] ?? null;
+      if (!year2) {
+        return { year: null, needsSetup: true };
+      }
+      const { rows: counts } = await c.query(
+        `SELECT
+           (SELECT count(*)::int FROM enrolments e
+             WHERE e.academic_year_id = $1 AND e.status = 'active')       AS students,
+           (SELECT count(DISTINCT ur.user_id)::int
+              FROM user_roles ur
+              JOIN roles r ON r.code = ur.role_code AND r.is_staff
+              JOIN users u ON u.id = ur.user_id AND u.status = 'active')  AS teachers,
+           (SELECT count(*)::int FROM sections s
+             WHERE s.academic_year_id = $1)                               AS sections,
+           (SELECT count(*)::int FROM classes)                            AS classes`,
+        [year2.id]
+      );
+      const { rows: att } = await c.query(
+        `SELECT
+           count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
+           count(ar.id)::int                                                       AS marked,
+           (SELECT count(*)::int FROM attendance_sessions s
+             WHERE s.taken_on = CURRENT_DATE)                                      AS sessions,
+           (SELECT count(*)::int FROM sections s
+             WHERE s.academic_year_id = $1)                                        AS sections_expected
+         FROM attendance_records ar
+        WHERE ar.taken_on = CURRENT_DATE`,
+        [year2.id]
+      );
+      const { rows: absent } = await c.query(
+        `SELECT ar.student_id, u.full_name_bn AS name_bn, e.roll_no,
+                s.name AS section, cl.name_bn AS class_bn, ar.status::text AS status
+           FROM attendance_records ar
+           JOIN users u     ON u.id = ar.student_id
+           JOIN sections s  ON s.id = ar.section_id
+           JOIN classes cl  ON cl.id = s.class_id
+           LEFT JOIN enrolments e
+                  ON e.student_id = ar.student_id AND e.section_id = ar.section_id
+                 AND e.status = 'active'
+          WHERE ar.taken_on = CURRENT_DATE AND ar.status = 'absent'
+          ORDER BY cl.level_no, s.name, e.roll_no
+          LIMIT $1`,
+        [ABSENT_LIST_CAP]
+      );
+      const { rows: absentTotal } = await c.query(
+        `SELECT count(*)::int AS n FROM attendance_records
+          WHERE taken_on = CURRENT_DATE AND status = 'absent'`
+      );
+      const { rows: exams } = await c.query(
+        `SELECT id, name_bn, starts_on::text AS starts_on, status::text AS status
+           FROM exams
+          WHERE academic_year_id = $1 AND starts_on >= CURRENT_DATE - INTERVAL '7 days'
+          ORDER BY starts_on
+          LIMIT 5`,
+        [year2.id]
+      );
+      const { rows: notices } = await c.query(
+        `SELECT id, title, category::text AS category,
+                published_at::text AS published_at, recipient_count
+           FROM notices
+          WHERE status = 'published'
+          ORDER BY published_at DESC
+          LIMIT 5`
+      );
+      const { rows: pending } = await c.query(
+        `SELECT
+           (SELECT count(*)::int FROM sections s
+             WHERE s.academic_year_id = $1 AND s.class_teacher_id IS NULL)
+             AS sections_without_class_teacher,
+           (SELECT count(*)::int
+              FROM sections s
+              JOIN class_subjects cs
+                ON cs.class_id = s.class_id AND cs.academic_year_id = s.academic_year_id
+             WHERE s.academic_year_id = $1
+               AND NOT EXISTS (SELECT 1 FROM section_subject_teachers sst
+                                WHERE sst.section_id = s.id
+                                  AND sst.subject_id = cs.subject_id
+                                  AND sst.ended_on IS NULL))
+             AS subjects_without_teacher,
+           (SELECT count(*)::int FROM exams e
+             WHERE e.academic_year_id = $1 AND e.status <> 'published'
+               AND e.ends_on < CURRENT_DATE)
+             AS exams_awaiting_publication,
+           (SELECT count(*)::int
+              FROM users u
+              JOIN user_roles ur ON ur.user_id = u.id AND ur.role_code = 'student'
+             WHERE u.status = 'active'
+               AND NOT EXISTS (SELECT 1 FROM enrolments e
+                                WHERE e.student_id = u.id
+                                  AND e.academic_year_id = $1
+                                  AND e.status = 'active'))
+             AS students_without_section`,
+        [year2.id]
+      );
+      let finance = null;
+      if (showFinance) {
+        const { rows: fin } = await c.query(
+          `SELECT COALESCE(sum(i.total_amount),   0)::text AS invoiced,
+                  COALESCE(sum(i.paid_amount),    0)::text AS collected,
+                  COALESCE(sum(i.balance_amount), 0)::text AS outstanding,
+                  count(*) FILTER (WHERE i.balance_amount > 0)::int AS unpaid
+             FROM invoices i
+            WHERE i.academic_year_id = $1`,
+          [year2.id]
+        );
+        finance = {
+          invoiced: fin[0]?.invoiced ?? "0",
+          collected: fin[0]?.collected ?? "0",
+          outstanding: fin[0]?.outstanding ?? "0",
+          unpaidCount: fin[0]?.unpaid ?? 0
+        };
+      }
+      const marked = att[0]?.marked ?? 0;
+      return {
+        year: { id: year2.id, label: year2.label },
+        needsSetup: false,
+        counts: {
+          students: counts[0]?.students ?? 0,
+          teachers: counts[0]?.teachers ?? 0,
+          sections: counts[0]?.sections ?? 0,
+          classes: counts[0]?.classes ?? 0
+        },
+        attendanceToday: {
+          present: att[0]?.present ?? 0,
+          marked,
+          // 0/0 is "nobody has taken attendance yet", which is a different
+          // statement from 0%, and the screen must not render it as one.
+          percent: marked > 0 ? Math.round((att[0]?.present ?? 0) / marked * 100) : null,
+          sessionsTaken: att[0]?.sessions ?? 0,
+          sectionsExpected: att[0]?.sections_expected ?? 0
+        },
+        absentToday: {
+          total: absentTotal[0]?.n ?? 0,
+          shown: absent.map((a) => ({
+            studentId: a.student_id,
+            nameBn: a.name_bn,
+            rollNo: a.roll_no,
+            section: a.section,
+            classBn: a.class_bn
+          }))
+        },
+        upcomingExams: exams.map((e) => ({
+          id: e.id,
+          nameBn: e.name_bn,
+          startsOn: e.starts_on,
+          status: e.status
+        })),
+        recentNotices: notices.map((n) => ({
+          id: n.id,
+          title: n.title,
+          category: n.category,
+          publishedAt: n.published_at,
+          recipientCount: n.recipient_count
+        })),
+        pending: {
+          sectionsWithoutClassTeacher: pending[0]?.sections_without_class_teacher ?? 0,
+          subjectsWithoutTeacher: pending[0]?.subjects_without_teacher ?? 0,
+          examsAwaitingPublication: pending[0]?.exams_awaiting_publication ?? 0,
+          studentsWithoutSection: pending[0]?.students_without_section ?? 0
+        },
+        finance
+      };
+    });
+    json(res, 200, body, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
+// packages/server-core/src/audit.ts
+async function writeAudit(client, actor, entry) {
+  try {
+    await client.query(
+      `INSERT INTO audit.activity_log
+         (tenant_id, actor_id, actor_role, action, entity_type, entity_id,
+          before_state, after_state)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        actor.tenantId,
+        actor.userId,
+        actor.role,
+        entry.action,
+        entry.entityType,
+        entry.entityId ?? null,
+        entry.before === void 0 ? null : JSON.stringify(entry.before),
+        entry.after === void 0 ? null : JSON.stringify(entry.after)
+      ]
+    );
+  } catch {
+  }
+}
+
+// services/ops-svc/api/assign.ts
+var ASSIGN_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var MAX_REASON = 200;
+function parseEffective(raw) {
+  if (!raw) return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996\u099F\u09BF \u09AC\u09C1\u099D\u09A4\u09C7 \u09AA\u09BE\u09B0\u09BF\u09A8\u09BF", "bad_date", { field: "effectiveDate" });
+  }
+  const d = /* @__PURE__ */ new Date(`${raw}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) {
+    throw new HttpError(400, "\u098F\u0987 \u09A4\u09BE\u09B0\u09BF\u0996\u099F\u09BF \u09A8\u09C7\u0987", "bad_date", { field: "effectiveDate" });
+  }
+  return raw;
+}
+async function handler9(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireRole(claims, ASSIGN_ROLES);
+      const sectionId2 = query(req).get("sectionId");
+      if (!sectionId2) throw new HttpError(400, "sectionId is required", "bad_request");
+      json(res, 200, await candidates(db, ctx, sectionId2), cors);
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    requireRole(claims, ASSIGN_ROLES);
+    const body = await readJson(req);
+    const sectionId = body.sectionId?.trim();
+    const teacherId = body.teacherId?.trim();
+    const subjectId = body.subjectId?.trim() || null;
+    if (!sectionId) throw new HttpError(400, "\u09B8\u09C7\u0995\u09B6\u09A8 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_request", { field: "sectionId" });
+    if (!teacherId) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_request", { field: "teacherId" });
+    const effective = parseEffective(body.effectiveDate);
+    const reason = (body.reason ?? "").trim().slice(0, MAX_REASON) || null;
+    const result = await db.withTenant(ctx, async (c) => {
+      const { rows: before } = subjectId ? await c.query(
+        `SELECT sst.teacher_id, u.full_name_bn AS teacher_bn
+               FROM section_subject_teachers sst
+               JOIN users u ON u.id = sst.teacher_id
+              WHERE sst.section_id = $1 AND sst.subject_id = $2
+                AND sst.ended_on IS NULL`,
+        [sectionId, subjectId]
+      ) : await c.query(
+        `SELECT cta.teacher_id, u.full_name_bn AS teacher_bn
+               FROM class_teacher_assignments cta
+               JOIN users u ON u.id = cta.teacher_id
+              WHERE cta.section_id = $1 AND cta.ended_on IS NULL`,
+        [sectionId]
+      );
+      const outgoing = before[0] ?? null;
+      if (outgoing && outgoing.teacher_id !== teacherId && !reason) {
+        throw new HttpError(
+          400,
+          "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0995\u09BE\u09B0\u09A3 \u09B2\u09BF\u0996\u09C1\u09A8 \u2014 \u0995\u09C7 \u0995\u0996\u09A8 \u09A6\u09BE\u09AF\u09BC\u09BF\u09A4\u09CD\u09AC\u09C7 \u099B\u09BF\u09B2\u09C7\u09A8, \u09A4\u09BE \u09AA\u09B0\u09C7 \u099C\u09BE\u09A8\u09A4\u09C7 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7",
+          "reason_required",
+          { field: "reason" }
+        );
+      }
+      const { rows: teacher } = await c.query(
+        `SELECT u.full_name_bn,
+                EXISTS (SELECT 1 FROM user_roles ur
+                          JOIN roles r ON r.code = ur.role_code
+                         WHERE ur.user_id = u.id AND r.is_staff) AS is_staff
+           FROM users u
+          WHERE u.id = $1 AND u.status = 'active'`,
+        [teacherId]
+      );
+      if (teacher.length === 0) {
+        throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "teacher_not_found", { field: "teacherId" });
+      }
+      if (!teacher[0].is_staff) {
+        throw new HttpError(400, "\u0987\u09A8\u09BF \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09A8", "not_staff", { field: "teacherId" });
+      }
+      const { rows } = subjectId ? await c.query(
+        `SELECT app.assign_subject_teacher($1, $2, $3, $4::date, $5) AS id`,
+        [sectionId, subjectId, teacherId, effective, reason]
+      ) : await c.query(
+        `SELECT app.assign_class_teacher($1, $2, $3::date, $4) AS id`,
+        [sectionId, teacherId, effective, reason]
+      );
+      const unchanged = outgoing?.teacher_id === teacherId;
+      if (!unchanged) {
+        await writeAudit(c, ctx, {
+          action: subjectId ? "academic.subject_teacher.assign" : "academic.class_teacher.assign",
+          entityType: "section",
+          entityId: sectionId,
+          before: outgoing ? { teacherId: outgoing.teacher_id, nameBn: outgoing.teacher_bn } : null,
+          after: { teacherId, nameBn: teacher[0].full_name_bn, subjectId, effective, reason }
+        });
+      }
+      return {
+        assignmentId: rows[0]?.id ?? null,
+        replaced: outgoing && !unchanged ? { teacherId: outgoing.teacher_id, nameBn: outgoing.teacher_bn } : null,
+        // An honest answer for the double-submitted form: nothing happened,
+        // and saying "assigned" would be a small lie the history contradicts.
+        unchanged,
+        teacher: { id: teacherId, nameBn: teacher[0].full_name_bn },
+        effectiveDate: effective
+      };
+    });
+    json(res, 200, result, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, field: err.detail?.field }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function candidates(db, ctx, sectionId) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: sec } = await c.query(
+      `SELECT class_id, academic_year_id AS year_id FROM sections WHERE id = $1`,
+      [sectionId]
+    );
+    if (sec.length === 0) throw new HttpError(404, "section not found", "not_found");
+    const { rows: subjects } = await c.query(
+      `SELECT sub.id, sub.name_bn,
+              sst.teacher_id AS assigned_teacher,
+              u.full_name_bn AS assigned_name
+         FROM class_subjects cs
+         JOIN subjects sub ON sub.id = cs.subject_id
+         LEFT JOIN section_subject_teachers sst
+                ON sst.section_id = $1 AND sst.subject_id = sub.id
+               AND sst.ended_on IS NULL
+         LEFT JOIN users u ON u.id = sst.teacher_id
+        WHERE cs.class_id = $2 AND cs.academic_year_id = $3
+        ORDER BY sub.name_bn`,
+      [sectionId, sec[0].class_id, sec[0].year_id]
+    );
+    const { rows: teachers } = await c.query(
+      `SELECT u.id, u.full_name_bn AS name_bn, sp.employee_code,
+              COALESCE(array_agg(DISTINCT tse.subject_id::text)
+                       FILTER (WHERE tse.subject_id IS NOT NULL), '{}') AS subject_ids,
+              (SELECT count(*)::int FROM section_subject_teachers x
+                WHERE x.teacher_id = u.id AND x.ended_on IS NULL) AS load
+         FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r       ON r.code = ur.role_code AND r.is_staff
+         LEFT JOIN staff_profiles sp            ON sp.user_id = u.id
+         LEFT JOIN teacher_subject_expertise tse ON tse.teacher_id = u.id
+        WHERE u.status = 'active'
+        GROUP BY u.id, u.full_name_bn, sp.employee_code
+        ORDER BY u.full_name_bn`
+    );
+    return {
+      subjects: subjects.map((s) => ({
+        id: s.id,
+        nameBn: s.name_bn,
+        assigned: s.assigned_teacher ? { id: s.assigned_teacher, nameBn: s.assigned_name ?? "" } : null
+      })),
+      teachers: teachers.map((t) => ({
+        id: t.id,
+        nameBn: t.name_bn,
+        employeeCode: t.employee_code,
+        // Current open assignments. A principal handing a sixth section to
+        // somebody already carrying five should be able to see that before
+        // they do it, not after the timetable fails to solve.
+        currentLoad: t.load,
+        expertiseSubjectIds: t.subject_ids
+      }))
+    };
+  });
+}
+
+// services/ops-svc/api/enrol.ts
+var ENROL_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var MAX_MOVE = 200;
+async function handler10(req, res) {
+  const cors = corsHeaders([], "POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "POST") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, ENROL_ROLES);
+    const body = await readJson(req);
+    const sectionId = body.sectionId?.trim();
+    const studentIds = [...new Set((body.studentIds ?? []).map((s) => String(s).trim()).filter(Boolean))];
+    const dryRun = body.dryRun !== false;
+    if (!sectionId) throw new HttpError(400, "\u09B8\u09C7\u0995\u09B6\u09A8 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_request", { field: "sectionId" });
+    if (studentIds.length === 0) {
+      throw new HttpError(400, "\u0995\u09CB\u09A8\u09CB \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AC\u09C7\u099B\u09C7 \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF", "bad_request", { field: "studentIds" });
+    }
+    if (studentIds.length > MAX_MOVE) {
+      throw new HttpError(
+        400,
+        `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_MOVE} \u099C\u09A8 \u2014 \u09AC\u09C7\u09B6\u09BF \u09B9\u09B2\u09C7 \u0986\u09AE\u09A6\u09BE\u09A8\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8`,
+        "too_many",
+        { field: "studentIds" }
+      );
+    }
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const result = await db.withTenant(ctx, async (c) => {
+      const { rows: sec } = await c.query(
+        `SELECT s.id, s.name, s.capacity, s.student_count,
+                ay.id AS year_id, ay.label AS year_label,
+                cl.name_bn AS class_bn, cl."group"::text AS "group"
+           FROM sections s
+           JOIN academic_years ay ON ay.id = s.academic_year_id
+           JOIN classes cl        ON cl.id = s.class_id
+          WHERE s.id = $1`,
+        [sectionId]
+      );
+      if (sec.length === 0) throw new HttpError(404, "\u09B8\u09C7\u0995\u09B6\u09A8 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+      const section = sec[0];
+      const { rows: current } = await c.query(
+        `SELECT u.id AS student_id, u.full_name_bn AS name_bn,
+                e.id AS enrolment_id, e.section_id AS from_section_id,
+                s.name AS from_section, cl.name_bn AS from_class_bn, e.roll_no
+           FROM users u
+           LEFT JOIN enrolments e
+                  ON e.student_id = u.id AND e.academic_year_id = $2
+                 AND e.status = 'active'
+           LEFT JOIN sections s ON s.id = e.section_id
+           LEFT JOIN classes cl ON cl.id = s.class_id
+          WHERE u.id = ANY($1::uuid[]) AND u.status = 'active'`,
+        [studentIds, section.year_id]
+      );
+      const found = new Set(current.map((r) => r.student_id));
+      const missing = studentIds.filter((id) => !found.has(id));
+      const alreadyHere = current.filter((r) => r.from_section_id === sectionId);
+      const moving = current.filter((r) => r.from_section_id !== sectionId);
+      const { rows: maxRoll } = await c.query(
+        `SELECT COALESCE(max(roll_no), 0) + 1 AS next
+           FROM enrolments WHERE section_id = $1 AND status = 'active'`,
+        [sectionId]
+      );
+      let roll = maxRoll[0]?.next ?? 1;
+      const plan2 = moving.map((r) => ({
+        studentId: r.student_id,
+        nameBn: r.name_bn,
+        from: r.from_section_id ? { sectionId: r.from_section_id, section: r.from_section, classBn: r.from_class_bn, rollNo: r.roll_no } : null,
+        toRollNo: roll++,
+        isNewEnrolment: r.enrolment_id === null
+      }));
+      const willBe = section.student_count + plan2.length;
+      const overCapacity = willBe > section.capacity;
+      const preview2 = {
+        section: {
+          id: section.id,
+          name: section.name,
+          classBn: section.class_bn,
+          group: section.group,
+          yearLabel: section.year_label,
+          capacity: section.capacity,
+          currentCount: section.student_count,
+          countAfter: willBe
+        },
+        moving: plan2,
+        alreadyInSection: alreadyHere.map((r) => ({ studentId: r.student_id, nameBn: r.name_bn })),
+        notFound: missing,
+        // Capacity is a warning, not a refusal. Bangladeshi sections run over
+        // their nominal capacity constantly, and a system that blocks the
+        // move is a system the school stops using in week two. The screen
+        // shows it; the person decides.
+        overCapacity,
+        committed: false
+      };
+      if (dryRun) return preview2;
+      for (const p of plan2) {
+        if (p.isNewEnrolment) {
+          await c.query(
+            `INSERT INTO enrolments
+               (tenant_id, student_id, section_id, academic_year_id, roll_no, status)
+             VALUES ($1, $2, $3, $4, $5, 'active')`,
+            [ctx.tenantId, p.studentId, sectionId, section.year_id, p.toRollNo]
+          );
+        } else {
+          await c.query(
+            `UPDATE enrolments
+                SET section_id = $1, roll_no = $2, row_version = row_version + 1
+              WHERE student_id = $3 AND academic_year_id = $4 AND status = 'active'`,
+            [sectionId, p.toRollNo, p.studentId, section.year_id]
+          );
+        }
+      }
+      await writeAudit(c, ctx, {
+        action: "academic.enrolment.move",
+        entityType: "section",
+        entityId: sectionId,
+        before: { count: section.student_count },
+        after: {
+          count: willBe,
+          moved: plan2.length,
+          // Ids only, no names: the audit log is management-readable and does
+          // not need to be a second copy of the roster.
+          studentIds: plan2.map((p) => p.studentId)
+        }
+      });
+      return { ...preview2, committed: true };
+    });
+    json(res, 200, result, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, field: err.detail?.field }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
+// services/ops-svc/api/rollover.ts
+var ROLLOVER_READ = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var ROLLOVER_WRITE = ["principal", "school_owner"];
+async function handler11(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireRole(claims, ROLLOVER_READ);
+      const q = query(req);
+      const from2 = q.get("from");
+      const to2 = q.get("to");
+      json(res, 200, await preview(db, ctx, from2, to2), cors);
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    requireRole(claims, ROLLOVER_WRITE);
+    const body = await readJson(req);
+    if (body.rolloverId) {
+      json(res, 200, await commit(db, ctx, body.rolloverId), cors);
+      return;
+    }
+    const from = body.fromYearId?.trim();
+    const to = body.toYearId?.trim();
+    if (!from || !to) throw new HttpError(400, "\u09A6\u09C1\u0987\u099F\u09BF \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "bad_request");
+    if (from === to) throw new HttpError(400, "\u098F\u0995\u0987 \u09AC\u099B\u09B0 \u09A5\u09C7\u0995\u09C7 \u098F\u0995\u0987 \u09AC\u099B\u09B0\u09C7 \u0989\u09A8\u09CD\u09A8\u09C0\u09A4 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE", "same_year");
+    json(res, 200, await plan(db, ctx, from, to), cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+function summarise(rows) {
+  return {
+    considered: rows.length,
+    promote: rows.filter((r) => r.action === "promote").length,
+    repeat: rows.filter((r) => r.action === "repeat").length,
+    graduate: rows.filter((r) => r.action === "graduate").length,
+    blocked: rows.filter((r) => r.action === "blocked").length
+  };
+}
+async function preview(db, ctx, from, to) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows: years } = await c.query(
+      `SELECT id, label, is_current FROM academic_years ORDER BY starts_on DESC`
+    );
+    if (!from || !to) {
+      return {
+        years: years.map((y) => ({ id: y.id, label: y.label, isCurrent: y.is_current })),
+        needsTargetYear: years.length < 2,
+        summary: null,
+        students: [],
+        existing: null
+      };
+    }
+    const { rows } = await c.query(
+      `SELECT * FROM app.rollover_preview($1, $2)`,
+      [from, to]
+    );
+    const { rows: existing } = await c.query(
+      `SELECT id, status, considered, to_promote, to_repeat, to_graduate, blocked,
+              promoted, repeated, graduated, committed_at::text AS committed_at
+         FROM year_rollovers
+        WHERE from_year_id = $1 AND to_year_id = $2`,
+      [from, to]
+    );
+    return {
+      years: years.map((y) => ({ id: y.id, label: y.label, isCurrent: y.is_current })),
+      needsTargetYear: false,
+      fromYear: years.find((y) => y.id === from) ?? null,
+      toYear: years.find((y) => y.id === to) ?? null,
+      summary: summarise(rows),
+      students: rows.map((r) => ({
+        studentId: r.student_id,
+        nameBn: r.student_name_bn,
+        fromLevel: r.from_class_level,
+        fromSection: r.from_section,
+        fromRoll: r.from_roll,
+        action: r.action,
+        toLevel: r.to_class_level,
+        toSection: r.to_section,
+        toRoll: r.to_roll,
+        blockerBn: r.blocker_bn
+      })),
+      existing: existing[0] ? {
+        id: existing[0].id,
+        status: existing[0].status,
+        planned: {
+          considered: existing[0].considered,
+          promote: existing[0].to_promote,
+          repeat: existing[0].to_repeat,
+          graduate: existing[0].to_graduate,
+          blocked: existing[0].blocked
+        },
+        actual: existing[0].status === "committed" ? {
+          promoted: existing[0].promoted,
+          repeated: existing[0].repeated,
+          graduated: existing[0].graduated,
+          committedAt: existing[0].committed_at
+        } : null
+      } : null
+    };
+  });
+}
+async function plan(db, ctx, from, to) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      `SELECT * FROM app.rollover_preview($1, $2)`,
+      [from, to]
+    );
+    const s = summarise(rows);
+    const { rows: saved } = await c.query(
+      `INSERT INTO year_rollovers
+         (tenant_id, from_year_id, to_year_id, considered, to_promote,
+          to_repeat, to_graduate, blocked, planned_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (tenant_id, from_year_id, to_year_id) DO UPDATE
+         SET considered = EXCLUDED.considered,
+             to_promote = EXCLUDED.to_promote,
+             to_repeat = EXCLUDED.to_repeat,
+             to_graduate = EXCLUDED.to_graduate,
+             blocked = EXCLUDED.blocked,
+             planned_by = EXCLUDED.planned_by
+         -- Re-planning is only meaningful while it has not run. A committed
+         -- rollover's frozen counts are the record of what it promised.
+         WHERE year_rollovers.status = 'planned'
+       RETURNING id, status`,
+      [ctx.tenantId, from, to, s.considered, s.promote, s.repeat, s.graduate, s.blocked, ctx.userId]
+    );
+    if (saved.length === 0) {
+      throw new HttpError(
+        409,
+        "\u098F\u0987 \u09A6\u09C1\u0987 \u09AC\u099B\u09B0\u09C7\u09B0 \u0989\u09A8\u09CD\u09A8\u09AF\u09BC\u09A8 \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u09B8\u09AE\u09CD\u09AA\u09A8\u09CD\u09A8 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7",
+        "already_committed"
+      );
+    }
+    return { rolloverId: saved[0].id, status: saved[0].status, summary: s };
+  });
+}
+async function commit(db, ctx, rolloverId) {
+  return db.withTenant(ctx, async (c) => {
+    try {
+      const { rows } = await c.query(
+        `SELECT * FROM app.commit_rollover($1)`,
+        [rolloverId]
+      );
+      const r = rows[0] ?? { promoted: 0, repeated: 0, graduated: 0 };
+      await writeAudit(c, ctx, {
+        action: "academic.rollover.commit",
+        entityType: "year_rollover",
+        entityId: rolloverId,
+        after: r
+      });
+      return { committed: true, ...r };
+    } catch (err) {
+      const e = err;
+      if (e.code === "23514" || e.code === "22023" || e.code === "P0002") {
+        throw new HttpError(
+          409,
+          e.message ?? "\u0989\u09A8\u09CD\u09A8\u09AF\u09BC\u09A8 \u09B8\u09AE\u09CD\u09AA\u09A8\u09CD\u09A8 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+          "rollover_refused",
+          { hint: e.hint ?? null }
+        );
+      }
+      throw err;
+    }
+  });
+}
+
+// services/sms-svc/src/dispatch.ts
+var NOTICE_SMS_DEFAULT_MAX = 180;
+var NOTICE_SMS_HARD_CEILING = 480;
+var NOTICE_SMS_MIN = 70;
+function noticeSmsMaxChars(settings) {
+  const raw = settings?.sms?.noticeMaxChars;
+  let n;
+  if (typeof raw === "number") n = raw;
+  else if (typeof raw === "string" && raw.trim() !== "") n = Number(raw);
+  else return NOTICE_SMS_DEFAULT_MAX;
+  if (!Number.isFinite(n)) return NOTICE_SMS_DEFAULT_MAX;
+  return Math.max(NOTICE_SMS_MIN, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
+}
+
+// services/ops-svc/api/settings.ts
+var SETTINGS_ROLES = ["principal", "school_owner", "it_admin", "academic_coordinator"];
+async function handler12(req, res) {
+  const cors = corsHeaders([], "GET, PUT, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const body2 = await db.withTenant(ctx, async (c) => {
+        const { rows } = await c.query(
+          `SELECT COALESCE(settings, '{}'::jsonb) AS settings FROM tenants`
+        );
+        return settingsPayload(rows[0]?.settings ?? {});
+      });
+      json(res, 200, body2, cors);
+      return;
+    }
+    if (req.method !== "PUT") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    requireRole(claims, SETTINGS_ROLES);
+    const patch = await readJson(req);
+    const raw = patch.sms?.noticeMaxChars;
+    if (raw === void 0) {
+      throw new HttpError(400, "\u0995\u09BF\u099B\u09C1 \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF", "nothing_to_update");
+    }
+    const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      throw new HttpError(400, "\u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_number", { field: "noticeMaxChars" });
+    }
+    if (n < NOTICE_SMS_MIN || n > NOTICE_SMS_HARD_CEILING) {
+      throw new HttpError(
+        400,
+        `${NOTICE_SMS_MIN} \u09A5\u09C7\u0995\u09C7 ${NOTICE_SMS_HARD_CEILING} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8`,
+        "out_of_range",
+        { field: "noticeMaxChars", min: NOTICE_SMS_MIN, max: NOTICE_SMS_HARD_CEILING }
+      );
+    }
+    const body = await db.withTenant(ctx, async (c) => {
+      const { rows: before } = await c.query(
+        `SELECT COALESCE(settings, '{}'::jsonb) AS settings FROM tenants`
+      );
+      const previous = noticeSmsMaxChars(before[0]?.settings ?? null);
+      const { rows } = await c.query(
+        // jsonb_set with create_missing, on the one key this screen owns.
+        // The branding object beside it is untouched.
+        `UPDATE tenants
+            SET settings = jsonb_set(
+                  COALESCE(settings, '{}'::jsonb),
+                  '{sms,noticeMaxChars}',
+                  to_jsonb($1::int),
+                  true)
+          RETURNING settings`,
+        [n]
+      );
+      if (rows.length === 0) {
+        throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
+      }
+      await writeAudit(c, ctx, {
+        action: "ops.settings.update",
+        entityType: "tenant",
+        entityId: ctx.tenantId,
+        before: { noticeMaxChars: previous },
+        after: { noticeMaxChars: n }
+      });
+      return settingsPayload(rows[0].settings);
+    });
+    json(res, 200, body, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+function settingsPayload(settings) {
+  return {
+    sms: {
+      noticeMaxChars: noticeSmsMaxChars(settings),
+      default: NOTICE_SMS_DEFAULT_MAX,
+      min: NOTICE_SMS_MIN,
+      max: NOTICE_SMS_HARD_CEILING,
+      // Bangla forces UCS-2, so a segment is 70 characters rather than 160.
+      // The screen needs this to show a cost, and it is not a number the
+      // frontend should be carrying its own copy of.
+      charsPerSegment: NOTICE_SMS_MIN
+    }
+  };
+}
+
+// services/ops-svc/api/users.ts
+var USER_ADMIN_ROLES = ["principal", "school_owner", "it_admin"];
+var USER_READ_ROLES = [...USER_ADMIN_ROLES, "academic_coordinator"];
+var GRANTABLE = /* @__PURE__ */ new Set([
+  "principal",
+  "academic_coordinator",
+  "dept_head",
+  "accountant",
+  "class_teacher",
+  "subject_teacher",
+  "librarian",
+  "it_admin"
+]);
+var SEARCH_LIMIT = 50;
+async function handler13(req, res) {
+  const cors = corsHeaders([], "GET, POST, PATCH, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireRole(claims, USER_READ_ROLES);
+      json(res, 200, await search(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "POST") {
+      requireRole(claims, USER_ADMIN_ROLES);
+      json(res, 200, await create(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "PATCH") {
+      requireRole(claims, USER_ADMIN_ROLES);
+      json(res, 200, await setStatus(db, ctx, req), cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+async function search(db, ctx, req) {
+  const q = query(req);
+  const term = (q.get("q") ?? "").trim();
+  const role = (q.get("role") ?? "").trim();
+  const status = (q.get("status") ?? "").trim();
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      `SELECT u.id, u.full_name_bn AS name_bn, u.full_name_en AS name_en,
+              u.phone_e164 AS phone, u.status::text AS status,
+              COALESCE(array_agg(DISTINCT ur.role_code)
+                       FILTER (WHERE ur.role_code IS NOT NULL), '{}') AS roles,
+              sp.employee_code, stp.student_code,
+              u.created_at::text AS created_at
+         FROM users u
+         LEFT JOIN user_roles ur      ON ur.user_id = u.id
+         LEFT JOIN staff_profiles sp  ON sp.user_id = u.id
+         LEFT JOIN student_profiles stp ON stp.user_id = u.id
+        WHERE u.deleted_at IS NULL
+          -- Name is a prefix/substring search; phone is exact. See the header:
+          -- a partial-phone search is a contact-list enumerator.
+          AND ($1 = '' OR u.full_name_bn ILIKE '%' || $1 || '%'
+                       OR u.full_name_en ILIKE '%' || $1 || '%'
+                       OR u.phone_e164 = $1
+                       OR sp.employee_code = $1
+                       OR stp.student_code = $1)
+          AND ($3 = '' OR u.status::text = $3)
+        GROUP BY u.id, u.full_name_bn, u.full_name_en, u.phone_e164, u.status,
+                 sp.employee_code, stp.student_code, u.created_at
+        HAVING ($2 = '' OR $2 = ANY(array_agg(ur.role_code)))
+        ORDER BY u.full_name_bn
+        LIMIT $4`,
+      [term, role, status, SEARCH_LIMIT]
+    );
+    return {
+      users: rows.map((r) => ({
+        id: r.id,
+        nameBn: r.name_bn,
+        nameEn: r.name_en,
+        phone: r.phone,
+        status: r.status,
+        roles: r.roles,
+        employeeCode: r.employee_code,
+        studentCode: r.student_code,
+        createdAt: r.created_at
+      })),
+      // The screen must be able to say "showing the first 50 of more" rather
+      // than implying the search found everything.
+      truncated: rows.length === SEARCH_LIMIT,
+      limit: SEARCH_LIMIT
+    };
+  });
+}
+function normalisePhone(raw) {
+  const digits = raw.replace(/[^\d+]/g, "");
+  if (/^\+8801[3-9]\d{8}$/.test(digits)) return digits;
+  if (/^8801[3-9]\d{8}$/.test(digits)) return `+${digits}`;
+  if (/^01[3-9]\d{8}$/.test(digits)) return `+88${digits}`;
+  throw new HttpError(400, "\u09AE\u09CB\u09AC\u09BE\u0987\u09B2 \u09A8\u09AE\u09CD\u09AC\u09B0\u099F\u09BF \u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "bad_phone", { field: "phone" });
+}
+async function create(db, ctx, req) {
+  const body = await readJson(req);
+  const nameBn = (body.nameBn ?? "").trim();
+  const roleCode = (body.roleCode ?? "").trim();
+  if (!nameBn) throw new HttpError(400, "\u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_request", { field: "nameBn" });
+  if (!GRANTABLE.has(roleCode)) {
+    throw new HttpError(400, "\u098F\u0987 \u09AD\u09C2\u09AE\u09BF\u0995\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE", "bad_role", { field: "roleCode" });
+  }
+  const phone = normalisePhone(body.phone ?? "");
+  return db.withTenant(ctx, async (c) => {
+    const { rows: dupe } = await c.query(
+      `SELECT id, full_name_bn AS name_bn FROM users
+        WHERE phone_e164 = $1 AND deleted_at IS NULL`,
+      [phone]
+    );
+    if (dupe.length > 0) {
+      throw new HttpError(
+        409,
+        `\u098F\u0987 \u09A8\u09AE\u09CD\u09AC\u09B0\u099F\u09BF \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 ${dupe[0].name_bn}-\u098F\u09B0 \u099C\u09A8\u09CD\u09AF \u09AC\u09CD\u09AF\u09AC\u09B9\u09C3\u09A4`,
+        "phone_taken",
+        { field: "phone", existingId: dupe[0].id }
+      );
+    }
+    const nameEn = (body.nameEn ?? "").trim() || nameBn;
+    const { rows } = await c.query(
+      `INSERT INTO users (tenant_id, full_name_bn, full_name_en, phone_e164, status)
+       VALUES ($1, $2, $3, $4, 'invited')
+       RETURNING id`,
+      [ctx.tenantId, nameBn, nameEn, phone]
+    );
+    const userId = rows[0].id;
+    await c.query(
+      `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES ($1, $2, $3)`,
+      [ctx.tenantId, userId, roleCode]
+    );
+    await c.query(
+      `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [
+        userId,
+        ctx.tenantId,
+        (body.employeeCode ?? "").trim() || null,
+        (body.designationBn ?? "").trim() || null
+      ]
+    );
+    await writeAudit(c, ctx, {
+      action: "ops.user.create",
+      entityType: "user",
+      entityId: userId,
+      after: { nameBn, roleCode }
+    });
+    return { id: userId, nameBn, roleCode, status: "invited" };
+  });
+}
+async function setStatus(db, ctx, req) {
+  const body = await readJson(req);
+  const userId = (body.userId ?? "").trim();
+  if (!userId) throw new HttpError(400, "userId is required", "bad_request", { field: "userId" });
+  if (typeof body.active !== "boolean") {
+    throw new HttpError(400, "active must be true or false", "bad_request", { field: "active" });
+  }
+  if (userId === ctx.userId && body.active === false) {
+    throw new HttpError(400, "\u09A8\u09BF\u099C\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F \u09A8\u09BF\u09B7\u09CD\u0995\u09CD\u09B0\u09BF\u09AF\u09BC \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE", "cannot_deactivate_self");
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(
+      `SELECT status::text AS status, full_name_bn AS name_bn FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (before.length === 0) throw new HttpError(404, "\u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u0995\u09BE\u09B0\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+    const next = body.active ? "active" : "left";
+    const { rows } = await c.query(
+      `UPDATE users SET status = $1::user_status, row_version = row_version + 1
+        WHERE id = $2 RETURNING status::text AS status`,
+      [next, userId]
+    );
+    if (rows.length === 0) throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
+    await writeAudit(c, ctx, {
+      action: body.active ? "ops.user.reactivate" : "ops.user.deactivate",
+      entityType: "user",
+      entityId: userId,
+      before: { status: before[0].status },
+      after: { status: rows[0].status }
+    });
+    return { id: userId, nameBn: before[0].name_bn, status: rows[0].status };
+  });
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -2185,9 +3223,15 @@ var ROUTES = {
   brand: handler4,
   manifest: handler5,
   notices: handler6,
-  inbox: handler7
+  inbox: handler7,
+  dashboard: handler8,
+  assign: handler9,
+  enrol: handler10,
+  rollover: handler11,
+  settings: handler12,
+  users: handler13
 };
-async function handler8(req, res) {
+async function handler14(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -2196,12 +3240,23 @@ async function handler8(req, res) {
     return;
   }
   if (req.method !== "OPTIONS" && sub !== "maintenance") {
-    const isWrite = req.method === "POST" || req.method === "PUT";
-    const bucket = (sub === "events" || sub === "notices" || sub === "inbox" || sub === "branding") && isWrite ? "mutation" : "read";
+    const isWrite = req.method === "POST" || req.method === "PUT" || req.method === "PATCH";
+    const WRITE_ROUTES = /* @__PURE__ */ new Set([
+      "events",
+      "notices",
+      "inbox",
+      "branding",
+      "assign",
+      "enrol",
+      "rollover",
+      "settings",
+      "users"
+    ]);
+    const bucket = WRITE_ROUTES.has(sub) && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
   }
   return route(req, res);
 }
 export {
-  handler8 as default
+  handler14 as default
 };

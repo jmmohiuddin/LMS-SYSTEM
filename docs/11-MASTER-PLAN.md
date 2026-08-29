@@ -18,8 +18,8 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৬৬১ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-2 শেষে; এর সাথে
-১৮টি SQL সুইট যা এবার সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
+এবং টেস্টেড (**৭০৯ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-3 শেষে; এর সাথে
+১৯টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
 যা নেই, সেটাই এই প্ল্যান — অগ্রাধিকার অনুযায়ী:
@@ -347,10 +347,10 @@ no phase accidentally re-implements these):
 |---|---|---|
 | স্কুলের নিজস্ব লোগো/নাম/তথ্য সর্বত্র (white-label) | **Missing** | **R-1** |
 | প্রিন্টে স্কুলের ওয়াটারমার্ক/লোগো (রসিদ ইত্যাদি) | Missing | R-1 (foundation) + R-5 (documents) |
-| ক্লাস → গ্রুপ → সেকশন → ছাত্র ড্রিল-ডাউন (প্রধান শিক্ষক) | Data model exists; **UI missing** | R-3 |
-| সেকশনে শিক্ষক অ্যাসাইন / বছরে বছরে নতুন অ্যাসাইন | Model + rollover exist; **UI missing** | R-3 |
-| শিক্ষক চলে গেলে রিপ্লেসমেন্ট, হিস্টরি অক্ষত | Model supports; **UI missing** | R-3 |
-| আইটি প্রোফাইল — পুরো স্কুল ম্যানেজ করবে | Partial (import, roles-view) | R-3 |
+| ক্লাস → গ্রুপ → সেকশন → ছাত্র ড্রিল-ডাউন (প্রধান শিক্ষক) | **Done (R-3)** | — |
+| সেকশনে শিক্ষক অ্যাসাইন / বছরে বছরে নতুন অ্যাসাইন | **Done (R-3)** | — |
+| শিক্ষক চলে গেলে রিপ্লেসমেন্ট, হিস্টরি অক্ষত | **Done (R-3)** — মাইগ্রেশন ০৪১ ছাড়া স্কিমা এটা পারত না | — |
+| আইটি প্রোফাইল — পুরো স্কুল ম্যানেজ করবে | **Mostly done (R-3)** — শ্রেণি/সেকশন তৈরি ও অভিভাবক সম্পাদনা বাকি | R-4+ |
 | এক সার্ভার থেকে প্রতিটি স্কুল সম্পূর্ণ আলাদা — লগইন, ডেটা, রুলস, লোকজন | **Exists** (tenant-scoped identity + 4-layer isolation, per-tenant crypto keys) — mechanism written up in **§1b** | R-7 adds per-school subdomains |
 | ছাত্রের আপডেট গার্ডিয়ান+শিক্ষক+প্রধান শিক্ষক সবাই দেখবে (sync) | **Exists** (one DB + RLS + sync pull) | — |
 | গার্ডিয়ান শুধু নিজের সন্তান দেখবে | **Exists** (RLS `guardianships` scoping) | — |
@@ -362,7 +362,7 @@ no phase accidentally re-implements these):
 | ক্যালেন্ডার — ছুটি/ইভেন্ট, স্কুল-অনুযায়ী | Table exists; **API+UI missing** | R-4 |
 | অফলাইনেও অ্যাটেনডেন্স, নেট এলে সিংক | **Exists** | — |
 | ১০ বছর পরে আইডি দিয়ে ছাত্র খুঁজে পাওয়া | Modeled + indexed; **endpoint+UI missing** | R-6 |
-| প্রতি বছর সহজে নতুন অ্যাসাইন (promotion) | **Exists** (rollover preview/commit) | R-3 surfaces it in UI |
+| প্রতি বছর সহজে নতুন অ্যাসাইন (promotion) | **Done (R-3)** — পূর্বরূপ → পরিকল্পনা → নিশ্চিতকরণ | — |
 | সফটওয়্যার নাকি ওয়েব | **Decided: Web+PWA** (D3) | — |
 | সেকশন-ভিত্তিক কমন চ্যাট (ঐচ্ছিক) | Missing, deliberately | R-9 (optional) |
 | নতুন স্কুলকে দ্রুত সার্ভিস দেওয়া (onboarding) | `provision_tenant()` SQL only | R-7 |
@@ -516,6 +516,24 @@ entries R-2 and R-2-FINAL.
 **Exit:** a school IT person, alone, can: create a teacher, assign them to Class 9
 Science F for the year, replace them mid-year with history intact, promote the whole
 school at year end — all from the UI.
+
+**Status: DONE** (2026-08-29), the first phase under D13. Migration **041** gave
+subject-teacher assignments a validity period and class teachers a history table, so
+replacement closes a row instead of overwriting one; it also created the `it_admin`
+role, which the codebase had checked for since R-1 without it existing in the roles
+table. 8 API routes and 7 screens, no new Vercel functions and no new UI framework.
+All four of D13's "Backend complete — UI pending" capabilities are closed — result
+publishing, invoice generation and the notice-SMS cap now have callers, and the
+routine-solver discrepancy was investigated and documented rather than changed
+(`/rms/generation` reads a produced routine, `/rms/solve` produces one; they are
+not duplicates, and `solve` stays API-only rather than gaining a second entry
+point). 709 tests, 0 failing; `db/tests/assignment_history.sql` 13/13.
+
+**What R-3 did NOT deliver, and should be scheduled:** creating classes and sections
+from the UI (a school opening a seventh section mid-year still needs the pilot
+runbook), guardian linking and `can_pay_fees` editing, and the audit VIEWER — the
+log is now written and readable, but F-1603's screen is not built. See
+`docs/PHASE_LOG.md` R-3 for the full list.
 
 ### R-4 — Calendar & schedule surfacing
 
@@ -1014,8 +1032,8 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-0 | Hygiene | XS | — | **done** |
 | R-1 | White-label branding | M | — | **done** (+ R-1-A surfaces) |
 | R-2 | Notices + notifications | M–L | R-1 (branded shell) | **done 2026-08-29** |
-| R-3 | Principal + IT portals | L | R-2 (dashboard cards) | next |
-| R-4 | Calendar UI | S | R-2 (notify hooks) | planned |
+| R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** |
+| R-4 | Calendar UI | S | R-2 (notify hooks) | next |
 | R-5 | Branded print engine | M | R-1 | planned |
 | R-6 | Search + history | S–M | — | planned |
 | R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |

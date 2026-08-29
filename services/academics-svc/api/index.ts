@@ -24,6 +24,8 @@ import importStudents from './import.ts';
 import ward from './ward.ts';
 import subjectchoice from './subjectchoice.ts';
 import classperf from './classperf.ts';
+// R-3 — the class -> group -> section -> student drill-down.
+import hierarchy from './hierarchy.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -31,7 +33,7 @@ const ROUTES: Record<string, Handler> = {
   sections, roster, exams, marks, publish, scripts, chapters, topics, results,
   assignments, practice, next, subjects, attendance,
   import: importStudents,
-  ward, subjectchoice, classperf,
+  ward, subjectchoice, classperf, hierarchy,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

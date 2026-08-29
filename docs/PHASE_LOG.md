@@ -25,8 +25,8 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-2 FINAL, R-3 not started
-Last Completed Phase: R-2 — Notices & in-app notification system (finalised R-2-FINAL)
+Current Phase:        none in progress — R-3 complete, R-4 not started
+Last Completed Phase: R-3 — Principal & IT admin portals (first phase under D13)
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -36,18 +36,19 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                661 passing, 0 failing (node --test, verified 2026-08-29)
-                      offline 46 · server-core 86 · ui-core 108 · academics-svc 78
+Tests:                709 passing, 0 failing (node --test, verified 2026-08-29)
+                      offline 46 · server-core 92 · ui-core 108 · academics-svc 78
                       identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13
-                      sync-svc 23 · pwa 201 · netlify 8
-                      + 18 SQL suites — EXECUTED against PostgreSQL 16, all green
+                      sync-svc 23 · pwa 243 · netlify 8
+                      + 19 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
-Build:                npm run build ok · tsc ×3 exit 0 · app.js 78 KB gz / 180 KB budget
-Migrations:           40 applied, 40/40 probed by scripts/migration-status.mjs
-Known Blockers:       none open in R-2's own scope. But D13 (2026-08-29) re-tests every
-                      completed phase against the UI layer, and four capabilities are
-                      "Backend complete — UI pending" — see the D13 entry at the end of
-                      this file. None of them regressed; they were never surfaced.
+Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
+Migrations:           41 applied, 41/41 probed by scripts/migration-status.mjs
+Known Blockers:       none open.
+                      CLOSED in R-3: all four of D13's "Backend complete — UI pending"
+                      capabilities now have screens — notice-SMS cap, publish results,
+                      generate invoices, and the routine solver (documented as already
+                      covered by the generation UI, see the R-3 entry).
                       CLOSED in R-2-FINAL:
                         · DB-backed suites never executed — run, and they found 5 real bugs
                         · migration 038 had no probe — probed; 40/40, none unprobed
@@ -61,10 +62,8 @@ Deferred, not blocking:
                       · SMS send is stubbed until an aggregator contract (R-8)
                       · no real-time push; the bell refreshes on navigation
                       · scripts/test-all.mjs cannot run on Windows (pre-existing)
-Next Step:            R-3 — Principal & IT admin portals (docs/11-MASTER-PLAN.md).
-                      R-3 is where three of the four D13 gaps belong (publish results,
-                      generate invoices, SMS settings), so they are folded into it
-                      rather than logged and forgotten.
+Next Step:            R-4 — Calendar & schedule surfacing (docs/11-MASTER-PLAN.md).
+                      Not started.
 ```
 
 ---
@@ -1862,3 +1861,338 @@ screen belongs with the RMS work.
 
 **R-3 — Principal & IT admin portals**, now carrying the three admin-facing D13
 gaps as part of its scope. Not started.
+
+
+---
+
+# 2026-08-29 · R-3 · Principal & IT admin portals
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-3 |
+| **Phase name** | Principal & IT admin portals (owner priority #3) |
+| **Status** | ✅ Complete. The first phase built under D13, and the first whose report separates the layers. |
+| **Migration number** | **041** — `db/migrations/041_assignment_history.sql` |
+| **Rollback status** | ✅ `db/rollback/041_assignment_history.down.sql`. **Destroys history**: every closed assignment row exists only in these columns, and restoring the old UNIQUE constraint is impossible while they exist, so they are deleted first. Correct pre-production; once a school has replaced a teacher mid-year this needs an export. Verified up → down → up with 0 objects left. |
+| **Git commit** | `git log -1 --format=%H -- db/migrations/041_assignment_history.sql` |
+
+### Objective
+
+স্কুল নিজে নিজের সব কাঠামো চালাতে পারে — ডেভেলপার ছাড়া। A principal and an IT
+admin must be able to run the institution's academic and system structure from
+screens, without SQL: the class → group → section → student drill-down,
+teacher assignment and replacement, bulk student moves, the yearly promotion,
+user accounts, and the three D13 gaps that had backends and no callers.
+
+### What was already existing
+
+- The whole domain model: `classes` (with `group` as a column), `sections`,
+  `enrolments` with per-year rows, `section_subject_teachers`,
+  `guardianships`, `year_rollovers` with `app.rollover_preview()` and
+  `app.commit_rollover()`, and `audit.activity_log`.
+- `POST /api/v1/academics/publish` and `POST /api/v1/finance/generate`,
+  complete and unreachable from the app (D13's audit).
+- The Ata Ekta component set: `.empty-state`, `.skel`, `.stepper`,
+  `.data-table`, `.status-chip[data-state]`, `.inline-notice`. **No new
+  visual language was introduced** — every R-3 screen is built from these.
+
+### Three things the schema could not do, and one it lied about
+
+1. **Replacing a teacher destroyed the record of the last one.**
+   `section_subject_teachers` was UNIQUE (tenant, section, subject, year) with
+   no validity period, so a replacement was an UPDATE and March disappeared.
+   The master plan's R-3 required "end old row, insert new — never delete";
+   that was a schema capability the schema did not have.
+2. **The class teacher had no history at all** — `sections.class_teacher_id` is
+   a single nullable column.
+3. **`it_admin` was a role no user could hold.** ops-svc/branding.ts has
+   admitted it to BRANDING_WRITERS since R-1 and docs/07 documents it, but it
+   is not in the `roles` table and `user_roles.role_code` has an FK to
+   `roles.code`. `app.has_role('it_admin')` could never be true. The allowlist
+   entry had been decorative for two phases — R-3 is the phase that builds the
+   IT admin's screens, so the role had to become real first.
+4. **The audit log could be written and never read**: 010 grants INSERT and
+   revokes UPDATE/DELETE, correctly, but granted no SELECT.
+
+Migration 041 fixes exactly those four and nothing else.
+
+### What was implemented
+
+**Database (041):** validity columns on `section_subject_teachers` with a
+PARTIAL unique index over the open rows; `class_teacher_assignments` plus a
+trigger that is the only writer of `sections.class_teacher_id`;
+`app.assign_class_teacher()` and `app.assign_subject_teacher()`; the
+`it_admin` role; RLS + SELECT on `audit.activity_log` for management.
+
+**`packages/server-core/src/audit.ts`** — the first writer `activity_log` has
+ever had. Deliberately swallows its own failures: losing a log line is bad, a
+logging error that stops a school promoting its students is much worse, and
+the domain tables still hold the fact.
+
+**API** — 7 new routes on the two existing dynamic functions (no new Vercel
+functions):
+
+| Route | Purpose |
+|---|---|
+| `GET /academics/hierarchy` | the tree, one section, or one student |
+| `GET /academics/publish` | publication readiness per exam-subject (new GET on an existing route) |
+| `GET/POST /ops/assign` | candidates; assign **or replace** |
+| `GET /ops/dashboard` | the principal's morning screen, one round-trip |
+| `POST /ops/enrol` | bulk move, preview and commit on one code path |
+| `GET/POST /ops/rollover` | preview → plan → commit |
+| `GET/PUT /ops/settings` | the notice-SMS cap |
+| `GET/POST/PATCH /ops/users` | search, create, deactivate |
+
+**UI** — 7 new screens and a shared `view-states.ts`: principal dashboard,
+academic drill-down (with assignment, replacement, bulk move and the student
+drawer inside it), result publishing, invoice generation, SMS settings,
+rollover, users.
+
+### Important architectural decisions
+
+1. **`group` stays a column, not a level.** The owner's brief draws Class 9 →
+   Science → F as three levels; the schema has two, because `classes` is
+   UNIQUE (tenant, level_no, stream, group). The API folds class rows by
+   `level_no` and presents the groups beneath, so the school sees its own
+   three-level tree over a schema that already existed. Adding a real group
+   table would have been a second way to say the same thing.
+
+2. **Assignment and replacement are one endpoint.** There is no moment when
+   the school knows in advance which it is doing. Two endpoints would mean a
+   client that guessed wrong either created a second open assignment or
+   refused a legitimate change.
+
+3. **A reason is required to close an assignment, and only to close one.**
+   Enforced by a CHECK (`(ended_on IS NULL) = (end_reason IS NULL)`) and by
+   the endpoint. A history of changes with no reasons is a list of dates.
+
+4. **The atomic part lives in SQL.** Closing the old row and opening the new
+   one cannot be two statements from the API: a failure between them leaves
+   either a subject with no teacher of record or two open rows, and the
+   partial unique index turns the second into an error at some unrelated later
+   moment for somebody else.
+
+5. **Re-assigning the same person is a no-op.** Otherwise a double-submitted
+   form writes a zero-length stint into the history a parent will one day read.
+
+6. **Preview and commit are one code path** (`dryRun`), so the preview cannot
+   drift from the commit — which is the entire value of a preview.
+
+7. **Capacity is a warning, not a refusal.** Bangladeshi sections run over
+   their nominal capacity constantly; a system that blocks the move is one the
+   school works around in week two.
+
+8. **The dashboard's attendance denominator is the MARKED students, not the
+   enrolled ones.** At 8:40am most sections have not been taken yet, and
+   dividing by the whole school shows 4% and starts a panic. `percent: null`
+   means "nobody has taken attendance yet" and the screen renders that as a
+   sentence, never as 0%.
+
+9. **The fee block is absent from the response, not hidden by CSS.** A
+   coordinator's `finance` is `null` server-side. Hiding a card whose numbers
+   are still in the body is the frontend-filtering pattern D13 rules out.
+
+10. **No delete anywhere in R-3.** Users deactivate to `status = 'left'`;
+    enrolments close; assignments close. `section_subject_teachers.teacher_id`
+    is ON DELETE RESTRICT, so the database already held this opinion.
+
+11. **Management reads are network-only in the service worker**, and that is
+    the one considered exception in the strategy table. They are read
+    IMMEDIATELY BEFORE a mutation, so a stale read means deciding against a
+    school that is no longer there. The academic tree stays cached — it is
+    navigation, it changes a few times a year, and drilling into it on a dead
+    link is the corridor case offline exists for.
+
+12. **Confirmation dialogues state the consequence in numbers.** Five
+    irreversible actions (replace, bulk move, promote, publish, generate) each
+    name what will happen — including the part that is wrong, like the three
+    subjects still unmarked — rather than asking "are you sure?". Focus
+    defaults to Cancel.
+
+### Database changes
+
+See 041 above. `schema_lint.sql` passes with **0 advisories**, including the
+L7 index-prefix rule on both new indexes.
+
+### API changes
+
+8 routes, listed above. No new Vercel functions: both dispatchers already
+exist, so the Hobby 12-function cap is untouched (still 10 of 12).
+
+### UI changes
+
+7 screens, 1 shared states module, dashboards for three more roles
+(`it_admin`, `academic_coordinator`, and a rebuilt principal), 7 More-menu
+entries, and a service-worker rule.
+
+### Files created
+
+- `db/migrations/041_assignment_history.sql`, `db/rollback/041_assignment_history.down.sql`
+- `db/tests/assignment_history.sql`
+- `packages/server-core/src/audit.ts`, `packages/server-core/test/audit.test.ts`
+- `services/academics-svc/api/hierarchy.ts`
+- `services/ops-svc/api/{dashboard,assign,enrol,rollover,settings,users}.ts`
+- `apps/pwa/src/view-states.ts`
+- `apps/pwa/src/{principal,academic,publish,invoice,admin-settings,rollover,users}-view.ts`
+- `apps/pwa/test/admin-ui.test.ts`
+
+### Files modified
+
+- `services/academics-svc/api/publish.ts` (GET branch), `.../index.ts`
+- `services/ops-svc/api/index.ts`, `services/sms-svc/src/dispatch.ts` (exported `NOTICE_SMS_MIN`)
+- `apps/pwa/src/{app,demo,sw-router}.ts`
+- `scripts/migration-status.mjs`, `.github/workflows/database.yml`
+- `docs/{07-IMPLEMENTATION-STATUS,11-MASTER-PLAN,PHASE_LOG}.md`
+- `api/v1/*.js` (rebuilt)
+
+### Files removed
+
+None.
+
+### Tests added
+
+- **`apps/pwa/test/admin-ui.test.ts` — 42 tests.** D13's four states are
+  tested as behaviour, and the empty state gets the most attention because it
+  is what a school sees on day one when every table is legitimately empty.
+- **`db/tests/assignment_history.sql` — 13 assertions**, re-runnable, leaving
+  no rows. The one that matters is #3: a replacement keeps the outgoing
+  teacher's row, dates and reason.
+- **`packages/server-core/test/audit.test.ts` — 6 tests**, the first of which
+  asserts that a failing audit write does NOT throw.
+
+### Tests executed
+
+```
+node --test  (11 workspaces)              709 passing, 0 failing
+db/tests/assignment_history.sql           13/13 PASS · re-runnable
+db/tests/schema_lint.sql                  PASS · 0 advisories
+19 SQL suites                             all green
+every R-3 endpoint query vs real schema   executed, 0 errors
+rollback, descending                      0 objects left, app schema gone
+up → down → up                            clean
+scripts/migration-status.mjs              41/41 applied, 0 unprobed
+tsc --noEmit ×3                           exit 0
+npm run build                             ok · app.js 95 KB gz / 180 KB
+D11 brand boundary                        green both directions
+```
+
+### Test results
+
+**709 passing, 0 failing.** offline 46 · server-core 92 · ui-core 108 ·
+academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 ·
+sync-svc 23 · **pwa 243** · netlify 8.
+
+Running the endpoints' SQL against the real schema found **one real defect**,
+the same way R-2's five were found: `users.full_name_en` is NOT NULL, and
+`POST /ops/users` inserted `null` when no English name was given. It
+typechecked, and it would have failed on the first teacher a Bangla-medium
+school's office added — which is most of them. It now falls back to the Bangla
+name rather than demanding a transliteration before the form will submit.
+
+### Build / typecheck results
+
+`npm run build` ok; `tsc --noEmit` clean in all three configurations; app.js
+95 KB gzipped against the 180 KB budget (up from 78 KB — seven screens);
+`git status` clean after a rebuild.
+
+### Security validation
+
+- Every new endpoint is role-gated with an allowlist that mirrors an RLS
+  policy; RLS remains the enforcement and `requireRole` is the clean 403 in
+  front of it.
+- The two new SQL functions are **SECURITY INVOKER**, deliberately: a definer
+  function here would be a way to assign teachers in a school you do not
+  belong to. `db/tests/assignment_history.sql` #9 proves tenant B cannot
+  assign into tenant A even naming real ids.
+- No endpoint accepts a tenant parameter. There is nothing to get wrong.
+- Phone search is EXACT; a prefix search over a PII column is a contact-list
+  enumerator. The student drawer shows guardian name and relationship and
+  **no phone number** — that screen is opened on every teacher's device.
+- User creation never touches `password_hash` and returns no credential;
+  first login stays on F-202's activation codes.
+- Audit reads are management-only (`activity_read_scope`), tenant-scoped, and
+  UPDATE/DELETE stay revoked. The suite asserts a subject teacher reads zero
+  rows, and that the teardown DELETE is refused to the app role.
+
+### Tenant-isolation validation
+
+Executed, not asserted on paper. `db/tests/assignment_history.sql` covers
+cross-tenant reads of sections, teachers, enrolments, assignments and the
+audit log — all zero — and a cross-tenant WRITE, which raises. Schema lint 0
+advisories; RLS coverage guard 0 gaps.
+
+### Browser acceptance
+
+Run against the real UI at `/app?demo=1`, per Part U, for **principal**, **IT
+admin** and **student**. It found four things the tests did not:
+
+1. **ISO dates among Bangla numerals** — the section screen printed
+   `2026-01-05` beside `৪০ জন`. On the assignment-history rows the dates are
+   the whole point of the record. Added `bnDate()`; now `৫ জানুয়ারি, ২০২৬`.
+2. **The demo showed a student the entire institution's structure** — every
+   section and every teacher's posting. The server refuses this
+   (`requireStaff`); the demo skipped the gate. The demo was lying in the more
+   dangerous direction: it is what a person is shown while deciding whether
+   the product is safe. All R-3 demo endpoints now reproduce their server
+   allowlists.
+3. **The invoice screen drew a billing form for someone who could not
+   submit it** — the invoice LIST is legitimately readable by a guardian for
+   their own child, so the screen loaded. Added `canGenerate`, mirroring
+   `BILLING_ROLES`.
+4. **A permission error rendered ABOVE an empty state** — "you may not see
+   this" followed by "there is nothing here", which are different claims and
+   only one was true.
+
+Verified working end to end: Class 9 → বিজ্ঞান → সেকশন F → ৪০ জন with 1 class
+teacher, 5 subject teachers and the replacement record; the replacement flow
+(confirmation naming both teachers, focus on Cancel, success stating the old
+record survives); the SMS cap (৩ → ৬ segments, cost warning at ২.০ গুণ,
+out-of-range refused); rollover (blocked students named, commit disabled);
+publishing readiness; and the IT admin's dashboard with no finance block and
+a read-only rollover.
+
+### Known limitations
+
+1. **The routine-solver discrepancy is documented, not "fixed"** (Part K).
+   `POST /rms/solve` and `POST /rms/generation` are **not duplicates**:
+   `generation` is the read the UI uses to show a produced routine and its
+   trade-offs, and `solve` is the write that produces one. The generation
+   screen is reached with `?routineId=`, i.e. it assumes a routine already
+   exists. So `solve` remains **backend-only, reachable over the API**, and no
+   screen triggers a solve. Nothing was removed or rewritten. It belongs with
+   the RMS work, not here — building a second entry point into timetable
+   generation from the admin portal is exactly the duplicate system Part K
+   warns against.
+2. **Section and class creation are not in the UI.** R-3 assigns people to
+   existing sections; `app.provision_tenant()` creates the classes and the
+   pilot runbook creates sections by hand. A school adding a seventh section
+   mid-year still needs the runbook. This is the largest honest gap.
+3. **Guardian management is read-only** (Part B). The student drawer shows
+   guardians and their fee authority; linking a new guardian or changing
+   `can_pay_fees` has no screen.
+4. **No audit VIEWER.** 041 makes the log readable and the mutations write to
+   it; F-1603's screen is not built. **Backend complete — UI pending.**
+5. **The bulk move is capped at 200 students** per request. Beyond that the
+   honest tool is the import wizard.
+6. **Invoice generation has no dry run**, because the endpoint has none, and a
+   client-side estimate would be a second implementation of fee structures and
+   waivers that disagreed on exactly the students whose fees are unusual.
+7. `scripts/test-all.mjs` still cannot run on Windows (pre-existing).
+
+### Unresolved bugs / issues
+
+None open. Two pre-existing defects were found and fixed: the phantom
+`it_admin` role (R-1), and `users.full_name_en` NOT NULL (found by running
+R-3's own SQL).
+
+### Decisions that require owner input
+
+- **Section creation** (limitation 2). It is the one remaining routine act a
+  school cannot do without the runbook, and it is small — a form over
+  `sections` — but it was not in R-3's brief. Worth folding into R-4 or
+  taking as a short R-3.1.
+
+### Next recommended step
+
+**R-4 — Calendar & schedule surfacing.** Not started.

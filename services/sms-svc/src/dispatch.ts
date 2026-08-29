@@ -96,6 +96,16 @@ const TEMPLATES: Record<string, (studentName: string, takenOn: string, org: stri
  */
 export const NOTICE_SMS_DEFAULT_MAX = 180;
 export const NOTICE_SMS_HARD_CEILING = 480;
+/**
+ * The floor, and also the size of one Bangla segment: Bangla forces UCS-2, so
+ * a segment is 70 characters rather than GSM-7's 160.
+ *
+ * Exported in R-3 because the settings screen has to state the range it will
+ * accept and the cost of exceeding it. It was a literal 70 in the clamp below;
+ * a second copy of that number in the admin UI would be a second copy of a
+ * rule, and the direction those drift in is the one that costs money.
+ */
+export const NOTICE_SMS_MIN = 70;
 
 /**
  * Resolve a tenant's configured alert length, bounded and defaulted.
@@ -122,7 +132,7 @@ export function noticeSmsMaxChars(settings: unknown): number {
   else return NOTICE_SMS_DEFAULT_MAX;
 
   if (!Number.isFinite(n)) return NOTICE_SMS_DEFAULT_MAX;
-  return Math.max(70, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
+  return Math.max(NOTICE_SMS_MIN, Math.min(NOTICE_SMS_HARD_CEILING, Math.floor(n)));
 }
 
 export function noticeSmsBody(

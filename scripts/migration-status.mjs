@@ -82,6 +82,7 @@ const SENTINELS = [
   ['038_submission_media',            'constraint', 'ck_submission_photo_has_no_duration'],
   ['039_tenant_branding',             'function',   'app.public_branding'],
   ['040_notices',                     'table',      'public.notice_receipts'],
+  ['041_assignment_history',          'table',      'public.class_teacher_assignments'],
 ];
 
 /**
@@ -129,6 +130,7 @@ const MEANING = {
   '038_submission_media':            'F-902 — a photo or voice answer, with the guard that a photo has no duration',
   '039_tenant_branding':             'R-1 — a school sees its own name on its own login screen',
   '040_notices':                     'R-2 — the school can finally tell anybody anything',
+  '041_assignment_history':          'R-3 — replacing a teacher stops erasing the last one',
 };
 
 const QUERIES = {

@@ -601,6 +601,95 @@ const DEMO_NOTICES: {
 const demoRead = new Set<string>();
 
 /** The role this preview is showing, read the same way DemoAuth reads it. */
+/**
+ * R-3's demo institution, shaped like Part T's acceptance case: Class 9 with
+ * three groups, Science carrying sections A–F, and F holding forty students
+ * with a class teacher and five subject teachers.
+ *
+ * The demo answers R-3's endpoints locally like every other one, and it obeys
+ * the same role rule the real product does — a student asking for the
+ * institution dashboard is refused here too, so the preview cannot teach
+ * anyone that the management screens are open to everybody.
+ */
+const DEMO_TEACHERS = [
+  { id: 'demo-t1', nameBn: 'রহিম স্যার',  employeeCode: 'T-101', currentLoad: 4, expertiseSubjectIds: ['demo-sub1'] },
+  { id: 'demo-t2', nameBn: 'করিম স্যার',  employeeCode: 'T-102', currentLoad: 3, expertiseSubjectIds: ['demo-sub1', 'demo-sub2'] },
+  { id: 'demo-t3', nameBn: 'হাসান স্যার', employeeCode: 'T-103', currentLoad: 5, expertiseSubjectIds: ['demo-sub2'] },
+  { id: 'demo-t4', nameBn: 'নাঈম স্যার',  employeeCode: 'T-104', currentLoad: 2, expertiseSubjectIds: ['demo-sub3'] },
+  { id: 'demo-t5', nameBn: 'শুভ স্যার',   employeeCode: 'T-105', currentLoad: 6, expertiseSubjectIds: ['demo-sub4'] },
+];
+
+const R3_SUBJECTS = [
+  { id: 'demo-sub1', nameBn: 'পদার্থবিজ্ঞান', nameEn: 'Physics' },
+  { id: 'demo-sub2', nameBn: 'রসায়ন',        nameEn: 'Chemistry' },
+  { id: 'demo-sub3', nameBn: 'জীববিজ্ঞান',    nameEn: 'Biology' },
+  { id: 'demo-sub4', nameBn: 'গণিত',          nameEn: 'Mathematics' },
+  { id: 'demo-sub5', nameBn: 'বাংলা',          nameEn: 'Bangla' },
+];
+
+/** Forty students, deterministic — a preview must look the same twice. */
+const DEMO_SECTION_F_ROSTER = Array.from({ length: 40 }, (_, i) => ({
+  studentId: `demo-s${i + 1}`,
+  rollNo: i + 1,
+  // Bangla numerals: the preview sits beside real Bangla counts, and a
+  // Latin '12' in the roster is the kind of seam a school notices first.
+  nameBn: `শিক্ষার্থী ${String(i + 1).replace(/\d/g, (c) => '০১২৩৪৫৬৭৮৯'[Number(c)])}`,
+  studentCode: `2026-9F-${String(i + 1).padStart(3, '0')}`,
+  status: 'active',
+}));
+
+const DEMO_SECTIONS_SCIENCE = ['A', 'B', 'C', 'D', 'E', 'F'].map((name, i) => ({
+  id: `demo-sec-${name}`,
+  name,
+  shift: 'morning',
+  capacity: 60,
+  studentCount: name === 'F' ? 40 : 38 - i,
+  classTeacher: name === 'F'
+    ? { id: 'demo-t1', nameBn: 'রহিম স্যার' }
+    : (i % 3 === 2 ? null : { id: `demo-t${(i % 5) + 1}`, nameBn: DEMO_TEACHERS[i % 5].nameBn }),
+  subjectTeacherCount: name === 'F' ? 5 : 4,
+}));
+
+
+/**
+ * R-3 role gates, mirroring the allowlists in the real handlers.
+ *
+ * The demo answers locally, so without these it answers EVERYTHING to
+ * EVERYBODY — and a preview that shows a student the institution's user list
+ * is teaching the opposite of what the product does. Found in the browser:
+ * the student preview rendered the whole academic tree, the staff directory
+ * and the result-publishing screen.
+ *
+ * Each set is a copy of a server allowlist, and copies drift. That is
+ * acceptable here and nowhere else: this decides what a SAMPLE-DATA preview
+ * draws, and the server still refuses the real request either way.
+ */
+const DEMO_GATES: Record<string, string[]> = {
+  '/api/v1/ops/dashboard': ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
+  '/api/v1/ops/assign':    ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
+  '/api/v1/ops/enrol':     ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
+  '/api/v1/ops/rollover':  ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
+  '/api/v1/ops/users':     ['principal', 'school_owner', 'it_admin', 'academic_coordinator'],
+  '/api/v1/academics/publish': ['principal', 'school_owner', 'academic_coordinator'],
+  '/api/v1/finance/generate':  ['principal', 'school_owner', 'accountant'],
+};
+
+/** requireStaff: students and guardians are the blocklist, as in auth.ts. */
+const DEMO_STAFF_ONLY = new Set(['/api/v1/academics/hierarchy']);
+
+function demoForbidden(pathname: string): Response | null {
+  const allowed = DEMO_GATES[pathname];
+  if (allowed && !allowed.includes(demoRole())) {
+    return new Response(JSON.stringify({ error: 'forbidden' }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (DEMO_STAFF_ONLY.has(pathname) && ['student', 'guardian'].includes(demoRole())) {
+    return new Response(JSON.stringify({ error: 'forbidden' }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  return null;
+}
+
 function demoRole(): string {
   const fromUrl = new URLSearchParams(location.search).get('role');
   if (fromUrl) return fromUrl;
@@ -669,6 +758,9 @@ export class DemoAuth extends Auth {
   override async authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
     const url = new URL(path, 'http://demo.internal');
 
+    const refused = demoForbidden(url.pathname);
+    if (refused) return refused;
+
     switch (url.pathname) {
       // R-1. Answered locally like every other demo endpoint, and answered
       // for THIS demo institution only — a demo that could hand back the
@@ -677,6 +769,288 @@ export class DemoAuth extends Auth {
       case '/api/v1/ops/branding':
       case '/api/v1/ops/brand':
         return ok({ branding: DEMO_TENANTS[demoTenantKey()].branding });
+
+      // ── R-3 ────────────────────────────────────────────────────────
+      // The role gate is reproduced, not skipped: a student who navigates
+      // to #/institution in the preview gets the same 403 the server would
+      // give them. A demo that showed the dashboard to everybody would be
+      // teaching that the management screens are open.
+      case '/api/v1/ops/dashboard': {
+        const showFinance = ['principal', 'school_owner'].includes(demoRole());
+        return ok({
+          year: { id: 'demo-year', label: '২০২৬' },
+          needsSetup: false,
+          counts: { students: 1240, teachers: 48, sections: 26, classes: 6 },
+          attendanceToday: {
+            present: 1102, marked: 1180, percent: 93,
+            sessionsTaken: 22, sectionsExpected: 26,
+          },
+          absentToday: {
+            total: 78,
+            shown: DEMO_SECTION_F_ROSTER.slice(0, 6).map((s) => ({
+              studentId: s.studentId, nameBn: s.nameBn, rollNo: s.rollNo,
+              section: 'F', classBn: 'নবম শ্রেণি',
+            })),
+          },
+          upcomingExams: [
+            { id: 'demo-exam1', nameBn: 'অর্ধবার্ষিক পরীক্ষা', startsOn: '2026-06-10', status: 'marking' },
+          ],
+          recentNotices: [
+            { id: 'demo-n1', title: 'অভিভাবক সভা', category: 'guardian', publishedAt: '2026-05-02', recipientCount: 860 },
+          ],
+          pending: {
+            sectionsWithoutClassTeacher: 2,
+            subjectsWithoutTeacher: 3,
+            examsAwaitingPublication: 1,
+            studentsWithoutSection: 0,
+          },
+          finance: showFinance
+            ? { invoiced: '1240000.00', collected: '985000.00', outstanding: '255000.00', unpaidCount: 212 }
+            : null,
+        });
+      }
+
+      case '/api/v1/academics/hierarchy': {
+        const sectionId = url.searchParams.get('sectionId');
+        const studentId = url.searchParams.get('studentId');
+
+        if (studentId) {
+          const st = DEMO_SECTION_F_ROSTER.find((r) => r.studentId === studentId)
+            ?? DEMO_SECTION_F_ROSTER[0];
+          return ok({
+            student: {
+              id: st.studentId, nameBn: st.nameBn, nameEn: null,
+              studentCode: st.studentCode, admissionDate: '2024-01-05',
+              lifecycleStatus: 'enrolled', bloodGroup: 'B+', status: 'active',
+            },
+            current: {
+              yearLabel: '২০২৬', levelNo: 9, classBn: 'নবম শ্রেণি',
+              groupBn: 'বিজ্ঞান', section: 'F', rollNo: st.rollNo, status: 'active',
+            },
+            history: [
+              { yearLabel: '২০২৬', levelNo: 9, classBn: 'নবম শ্রেণি', groupBn: 'বিজ্ঞান',
+                section: 'F', rollNo: st.rollNo, status: 'active', enrolledOn: '2026-01-05', endedOn: null },
+              { yearLabel: '২০২৫', levelNo: 8, classBn: 'অষ্টম শ্রেণি', groupBn: 'সাধারণ',
+                section: 'খ', rollNo: 12, status: 'promoted', enrolledOn: '2025-01-05', endedOn: '2025-12-20' },
+            ],
+            guardians: [
+              { nameBn: 'মোঃ আব্দুল করিম', relation: 'father', isPrimary: true, canPayFees: true },
+              { nameBn: 'রোকসানা বেগম', relation: 'mother', isPrimary: false, canPayFees: false },
+            ],
+            attendance90d: { present: 74, total: 80 },
+          });
+        }
+
+        if (sectionId) {
+          const sec = DEMO_SECTIONS_SCIENCE.find((x) => x.id === sectionId) ?? DEMO_SECTIONS_SCIENCE[5];
+          const isF = sec.name === 'F';
+          return ok({
+            section: {
+              id: sec.id, name: sec.name, shift: sec.shift, capacity: sec.capacity,
+              studentCount: sec.studentCount, classId: 'demo-cls-9sci', levelNo: 9,
+              classNameBn: 'নবম শ্রেণি', groupBn: 'বিজ্ঞান',
+              yearId: 'demo-year', yearLabel: '২০২৬',
+            },
+            classTeacher: sec.classTeacher
+              ? { ...sec.classTeacher, since: '2026-01-05' }
+              : null,
+            subjectTeachers: (isF ? R3_SUBJECTS : R3_SUBJECTS.slice(0, 4)).map((sub, i) => ({
+              assignmentId: `demo-a-${sec.name}-${i}`,
+              subject: sub,
+              teacher: { id: DEMO_TEACHERS[i % 5].id, nameBn: DEMO_TEACHERS[i % 5].nameBn },
+              startedOn: '2026-01-05',
+            })),
+            unassignedSubjects: isF ? [] : [R3_SUBJECTS[4]],
+            roster: isF ? DEMO_SECTION_F_ROSTER : DEMO_SECTION_F_ROSTER.slice(0, sec.studentCount),
+            // A replacement that already happened, so the preview shows what
+            // migration 041 preserves rather than only describing it.
+            history: isF
+              ? [{ kind: 'subject_teacher', subjectBn: 'পদার্থবিজ্ঞান', teacherBn: 'জামাল স্যার',
+                   startedOn: '2026-01-05', endedOn: '2026-03-15', endReason: 'বদলি হয়েছেন' }]
+              : [],
+          });
+        }
+
+        return ok({
+          years: [
+            { id: 'demo-year', label: '২০২৬', isCurrent: true },
+            { id: 'demo-year-prev', label: '২০২৫', isCurrent: false },
+          ],
+          year: { id: 'demo-year', label: '২০২৬' },
+          classes: [
+            {
+              levelNo: 9, nameBn: 'নবম শ্রেণি', nameEn: 'Class Nine',
+              sectionCount: 8, studentCount: 289,
+              groups: [
+                { classId: 'demo-cls-9sci', group: 'science', groupBn: 'বিজ্ঞান',
+                  sectionCount: 6, studentCount: 226, sections: DEMO_SECTIONS_SCIENCE },
+                { classId: 'demo-cls-9hum', group: 'humanities', groupBn: 'মানবিক',
+                  sectionCount: 1, studentCount: 34,
+                  sections: [{ id: 'demo-sec-hum', name: 'ক', shift: 'morning', capacity: 60,
+                               studentCount: 34, classTeacher: { id: 'demo-t3', nameBn: 'হাসান স্যার' },
+                               subjectTeacherCount: 4 }] },
+                { classId: 'demo-cls-9bus', group: 'business_studies', groupBn: 'ব্যবসায় শিক্ষা',
+                  sectionCount: 1, studentCount: 29,
+                  sections: [{ id: 'demo-sec-bus', name: 'ক', shift: 'morning', capacity: 60,
+                               studentCount: 29, classTeacher: null, subjectTeacherCount: 3 }] },
+              ],
+            },
+            {
+              levelNo: 10, nameBn: 'দশম শ্রেণি', nameEn: 'Class Ten',
+              sectionCount: 2, studentCount: 71,
+              groups: [
+                { classId: 'demo-cls-10sci', group: 'science', groupBn: 'বিজ্ঞান',
+                  sectionCount: 2, studentCount: 71,
+                  sections: [
+                    { id: 'demo-sec-10a', name: 'ক', shift: 'morning', capacity: 60, studentCount: 36,
+                      classTeacher: { id: 'demo-t4', nameBn: 'নাঈম স্যার' }, subjectTeacherCount: 5 },
+                    { id: 'demo-sec-10b', name: 'খ', shift: 'morning', capacity: 60, studentCount: 35,
+                      classTeacher: { id: 'demo-t5', nameBn: 'শুভ স্যার' }, subjectTeacherCount: 5 },
+                  ] },
+              ],
+            },
+          ],
+        });
+      }
+
+      case '/api/v1/ops/assign': {
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as
+            { teacherId?: string; reason?: string; effectiveDate?: string };
+          const t = DEMO_TEACHERS.find((x) => x.id === req.teacherId) ?? DEMO_TEACHERS[0];
+          return ok({
+            assignmentId: 'demo-new-assignment',
+            replaced: req.reason ? { teacherId: 'demo-t1', nameBn: 'রহিম স্যার' } : null,
+            unchanged: false,
+            teacher: { id: t.id, nameBn: t.nameBn },
+            effectiveDate: req.effectiveDate ?? '2026-05-01',
+          });
+        }
+        return ok({
+          subjects: R3_SUBJECTS.map((sub, i) => ({
+            id: sub.id, nameBn: sub.nameBn,
+            assigned: { id: DEMO_TEACHERS[i % 5].id, nameBn: DEMO_TEACHERS[i % 5].nameBn },
+          })),
+          teachers: DEMO_TEACHERS,
+        });
+      }
+
+      case '/api/v1/ops/enrol': {
+        const req = JSON.parse(String(init.body ?? '{}')) as
+          { studentIds?: string[]; dryRun?: boolean };
+        const ids = req.studentIds ?? [];
+        return ok({
+          section: { id: 'demo-sec-A', name: 'A', classBn: 'নবম শ্রেণি', group: 'science',
+                     yearLabel: '২০২৬', capacity: 60, currentCount: 38,
+                     countAfter: 38 + ids.length },
+          moving: ids.map((id, i) => ({
+            studentId: id,
+            nameBn: DEMO_SECTION_F_ROSTER.find((r) => r.studentId === id)?.nameBn ?? id,
+            from: { sectionId: 'demo-sec-F', section: 'F', classBn: 'নবম শ্রেণি', rollNo: i + 1 },
+            toRollNo: 39 + i,
+            isNewEnrolment: false,
+          })),
+          alreadyInSection: [], notFound: [],
+          overCapacity: 38 + ids.length > 60,
+          committed: req.dryRun === false,
+        });
+      }
+
+      case '/api/v1/ops/rollover': {
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { rolloverId?: string };
+          if (req.rolloverId) return ok({ committed: true, promoted: 168, repeated: 5, graduated: 4 });
+          return ok({ rolloverId: 'demo-rollover', status: 'planned',
+                      summary: { considered: 180, promote: 168, repeat: 5, graduate: 4, blocked: 3 } });
+        }
+        return ok({
+          years: [
+            { id: 'demo-year-next', label: '২০২৭', isCurrent: false },
+            { id: 'demo-year', label: '২০২৬', isCurrent: true },
+          ],
+          needsTargetYear: false,
+          fromYear: { id: 'demo-year', label: '২০২৬' },
+          toYear: { id: 'demo-year-next', label: '২০২৭' },
+          summary: { considered: 180, promote: 168, repeat: 5, graduate: 4, blocked: 3 },
+          students: [
+            ...DEMO_SECTION_F_ROSTER.slice(0, 8).map((r, i) => ({
+              studentId: r.studentId, nameBn: r.nameBn, fromLevel: 9, fromSection: 'F',
+              fromRoll: r.rollNo, action: 'promote', toLevel: 10, toSectionId: 'demo-sec-10a',
+              toSection: 'ক', toRoll: i + 1, blockerBn: null,
+            })),
+            // The blocked case, by name and with a reason — the thing that
+            // stops the commit and the thing a head teacher must resolve.
+            { studentId: 'demo-s90', nameBn: 'শিক্ষার্থী ৯০', fromLevel: 9, fromSection: 'F',
+              fromRoll: 41, action: 'blocked', toLevel: null, toSectionId: null,
+              toSection: null, toRoll: null, blockerBn: 'দশম শ্রেণিতে কোনো সেকশন তৈরি হয়নি' },
+          ],
+          existing: null,
+        });
+      }
+
+      case '/api/v1/ops/settings': {
+        if (init.method === 'PUT') {
+          const req = JSON.parse(String(init.body ?? '{}')) as
+            { sms?: { noticeMaxChars?: number } };
+          return ok({ sms: { noticeMaxChars: req.sms?.noticeMaxChars ?? 180,
+                             default: 180, min: 70, max: 480, charsPerSegment: 70 } });
+        }
+        return ok({ sms: { noticeMaxChars: 180, default: 180, min: 70, max: 480, charsPerSegment: 70 } });
+      }
+
+      case '/api/v1/ops/users': {
+        if (init.method === 'POST') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { nameBn?: string; roleCode?: string };
+          return ok({ id: 'demo-new-user', nameBn: req.nameBn ?? 'নতুন', roleCode: req.roleCode, status: 'invited' });
+        }
+        if (init.method === 'PATCH') {
+          const req = JSON.parse(String(init.body ?? '{}')) as { active?: boolean };
+          return ok({ id: 'demo-t1', nameBn: 'রহিম স্যার', status: req.active ? 'active' : 'left' });
+        }
+        return ok({
+          users: [
+            ...DEMO_TEACHERS.map((t, i) => ({
+              id: t.id, nameBn: t.nameBn, nameEn: null, phone: `+88017000000${i + 1}`,
+              status: i === 4 ? 'left' : 'active',
+              roles: [i === 0 ? 'class_teacher' : 'subject_teacher'],
+              employeeCode: t.employeeCode, studentCode: null,
+            })),
+            { id: 'demo-it', nameBn: 'আইটি অ্যাডমিন', nameEn: null, phone: '+8801700000099',
+              status: 'active', roles: ['it_admin'], employeeCode: 'T-001', studentCode: null },
+          ],
+          truncated: false, limit: 50,
+        });
+      }
+
+      case '/api/v1/academics/publish': {
+        if (init.method === 'POST') {
+          return ok({ ok: true, examId: 'demo-exam1', marksGraded: 1180,
+                      resultsPublished: 236, notified: 472 });
+        }
+        return ok({
+          exams: [
+            {
+              examId: 'demo-exam1', examNameBn: 'অর্ধবার্ষিক পরীক্ষা', status: 'marking',
+              startsOn: '2026-06-10', endsOn: '2026-06-20',
+              subjects: R3_SUBJECTS.map((sub, i) => ({
+                examSubjectId: `demo-es${i}`, subjectBn: sub.nameBn, sectionName: 'F',
+                enrolled: 40, marked: i === 4 ? 31 : 40,
+              })),
+            },
+            {
+              examId: 'demo-exam0', examNameBn: 'প্রথম সাময়িক পরীক্ষা', status: 'published',
+              startsOn: '2026-03-02', endsOn: '2026-03-12',
+              subjects: R3_SUBJECTS.slice(0, 3).map((sub, i) => ({
+                examSubjectId: `demo-es0${i}`, subjectBn: sub.nameBn, sectionName: 'F',
+                enrolled: 40, marked: 40,
+              })),
+            },
+          ],
+        });
+      }
+
+      case '/api/v1/finance/generate':
+        return ok({ ok: true, billingPeriod: '2026-05', invoiceCount: 236, notified: 198 });
 
       // R-2. The inbox differs by ROLE, because that is the whole point: a
       // student must not see the staff-only notice. In the real product the
@@ -729,7 +1103,7 @@ export class DemoAuth extends Auth {
         return ok({ studentId: 'demo-s1', months: 6, ...DEMO_ATTENDANCE });
 
       case '/api/v1/academics/subjects':
-        return ok({ studentId: 'demo-s1', subjects: DEMO_SUBJECTS });
+        return ok({ studentId: 'demo-s1', subjects: R3_SUBJECTS });
 
       case '/api/v1/academics/next':
         return ok({ suggestions: DEMO_NEXT });

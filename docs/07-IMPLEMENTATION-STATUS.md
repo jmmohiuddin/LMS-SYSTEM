@@ -15,12 +15,13 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **661 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 86 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · **sms-svc 13** (new workspace) · sync-svc 23 · pwa 201 · netlify 8. Plus 18 SQL assertion suites, all green, all idempotent |
-| Schema | 40 migrations (39 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 40/40 with no unprobed migration |
+| Tests | **709 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 243** · netlify 8. Plus 19 SQL assertion suites, all green, all idempotent |
+| Schema | 41 migrations (40 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 41/41 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
+| Portals | R-3 (§9e): principal dashboard, academic drill-down, teacher assignment + replacement with history, bulk moves, rollover, users, SMS settings |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
-| Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. Four capabilities are currently **Backend complete — UI pending**: notice-SMS cap, publish results, generate invoices, routine solver — see PHASE_LOG D13 |
+| Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 closed all four of D13's gaps. Still **Backend complete — UI pending**: the audit viewer (F-1603), and `POST /rms/solve` which stays API-only by design (see PHASE_LOG R-3) |
 | Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
 
 What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their
@@ -618,6 +619,74 @@ blob would have clamped every alert to one segment instead of falling back.
 - The emitters are wired at the three publish points but their **endpoint-level**
   behaviour is covered by the SQL suite and a scripted end-to-end check, not by
   an HTTP integration test.
+
+---
+
+## 9e. R-3 — principal & IT admin portals (closed)
+
+The first phase built under D13, and the first whose completeness was decided
+by whether a person can use the thing rather than by whether the endpoint
+answers.
+
+**What a school can now do without a developer:** drill শ্রেণি ৯ → বিজ্ঞান →
+সেকশন F → ৪০ জন; see which subjects nobody is teaching; assign a class teacher
+or a subject teacher; replace one mid-year with a reason, keeping the record of
+who was responsible until when; move forty students to another section with a
+preview; run the year-end promotion through preview → plan → commit; publish
+exam results; generate a month's invoices; create and deactivate staff
+accounts; and set the notice-SMS length.
+
+**Migration 041** fixed three things the schema could not do and one it lied
+about: subject-teacher assignments had no validity period (so replacement was
+an UPDATE and the previous teacher vanished); the class teacher had no history
+at all; `it_admin` was in ops-svc's BRANDING_WRITERS allowlist and in this
+document since R-1 but **not in the roles table**, so no user could ever hold
+it and `app.has_role('it_admin')` could never be true; and
+`audit.activity_log` had INSERT granted and no SELECT, so it could be written
+and never read.
+
+Assignment is now one operation for both cases — there is no moment when a
+school knows in advance whether it is assigning or replacing — and the atomic
+part lives in two SECURITY INVOKER SQL functions, because closing the old row
+and opening the new one as two statements from the API leaves either a subject
+with no teacher of record or two open rows, and the partial unique index turns
+the second into an error later, for somebody else.
+
+**The four D13 gaps are closed.** `POST /academics/publish` and
+`POST /finance/generate` have callers; the notice-SMS cap has a write path
+with a live segment count and a cost warning stated in multiples of the bill;
+and the routine-solver discrepancy was investigated and **documented rather
+than changed** — `/rms/generation` and `/rms/solve` are not duplicates (one
+reads a produced routine, the other produces it), and building a second
+timetable-generation entry point from the admin portal is precisely the
+duplicate system Part K of the brief warns against.
+
+**Browser acceptance found four things the 42 UI tests did not**: ISO dates
+printed among Bangla numerals on the very rows where dates are the point; a
+demo that showed a student the whole institution's structure because it skipped
+a gate the server has; an invoice screen that drew a billing form for someone
+who could not submit it; and a permission error rendered above an empty state,
+saying "you may not see this" and then "there is nothing here". Running the
+endpoints' SQL against a real schema found a fifth: `users.full_name_en` is
+NOT NULL and the create-user endpoint inserted null, which would have failed on
+the first teacher a Bangla-medium office added.
+
+**Known limitations:**
+
+- **Section and class creation are not in the UI.** R-3 assigns people to
+  sections that already exist; `app.provision_tenant()` makes the classes and
+  the pilot runbook makes sections by hand. A school opening a seventh section
+  mid-year still needs the runbook. The largest honest gap in this phase.
+- **Guardian management is read-only.** The student drawer shows guardians and
+  their fee authority; linking one, or changing `can_pay_fees`, has no screen.
+- **No audit viewer.** The log is now readable and R-3's mutations write to it,
+  but F-1603's screen is not built — **backend complete, UI pending**.
+- **`POST /rms/solve` stays API-only**, by the decision above.
+- The bulk move is capped at 200 students per request; beyond that the honest
+  tool is the import wizard.
+- Invoice generation has no dry run, because the endpoint has none and a
+  client-side estimate would be a second implementation of fee structures and
+  waivers, disagreeing on exactly the students whose fees are unusual.
 
 ---
 

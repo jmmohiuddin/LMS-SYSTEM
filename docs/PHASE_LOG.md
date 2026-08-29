@@ -27,9 +27,10 @@ here — without any chat history, without asking anyone.
 ```text
 Current Phase:        none in progress — R-1 closed, R-2 not started
 Last Completed Phase: R-1 — White-label & branding foundation
-Last Commit:          R-1  5265ea3e561c4d9b86649d234eca9b3f90363e30
-                      R-0  a2a26942fe7a503b57344ff67a827ad2a2814189
-                      Rules/D10/D11 commit: git log -1 --format=%H -- docs/PHASE_LOG.md
+Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
+                      R-0   a2a26942fe7a503b57344ff67a827ad2a2814189
+                      R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
+                      RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
 Tests:                415 unit passing, 0 failing (node --test, verified 2026-08-29)
                       + DB-backed suites that self-skip without DATABASE_URL — NOT YET RUN
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 74 KB gz / 180 KB budget
@@ -691,3 +692,114 @@ Still open from R-1-A: which file becomes the production entry point.
 
 **R-2 — Notices & notification system**, per the master plan. Its phase-log entry
 must be written before it is marked complete.
+
+---
+
+# 2026-08-29 · D12 · Tenant resolution & the isolation stack, written down
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | D12 (decision entry — no code phase) |
+| **Phase name** | One deployment, many institutions: how a school reaches its door |
+| **Status** | ✅ Complete (documentation + decision; mechanism itself was already built) |
+| **Migration number** | none |
+| **Rollback status** | n/a |
+| **Git commit** | the commit that touched only docs in this entry — `git log -1 --format=%H -- docs/11-MASTER-PLAN.md docs/PHASE_LOG.md` at this entry's date |
+
+### Objective
+
+The owner asked how one server and one login page can serve Monipur and
+Mohammadpur completely separately — different admins, teachers, students,
+guardians, data, rules — and observed, correctly, that the master plan never
+spelled this out. Answer the question in the plan itself, permanently.
+
+### What was already existing
+
+The entire mechanism. Tenant-scoped user rows, `tid` inside the signed JWT,
+`withTenant()` → `SET LOCAL`, fail-closed RLS on ~95 tables, per-tenant
+encryption keys, per-tenant caps, the `?tid=` install-link resolution with the
+one-time slug fallback, R-1's pre-auth branded login. What did not exist was any
+document a reader could point to — the design lived in migration comments,
+`docs/01`, and code.
+
+### What was implemented
+
+Documentation only:
+
+- **§1b in 11-MASTER-PLAN.md** — the full write-up: how a school's own link (and
+  later its subdomain) routes its people to *its* login; the four isolation
+  layers L1 identity → L2 API → L3 session → L4 RLS, with the per-tenant crypto
+  key beneath them; how roles stay tenant-scoped; how one person in two schools
+  gets two accounts joined by `global_person_id`; and the CI proof.
+- **Decision D12** — tenant resolution is per-institution entry links now,
+  per-tenant subdomains at R-7, custom domains later; **a school-picker dropdown
+  is forbidden at every stage** because it would enumerate the customer list
+  (the same reasoning that shaped `app.public_branding()`).
+- **R-7 scope** — gains an explicit subdomain-resolution bullet (hostname →
+  slug, wildcard DNS/cert, `?tid=` links still honoured).
+- The §3 requirement map gains the row the owner's question corresponds to.
+
+### Important architectural decisions
+
+D12 itself (above). One nuance made explicit: the slug fallback field on the
+login screen is a fallback, not the main road — the school's handed-out link is
+the primary channel because it is the channel schools already use for everything
+they tell guardians.
+
+### Database changes / API changes / UI changes
+
+None / none / none.
+
+### Files created
+
+None.
+
+### Files modified
+
+- `docs/11-MASTER-PLAN.md` — §1b, D12, R-7 bullet, §3 row
+- `docs/PHASE_LOG.md` — this entry; status block now lists notable commit hashes
+  explicitly (the RULES hash became knowable after its commit landed)
+
+### Files removed
+
+None.
+
+### Tests added / executed / results
+
+None added — no behaviour changed. Existing suite last verified at 415 passing,
+0 failing (see R-1 and RULES entries).
+
+### Build / typecheck results
+
+Docs-only change; `npm run build` re-verified clean at commit time.
+
+### Security validation
+
+No change to any enforcement. The entry *describes* enforcement that exists and
+is CI-tested.
+
+### Tenant-isolation validation
+
+Unchanged — §1b now cites where it is proven (CI tenancy suite,
+`db/tests/tenant_branding.sql`).
+
+### Known limitations
+
+- Subdomain resolution is a **plan** (R-7), not a built feature. Until then the
+  `?tid=` link and the slug fallback are the only doors.
+- §1b documents `guardianships`-based guardian scoping and section-based teacher
+  scoping as built; both predate this log — their own test coverage lives with
+  migrations 002/010, not in an entry here.
+
+### Unresolved bugs / issues
+
+None new. R-1-A (two front doors) remains the open blocker it was.
+
+### Decisions that require owner input
+
+None new from this entry. (R-1-A's option A/B/C choice still pending.)
+
+### Next recommended step
+
+R-2 — Notices & notification system.

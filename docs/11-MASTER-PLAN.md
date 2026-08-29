@@ -54,6 +54,7 @@ are folded into the phases below.
 | D9 | Section chat, native apps, biometrics, library/transport/hostel/payroll = **post-roadmap add-ons**. | PRD "What NOT to do": don't build social features before core management is stable. |
 | D10 | **[`docs/PHASE_LOG.md`](PHASE_LOG.md) is the canonical chronological implementation history.** It is updated *before* a phase may be marked complete, and after every meaningful change: a phase, a bug fix, an architectural decision, a migration, a test milestone, a deployment change, an important discovery. History is append-only — a decision that supersedes an earlier one gets a NEW entry saying what changed, why, and what replaced it; the old entry stays. | A new agent (or a new engineer) must be able to read one file and know what has happened here from the beginning, without any chat history. Chat context is lost; a file in the repository is not. Silently editing away an old decision destroys the reasoning that a future reader needs most — the reason something was tried and abandoned. |
 | D11 | **`shikhonBD` is the permanent platform and marketing brand. White-labelling applies ONLY to a tenant's operational application and the documents it produces.** The public marketing site, platform documentation, and any future platform Super Admin console stay branded shikhonBD / eShikhon. A school's login, shell, PWA identity, notices, receipts and reports carry the school's identity. Enforced in both directions by the `Brand boundary (D11)` job in `.github/workflows/frontend.yml`. | R-1 removed the platform brand from tenant screens, which was correct — and created the opposite risk, because "remove ShikhonBD" reads like a rule that applies everywhere. It does not. The landing page is *our* shopfront; un-branding it would be a marketing loss nothing else would catch. The one-line statement of the rule is: **the platform is branded, the tenant application is white-labelled.** |
+| D12 | **Tenant resolution: each institution gets its own entry link — never a school-picker.** Today that is the install link (`/?tid=<tenant-id>`, or the slug typed once on the login screen); the device remembers it, the PWA install bakes it into `start_url`, and the login screen renders that school's identity before anyone signs in. At R-7 each tenant additionally gets a subdomain (`monipur.shikhonbd.com`) resolved from the hostname, with custom domains as a later option. A "choose your school" dropdown is forbidden at every stage. See §1b for the full mechanism. | One deployment must serve many institutions without ever showing one school's users another school's door. A picker would enumerate our customer list to anyone who loads the login page — the same reason `app.public_branding()` answers only exact keys and returns 200-with-defaults for unknown ones. The link a school hands out is the same channel it already uses for everything else it tells its guardians. |
 
 ---
 
@@ -88,6 +89,89 @@ the Ata Ekta design mock-up, not the functional application; the real PWA is
 `index.legacy.html` and is linked from nowhere. Investigated and documented in
 [PHASE_LOG.md](PHASE_LOG.md) under `R-1-A`. Resolving it is a prerequisite for
 the pilot (R-8) and is the one open item this plan does not yet assign to a phase.
+
+---
+
+## 1b. One deployment, many institutions — how a school reaches ITS door, and why it can never open another's (D12)
+
+The owner's question, stated plainly: *there is one server and one login page —
+so how do Monipur High School's people log into Monipur, Mohammadpur's into
+Mohammadpur, with each school's admins, teachers, students, guardians, data and
+rules completely separate?* Everything below is **already built and tested**;
+this section exists so the mechanism is written down rather than implied.
+
+### How a user reaches their own school's login
+
+```text
+The school hands out ITS link            The device from then on
+──────────────────────────────           ───────────────────────────
+shikhonbd…/?tid=<monipur-id>      →      remembers the tenant (localStorage),
+  (printed on the admission slip,        shows MONIPUR's name/logo/colours on
+   sent in the school's SMS, QR          the login screen BEFORE sign-in (R-1),
+   on the office wall)                   installs the PWA as "Monipur High"
+                                         (start_url carries ?tid=)
+```
+
+- **No link?** The login screen asks once for the school ID (slug) — a fallback,
+  not the main road.
+- **R-7 adds subdomains**: `monipur.shikhonbd.com`, tenant resolved from the
+  hostname; optional custom domains later. The `?tid=` link keeps working.
+- **Never a school-picker dropdown** (D12): it would enumerate the customer
+  list, and `app.public_branding()` is deliberately built so that enumeration is
+  impossible — exact key in, one school out, nothing for an unknown key.
+
+### Why crossing tenants is impossible, not just forbidden
+
+Four layers, each independent of the one above it; the bottom one is the actual
+guarantee:
+
+```text
+L1  IDENTITY   users are tenant-scoped rows. A Monipur teacher's account IS a
+               Monipur row; phone+OTP verifies within that tenant; the JWT
+               carries tid, EdDSA-signed — unforgeable, 15-minute life.
+L2  API        no endpoint accepts a tenant id in URL or body. The only tenant
+               a request can name is the one in its verified token. There is
+               no parameter to tamper with.
+L3  SESSION    every DB transaction starts with SET LOCAL app.tenant_id from
+               the token (packages/server-core withTenant()).
+L4  DATABASE   Row-Level Security on every tenant table (~95), FORCE'd, fail-
+               closed: Mohammadpur's rows are invisible to a Monipur session
+               at the database layer. A bug in L1–L3 yields zero rows, not
+               another school's data. No context at all → zero rows.
+```
+
+Beneath even L4: the app's runtime DB role cannot BYPASSRLS (boot guard refuses
+to start), and each tenant's PII is encrypted under **its own key**
+(`tenants.dek_wrapped`) — school A's identifiers cannot be decrypted with school
+B's key even if rows somehow leaked. Per-tenant SMS caps, AI budgets and rate
+limits keep one school's usage from affecting another's.
+
+**Inside** a school, the same L4 narrows further by role (the RESTRICTIVE
+policies of migration 010): a student reads only their own records, a guardian
+only their linked children (`guardianships`), a teacher only their assigned
+sections, the principal the whole institution — *their* institution.
+
+### The people, concretely
+
+- Monipur's admin, headmaster, teachers, students, guardians are all rows with
+  Monipur's `tenant_id`; their roles (`user_roles`) are tenant-scoped too. The
+  headmaster of Monipur holds `principal` **in Monipur** — the word grants
+  nothing anywhere else.
+- One person serving two institutions (an examiner, a guardian with children in
+  two schools) has **two accounts**, one per school, joined internally by the
+  permanent `global_person_id`; they enter each school through that school's own
+  link. No screen ever merges two schools' data.
+- Every school's own rules — weekend days, shifts, grading bands, fee
+  structures, calendar, subject sets, branding — are that school's rows,
+  isolated the same way as its people.
+
+### Proof, not promise
+
+CI's tenancy suite (and R-1's `db/tests/tenant_branding.sql`) asserts it
+directly: with school A's session context, `SELECT`/`UPDATE`/`DELETE` against
+school B match **zero rows**, and a session with no tenant context sees nothing
+at all. Every new table is required to join this regime (D8) and the schema-lint
+test fails CI if one ships without RLS.
 
 ---
 
@@ -147,6 +231,7 @@ no phase accidentally re-implements these):
 | সেকশনে শিক্ষক অ্যাসাইন / বছরে বছরে নতুন অ্যাসাইন | Model + rollover exist; **UI missing** | R-3 |
 | শিক্ষক চলে গেলে রিপ্লেসমেন্ট, হিস্টরি অক্ষত | Model supports; **UI missing** | R-3 |
 | আইটি প্রোফাইল — পুরো স্কুল ম্যানেজ করবে | Partial (import, roles-view) | R-3 |
+| এক সার্ভার থেকে প্রতিটি স্কুল সম্পূর্ণ আলাদা — লগইন, ডেটা, রুলস, লোকজন | **Exists** (tenant-scoped identity + 4-layer isolation, per-tenant crypto keys) — mechanism written up in **§1b** | R-7 adds per-school subdomains |
 | ছাত্রের আপডেট গার্ডিয়ান+শিক্ষক+প্রধান শিক্ষক সবাই দেখবে (sync) | **Exists** (one DB + RLS + sync pull) | — |
 | গার্ডিয়ান শুধু নিজের সন্তান দেখবে | **Exists** (RLS `guardianships` scoping) | — |
 | ছাত্র শুধু নিজেরটা দেখবে | **Exists** (RLS self-scoping) | — |
@@ -354,6 +439,11 @@ appears in under a second.
   spend from `sms_outbox.cost_bdt`, AI tokens), manage `plan_code`/`student_cap`/
   `trial_ends_on`. Gated by a platform role + service key; every access audited
   (`audit.platform_access` exists).
+- **Per-tenant subdomains (D12, §1b):** `monipur.shikhonbd.com` — tenant resolved
+  from the hostname (the slug already exists and is unique), wildcard DNS + cert at
+  the edge, `?tid=` links unchanged and still honoured. Custom domains
+  (`portal.school.edu.bd`) become a paid option later, not part of this phase's
+  exit criteria.
 - **Setup wizard UI** over `app.provision_tenant()`: institution type
   (school/college/madrasa — maps to existing `stream`/`level`/`weekend_days`), branding
   (R-1 editor reused), academic year, classes/groups/sections, then straight into the

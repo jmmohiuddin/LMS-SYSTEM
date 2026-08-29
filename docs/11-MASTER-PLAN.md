@@ -52,6 +52,42 @@ are folded into the phases below.
 | D7 | **New agent surfaces follow the Ata Ekta design system** (tokens in `apps/pwa/public/design/tokens/`). | Consistency; dark mode already tokenised. |
 | D8 | **Every new table gets: `tenant_id` + `app.enforce_tenant()` trigger + RLS policy + rollback file + probe in `migration-status.mjs`.** This is the existing schema-lint rule; it stays absolute. | Tenant isolation is the product. |
 | D9 | Section chat, native apps, biometrics, library/transport/hostel/payroll = **post-roadmap add-ons**. | PRD "What NOT to do": don't build social features before core management is stable. |
+| D10 | **[`docs/PHASE_LOG.md`](PHASE_LOG.md) is the canonical chronological implementation history.** It is updated *before* a phase may be marked complete, and after every meaningful change: a phase, a bug fix, an architectural decision, a migration, a test milestone, a deployment change, an important discovery. History is append-only — a decision that supersedes an earlier one gets a NEW entry saying what changed, why, and what replaced it; the old entry stays. | A new agent (or a new engineer) must be able to read one file and know what has happened here from the beginning, without any chat history. Chat context is lost; a file in the repository is not. Silently editing away an old decision destroys the reasoning that a future reader needs most — the reason something was tried and abandoned. |
+| D11 | **`shikhonBD` is the permanent platform and marketing brand. White-labelling applies ONLY to a tenant's operational application and the documents it produces.** The public marketing site, platform documentation, and any future platform Super Admin console stay branded shikhonBD / eShikhon. A school's login, shell, PWA identity, notices, receipts and reports carry the school's identity. Enforced in both directions by the `Brand boundary (D11)` job in `.github/workflows/frontend.yml`. | R-1 removed the platform brand from tenant screens, which was correct — and created the opposite risk, because "remove ShikhonBD" reads like a rule that applies everywhere. It does not. The landing page is *our* shopfront; un-branding it would be a marketing loss nothing else would catch. The one-line statement of the rule is: **the platform is branded, the tenant application is white-labelled.** |
+
+---
+
+## 1a. Surfaces — which brand belongs where (D11)
+
+Three distinct surfaces, and confusing them is the failure mode D11 exists to
+prevent:
+
+```text
+PUBLIC PLATFORM                          TENANT APPLICATION
+  shikhonBD / eShikhon                     school-a.<platform>
+  ├── landing / marketing site             college-b.<platform>
+  ├── pricing, public docs, SEO            ├── login          ─┐
+  ├── platform Super Admin console         ├── shell / PWA     │ the
+  └── company communications               ├── notices         │ school's
+       → BRANDED shikhonBD                 ├── receipts        │ identity
+                                           └── reports        ─┘
+                                                → WHITE-LABELLED
+```
+
+The marketing site sells the platform; the application runs a school. A school's
+staff, students and guardians spend their year inside the right-hand column and
+should see their own institution there. Anyone evaluating the product is in the
+left-hand column and should see ours.
+
+Platform attribution inside a tenant application is not forbidden, but it is a
+deliberate design decision (a discreet footer, say) — not something that arrives
+by a string nobody removed.
+
+**Current state — unresolved.** `/` serves `apps/pwa/public/index.html`, which is
+the Ata Ekta design mock-up, not the functional application; the real PWA is
+`index.legacy.html` and is linked from nowhere. Investigated and documented in
+[PHASE_LOG.md](PHASE_LOG.md) under `R-1-A`. Resolving it is a prerequisite for
+the pilot (R-8) and is the one open item this plan does not yet assign to a phase.
 
 ---
 
@@ -133,9 +169,14 @@ no phase accidentally re-implements these):
 Phases are numbered **R-1 … R-9** (R = rollout, to avoid colliding with the old PRD's
 Phase 0–4). Each phase is independently shippable, ordered by (a) owner priority,
 (b) dependency, (c) daily-habit-before-quarterly. **Definition of done for every phase**
-is unchanged from `05-DELIVERY-ROADMAP.md` §7: migrations forward+rollback in CI, tenancy
-suite green, RLS on every new table, tests in the same commit, `bn`+`en` strings, bundle
-gate, and a docs/07 status update.
+is `05-DELIVERY-ROADMAP.md` §7 — migrations forward+rollback in CI, tenancy suite green,
+RLS on every new table, tests in the same commit, `bn`+`en` strings, bundle gate, and a
+docs/07 status update — plus two additions that are not optional:
+
+- **A [PHASE_LOG.md](PHASE_LOG.md) entry, written before the phase is called complete**
+  (D10). Not after, and not "when there's time": the entry is part of the work.
+- **The `Brand boundary (D11)` CI job green in both directions** — no platform brand on
+  tenant surfaces, and the platform brand still present on the marketing site.
 
 ### R-0 — Hygiene (½ day, do first)
 
@@ -379,6 +420,13 @@ deployable system and an update to `docs/07-IMPLEMENTATION-STATUS.md`.
 ## 6. What NOT to do (binding, inherited + new)
 
 - No per-school code paths, CSS files, or branches — configuration only (D4).
+- **Never state or implement the branding rule as "ShikhonBD must disappear."** It is
+  the permanent platform brand (D11). Strip it from a tenant's operational screens;
+  leave it on the marketing site, the public docs and the platform console. A
+  white-label sweep that reaches `landing.html` is a bug, and the CI guard treats it
+  as one.
+- Never close a phase without its [PHASE_LOG.md](PHASE_LOG.md) entry, and never edit an
+  old entry to match a newer decision — supersede it with a new one (D10).
 - No new framework, no rewrite of the PWA shell, no microservices split.
 - Never delete assignment/enrolment/attendance history — end-date and supersede.
 - Never trust frontend visibility as security — RLS is the enforcement layer.

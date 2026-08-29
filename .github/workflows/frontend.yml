@@ -34,28 +34,53 @@ jobs:
           fi
           echo "none found"
 
-      # R-1 (docs/11-MASTER-PLAN.md): one deployment serves many schools,
-      # and a school's own screens must carry ITS identity, not the
-      # platform's. That is the kind of rule that erodes one reasonable
-      # string at a time — a placeholder here, a footer there — so it is
-      # held by a check rather than by memory.
+      # Decision D11 (docs/11-MASTER-PLAN.md): shikhonBD is the PERMANENT
+      # platform and marketing brand. White-labelling applies to a tenant's
+      # operational application and the documents it produces — not to the
+      # platform's own website.
       #
-      # landing.html is the platform's marketing site and is exempt: that
-      # page IS ShikhonBD talking about itself.
-      - name: No platform branding in tenant-facing UI
+      # So this guard runs in BOTH directions, because both failures are
+      # real and they pull opposite ways:
+      #
+      #   1. Platform brand leaking INTO a school's operational screens —
+      #      the R-1 regression. Erodes one reasonable string at a time: a
+      #      placeholder here, a footer there.
+      #
+      #   2. Platform brand being stripped OUT of the marketing site — the
+      #      likelier mistake now that a guard exists at all, because
+      #      "remove ShikhonBD" reads like a rule that applies everywhere.
+      #      It does not. landing.html is our own shopfront.
+      - name: Brand boundary (D11)
         run: |
           set -euo pipefail
+
+          # ── Tenant-brand-required surfaces ──────────────────────────
+          # A school's login, shell, PWA identity, offline page and the
+          # documents it prints. Comment lines are excluded: explaining the
+          # rule is not breaking it.
           hits=$(grep -rn 'ShikhonBD' \
                    apps/pwa/src apps/pwa/public/index.html \
                    apps/pwa/public/index.legacy.html apps/pwa/public/offline.html \
                    apps/pwa/public/manifest.webmanifest \
                  | grep -vE '^\s*[^:]+:[0-9]+:\s*(//|\*|<!--)' || true)
           if [ -n "$hits" ]; then
-            echo "::error::platform branding found in tenant-facing UI (R-1)"
+            echo "::error::platform brand found in a TENANT-facing surface (D11)"
             echo "$hits"
             exit 1
           fi
-          echo "none found"
+          echo "ok  tenant surfaces carry no platform brand"
+
+          # ── Platform-brand-required surfaces ────────────────────────
+          # The marketing site must keep saying who we are. A white-label
+          # sweep that reached this file would silently un-brand the
+          # company's own website, and nothing else would notice.
+          for f in apps/pwa/public/landing.html; do
+            if ! grep -qi 'shikhonbd' "$f"; then
+              echo "::error file=$f::platform brand missing from a PLATFORM surface (D11) — landing.html is shikhonBD's own site and must stay branded"
+              exit 1
+            fi
+            echo "ok  $f carries the platform brand"
+          done
 
       # The critical path is budgeted at 180 KB gzipped (docs/01 §8).
       #

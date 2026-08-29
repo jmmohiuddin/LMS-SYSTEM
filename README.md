@@ -27,6 +27,51 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 | 5 | [docs/05-DELIVERY-ROADMAP.md](docs/05-DELIVERY-ROADMAP.md) | Phasing, team shape, SLOs, cost model, risk register |
 | 6 | [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) | Live Neon deployment: database choice, roles, connection strings, pooler safety, maintenance scheduling |
 | 7 | [docs/07-IMPLEMENTATION-STATUS.md](docs/07-IMPLEMENTATION-STATUS.md) | **Blueprint vs. as-built**: what is deployed on Vercel today, the 12-function API inventory, PWA screens, the login kill switch and demo mode, ops runbook, gap list |
+| 8 | [docs/08-CREDENTIAL-ROTATION.md](docs/08-CREDENTIAL-ROTATION.md) | Credential rotation ledger and the automated secret checks |
+| 9 | [docs/09-PRD-AUDIT.md](docs/09-PRD-AUDIT.md) | Coverage of the PRD's 128 prioritised requirements, audited against the repository |
+| 10 | [docs/10-NETLIFY.md](docs/10-NETLIFY.md) | Netlify as a second deployment target sharing every handler |
+| 11 | [docs/11-MASTER-PLAN.md](docs/11-MASTER-PLAN.md) | **The plan of record**: decisions D1–D11, the R-0…R-9 roadmap, and what not to do |
+| — | [docs/PHASE_LOG.md](docs/PHASE_LOG.md) | **Start here.** Chronological history of everything that has been built, why, and what is still open |
+
+---
+
+## Working conventions
+
+Two standing rules. Both are decisions of record in
+[docs/11-MASTER-PLAN.md](docs/11-MASTER-PLAN.md) and both are enforced, not
+merely encouraged.
+
+### D10 — the phase log is the project's memory
+
+[`docs/PHASE_LOG.md`](docs/PHASE_LOG.md) is the canonical chronological history.
+Update it after every meaningful change — a phase, a bug fix, an architectural
+decision, a migration, a test milestone, a deployment change, an important
+discovery. **A phase is not complete until its entry is written.**
+
+It is **append-only**. A decision that supersedes an earlier one gets a new entry
+saying what changed, why, and what replaced it; the superseded entry stays as it
+was. Deleting the reasoning behind an abandoned approach destroys the thing a
+future reader needs most.
+
+The test it has to pass: *a new contributor, or a new agent with no chat history,
+reads that one file and knows where this project stands.*
+
+### D11 — the platform is branded, the tenant application is white-labelled
+
+**`shikhonBD` is the permanent platform and marketing brand.** It stays on the
+landing page, the marketing site, public documentation and any future platform
+Super Admin console.
+
+**White-labelling applies only to a tenant's operational application** — a
+school's login, shell, PWA identity, notices, receipts and reports carry that
+school's name, logo, colours and watermark.
+
+The rule is *not* "remove ShikhonBD". The `Brand boundary (D11)` job in
+`.github/workflows/frontend.yml` enforces both halves: it fails the build if the
+platform brand appears on a tenant surface, **and** if it disappears from the
+marketing site.
+
+---
 
 ## Database
 

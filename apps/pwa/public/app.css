@@ -2271,3 +2271,39 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
   .cal-grid th { font-size: 9px; }
   .cal-day { font-size: var(--text-2xs); }
 }
+
+/* ── Working weekend (R-4.1) ───────────────────────────────────────────
+   Three states now share the grid, and two of them fall on the same
+   columns: a Saturday is normally shut, and a make-up Saturday is open.
+   So the working-weekend cell has to actively UNDO the weekend shading
+   rather than merely add to it — a day that reads as closed while the
+   system treats it as open is the calendar lying about what will happen.
+
+   Like the holiday rule, the marker is a shape (a top rule) as well as a
+   colour, so it survives greyscale and daylight on a cheap screen. */
+.cal-weekend.cal-working { background: var(--c-surface); }
+.cal-working .cal-day {
+  border-top: 3px solid var(--c-success);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: calc(var(--s-1) - 2px);
+}
+.cal-working .cal-num { color: var(--c-ink); font-weight: 700; }
+
+/* The legend. Only the states present in the month on screen are drawn,
+   so this is never a key to markers nobody can see. */
+.cal-legend {
+  list-style: none; margin: var(--s-2) 0 0; padding: 0 var(--s-4);
+  display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4);
+}
+.cal-legend-item {
+  display: flex; align-items: center; gap: var(--s-2);
+  font-size: var(--text-2xs); color: var(--c-ink-2);
+}
+.cal-legend-swatch {
+  width: 14px; height: 14px; border-radius: var(--radius);
+  background: var(--c-surface-3); border: 1px solid var(--c-line);
+}
+.cal-legend-swatch[data-state='holiday']         { border-bottom: 3px solid var(--c-warn); }
+.cal-legend-swatch[data-state='working_weekend'] { background: var(--c-surface);
+                                                   border-top: 3px solid var(--c-success); }

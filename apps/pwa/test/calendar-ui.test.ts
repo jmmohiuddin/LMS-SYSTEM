@@ -421,3 +421,108 @@ describe('roles and presentation', () => {
     assert.equal(opts[0].getAttribute('data-active'), 'true');
   });
 });
+
+// ── R-4.1: the three day states ────────────────────────────────────────
+
+describe('working weekend', () => {
+  const WORKING = ENTRY({
+    id: 'w1', day: '2026-10-17', kind: 'working_weekend',
+    titleBn: 'বন্যার ক্ষতি পুষিয়ে নিতে ক্লাস', descriptionBn: null,
+  });
+
+  test('THE ONE THAT MATTERS — a working Saturday does not look shut', async () => {
+    // 2026-10-17 is a Saturday, inside the {5,6} weekend. The whole point of
+    // the override is that this ONE date is open while the column is not, so
+    // the cell has to actively undo the weekend shading.
+    await mountOctober(PAYLOAD({ entries: [WORKING] }));
+    const cell = dayOf('১৭ অক্টোবর')!.closest('td')!;
+    assert.equal(cell.getAttribute('data-state'), 'working_weekend');
+    assert.ok(cell.classList.contains('cal-working'));
+    assert.ok(cell.classList.contains('cal-weekend'),
+      'it is still a weekend COLUMN; the day is the exception');
+  });
+
+  test('and says it is open, because the column around it says otherwise', async () => {
+    await mountOctober(PAYLOAD({ entries: [WORKING] }));
+    const label = dayOf('১৭ অক্টোবর')!.getAttribute('aria-label') ?? '';
+    assert.match(label, /সাপ্তাহিক ছুটির দিনে খোলা/);
+    assert.doesNotMatch(label, /^.*· সাপ্তাহিক ছুটি ·/,
+      'a day that is open must not also be announced as the weekly holiday');
+  });
+
+  test('an ordinary weekend day is still announced as closed', async () => {
+    await mountOctober(PAYLOAD({ entries: [WORKING] }));
+    // 2026-10-24, the next Saturday, carries no override.
+    const label = dayOf('২৪ অক্টোবর')!.getAttribute('aria-label') ?? '';
+    assert.match(label, /সাপ্তাহিক ছুটি/);
+    assert.doesNotMatch(label, /খোলা/);
+  });
+
+  test('a holiday on the same date wins, matching the sender', async () => {
+    // The contradiction the schema permits. The UI must agree with
+    // sms-svc's nonWorkingReasonFor, or the calendar lies about what the
+    // system will do.
+    await mountOctober(PAYLOAD({
+      entries: [WORKING, ENTRY({ id: 'h1', day: '2026-10-17', kind: 'holiday' })],
+    }));
+    const cell = dayOf('১৭ অক্টোবর')!.closest('td')!;
+    assert.equal(cell.getAttribute('data-state'), 'holiday');
+    assert.ok(!cell.classList.contains('cal-working'));
+  });
+
+  test('a normal weekday is neither', async () => {
+    await mountOctober(PAYLOAD({ entries: [] }));
+    const cell = dayOf('১৯ অক্টোবর')!.closest('td')!;   // a Monday
+    assert.equal(cell.getAttribute('data-state'), 'normal');
+  });
+
+  test('the legend names the states present, and only those', async () => {
+    await mountOctober(PAYLOAD({ entries: [WORKING] }));
+    const states = [...root().querySelectorAll('.cal-legend-swatch')]
+      .map((s) => s.getAttribute('data-state'));
+    assert.ok(states.includes('working_weekend'));
+    assert.ok(states.includes('weekend'));
+    assert.ok(!states.includes('holiday'), 'no holiday this month, so no key for one');
+  });
+
+  test('the card explains the effect, which "working weekend" alone does not', async () => {
+    await mountOctober(PAYLOAD({ entries: [WORKING] }));
+    fire(dayOf('১৭ অক্টোবর')!);
+    await settle();
+    assert.match(text(), /স্বাভাবিক কর্মদিবস হিসেবে গণ্য হবে/);
+    assert.match(text(), /এসএমএস যথারীতি যাবে/);
+  });
+
+  test('deleting one warns that the day goes quiet again', async () => {
+    await mountOctober(PAYLOAD({ entries: [WORKING] }));
+    fire(dayOf('১৭ অক্টোবর')!);
+    await settle();
+    fire(byLabel(/^মুছে ফেলুন$/)!);
+    await settle();
+    // The opposite consequence to a holiday's, and just as invisible.
+    assert.match(text(), /আবার\s*\n?\s*সাপ্তাহিক ছুটি হিসেবে গণ্য হবে|সাপ্তাহিক ছুটি হিসেবে গণ্য হবে/);
+    assert.match(text(), /এসএমএস বন্ধ থাকবে/);
+  });
+
+  test('a read-only role sees the state and cannot change it', async () => {
+    await mountOctober(PAYLOAD({ entries: [WORKING] }), false);
+    assert.equal(dayOf('১৭ অক্টোবর')!.closest('td')!.getAttribute('data-state'),
+      'working_weekend');
+    fire(dayOf('১৭ অক্টোবর')!);
+    await settle();
+    assert.match(text(), /স্বাভাবিক কর্মদিবস/, 'the effect is legible to everyone');
+    assert.equal(byLabel(/^সম্পাদনা$/), undefined);
+    assert.equal(byLabel(/^মুছে ফেলুন$/), undefined);
+  });
+
+  test('it is offered in the create form and the filter', async () => {
+    await mountOctober(PAYLOAD());
+    assert.ok([...root().querySelectorAll('.seg-opt')]
+      .some((o) => o.textContent === 'খোলা'), 'a school can find its make-up days');
+    fire(byLabel(/নতুন এন্ট্রি/)!);
+    await settle();
+    const kinds = [...(root().querySelector('.card-form select') as HTMLSelectElement).options]
+      .map((o) => o.value);
+    assert.ok(kinds.includes('working_weekend'));
+  });
+});

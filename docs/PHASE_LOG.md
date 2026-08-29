@@ -25,8 +25,8 @@ here — without any chat history, without asking anyone.
 ## CURRENT PROJECT STATUS
 
 ```text
-Current Phase:        none in progress — R-4 complete, R-5 not started
-Last Completed Phase: R-4 — Academic calendar (per-tenant holidays, events, weekends)
+Current Phase:        none in progress — R-4 complete incl. R-4.1, R-5 not started
+Last Completed Phase: R-4.1 — Working weekends now override the weekly weekend
 Last Doc Phase:       R-7-DOC — tenant onboarding specified + pilot runbook
                       (documentation only; R-7 itself is NOT implemented)
 Surfaces:             /  marketing (shikhonBD)  ·  /app  the application
@@ -36,10 +36,10 @@ Last Commit:          HEAD of main — `git log -1`. Notable earlier commits:
                       R-1   5265ea3e561c4d9b86649d234eca9b3f90363e30
                       RULES 96639be51ac8851e44e27592cdf3d300f5ca33e9
                       D12   4ea1541b816745db580ed1b02154338a6f695f74
-Tests:                768 passing, 0 failing (node --test, verified 2026-08-29)
+Tests:                787 passing, 0 failing (node --test, verified 2026-08-29)
                       offline 46 · server-core 92 · ui-core 108 · academics-svc 78
-                      identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13
-                      sync-svc 23 · pwa 302 · netlify 8
+                      identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 22
+                      sync-svc 23 · pwa 312 · netlify 8
                       + 21 SQL suites — EXECUTED against PostgreSQL 16, all green
                       + up → down → up clean, 0 objects left, lint 0 advisories
 Build:                npm run build ok · tsc ×3 exit 0 · app.js 95 KB gz / 180 KB budget
@@ -2756,6 +2756,187 @@ None open.
   attendance and SMS treat that Friday as a school day? It is a small reader
   change and a real Bangladeshi case (make-up days after floods), but it
   changes when SMS goes out, so it is the owner's call.
+
+### Next recommended step
+
+**R-5 — Branded print & document engine.** Not started.
+
+
+---
+
+# 2026-08-29 · R-4.1 · Working weekends stop being decoration
+
+| | |
+|---|---|
+| **Date** | 2026-08-29 |
+| **Phase ID** | R-4.1 |
+| **Phase name** | Working-weekend integration (R-4 completion pass) |
+| **Status** | ✅ Complete. R-4's one open owner decision is resolved. |
+| **Migration number** | **none — deliberately.** See below. |
+| **Rollback status** | n/a — no schema change. |
+| **Git commit** | `git log -1 --format=%H -- services/sms-svc/src/dispatch.ts` |
+
+### Objective
+
+R-4 shipped with one honest gap, recorded as needing an owner decision:
+`calendar_days.kind = 'working_weekend'` was **storable and honoured by
+nothing**. The owner has decided it should behave as a real override, so this
+pass makes it one.
+
+### Why no migration
+
+The `kind` CHECK has admitted `working_weekend` since migration 003; 043 gave
+the table its RESTRICTIVE write scope, which covers this kind exactly as it
+covers holidays; the read scope is already open to every role; and
+`ix_calendar_day (tenant_id, day)` already serves the lookup. There was
+nothing left to add. The whole change is one rule and one widened `IN` list —
+which is what "reuse the existing source-of-truth tables" should look like
+when the schema was right the first time.
+
+### What was found first
+
+The suppression logic existed **twice**, in `services/sms-svc/src/dispatch.ts`:
+once in `suppressionReason()` for attendance SMS, once inline in the notice
+sender. Both did the same two things in the same order — weekend, then
+holiday — as two independent copies.
+
+That is exactly how they would have drifted the moment one of them learned
+about working weekends, so the first move was to collapse them into one
+exported function before teaching it anything new.
+
+**And a second finding, which is the more useful one: nothing has ever
+blocked ATTENDANCE.** There is no calendar check on the attendance path,
+online or offline; a teacher could always take a register on any date. So
+"attendance remains operational on a working weekend" was already true and
+R-4.1 changes nothing about it. What was broken was narrower and worse: the
+register taken on that Saturday produced an `attendance.marked.v1` event, and
+the sender then threw it away as 'weekend'. The school worked, the children
+were marked absent, and no guardian was told.
+
+The suite asserts this rather than assuming it — a teacher takes a register on
+the make-up Saturday and the outbox event is verified present.
+
+### The rule
+
+`nonWorkingReasonFor(isoDay, weekendDays, overrides)`, pure and exported so
+the decision is testable without a database:
+
+```
+holiday                     → closed, whatever else the date says
+weekend + working_weekend   → OPEN
+weekend                     → closed
+otherwise                   → open
+```
+
+**Holiday beats working weekend**, deliberately. The schema permits a date to
+carry both, because they are different rows; that is a data-entry
+contradiction, and the conservative resolution is the right one —
+suppressing a message that should have gone is a smaller harm than sending
+nine hundred SMS on a day the school is shut, and a declared holiday is the
+more specific statement about that date.
+
+### What it does NOT touch
+
+**The timetable.** `rms-svc/solve.ts` derives teaching days from
+`tenants.weekend_days` to build a WEEKLY template. A working weekend is one
+date, not a change to the week, and a solver that rebuilt the routine because
+of a single make-up Saturday would be answering a question nobody asked.
+
+**Attendance.** As above: nothing blocked it, and nothing now does.
+
+### Files changed
+
+- `services/sms-svc/src/dispatch.ts` — two duplicated checks collapsed into
+  `nonWorkingReasonFor()` + `calendarOverrides()`; the holiday lookup widened
+  its `IN` list, so the new rule costs **no extra round trip**.
+- `services/sms-svc/test/notice-sms.test.ts` — +9 tests on the pure rule.
+- `apps/pwa/src/calendar-view.ts` — `dayState()` returning one of four
+  states; `data-state` on each cell; a legend; the effect written on the
+  entry card; a delete warning that is the mirror of a holiday's.
+- `apps/pwa/public/app.css` — `.cal-working` (which must actively UNDO the
+  weekend shading) and `.cal-legend`.
+- `apps/pwa/test/calendar-ui.test.ts` — +10 tests.
+- `db/tests/calendar.sql` — +8 assertions (14 → 22).
+- `apps/pwa/src/demo.ts` — a make-up Saturday in the fixture.
+- `docs/{07,11,PHASE_LOG}`.
+
+### Tests executed
+
+```
+node --test  (11 workspaces)   787 passing, 0 failing
+db/tests/calendar.sql          22/22 PASS · run twice, 0 rows left
+21 SQL suites, twice           all green both passes
+schema lint                    0 advisories
+migration-status               43/43, unchanged (no migration)
+tsc --noEmit ×3                exit 0
+npm run build                  ok · app.js 107 KB gz / 180 KB
+D11 brand boundary             green both directions
+```
+
+**787 passing**, up from 768. sms-svc 13 → 22, pwa 302 → 312.
+
+Writing the SQL assertions surfaced three fixture defects, all of the kind
+only running finds: `attendance_mode` is `section_daily`/`period_wise` (not
+'daily'), `attendance_sessions.id` has **no default** because a session is
+created offline on the device and carries a client-generated uuid through the
+outbox, and `taken_at`/`marked_at` are NOT NULL without defaults for the same
+reason. A fourth was mine: `String.replace` treats `$$` in the REPLACEMENT as
+an escaped `$`, so the scripted splice silently ate every dollar-quote in the
+appended SQL.
+
+### Security and tenant isolation
+
+- A student cannot declare a working weekend — asserted, and the stakes are
+  the mirror of a holiday's: it would make the school text nine hundred
+  guardians on a Saturday nobody worked.
+- A teacher reads it and cannot change it — asserted.
+- The override applies to **exactly one date**: the adjacent Friday and the
+  following Saturday are verified unaffected.
+- **Cross-tenant**: tenant B's sender, running the sender's own query for the
+  same date, sees nothing — and naming tenant A's `tenant_id` in the
+  predicate still returns zero rows, because RLS is the boundary and not the
+  WHERE clause. The specific harm avoided: Monipur's make-up Saturday must
+  not start the Madrasah next door texting on its quiet day.
+
+### Browser verification
+
+Tenant A, October 2026. The make-up Saturday (১৭) renders **unshaded with a
+green top rule and a bold numeral** inside the shaded শনি column, while the
+plain Saturday (২৪) stays shaded, unruled and normal weight — three signals,
+not colour alone. Measured: `rgb(35,33,32)` vs `rgb(44,42,41)`, 2.67px vs
+0.67px top border, weight 700 vs 400.
+
+The accessible name says "সাপ্তাহিক ছুটির দিনে খোলা" and does **not** also
+announce the weekly holiday. The legend lists only the states present in the
+month. The card explains that the day counts as a normal working day and the
+SMS will go out; deleting it warns that the day goes quiet again. A read-only
+role sees all of it and can change none of it. Mobile 375×812: no sideways
+scroll.
+
+### Known limitations
+
+1. **`ramadan_schedule` remains descriptive.** Like `working_weekend` before
+   this pass, it is storable and honoured by nothing — it would need to shift
+   period times, which is a routine concern, not a suppression one. Recorded
+   so it is not rediscovered as a surprise.
+2. **The routine is untouched** on a working weekend: the timetable has no
+   Saturday column for a Fri+Sat school, so a make-up day runs on a
+   schedule the school arranges outside the app. Making the solver
+   date-aware is a much larger change and belongs with RMS.
+3. **Holiday-beats-working-weekend is not enforced at write time.** The UI
+   does not stop an office adding both to one date; the sender and the
+   calendar simply agree on which wins. A CHECK could forbid it, but the
+   two are separate rows and a partial exclusion constraint for one
+   data-entry mistake is more machinery than the mistake deserves.
+
+### Carried backlog (unchanged, from R-3)
+
+class/section edit UI · guardian unlink workflow · audit export and
+entity-name resolution · `POST /rms/solve` API-only by decision.
+
+### Unresolved bugs / issues
+
+None open. R-4 has no remaining owner decisions.
 
 ### Next recommended step
 

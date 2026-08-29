@@ -408,6 +408,253 @@ END $$;
 COMMIT;
 
 -- ---------------------------------------------------------------------
+-- 11. WORKING WEEKEND (R-4.1) — the override, and who may set it.
+--
+-- `working_weekend` has been storable since migration 003 and was honoured
+-- by nothing: both SMS suppression sites asked only about kind='holiday', so
+-- a school working a make-up Saturday after a flood took its register and no
+-- guardian heard about it.
+--
+-- The DECISION is a pure function in sms-svc (nonWorkingReasonFor) and is
+-- tested there without a database. What belongs here is the DATA the
+-- function is fed: the exact query the sender runs, and who may write the
+-- row it finds.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7c800000-0000-4000-8000-00000000000a';
+SET LOCAL app.role      = 'principal';
+SET LOCAL app.user_id   = '7c800000-0000-4000-8000-0000000000f1';
+
+-- 2026-10-17 is a Saturday: weekend for Monipur {5,6}, a working day for the
+-- Madrasah {5}. Declaring it a make-up day for Monipur.
+INSERT INTO calendar_days (tenant_id, academic_year_id, day, kind, title_bn,
+                           description_bn, created_by)
+SELECT :T, ay.id, '2026-10-17', 'working_weekend', 'বন্যার ক্ষতি পুষিয়ে নিতে ক্লাস',
+       'শনিবার স্বাভাবিক রুটিনে ক্লাস হবে।', :HEAD
+  FROM academic_years ay WHERE ay.tenant_id = :T AND ay.is_current;
+
+DO $$
+DECLARE kinds text[];
+BEGIN
+  -- The EXACT query services/sms-svc/src/dispatch.ts::calendarOverrides runs.
+  SELECT array_agg(DISTINCT kind ORDER BY kind) INTO kinds
+    FROM calendar_days
+   WHERE tenant_id = '7c800000-0000-4000-8000-00000000000a'
+     AND day = '2026-10-17'
+     AND kind IN ('holiday', 'working_weekend');
+
+  IF kinds IS DISTINCT FROM ARRAY['working_weekend']::text[] THEN
+    RAISE EXCEPTION 'FAIL: the suppression lookup returned % for the make-up Saturday', kinds;
+  END IF;
+  RAISE NOTICE 'PASS the sender sees the working-weekend override for that date';
+END $$;
+
+DO $$
+DECLARE kinds text[];
+BEGIN
+  -- And says nothing about the Friday beside it, or any other Saturday.
+  SELECT array_agg(kind) INTO kinds FROM calendar_days
+   WHERE tenant_id = '7c800000-0000-4000-8000-00000000000a'
+     AND day = '2026-10-16'
+     AND kind IN ('holiday', 'working_weekend');
+  IF kinds IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: the override leaked onto the adjacent Friday (%)', kinds;
+  END IF;
+
+  SELECT array_agg(kind) INTO kinds FROM calendar_days
+   WHERE tenant_id = '7c800000-0000-4000-8000-00000000000a'
+     AND day = '2026-10-24'
+     AND kind IN ('holiday', 'working_weekend');
+  IF kinds IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: the override leaked onto the following Saturday (%)', kinds;
+  END IF;
+  RAISE NOTICE 'PASS the override applies to exactly one date';
+END $$;
+
+-- The holiday from step 2 is still on 2026-10-10, unaffected.
+DO $$
+DECLARE kinds text[];
+BEGIN
+  SELECT array_agg(kind) INTO kinds FROM calendar_days
+   WHERE tenant_id = '7c800000-0000-4000-8000-00000000000a'
+     AND day = '2026-10-10'
+     AND kind IN ('holiday', 'working_weekend');
+  IF kinds IS DISTINCT FROM ARRAY['holiday']::text[] THEN
+    RAISE EXCEPTION 'FAIL: the existing holiday changed (%)', kinds;
+  END IF;
+  RAISE NOTICE 'PASS existing holiday suppression is untouched';
+END $$;
+
+-- A date carrying BOTH. The schema permits it (different kinds are different
+-- rows); the sender resolves holiday-wins. Asserted here so a future change
+-- to the constraint cannot make the contradiction unrepresentable without
+-- somebody noticing this test.
+INSERT INTO calendar_days (tenant_id, academic_year_id, day, kind, title_bn, created_by)
+SELECT :T, ay.id, '2026-10-31', 'holiday', 'ছুটি', :HEAD
+  FROM academic_years ay WHERE ay.tenant_id = :T AND ay.is_current;
+INSERT INTO calendar_days (tenant_id, academic_year_id, day, kind, title_bn, created_by)
+SELECT :T, ay.id, '2026-10-31', 'working_weekend', 'ভুল করে খোলা', :HEAD
+  FROM academic_years ay WHERE ay.tenant_id = :T AND ay.is_current;
+
+DO $$
+DECLARE n integer;
+BEGIN
+  SELECT count(*) INTO n FROM calendar_days
+   WHERE day = '2026-10-31' AND kind IN ('holiday', 'working_weekend');
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'FAIL: expected the contradiction to be storable, got % row(s)', n;
+  END IF;
+  RAISE NOTICE 'PASS a contradictory day is storable; the sender resolves it holiday-first';
+END $$;
+COMMIT;
+
+-- ---------------------------------------------------------------------
+-- 12. Only management may declare a working weekend.
+--
+-- The same stakes as a holiday, in the opposite direction: a student who
+-- could add this row would make the school text nine hundred guardians on a
+-- Saturday nobody worked.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7c800000-0000-4000-8000-00000000000a';
+SET LOCAL app.role      = 'student';
+SET LOCAL app.user_id   = '7c800000-0000-4000-8000-0000000000a1';
+
+DO $$
+DECLARE v_year uuid;
+BEGIN
+  SELECT id INTO v_year FROM academic_years WHERE is_current LIMIT 1;
+  BEGIN
+    INSERT INTO calendar_days (tenant_id, academic_year_id, day, kind, title_bn)
+    VALUES ('7c800000-0000-4000-8000-00000000000a', v_year,
+            '2026-11-21', 'working_weekend', 'আজ ক্লাস হোক');
+    RAISE EXCEPTION 'FAIL: a student declared a working weekend';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'PASS a student cannot declare a working weekend';
+  END;
+END $$;
+ROLLBACK;
+
+BEGIN;
+SET LOCAL app.tenant_id = '7c800000-0000-4000-8000-00000000000a';
+SET LOCAL app.role      = 'subject_teacher';
+SET LOCAL app.user_id   = '7c800000-0000-4000-8000-0000000000f2';
+
+DO $$
+DECLARE n integer;
+BEGIN
+  -- A teacher READS it — they need to know Saturday is a school day.
+  SELECT count(*) INTO n FROM calendar_days
+   WHERE day = '2026-10-17' AND kind = 'working_weekend';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: a teacher cannot see the working weekend'; END IF;
+
+  UPDATE calendar_days SET kind = 'holiday' WHERE day = '2026-10-17';
+  IF FOUND THEN RAISE EXCEPTION 'FAIL: a teacher turned a working weekend into a holiday'; END IF;
+
+  DELETE FROM calendar_days WHERE day = '2026-10-17';
+  IF FOUND THEN RAISE EXCEPTION 'FAIL: a teacher deleted a working weekend'; END IF;
+
+  RAISE NOTICE 'PASS a teacher sees the working weekend and cannot change it';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------
+-- 13. TENANT ISOLATION — one school's make-up day is not another's.
+--
+-- The specific harm: Monipur declares its Saturday a working day; if that
+-- leaked, the Madrasah next door would start texting on ITS quiet day.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7c800000-0000-4000-8000-00000000000b';
+SET LOCAL app.role      = 'principal';
+SET LOCAL app.user_id   = '7c800000-0000-4000-8000-0000000000e1';
+
+DO $$
+DECLARE kinds text[]; n integer;
+BEGIN
+  -- The sender's own query, run as the OTHER tenant, for the same date.
+  SELECT array_agg(kind) INTO kinds FROM calendar_days
+   WHERE tenant_id = '7c800000-0000-4000-8000-00000000000b'
+     AND day = '2026-10-17'
+     AND kind IN ('holiday', 'working_weekend');
+  IF kinds IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL: tenant B sees tenant A''s working weekend (%)', kinds;
+  END IF;
+
+  -- Not even by naming A's tenant_id in the predicate: RLS is the boundary,
+  -- not the WHERE clause.
+  SELECT count(*) INTO n FROM calendar_days
+   WHERE tenant_id = '7c800000-0000-4000-8000-00000000000a'
+     AND day = '2026-10-17';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'FAIL: naming A''s tenant_id returned % row(s) to B', n;
+  END IF;
+
+  RAISE NOTICE 'PASS a working weekend does not cross tenants';
+END $$;
+COMMIT;
+
+-- ---------------------------------------------------------------------
+-- 14. ATTENDANCE remains operational — and always was.
+--
+-- Nothing in this system has ever refused a register on a holiday or a
+-- weekend: there is no calendar check on the attendance path, offline or
+-- online. R-4.1 added none. This asserts the property rather than assuming
+-- it, because "attendance still works on a working weekend" is a claim the
+-- brief asks to verify.
+-- ---------------------------------------------------------------------
+BEGIN;
+SET LOCAL app.tenant_id = '7c800000-0000-4000-8000-00000000000a';
+-- As principal: attendance_sessions_scope admits management or a teacher
+-- of that section, and the fixture teacher is not assigned to it. WHO may
+-- take a register is asserted elsewhere; this is about the CALENDAR not
+-- blocking one.
+SET LOCAL app.role      = 'principal';
+SET LOCAL app.user_id   = '7c800000-0000-4000-8000-0000000000f1';
+
+DO $$
+DECLARE v_session uuid; v_year uuid; n integer;
+BEGIN
+  SELECT id INTO v_year FROM academic_years WHERE is_current LIMIT 1;
+
+  -- A register taken on the make-up Saturday.
+  -- attendance_sessions.id has NO default: a session is created offline on
+  -- the device and carries a client-generated uuid through the outbox. So
+  -- the test supplies one, exactly as the sync applier does.
+  v_session := gen_random_uuid();
+  INSERT INTO attendance_sessions
+    (id, tenant_id, section_id, academic_year_id, taken_on, period_no, mode,
+     taken_by, taken_at)
+  VALUES (v_session, '7c800000-0000-4000-8000-00000000000a',
+          '7c800000-0000-4000-8000-00000000ec01', v_year,
+          '2026-10-17', 1, 'section_daily', '7c800000-0000-4000-8000-0000000000f1', now());
+
+  INSERT INTO attendance_records
+    (tenant_id, session_id, student_id, section_id, taken_on, status,
+     marked_by, marked_at)
+  VALUES ('7c800000-0000-4000-8000-00000000000a', v_session,
+          '7c800000-0000-4000-8000-0000000000a1',
+          '7c800000-0000-4000-8000-00000000ec01', '2026-10-17', 'absent',
+          '7c800000-0000-4000-8000-0000000000f1', now());
+
+  SELECT count(*) INTO n FROM attendance_records
+   WHERE taken_on = '2026-10-17';
+  IF n <> 1 THEN RAISE EXCEPTION 'FAIL: attendance on a working weekend was refused'; END IF;
+
+  -- And the absence raised its event, which is what the SMS sender consumes.
+  -- Before R-4.1 the event was raised too — and then suppressed as 'weekend'.
+  SELECT count(*) INTO n FROM event_outbox
+   WHERE event_type = 'attendance.marked.v1'
+     AND payload->>'takenOn' = '2026-10-17';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'FAIL: the absence raised % outbox event(s)', n;
+  END IF;
+
+  RAISE NOTICE 'PASS attendance works on a working weekend and queues its event';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------
 -- Teardown — re-runnable, leaving nothing.
 -- ---------------------------------------------------------------------
 RESET ROLE;

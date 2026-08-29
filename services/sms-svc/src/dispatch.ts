@@ -47,6 +47,69 @@ export interface DispatchOptions {
   now?: () => number;
 }
 
+/**
+ * The two calendar kinds that decide whether a date is a school day.
+ *
+ * `calendar_days.kind` has five values; the other three (exam, event,
+ * ramadan_schedule) describe what is happening ON a working day and change
+ * nothing about whether messages go out.
+ */
+export type WorkingDayOverride = 'holiday' | 'working_weekend';
+
+/**
+ * Is this a day the school works, and if not, why not?  (R-4.1)
+ *
+ * The rule in one place, because before this it was two copies of "weekend,
+ * then holiday" — one in the attendance sender and one in the notice sender —
+ * and two copies is how they drift the moment one of them learns something.
+ *
+ * ── Precedence, and why holiday wins ────────────────────────────────────
+ *   holiday                     → closed, whatever else the row says
+ *   weekend + working_weekend   → OPEN. This is the make-up day: a school
+ *                                 recovering a week lost to floods works the
+ *                                 Saturday, and the guardians must be told
+ *                                 their child was absent from it.
+ *   weekend                     → closed
+ *   otherwise                   → open
+ *
+ * A date carrying BOTH a holiday and a working_weekend is a data-entry
+ * contradiction — the schema permits it because the two kinds are different
+ * rows. Holiday wins, deliberately: suppressing a message that should have
+ * gone is a smaller harm than sending nine hundred SMS on a day the school is
+ * shut, and a school that has declared a holiday has made the more specific,
+ * more recent statement about that date.
+ *
+ * ── What this does NOT change ───────────────────────────────────────────
+ * Nothing has ever stopped a teacher TAKING attendance on any date — there is
+ * no holiday check on the attendance path, offline or online, and R-4.1 adds
+ * none. "Attendance remains operational on a working weekend" was already
+ * true; what was broken was that the register filled in on that Saturday
+ * produced no messages to guardians.
+ *
+ * Nor does it touch the timetable. `rms-svc/solve.ts` derives teaching days
+ * from `tenants.weekend_days` to build a WEEKLY template; a working weekend
+ * is one date, not a change to the week, and a solver that rebuilt the
+ * routine because of one make-up Saturday would be answering a question
+ * nobody asked.
+ *
+ * Pure and exported so the decision can be tested without a database; the
+ * query that feeds it is `calendarOverrides()`.
+ */
+export function nonWorkingReasonFor(
+  isoDay: string,
+  weekendDays: Set<number>,
+  overrides: Set<WorkingDayOverride>,
+): 'holiday' | 'weekend' | null {
+  if (overrides.has('holiday')) return 'holiday';
+
+  const dow = new Date(`${isoDay}T00:00:00Z`).getUTCDay();
+  if (!weekendDays.has(dow)) return null;
+
+  // A weekend the school has explicitly declared a working day.
+  if (overrides.has('working_weekend')) return null;
+  return 'weekend';
+}
+
 /** One run's SMS budget and identity, shared by both stage-1 senders. */
 interface TenantSmsBudget {
   weekendDays: Set<number>;
@@ -371,18 +434,12 @@ export class SmsDispatchWorker {
       // parent needs on a day the school is closed.
       if (notice.category !== 'emergency') {
         const today = new Date(this.now()).toISOString().slice(0, 10);
-        const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
-        if (budget.weekendDays.has(dow)) {
-          suppressed.weekend = (suppressed.weekend ?? 0) + 1;
-          await this.markPublished(client, ev.id);
-          continue;
-        }
-        const holiday = await client.query(
-          `SELECT 1 FROM calendar_days WHERE tenant_id = $1 AND day = $2 AND kind = 'holiday' LIMIT 1`,
-          [tenantId, today],
-        );
-        if ((holiday.rowCount ?? 0) > 0) {
-          suppressed.holiday = (suppressed.holiday ?? 0) + 1;
+        // R-4.1: the same rule the attendance sender uses, from the same
+        // function. A school working a make-up Saturday gets its notices.
+        const overrides = await this.calendarOverrides(client, tenantId, today);
+        const reason = nonWorkingReasonFor(today, budget.weekendDays, overrides);
+        if (reason) {
+          suppressed[reason] = (suppressed[reason] ?? 0) + 1;
           await this.markPublished(client, ev.id);
           continue;
         }
@@ -450,16 +507,34 @@ export class SmsDispatchWorker {
   ): Promise<string | null> {
     if (capUsed >= dailyCap) return 'daily_cap_exceeded';
 
-    const dow = new Date(`${payload.takenOn}T00:00:00Z`).getUTCDay();
-    if (weekendDays.has(dow)) return 'weekend';
+    // One rule, one query, shared with the notice sender — see
+    // nonWorkingReasonFor(). Before R-4.1 these two sites each carried their
+    // own copy of "weekend, then holiday", which is exactly how they would
+    // have drifted the moment one of them learned about working weekends.
+    const overrides = await this.calendarOverrides(client, tenantId, payload.takenOn);
+    return nonWorkingReasonFor(payload.takenOn, weekendDays, overrides);
+  }
 
-    const holiday = await client.query(
-      `SELECT 1 FROM calendar_days WHERE tenant_id = $1 AND day = $2 AND kind = 'holiday' LIMIT 1`,
-      [tenantId, payload.takenOn],
+  /**
+   * Which of the two day-deciding kinds apply to this date.
+   *
+   * One query where there used to be one query — the holiday lookup simply
+   * widened its IN list, so the working-weekend rule costs no extra round
+   * trip. Scoped by tenant_id in the predicate AND by RLS underneath, so an
+   * override in one school cannot silence or unsilence another's.
+   */
+  private async calendarOverrides(
+    client: pg.PoolClient,
+    tenantId: string,
+    isoDay: string,
+  ): Promise<Set<WorkingDayOverride>> {
+    const { rows } = await client.query<{ kind: WorkingDayOverride }>(
+      `SELECT DISTINCT kind FROM calendar_days
+        WHERE tenant_id = $1 AND day = $2
+          AND kind IN ('holiday', 'working_weekend')`,
+      [tenantId, isoDay],
     );
-    if ((holiday.rowCount ?? 0) > 0) return 'holiday';
-
-    return null;
+    return new Set(rows.map((r) => r.kind));
   }
 
   private async markAttendanceSmsState(

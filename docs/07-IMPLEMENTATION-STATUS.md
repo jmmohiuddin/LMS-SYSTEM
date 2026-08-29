@@ -15,12 +15,12 @@ security block (§9a).
 | Hosting | Vercel (Hobby plan) — static PWA + 10 Serverless Functions (12-function cap, 2 spare) |
 | Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **768 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 302** · netlify 8. Plus 21 SQL assertion suites, all green, all idempotent |
+| Tests | **787 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector), the first time the DB-backed suites have ever executed. offline 46 · server-core 92 · ui-core 108 · academics-svc 78 · identity-svc 10 · ops-svc 26 · rms-svc 62 · sms-svc 13 · sync-svc 23 · **pwa 312** · netlify 8. Plus 21 SQL assertion suites, all green, all idempotent |
 | Schema | 43 migrations (42 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
 | Login | **Temporarily disabled** by a two-sided kill switch (§5) |
 | Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) |
 | Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
-| Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied |
+| Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied. R-4.1: a `working_weekend` row now overrides the weekly weekend for SMS |
 | Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
 | Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 and its completion pass closed every gap. **Nothing is "Backend complete — UI pending"**; `POST /rms/solve` stays API-only by an explicit documented decision, not by omission (PHASE_LOG R-3) |
 | Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
@@ -842,12 +842,12 @@ their next navigation.
 
 **Known limitations:**
 
-- **`working_weekend` is storable and not yet honoured.** The kind predates
-  R-4; the attendance and SMS readers only ask about `kind = 'holiday'`. It
-  appears in the form because it is a real thing a school records (make-up
-  days after floods), and it does not yet change behaviour. **Backend partial
-  — reader pending**, and it needs an owner decision because it changes when
-  SMS goes out.
+- **`working_weekend` — CLOSED by R-4.1.** It now overrides the weekly
+  weekend: a make-up Saturday is a working day and its attendance and notice
+  SMS go out. Holiday still wins on a contradictory date. The suppression
+  logic, which existed twice, is now one exported function. **`ramadan_schedule`
+  remains descriptive** — it would need to shift period times, which is a
+  routine concern rather than a suppression one.
 - No recurring events. ঈদ moves every year and a school enters its calendar in
   one sitting each January.
 - No import of national holidays; every school types its own dates.

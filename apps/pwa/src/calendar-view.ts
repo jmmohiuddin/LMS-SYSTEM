@@ -76,7 +76,7 @@ export const KIND_BN: Record<string, string> = {
   exam: 'পরীক্ষা',
   event: 'অনুষ্ঠান',
   ramadan_schedule: 'রমজানের সময়সূচি',
-  working_weekend: 'কর্মদিবস (সাপ্তাহিক ছুটিতে)',
+  working_weekend: 'খোলা',
 };
 
 const SHIFT_BN: Record<string, string> = {
@@ -203,6 +203,30 @@ export class CalendarView {
     return this.entriesOn(day).some((e) => e.kind === 'holiday');
   }
 
+  /**
+   * A weekend the school has declared a working day.  (R-4.1)
+   *
+   * The same precedence the SMS sender applies in
+   * `sms-svc/src/dispatch.ts::nonWorkingReasonFor`: a holiday on the same
+   * date wins, because a school that has declared one has made the more
+   * specific statement. Keeping the two in step matters — a cell that says
+   * "খোলা" while the sender suppresses the SMS is the calendar lying about
+   * what the system will do.
+   */
+  private isWorkingWeekend(day: string, dow: number): boolean {
+    if (!this.isWeekend(dow)) return false;
+    if (this.isHoliday(day)) return false;
+    return this.entriesOn(day).some((e) => e.kind === 'working_weekend');
+  }
+
+  /** The three states a cell can be in, for the label and the legend. */
+  private dayState(day: string, dow: number): 'holiday' | 'working_weekend' | 'weekend' | 'normal' {
+    if (this.isHoliday(day)) return 'holiday';
+    if (this.isWorkingWeekend(day, dow)) return 'working_weekend';
+    if (this.isWeekend(dow)) return 'weekend';
+    return 'normal';
+  }
+
   private todayIso(): string {
     const t = new Date();
     return iso(t.getFullYear(), t.getMonth(), t.getDate());
@@ -253,6 +277,7 @@ export class CalendarView {
     if (this.creating || this.editing) root.append(this.form());
 
     root.append(this.grid());
+    root.append(this.legend());
     root.append(this.dayPanel());
     root.append(this.upcoming());
   }
@@ -316,7 +341,7 @@ export class CalendarView {
       wrap.append(b);
     };
     mk('', 'সব');
-    for (const k of ['holiday', 'exam', 'event']) mk(k, KIND_BN[k]);
+    for (const k of ['holiday', 'working_weekend', 'exam']) mk(k, KIND_BN[k]);
     return wrap;
   }
 
@@ -382,10 +407,18 @@ export class CalendarView {
       const dow = (first + day - 1) % 7;
       const entries = this.entriesOn(dayIso);
 
+      const state = this.dayState(dayIso, dow);
+
       const td = d.createElement('td');
       td.className = 'cal-cell';
+      // `data-state` carries the ONE answer — holiday, working weekend,
+      // weekend or normal — rather than two classes a reader has to combine.
+      // A working weekend is still a weekend column; what changes is that
+      // this particular date is open, so it must not look shut.
+      td.setAttribute('data-state', state);
       if (this.isWeekend(dow)) td.classList.add('cal-weekend');
-      if (this.isHoliday(dayIso)) td.classList.add('cal-holiday');
+      if (state === 'holiday') td.classList.add('cal-holiday');
+      if (state === 'working_weekend') td.classList.add('cal-working');
       if (dayIso === today) td.classList.add('cal-today');
       if (dayIso === this.selectedDay) td.classList.add('cal-selected');
 
@@ -393,9 +426,12 @@ export class CalendarView {
       btn.type = 'button';
       btn.className = 'cal-day';
       // The accessible name carries what the visual marker carries, so a
-      // shaded holiday is not information only a sighted user gets.
+      // shaded holiday is not information only a sighted user gets — and a
+      // working weekend has to SAY it is open, because the column around it
+      // still reads as the weekend.
       const parts = [`${bnNum(day)} ${MONTH_BN[this.month]}`];
-      if (this.isWeekend(dow)) parts.push('সাপ্তাহিক ছুটি');
+      if (state === 'weekend') parts.push('সাপ্তাহিক ছুটি');
+      if (state === 'working_weekend') parts.push('সাপ্তাহিক ছুটির দিনে খোলা');
       for (const e of entries) parts.push(`${KIND_BN[e.kind] ?? e.kind}: ${e.titleBn}`);
       btn.setAttribute('aria-label', parts.join(' · '));
       if (dayIso === this.selectedDay) btn.setAttribute('aria-current', 'date');
@@ -432,6 +468,51 @@ export class CalendarView {
     table.append(tbody);
     scroll.append(table);
     return scroll;
+  }
+
+  /**
+   * The three day states, named.  (R-4.1)
+   *
+   * A shaded column and an underline are markers; a person seeing them for
+   * the first time has to guess what they mean, and "this Saturday is
+   * shaded but that one is not" is precisely the thing a working weekend
+   * introduces. So the states are written out under the grid.
+   *
+   * Rendered only when a state is actually present in the month on screen —
+   * a legend explaining a marker nobody can see is furniture.
+   */
+  private legend(): HTMLElement {
+    const d = this.o.doc;
+    const wrap = d.createElement('ul');
+    wrap.className = 'cal-legend';
+    wrap.setAttribute('aria-label', 'দিনের ধরন');
+
+    const present = new Set<string>();
+    const first = new Date(Date.UTC(this.year, this.month, 1)).getUTCDay();
+    const total = new Date(Date.UTC(this.year, this.month + 1, 0)).getUTCDate();
+    for (let day = 1; day <= total; day++) {
+      present.add(this.dayState(iso(this.year, this.month, day), (first + day - 1) % 7));
+    }
+
+    const items: [string, string][] = [
+      ['holiday', 'ছুটি — বন্ধ, হাজিরার এসএমএস যাবে না'],
+      ['working_weekend', 'সাপ্তাহিক ছুটির দিনে খোলা — স্বাভাবিক কর্মদিবসের মতো'],
+      ['weekend', 'সাপ্তাহিক ছুটি'],
+    ];
+    for (const [state, labelBn] of items) {
+      if (!present.has(state)) continue;
+      const li = d.createElement('li');
+      li.className = 'cal-legend-item';
+      const swatch = d.createElement('span');
+      swatch.className = 'cal-legend-swatch';
+      swatch.setAttribute('data-state', state);
+      swatch.setAttribute('aria-hidden', 'true');
+      const text = d.createElement('span');
+      text.textContent = labelBn;
+      li.append(swatch, text);
+      wrap.append(li);
+    }
+    return wrap;
   }
 
   /** What is on the selected day, or a prompt to pick one. */
@@ -485,6 +566,7 @@ export class CalendarView {
     const chip = d.createElement('span');
     chip.className = 'status-chip';
     if (e.kind === 'holiday') chip.setAttribute('data-state', 'warning');
+    else if (e.kind === 'working_weekend') chip.setAttribute('data-state', 'success');
     else if (e.kind === 'exam') chip.setAttribute('data-state', 'pending');
     chip.textContent = KIND_BN[e.kind] ?? e.kind;
     head.append(title, chip);
@@ -497,6 +579,15 @@ export class CalendarView {
       // rendered in every reader's browser.
       p.textContent = e.descriptionBn;
       card.append(p);
+    }
+
+    if (e.kind === 'working_weekend') {
+      const effect = d.createElement('p');
+      effect.className = 'att-sub';
+      effect.textContent =
+        'এই দিনটি সাপ্তাহিক ছুটি হলেও স্বাভাবিক কর্মদিবস হিসেবে গণ্য হবে — ' +
+        'হাজিরা ও নোটিশের এসএমএস যথারীতি যাবে।';
+      card.append(effect);
     }
 
     const meta: string[] = [];
@@ -538,12 +629,16 @@ export class CalendarView {
         card.append(confirmDialog({
           doc: d,
           title: 'শিক্ষাপঞ্জি থেকে সরানো',
+          // Both of these kinds change whether messages go out that day, in
+          // opposite directions. Saying only "this will be removed" leaves
+          // the office to discover the effect from a parent's complaint.
           body: e.kind === 'holiday'
-            // The consequence that is not obvious: removing a holiday
-            // un-suppresses that day's attendance SMS.
             ? `"${e.titleBn}" (${bnDate(e.day)}) সরানো হবে। ছুটি সরালে ওই দিনের ` +
               'হাজিরার এসএমএস আবার পাঠানো হবে।'
-            : `"${e.titleBn}" (${bnDate(e.day)}) শিক্ষাপঞ্জি থেকে সরানো হবে।`,
+            : e.kind === 'working_weekend'
+              ? `"${e.titleBn}" (${bnDate(e.day)}) সরানো হবে। এরপর দিনটি আবার ` +
+                'সাপ্তাহিক ছুটি হিসেবে গণ্য হবে এবং ওই দিনের এসএমএস বন্ধ থাকবে।'
+              : `"${e.titleBn}" (${bnDate(e.day)}) শিক্ষাপঞ্জি থেকে সরানো হবে।`,
           confirmLabel: 'সরান',
           danger: true,
           onConfirm: () => void this.remove(e),

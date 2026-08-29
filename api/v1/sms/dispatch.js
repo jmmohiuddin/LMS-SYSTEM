@@ -188,6 +188,13 @@ function randomOpaqueToken(bytes = 32) {
 }
 
 // services/sms-svc/src/dispatch.ts
+function nonWorkingReasonFor(isoDay, weekendDays, overrides) {
+  if (overrides.has("holiday")) return "holiday";
+  const dow = (/* @__PURE__ */ new Date(`${isoDay}T00:00:00Z`)).getUTCDay();
+  if (!weekendDays.has(dow)) return null;
+  if (overrides.has("working_weekend")) return null;
+  return "weekend";
+}
 var TEMPLATES = {
   "attendance.absent.v2": (name, day, org) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u0985\u09A8\u09C1\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u099B\u09BF\u09B2\u0964 \u2014 ${org}`,
   "attendance.late.v1": (name, day, org) => `\u0986\u09AA\u09A8\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8 ${name} \u0986\u099C (${day}) \u09AC\u09BF\u09A6\u09CD\u09AF\u09BE\u09B2\u09AF\u09BC\u09C7 \u09A6\u09C7\u09B0\u09BF\u09A4\u09C7 \u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964 \u2014 ${org}`
@@ -387,18 +394,10 @@ var SmsDispatchWorker = class {
       }
       if (notice.category !== "emergency") {
         const today = new Date(this.now()).toISOString().slice(0, 10);
-        const dow = (/* @__PURE__ */ new Date(`${today}T00:00:00Z`)).getUTCDay();
-        if (budget.weekendDays.has(dow)) {
-          suppressed.weekend = (suppressed.weekend ?? 0) + 1;
-          await this.markPublished(client, ev.id);
-          continue;
-        }
-        const holiday = await client.query(
-          `SELECT 1 FROM calendar_days WHERE tenant_id = $1 AND day = $2 AND kind = 'holiday' LIMIT 1`,
-          [tenantId, today]
-        );
-        if ((holiday.rowCount ?? 0) > 0) {
-          suppressed.holiday = (suppressed.holiday ?? 0) + 1;
+        const overrides = await this.calendarOverrides(client, tenantId, today);
+        const reason = nonWorkingReasonFor(today, budget.weekendDays, overrides);
+        if (reason) {
+          suppressed[reason] = (suppressed[reason] ?? 0) + 1;
           await this.markPublished(client, ev.id);
           continue;
         }
@@ -457,14 +456,25 @@ var SmsDispatchWorker = class {
   }
   async suppressionReason(client, tenantId, payload, weekendDays, capUsed, dailyCap) {
     if (capUsed >= dailyCap) return "daily_cap_exceeded";
-    const dow = (/* @__PURE__ */ new Date(`${payload.takenOn}T00:00:00Z`)).getUTCDay();
-    if (weekendDays.has(dow)) return "weekend";
-    const holiday = await client.query(
-      `SELECT 1 FROM calendar_days WHERE tenant_id = $1 AND day = $2 AND kind = 'holiday' LIMIT 1`,
-      [tenantId, payload.takenOn]
+    const overrides = await this.calendarOverrides(client, tenantId, payload.takenOn);
+    return nonWorkingReasonFor(payload.takenOn, weekendDays, overrides);
+  }
+  /**
+   * Which of the two day-deciding kinds apply to this date.
+   *
+   * One query where there used to be one query — the holiday lookup simply
+   * widened its IN list, so the working-weekend rule costs no extra round
+   * trip. Scoped by tenant_id in the predicate AND by RLS underneath, so an
+   * override in one school cannot silence or unsilence another's.
+   */
+  async calendarOverrides(client, tenantId, isoDay) {
+    const { rows } = await client.query(
+      `SELECT DISTINCT kind FROM calendar_days
+        WHERE tenant_id = $1 AND day = $2
+          AND kind IN ('holiday', 'working_weekend')`,
+      [tenantId, isoDay]
     );
-    if ((holiday.rowCount ?? 0) > 0) return "holiday";
-    return null;
+    return new Set(rows.map((r) => r.kind));
   }
   async markAttendanceSmsState(client, tenantId, payload, state) {
     await client.query(

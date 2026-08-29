@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 import {
   noticeSmsBody,
   noticeSmsMaxChars,
+  nonWorkingReasonFor,
+  type WorkingDayOverride,
   NOTICE_SMS_DEFAULT_MAX,
   NOTICE_SMS_HARD_CEILING,
 } from '../src/dispatch.ts';
@@ -106,5 +108,77 @@ describe('noticeSmsBody', () => {
   test('an empty body degrades to the headline, not to a dangling colon', () => {
     const body = noticeSmsBody('ছুটি', '', ORG);
     assert.equal(body, `ছুটি — ${ORG}`);
+  });
+});
+
+/**
+ * Working weekends (R-4.1).
+ *
+ * `calendar_days.kind = 'working_weekend'` has been storable since migration
+ * 003 and was honoured by nothing: both suppression sites asked only about
+ * `kind = 'holiday'`, so a school working a make-up Saturday after a flood
+ * took its register and no guardian heard about it.
+ *
+ * The decision is pure and exported precisely so this can be asserted without
+ * a database — the query that feeds it is one widened IN list.
+ */
+describe('nonWorkingReasonFor', () => {
+  const FRI_SAT = new Set([5, 6]);   // most BD institutions
+  const FRI_ONLY = new Set([5]);     // many Madrasah
+  const none = new Set<WorkingDayOverride>();
+
+  // 2026-10-10 is a Saturday; 2026-10-09 a Friday; 2026-10-12 a Monday.
+  const SAT = '2026-10-10';
+  const FRI = '2026-10-09';
+  const MON = '2026-10-12';
+
+  test('an ordinary working day is not suppressed', () => {
+    assert.equal(nonWorkingReasonFor(MON, FRI_SAT, none), null);
+  });
+
+  test('the weekend is, and says which reason', () => {
+    assert.equal(nonWorkingReasonFor(SAT, FRI_SAT, none), 'weekend');
+    assert.equal(nonWorkingReasonFor(FRI, FRI_SAT, none), 'weekend');
+  });
+
+  test('the weekend is per tenant — Saturday is a school day for a Madrasah', () => {
+    assert.equal(nonWorkingReasonFor(SAT, FRI_ONLY, none), null);
+    assert.equal(nonWorkingReasonFor(FRI, FRI_ONLY, none), 'weekend');
+  });
+
+  test('a holiday suppresses any day, weekday included', () => {
+    assert.equal(nonWorkingReasonFor(MON, FRI_SAT, new Set(['holiday'])), 'holiday');
+  });
+
+  test('THE ONE THAT MATTERS — a working weekend is a working day', () => {
+    // The make-up Saturday. Before R-4.1 this returned 'weekend' and nine
+    // hundred guardians heard nothing about a register that was taken.
+    assert.equal(nonWorkingReasonFor(SAT, FRI_SAT, new Set(['working_weekend'])), null);
+  });
+
+  test('and it only affects the weekend it was declared for', () => {
+    // The override is looked up per date, so a Saturday marked working says
+    // nothing about the Friday beside it.
+    assert.equal(nonWorkingReasonFor(FRI, FRI_SAT, none), 'weekend');
+  });
+
+  test('a working weekend on a weekday changes nothing', () => {
+    // Nonsense data — a Monday marked "working" — must not become a way to
+    // do anything unexpected.
+    assert.equal(nonWorkingReasonFor(MON, FRI_SAT, new Set(['working_weekend'])), null);
+  });
+
+  test('holiday beats working weekend, deliberately', () => {
+    // A contradiction the schema permits, because they are different rows.
+    // Suppressing a message that should have gone is a smaller harm than
+    // sending 900 SMS on a day the school is shut.
+    assert.equal(
+      nonWorkingReasonFor(SAT, FRI_SAT, new Set(['holiday', 'working_weekend'])),
+      'holiday');
+  });
+
+  test('a school with no weekend at all works every day', () => {
+    assert.equal(nonWorkingReasonFor(SAT, new Set(), none), null);
+    assert.equal(nonWorkingReasonFor(FRI, new Set(), none), null);
   });
 });

@@ -776,6 +776,13 @@ const DEMO_CALENDAR: Record<'a' | 'b', {
       { id: 'demo-cal-2', day: '2026-10-15', kind: 'event', titleBn: 'ক্রীড়া দিবস',
         descriptionBn: 'সকাল ৯টায় মাঠে।', appliesToShifts: null,
         source: 'calendar', editable: true, createdByNameBn: 'প্রধান শিক্ষক' },
+      // R-4.1. 2026-10-17 is a Saturday — inside tenant A's {5,6} weekend —
+      // declared a working day. The one date the column says shut and the
+      // school says open.
+      { id: 'demo-cal-4', day: '2026-10-17', kind: 'working_weekend',
+        titleBn: 'বন্যার ক্ষতি পুষিয়ে নিতে ক্লাস',
+        descriptionBn: 'শনিবার স্বাভাবিক রুটিনে ক্লাস হবে।', appliesToShifts: null,
+        source: 'calendar', editable: true, createdByNameBn: 'প্রধান শিক্ষক' },
       { id: 'demo-cal-3', day: '2026-10-15', kind: 'event', titleBn: 'অভিভাবক সভা',
         descriptionBn: null, appliesToShifts: ['morning'],
         source: 'calendar', editable: true, createdByNameBn: 'প্রধান শিক্ষক' },

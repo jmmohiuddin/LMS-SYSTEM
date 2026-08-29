@@ -18,7 +18,7 @@ are folded into the phases below.
 (RLS) আইসোলেশন। ক্লাস → গ্রুপ → সেকশন → শিফট হায়ারার্কি, বছরভিত্তিক এনরোলমেন্ট
 হিস্টরি, স্থায়ী স্টুডেন্ট আইডি, শিক্ষক অ্যাসাইনমেন্ট, প্রমোশন/রোলওভার, অফলাইন
 অ্যাটেনডেন্স + সিংক, পরীক্ষার রুটিন, মার্কস → রেজাল্ট → GPA, ফি/ইনভয়েস — সব বানানো
-এবং টেস্টেড (**৭৬৮ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-4 শেষে; এর সাথে
+এবং টেস্টেড (**৭৮৭ টেস্ট পাস, ০ ফেইল** — ২০২৬-০৮-২৯ যাচাইকৃত, R-4.1 শেষে; এর সাথে
 ২১টি SQL সুইট যা সত্যিকারের PostgreSQL-এ চালিয়ে দেখা হয়েছে)। **নতুন করে ভিত্তি
 বানানোর দরকার নেই।**
 
@@ -576,8 +576,18 @@ Friday. Notices reuse `app.emit_auto_notice`; `notices.source_kind` gained
 Reads are offline-readable (service-worker SWR, like the inbox); writes are
 online-only by decision, not omission — a queued holiday is one that suppresses SMS
 on a day nobody agreed to. No real-time push: there is no such infrastructure to
-reuse and R-2 made the same call. 768 tests, 0 failing; `db/tests/calendar.sql`
-14/14.
+reuse and R-2 made the same call.
+
+**R-4.1** (2026-08-29) closed the phase's one open owner decision. A
+`working_weekend` row now genuinely overrides the weekly weekend: a school working a
+make-up Saturday after a flood gets its attendance and notice SMS, where before the
+register was taken and the messages were silently dropped as 'weekend'. **No
+migration** — the kind, the write scope and the index all already existed. The
+suppression logic had been duplicated across two senders and is now one exported,
+purely-testable function; holiday still beats working weekend on a contradictory
+date, because sending nine hundred SMS on a day the school is shut is the worse
+error. Nothing blocked attendance before or after: that path never consulted the
+calendar. 787 tests, 0 failing; `db/tests/calendar.sql` 22/22.
 
 ### R-5 — Branded print & document engine *(completes owner priority #1)*
 
@@ -1065,7 +1075,7 @@ report trend charts (F-1505), native app wrappers, library/transport/hostel/payr
 | R-1 | White-label branding | M | — | **done** (+ R-1-A surfaces) |
 | R-2 | Notices + notifications | M–L | R-1 (branded shell) | **done 2026-08-29** |
 | R-3 | Principal + IT portals | L | R-2 (dashboard cards) | **done 2026-08-29** (+ completion pass) |
-| R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** |
+| R-4 | Calendar UI | S | R-2 (notify hooks) | **done 2026-08-29** (+ R-4.1) |
 | R-5 | Branded print engine | M | R-1 | next |
 | R-6 | Search + history | S–M | — | planned |
 | R-7 | Onboarding + platform console | M | R-1 | spec written (R-7-DOC) |

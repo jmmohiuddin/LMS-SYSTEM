@@ -5581,3 +5581,140 @@ commands are `node scripts/preflight.mjs`, then `scripts/restore-drill.mjs` and
 `scripts/security-probe.mjs` against it — all three written during this pass
 precisely so that day is a repeat of something rehearsed rather than a first
 attempt.
+
+---
+
+# 2026-08-30 · R-8 external readiness pass · Eight gates, one attempted, none closed
+
+**Status: R-8 remains OPEN.** Nothing in this entry moves a gate. It records
+what was attempted, what was learned, and — for the one gate that was
+genuinely reachable — exactly what stopped it.
+
+The eight priorities in this pass are all *external*. Seven of them need a
+credential, a contract, a domain or an institution that does not exist and
+cannot be brought into existence from a repository. Writing seven paragraphs
+saying "blocked" would be padding, so the pass did the only useful thing
+available: it **attempted the one gate that might have been reachable**, and
+turned an assumption into a dated finding.
+
+## Real web push (§5) — attempted, blocked, and now evidenced
+
+Previous entries said push was unverified. That was an assumption about the
+environment rather than an observation, and it was worth testing rather than
+repeating.
+
+**What worked, and it is more than expected:**
+
+- Real VAPID keys generated — P-256, 87-character public key.
+- **Network egress to real push services confirmed.** `fcm.googleapis.com`
+  answered HTTP 400 and `updates.push.services.mozilla.com` answered 406 —
+  real HTTP responses from the real services, not connection failures. The
+  path from this machine to Google's and Mozilla's push infrastructure is
+  open.
+- The app served over a secure context (127.0.0.1 counts), with
+  `PushManager`, `ServiceWorker` and `Notification` all present.
+
+**What blocked it, in the automated browser available here:**
+
+1. `Notification.permission` was already `"denied"`, and
+   `requestPermission()` returned `"denied"` **without prompting**. No user
+   gesture can lift that from JavaScript, and
+   `pushManager.subscribe({userVisibleOnly: true})` cannot be reached without
+   it.
+2. `navigator.serviceWorker.register('/sw.js')` fails with *"An unknown error
+   occurred when fetching the script"* — while the page itself fetches that
+   exact URL with **HTTP 200, `content-type: text/javascript`, 5551 bytes, and
+   it parses as valid JavaScript**. That distinction matters and is why it was
+   checked: the failure is the browser profile disabling service workers, and
+   **not a defect in the product**.
+3. `list_connected_browsers` returned empty — no real Chrome is reachable, so
+   no real device could be substituted.
+
+**Conclusion.** Everything on our side of the boundary is in place: keys,
+encryption, subscription endpoint, sender, fallback. Only the device is
+missing. Closing this gate needs an ordinary Chrome, Edge or Firefox on a real
+machine, where a person can click Allow, pointed at a deployment carrying the
+VAPID keys. It is a ten-minute task for someone with a browser and impossible
+for someone without one.
+
+## Real offline connectivity (§6) — blocked by the same finding
+
+The instruction was explicit: do not use "server stopped" as the final proof.
+The better test — a real connectivity loss with the service worker serving the
+shell — depends on the service worker registering, which is exactly what fails
+above. So no improvement over the existing evidence was possible, and none is
+claimed. The procedure remains written out in
+[12-PRODUCTION-RUNBOOK.md](12-PRODUCTION-RUNBOOK.md) §8a.
+
+## The other six gates
+
+Deployment, real SMS, a human alert destination, production backup and restore,
+pilot institutions and pilot stabilisation. Each needs something this
+environment does not contain and cannot create — host credentials, a signed
+aggregator contract, an alerting workspace, a production database, and schools.
+No work was invented to look busy against them, and per §13 no new architecture
+was introduced.
+
+## One schema addition, and its reasoning
+
+`docs/production-evidence.json` gains a third status, `"blocked"`: attempted,
+could not be completed, obstacle recorded, **`result` stays null** so it closes
+nothing. The preflight reports it as unverified and prints the obstacle.
+
+A bare null says "unknown". After this pass, real push is not unknown — we know
+precisely what stopped it, and that is worth more to whoever picks this up than
+an empty field. It also stops the same dead end being walked into twice.
+
+## Verification
+
+No product code changed in this pass. The suite stands where the closure pass
+left it: **1158 tests** with a database, **862** without, 26 DB suites, 48/48
+migrations. `node scripts/preflight.mjs` against a `production` environment
+reports **10 pass · 7 fail · 15 unverified**, and refuses.
+
+## The gates, unchanged
+
+| Gate | State |
+|---|---|
+| Production deployed | **shut** — no host credentials exist |
+| DNS / TLS verified | **shut** — no domain control |
+| Real SMS delivered | **shut** — no aggregator contract |
+| Human monitoring alert received | **shut** — no sink configured |
+| Backup restore verified | **shut** in production; rehearsed on local-docker |
+| Real push delivered | **shut — attempted 2026-08-30**, blocked by the browser profile; evidence recorded |
+| Real offline connectivity tested | **shut** — depends on the same service worker |
+| 3–5 real pilot institutions | **shut** — zero |
+| Real users completed core flows | **shut** |
+| Critical pilot bugs fixed | **n/a** — no pilot |
+| Security re-test passed | **shut** in production; 29/29 on local-docker |
+| Production evidence recorded | **partial** — 2 rehearsed, 1 blocked, 8 null |
+
+## Known issues, carried and NOT removed  (§12)
+
+1. **DNS/TLS not live.**
+2. **Real SMS not tested.**
+3. **Real push not tested** — now with a recorded reason rather than a null.
+4. **Human monitoring alert not tested.**
+5. **Production backup/restore not tested.**
+6. **Real offline connectivity test not done.**
+7. **Pilot count = 0.**
+8. **`GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+   calls it.** Carried since R-8's first pass.
+9. `docs/09-PRD-AUDIT.md` remains stale (2026-08-12).
+
+## R-9's pilot gate
+
+**Closed.** No pilot has occurred and none can be arranged from here. No R-9
+optional feature was implemented in this pass.
+
+## Next recommended step
+
+Unchanged, and now with the cheapest item first:
+
+1. **Open the app in an ordinary browser on any real machine** with the VAPID
+   keys set, click Allow, and publish a notice. That closes the push gate in
+   ten minutes and needs nothing bought or signed.
+2. **Sign an SMS aggregator contract.**
+3. **Stand up one production deployment.** On that day, in order:
+   `scripts/preflight.mjs`, `scripts/restore-drill.mjs`,
+   `scripts/security-probe.mjs`.

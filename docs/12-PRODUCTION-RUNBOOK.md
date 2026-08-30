@@ -23,7 +23,7 @@ written down, and the difference matters at 08:00 on a Sunday.
 | Student-cap refusal and recovery | **Exercised.** Refused, nothing partial written, cap raised, import completed |
 | SMS through a provider adapter | **Exercised against a FAKE aggregator** (localhost). No real aggregator has ever been called |
 | Delivery reports | **Exercised against the fake aggregator** |
-| Web push | **Exercised against a fake push service**, decrypted end to end. No real push service (FCM/Mozilla/Apple) has ever been called, and no real browser has completed `pushManager.subscribe()` |
+| Web push | **Exercised against a fake push service**, decrypted end to end. **Attempted against a real one on 2026-08-30 and blocked** — egress to FCM and Mozilla confirmed open, but the automated browser has notifications permanently denied and refuses to register a service worker it can otherwise fetch. Needs one ordinary browser on one real machine; see §4 |
 | Backup and restore | **Rehearsed, not production.** `scripts/restore-drill.mjs` against a local Postgres 16.15: dump, restore into an isolated database, and every schema count, table count and per-tenant count compared — all identical. RTO 4.0s on 2.6 MB. **No production database exists to restore** |
 | Live security probe | **Rehearsed, not production.** `scripts/security-probe.mjs` — 29 checks over 12 areas against a running deployment, positive and negative, none failing |
 | Onboarding duration | **Instrumented, not measured.** The console now reports how long a school's setup took, derived from its own audit rows. No real institution has been onboarded, so the "under one hour" target remains unmeasured |
@@ -177,12 +177,63 @@ only when their owner next opens the app. Rotate on compromise, not on
 schedule: the private key signs a 12-hour token addressed to a push service and
 grants no access to anything of ours.
 
-⚠ **Not verified against a real push service.** The RFC 8291 encryption is
+**Not verified against a real push service.** The RFC 8291 encryption is
 checked against the specification's own published test vector, and the full
 path has been driven end to end against a local push service that decrypted the
 result — but FCM, Mozilla and Apple have never seen a message from this code,
 and no real browser has completed a subscription handshake. The first contact
 is most likely to fail on the `applicationServerKey` encoding.
+
+### What was tried on 2026-08-30, and what stopped it
+
+Worth recording, because it narrows the remaining work to one thing.
+
+**Confirmed working:** real VAPID keys generate (P-256, 87-character public
+key), and **network egress to the real push services is open** —
+`fcm.googleapis.com` answered HTTP 400 and
+`updates.push.services.mozilla.com` answered 406. Those are real responses from
+the real services, not connection failures. The app is a secure context on
+localhost, and `PushManager` / `ServiceWorker` / `Notification` are all present.
+
+**What blocked it** was the automated browser, in two independent ways:
+`Notification.permission` was already `denied` and `requestPermission()`
+returned `denied` without prompting, so `subscribe({userVisibleOnly: true})` is
+unreachable; and `serviceWorker.register('/sw.js')` failed with *"An unknown
+error occurred when fetching the script"* **while the page itself fetched that
+exact URL with HTTP 200, the right content-type, 5551 bytes of valid
+JavaScript**. That second detail is the useful one: it means the service worker
+is fine and the browser profile is not.
+
+### Closing this gate
+
+It needs a browser where a person can click Allow. Any ordinary Chrome, Edge or
+Firefox on any real machine will do — no contract, no purchase, no deployment.
+
+```bash
+node scripts/generate-vapid-keys.mjs     # once; set both vars, then restart
+```
+
+Then, in that browser, against a deployment carrying the keys:
+
+```text
+open the app  →  Allow notifications  →  the notifications screen registers the device
+              →  publish a notice from another account
+              →  the notification appears
+              →  click it: the app opens on that notice
+              →  check the school's OWN name is on it, not shikhonBD (D11)
+              →  unsubscribe, and confirm the device disappears
+```
+
+Then the negative cases, which matter as much: permission **denied** (the
+screen must explain, not hang), an **unsupported** browser, **unconfigured**
+VAPID (everything must still go by SMS), an **expired** subscription (the
+service answers 410 and the row must be cleaned up), and a **failed** push
+falling through to SMS.
+
+Only after all of that: record `real_push_delivery` in
+[production-evidence.json](production-evidence.json) with the browser, the
+device and the observed result. Until then it stays `blocked`, and the
+preflight will say so.
 
 ---
 

@@ -33,7 +33,12 @@
     "  - status \"rehearsed\" means the procedure was executed somewhere that is",
     "    not the target environment. It closes no production gate. It exists so",
     "    the production run is a repeat of a rehearsed thing rather than a first",
-    "    attempt during an incident."
+    "    attempt during an incident.",
+    "  - status \"blocked\" means it was ATTEMPTED and could not be completed,",
+    "    with the obstacle recorded. result stays null, so it closes nothing —",
+    "    but \"we tried on this date and here is exactly what stopped us\" is",
+    "    worth more to the next person than a bare null, and it stops the same",
+    "    dead end being walked into twice."
   ],
 
   "wildcard_dns": null,
@@ -41,7 +46,14 @@
   "subdomain_routing": null,
 
   "real_sms_delivery": null,
-  "real_push_delivery": null,
+
+  "real_push_delivery": {
+    "status": "blocked",
+    "date": "2026-08-30",
+    "environment": "local-docker",
+    "result": null,
+    "evidence": "ATTEMPTED against a real push service and could not be completed. What worked: real VAPID keys generated (P-256, 87-char public key); network egress to real push services confirmed (fcm.googleapis.com answered HTTP 400 and updates.push.services.mozilla.com answered 406 — real responses, not connection failures); the app served over a secure context (127.0.0.1); PushManager, ServiceWorker and Notification all present. What blocked it, in the automated browser available here: (1) Notification.permission was already 'denied' and requestPermission() returned 'denied' without prompting, so pushManager.subscribe({userVisibleOnly:true}) can never be reached; (2) navigator.serviceWorker.register('/sw.js') fails with 'An unknown error occurred when fetching the script' even though the page itself fetches that exact URL with HTTP 200, content-type text/javascript, 5551 bytes, and it parses as valid JavaScript — so the failure is the browser profile disabling service workers, NOT a defect in the product; (3) no real Chrome instance is connected to this account (list_connected_browsers returned empty), so no real device was reachable. CONCLUSION: real push delivery remains unverified and must not be claimed. It needs a browser where notifications can be granted — an ordinary Chrome, Edge or Firefox on a real machine — pointed at a deployment with these VAPID keys. Everything on our side of the boundary is in place; only the device is missing."
+  },
 
   "backup_configured": null,
 

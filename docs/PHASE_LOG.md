@@ -5989,3 +5989,87 @@ classification table above.
 Unchanged and unaffected by this pass: **one ordinary browser on a real machine
 to close the push gate**, then an SMS aggregator contract, then a production
 deployment.
+
+---
+
+# 2026-08-30 · Final audit preparation · The specification, not the audit
+
+**Status: R-8 remains OPEN**, external-dependency mode unchanged. No code was
+touched, no configuration changed, no evidence generated.
+
+One deliverable: [FINAL-FULL-PROJECT-AUDIT-PLAN.md](FINAL-FULL-PROJECT-AUDIT-PLAN.md),
+the permanent specification for the independent final audit that happens only
+after R-8 closes, production is real, and the pilot is complete and stable.
+
+## What it is for
+
+An auditor who has never seen this project, with no access to any prior
+conversation, should be able to read that one file and audit shikhonBD end to
+end. That constraint drove every choice in it: no phrase like "as discussed",
+no reliance on memory, and real names throughout — actual table names, actual
+role codes read from the database, actual script paths, actual endpoint
+families.
+
+## What is in it
+
+The fifteen sections asked for: audit philosophy · full system scope (30 areas)
+· a 35-row security attack matrix · a role matrix across six roles · a tenant
+isolation matrix over fourteen resources in both directions · a D13 UI/UX pass
+· offline · data integrity · performance · production readiness · documentation
+contradiction hunting · severity definitions · the four-pass process · the
+evidence rule · the release decision with a checklist and sign-off.
+
+Plus two appendices that are the part I would most want if I were the auditor.
+
+## Appendix A — the traps
+
+Twelve things that have already produced a wrong answer in this project,
+written down so the next person does not rediscover them at their own cost:
+`SET LOCAL` discarded outside a transaction; a bare pool query seeing nothing
+under RLS; **superusers bypassing RLS**, which produced a false cross-tenant
+leak in an early harness; `node --test` stripping types rather than checking
+them; `jsonb_set` as a silent no-op; `ON CONFLICT` and NULL distinctness; a
+trigger aborting the transaction its catch block then queries; `/sync/push`
+returning 200 with the rejection inside the body; Node's `fetch` sending
+`Sec-Fetch-Mode`; the rate limiter outliving the process; Bangla forcing UCS-2
+at 70 characters a segment; and two real schools sharing a display name.
+
+Each of those cost real time here. An auditor who reads them first starts a day
+ahead.
+
+## Appendix B — the known-open list
+
+So a pre-existing gap is not reported as a regression: every shut external
+gate, the stale public deployment at `shikhon-lms.vercel.app`, the unused
+`GET /sync/pull`, the unindexed board-registration column, the stale PRD audit,
+and the seven backlog features deliberately not built. With an instruction to
+**verify each is still true rather than assume it**.
+
+## Three things the document insists on
+
+1. **Do not trust the tests.** There are ~1160 and they pass, and this project
+   has produced a test that passed for the wrong reason twice — once a suite
+   reaching its cross-tenant assertion with a tenant still set, once a type
+   gate red for six commits behind a green suite. The plan requires the auditor
+   to **break ten important tests on purpose and confirm each one fails**.
+
+2. **Do not trust the documentation** — including everything I have written.
+   `README.md` claimed "Built and deployed" about seven services while nothing
+   was deployed. Where code and documentation disagree, the code is the truth
+   and the document is a bug.
+
+3. **A refusal is only proved alongside a success.** Every isolation test needs
+   the legitimate caller to succeed on the same route, because a broken
+   endpoint and a secure one look identical from outside.
+
+## What was deliberately NOT done
+
+The audit itself. No application behaviour changed, no production configuration
+touched, no gate turned green, and no evidence written to
+`docs/production-evidence.json` — which still stands at 2 rehearsed, 1 blocked,
+8 null. R-9 not started; its pilot gate stays closed.
+
+## Next external dependency
+
+Unchanged: one ordinary browser on a real machine to close the push gate, then
+an SMS aggregator contract, then a production deployment.

@@ -72,29 +72,53 @@ if (existsSync(EVIDENCE_PATH)) {
   }
 }
 
+/** Which deployment is being preflighted, as the evidence file spells it. */
+function currentEnvironment() {
+  return (env.APP_ENV || env.VERCEL_ENV || env.CONTEXT || env.NODE_ENV || 'unknown').trim();
+}
+
 /**
- * An attestation counts when it names a date, an outcome of "pass", and the
- * environment it was performed against. Anything less is somebody having
+ * An attestation counts when it names a date, an outcome of "pass", and **the
+ * environment it was performed against**. Anything less is somebody having
  * filled in a form.
+ *
+ * ── The environment check is the one that keeps this honest ─────────────
+ * A restore drill rehearsed against a local Docker Postgres is real work and
+ * worth recording — but it is not a production restore, and an evidence file
+ * that cannot tell the two apart would let a rehearsal close a production
+ * gate. That is the precise failure this whole mechanism exists to prevent,
+ * so an attestation from a different environment reads as UNVERIFIED **and
+ * says where it was actually done**, which is more useful than either a tick
+ * or a blank.
  */
 function attested(area, item, key) {
   const e = evidence[key];
-  if (!e || !e.verifiedOn || e.result !== 'pass') {
-    unver(area, item, e?.notes
-      ? `not attested — ${e.notes}`
+  if (!e || !e.date || e.result !== 'pass') {
+    unver(area, item, e?.evidence
+      ? `not attested — ${e.evidence}`
       : `no entry in docs/production-evidence.json ("${key}")`);
     return;
   }
-  const days = Math.floor((Date.now() - Date.parse(e.verifiedOn)) / 86_400_000);
+  const days = Math.floor((Date.now() - Date.parse(e.date)) / 86_400_000);
   if (!Number.isFinite(days)) {
-    unver(area, item, `"${key}".verifiedOn is not a date`);
+    unver(area, item, `"${key}".date is not a date`);
     return;
   }
   if (days > MAX_EVIDENCE_AGE_DAYS) {
-    unver(area, item, `attested ${e.verifiedOn} — lapsed after ${MAX_EVIDENCE_AGE_DAYS} days`);
+    unver(area, item, `attested ${e.date} — lapsed after ${MAX_EVIDENCE_AGE_DAYS} days`);
     return;
   }
-  pass(area, item, `${e.verifiedOn}${e.by ? ` by ${e.by}` : ''}${e.notes ? ` — ${e.notes}` : ''}`);
+  const here = currentEnvironment();
+  if ((e.environment ?? '') !== here) {
+    unver(area, item,
+      `attested ${e.date} against "${e.environment ?? 'unrecorded'}", NOT "${here}"`
+      + ` — a rehearsal elsewhere, not evidence for this deployment`
+      + (e.evidence ? `. ${String(e.evidence).slice(0, 120)}` : ''));
+    return;
+  }
+  pass(area, item,
+    `${e.date} · ${e.environment}${e.by ? ` · ${e.by}` : ''}`
+    + (e.evidence ? ` — ${String(e.evidence).slice(0, 140)}` : ''));
 }
 
 /* ── 1. Environment variables ─────────────────────────────────────────── */
@@ -210,7 +234,10 @@ attested('DNS/TLS', 'a tenant subdomain routes and isolates', 'subdomain_routing
 
 const subdomainsReady = ['true', '1', 'yes', 'on'].includes(val('WILDCARD_DNS_READY').toLowerCase());
 if (subdomainsReady) {
-  const attestedDns = evidence.wildcard_dns?.result === 'pass';
+  // Must be attested for THIS environment: a subdomain that resolves on
+  // staging is not a subdomain the console may promise a production operator.
+  const attestedDns = evidence.wildcard_dns?.result === 'pass'
+    && evidence.wildcard_dns?.environment === currentEnvironment();
   if (attestedDns) pass('DNS/TLS', 'subdomain feature flag', 'on, and DNS is attested');
   else fail('DNS/TLS', 'subdomain feature flag',
     'WILDCARD_DNS_READY is on but no DNS attestation exists — the console will '

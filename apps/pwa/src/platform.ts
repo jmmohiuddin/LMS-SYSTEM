@@ -244,6 +244,14 @@ export class Console_ {
     push: { devices: number; devicesReached: number; lastPushAt: string | null };
     usage: { lastLoginAt: string | null; activeUsers7d: number;
              lastAttendanceOn: string | null; attendanceSessions7d: number };
+    onboarding: {
+      startedAt: string | null; finishedAt: string | null;
+      minutes: number | null; steps: number; operators: number;
+      firstLoginAt: string | null; minutesToFirstLogin: number | null;
+      firstAttendanceOn: string | null;
+      /** Set by the server, not guessed here — see platform-svc's health. */
+      synthetic: boolean;
+    };
   } | null = null;
 
   /** R-8. Null until the readiness screen is opened. */
@@ -839,6 +847,49 @@ export class Console_ {
       `${bnNum(hh.sms.failed)} / ${bnNum(hh.sms.suppressed)}`, hh.sms.failed === 0);
     row('এ মাসে সেগমেন্ট', bnNum(hh.sms.segmentsThisMonth));
     if (hh.sms.costBdt > 0) row('এ পর্যন্ত খরচ', `৳ ${bnNum(hh.sms.costBdt.toFixed(2))}`);
+
+    // R-8 §11. The onboarding measurement, on the screen rather than in a
+    // report. "সেটআপে লেগেছে ৪২ মিনিট" is the only form of the master plan's
+    // under-an-hour target that anybody can check.
+    const ob = hh.onboarding;
+    if (ob.synthetic) {
+      // A school created by a seeding script. Saying "০ মিনিট" here would be
+      // the prettiest lie on the screen, and it is exactly the number somebody
+      // would later quote as evidence for the under-an-hour target.
+      row('সেটআপে লেগেছে', 'স্বয়ংক্রিয়ভাবে তৈরি — সময় গণনার যোগ্য নয়', null);
+    } else if (ob.minutes !== null) {
+      const mins = Math.round(ob.minutes);
+      row('সেটআপে লেগেছে',
+        mins >= 60
+          ? `${bnNum(Math.floor(mins / 60))} ঘণ্টা ${bnNum(mins % 60)} মিনিট`
+          : `${bnNum(mins)} মিনিট`,
+        // The target is an hour. Under it is not a triumph and over it is not
+        // a failure — it is a number to look at when a pilot says setup was
+        // hard, which is why it is coloured but not celebrated.
+        mins < 60);
+      row('সেটআপের ধাপ', `${bnNum(ob.steps)}টি`
+        + (ob.operators > 1 ? ` · ${bnNum(ob.operators)} জন অপারেটর` : ''));
+    }
+    if (ob.minutesToFirstLogin !== null) {
+      // An activation code handed over and never used is the commonest silent
+      // failure of an onboarding, and this is the number that shows it.
+      const m = ob.minutesToFirstLogin;
+      if (m < 0) {
+        // Negative is not an error and not a clock problem: the principal
+        // signed in while the operator was still importing students, which is
+        // ordinary and is a GOOD sign. The first version of this row rendered
+        // it as "-১৭ মিনিট পরে", which is nonsense on a screen — found by
+        // opening the one school that was onboarded by hand.
+        row('প্রথম প্রবেশ', 'সেটআপ চলাকালীনই', true);
+      } else {
+        row('সেটআপের পর প্রথম প্রবেশ',
+          m < 60 ? `${bnNum(m)} মিনিট পরে`
+            : m < 1440 ? `${bnNum(Math.round(m / 60))} ঘণ্টা পরে`
+              : `${bnNum(Math.round(m / 1440))} দিন পরে`);
+      }
+    } else if (ob.finishedAt !== null) {
+      row('সেটআপের পর প্রথম প্রবেশ', 'এখনো কেউ ঢোকেননি', false);
+    }
 
     row('পুশ যন্ত্র', `${bnNum(hh.push.devices)}`
       + (hh.push.devices > 0 ? ` · ${bnNum(hh.push.devicesReached)} টিতে পৌঁছেছে` : ''));

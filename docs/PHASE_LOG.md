@@ -5346,3 +5346,238 @@ R-8 production-readiness pass.
 that order. Everything left on this list is behind one of those two, and the
 first thing to do on the deployment is run `node scripts/preflight.mjs` and
 work the failures down — it is written to be the first command of that day.
+
+---
+
+# 2026-08-30 · R-8 production closure pass · Evidence that cannot be faked
+
+**Status: R-8 remains OPEN.** Every external gate is still shut, and this entry
+exists to record what was built to close them and what was actually observed —
+not to move the status.
+
+The instruction for this pass listed fifteen sections. Ten of them require a
+production deployment, an aggregator contract, a domain, a real device or a
+real school, and none of those exists. Rather than write ten paragraphs saying
+so, the pass did the five that are real work and built the mechanism that makes
+the other ten impossible to fake.
+
+## The mechanism (§1, §13)
+
+`scripts/preflight.mjs` checks configuration. `docs/production-evidence.json`
+records observation. Neither can green the other's half.
+
+The load-bearing part is the **environment field**. An attestation now names
+the deployment it was made against, and the preflight compares that to the
+deployment being checked. So this pass's restore drill — genuinely executed,
+genuinely passing — reports as:
+
+```
+[ ?? ] a restore was performed and verified
+       attested 2026-08-30 against "local-docker", NOT "production"
+       — a rehearsal elsewhere, not evidence for this deployment
+```
+
+That line is the whole design. A rehearsal is real work and worth recording,
+and it is not a production restore, and an evidence file that could not tell
+those apart would let the first close the second.
+
+## The restore drill (§5, marked highest priority)
+
+`scripts/restore-drill.mjs`: back up, restore into an **isolated** database
+(refusing outright if the target is the source), then compare the copy against
+the original — every schema object count, every table count, and every tenant's
+students, teachers, guardians, attendance, marks and invoices. Any difference
+fails, and it names which.
+
+The comparison is the point. "The restore completed" is not evidence:
+`pg_restore` exits 0 having skipped objects it could not create, a dump taken
+with the wrong flags restores a schema with no rows in it, and a partitioned
+table can come back with its parent and none of its children. Every one of
+those looks like success and has lost a school's attendance.
+
+**Observed, local Docker, Postgres 16.15:** 2.6 MB dumped in 0.6s, restored in
+3.0s. 121 tables, 355 indexes, 110 RLS-enabled tables, 227 policies, 86
+functions, 162 triggers, 4 attendance partitions, 27 table counts and 8 tenants
+— all identical. **RTO 4.0s**, on 2.6 MB, which is not a school year.
+
+**RPO is not measured**, here or anywhere. It is a property of the backup
+SCHEDULE, and a drill claiming to measure it would be measuring nothing.
+
+### The drill caught a defect in its own comparison
+
+It matched tenants **by display name**, and two schools on this database are
+both called মোহাম্মদপুর কলেজ — so one was compared against itself and a phantom
+mismatch reported. Two real schools sharing a name is ordinary in Bangladesh,
+not a corner case. Keyed by id now.
+
+## The live security probe (§12)
+
+`scripts/security-probe.mjs` — committed rather than thrown away, because the
+point of it is to be re-run: on staging, on production, after a policy change,
+before a pilot. It discovers its own fixtures from whatever database it is
+given, so the identical battery runs anywhere.
+
+**29 checks over 12 areas, positive and negative, all passing.** Positive cases
+are not filler: every negative here would also pass on a deployment where the
+database is unreachable and everything 500s, and a report that cannot tell
+"tenant B did not leak" from "nothing works" is worthless.
+
+Covered: forged `X-Tenant-ID`/`X-User-ID`/`X-Role` ignored in favour of signed
+claims; headers-without-token and garbage-bearer both 401; cross-tenant reads
+of section, student and attendance by id refused; **a cross-tenant WRITE
+through a payload `tenantId` not applied**; no runtime role holds SUPERUSER or
+BYPASSRLS; tenant A's database context cannot see tenant B's rows by primary
+key **while still seeing its own**; no tenant context means nothing visible;
+every table carrying `tenant_id` has RLS enabled; a service credential from a
+browser refused; a user token is not a service credential and cannot run
+maintenance; 7 SSRF vectors (http, loopback, 169.254.169.254, private range,
+userinfo, `.internal`, `.local`) all refused; cross-tenant notice and document
+access refused; the platform health endpoint unreachable with a tenant token;
+the console refuses both a tenant user and an anonymous caller; no live secret
+or connection string in any bundle; error bodies carry no credential; an
+unlisted CORS origin is not echoed and credentials are never allowed;
+per-phone OTP requests are rate-limited.
+
+**A third state had to be added.** The OTP check first reported FAIL, and the
+cause was the fixture: OTP is disabled on that deployment and the feature gate
+answers before the limiter, so the check could not run. Reporting that as PASS
+would have been the exact dishonesty this pass exists to stamp out; reporting
+it as FAIL trains a reader to ignore failures. It is SKIP, it says why, and the
+summary counts it separately. Re-run against a deployment with
+`OTP_SENDING_ENABLED` set: **29/29, nothing skipped.**
+
+## Onboarding, measured rather than asserted (§11)
+
+The master plan carries an "onboarded in under one hour" target and R-8 forbids
+claiming it unmeasured. `audit.platform_access` already timestamps every
+console action, so the duration is **derived** — no new column, and nothing for
+an operator to remember to set. A crashed halfway onboarding leaves the audit
+rows exactly right where a `finished_at` column would be wrong forever.
+
+Surfaced two ways, per D13: on the school's own page in the console
+(সেটআপে লেগেছে ১ ঘণ্টা ১ মিনিট · সেটআপের ধাপ ৭টি) and aggregated by
+`scripts/pilot-report.mjs`.
+
+### Three ways it could have flattered itself, all closed
+
+1. The report summarised **every** tenant and duly announced "measured
+   onboardings: 2, median 61 min" — both of them the author's own walks through
+   the wizard, one automated. Nothing counts now unless it is named in
+   `PILOT_TENANT_IDS`. Designating a pilot is a deliberate act, and that is
+   what makes the number mean anything.
+2. A seeded tenant rendered as **"০ মিনিট"** — the prettiest lie available on
+   that screen, and precisely the number somebody would later quote as evidence
+   for the target. The server computes `synthetic` and the console says
+   স্বয়ংক্রিয়ভাবে তৈরি — সময় গণনার যোগ্য নয়.
+3. A single-step onboarding reports **null**, not zero. Zero averages
+   beautifully and means nothing.
+
+### And one plain bug
+
+A principal who signs in while the operator is still importing students
+produces a negative interval — which is normal, and a good sign. The console
+printed **"-১৭ মিনিট পরে"**. Found by opening the one school that was onboarded
+by hand. It says সেটআপ চলাকালীনই now, and the signedness is documented at the
+source rather than clamped away.
+
+## Settings (§8, fourth edge)
+
+Written, re-read through a fresh request, confirmed directly in the database,
+and tenant B left untouched by A's write through **body `tenantId`, an
+`X-Tenant-ID` header and a `?tenantId=` query** — all three answered 200 for A's
+own school and touched nothing of B's.
+
+## Host metrics (§7)
+
+Deliberately not rebuilt inside the product: the host already records every
+invocation, and a table of HTTP responses here would duplicate a source of
+truth and be wrong in a different way from it. §6 of the runbook now names
+where each metric lives, its threshold, who is told, and how to investigate —
+with two rules: the destination must be the same one `ALERT_WEBHOOK_URL` points
+at, and the scheduled-function failure notification must be on before the first
+pilot, because it is the only thing that can report the monitor's own death.
+
+## Verification
+
+- **1160 tests** with a database attached, **890** without. All passing.
+- 26 DB suites green, 48/48 migrations applied.
+- `check-secrets --history` clean across every commit.
+- D11 three-way brand guard and the parameter-property guard passing.
+- Browser: the onboarding row on the console health panel, both the real
+  61-minute run and the synthetic case.
+
+### One process mistake, recorded
+
+The pilot runbook already existed — 371 lines of manual SQL fallback from R-7 —
+and the first version of this pass **overwrote it**, deleting 313 lines to
+write a fresh one. That is precisely the erasure the phase instructions forbid,
+and it was caught by reading `git diff --stat` before the commit rather than by
+any guard. Restored, and the new material (§13–18: pilot selection, the
+evidence tables, the HSC conversation, the offline test, blockers) is appended.
+The diff is now 140 insertions and no deletions.
+
+## The gates, and none of them moved
+
+| Gate | State |
+|---|---|
+| Production deployment | **shut** — none exists |
+| DNS / TLS | **shut** — no domain control |
+| Real SMS | **shut** — no aggregator contract |
+| Real push | **shut** — no device has ever been called |
+| Backup restore | **rehearsed on local-docker**, production shut |
+| Monitoring human alert | **shut** — no sink configured |
+| Security final pass | **rehearsed on local-docker**, 29/29 |
+| R-7 onboarding in production | **shut** |
+| 3–5 pilot institutions | **shut** — zero |
+| Real user core workflows | **shut** |
+| Offline real-world test | **shut** |
+
+## R-9's pilot gate
+
+**Unsatisfied.** No pilot has occurred. The web push implementation recorded on
+2026-08-29 remains an independently implemented R-9 capability that did not
+require pilot feedback; the gate on the remaining six R-9 items is untouched by
+this pass and stays shut. No R-9 optional feature was implemented.
+
+## Carried backlog — preserved
+
+**R-3:** class/section edit UI · guardian unlink · audit export and entity-name
+resolution · `POST /rms/solve` API-only.
+
+**R-5:** object storage · CSV export · multi-card ID layout · **money
+formatting** (still open).
+
+**R-6:** board-registration index · attendance date-range filter · type-ahead.
+
+**R-7:** operator SSO and key rotation · trial-expiry automation · per-class
+group configuration in the wizard · logo/watermark upload in the wizard ·
+platform audit UI · plan feature gating · teacher→subject assignment is still
+per-section by hand.
+
+**R-8:** SMS retry backoff · RPO/RTO **decision** (the drill measures RTO; the
+numbers are still a policy call) · a curriculum specialist to fill
+`verified_against` · per-institution subject configuration for colleges beyond
+add and remove · API failure-rate alerting in the host's own metrics · the
+host's scheduled-function failure notification · a production restore drill.
+
+*Closed by this pass: the restore drill itself, the live security probe, the
+production preflight, and onboarding measurement.*
+
+**R-9:** push retry/backoff · per-notice channel choice · the iOS Home-Screen
+explanation · a first-contact test against a real push service.
+
+## Unresolved bugs / issues
+
+**1. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+calls it.** Carried unchanged since R-8's first pass.
+
+**2. `docs/09-PRD-AUDIT.md` remains stale** (2026-08-12).
+
+## Next recommended step
+
+Unchanged and now unambiguous: **sign an SMS aggregator contract and stand up
+one production deployment.** On the day the deployment exists, the first three
+commands are `node scripts/preflight.mjs`, then `scripts/restore-drill.mjs` and
+`scripts/security-probe.mjs` against it — all three written during this pass
+precisely so that day is a repeat of something rehearsed rather than a first
+attempt.

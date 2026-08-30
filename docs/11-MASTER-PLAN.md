@@ -1276,11 +1276,19 @@ from this side of a pilot.
 | R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
 | R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
 | R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** + completion pass same day (4 institution types, resumable wizard, staff activation codes, HSC subjects, attendance fixed; wildcard DNS/TLS is a deploy step) |
-| R-8 | Go-live unlocks + production readiness | M | any | **code done 2026-08-30** (provider adapter + DLR, switches, AI budget, readiness screen, SMS send-safety, operator health panel, CORS allowlist, R-7 sharp edges); **NOT production-complete** — no deployment, no aggregator, no backup test, no monitoring, **no pilot** |
+| R-8 | Go-live unlocks + production readiness | M | any | **OPEN.** Code closed 2026-08-30 (provider adapter + DLR, switches, AI budget, readiness screen, SMS send-safety, operator health panel, CORS allowlist, R-7 sharp edges, service-key hardening, alerting, preflight, restore drill, live security probe, onboarding measurement). **Every external gate is still shut**: no production deployment, no aggregator contract, no wildcard DNS/TLS, no real SMS or push delivery, no production restore, no alert delivered to a human, **no pilot institution**. Evidence is tracked per item in `docs/production-evidence.json`; `node scripts/preflight.mjs` is the gate and it exits non-zero |
 | R-9 | Add-ons | — | **pilot — NOT satisfied** | web push implemented pre-pilot as an independent capability (2026-08-29); **the pilot gate stands for the other six items** |
 
 Recommended execution order: **R-0 → R-1 → R-2 → R-3 → R-4 → R-5 → R-6 → R-7**, with
-R-8 items flipped as credentials arrive. Each phase ends with a commit-tested,
+R-8 items flipped as credentials arrive.
+
+**On the "onboarded in under one hour" target** (R-7/R-8): it is now *measured*
+rather than asserted. `audit.platform_access` already timestamps every console
+action, so the duration is derived from it — shown on the school's own page in
+the console and aggregated by `scripts/pilot-report.mjs`. The target remains
+**UNMEASURED** and must not be claimed: the only onboardings on record are
+seeded fixtures and the author's own walks through the wizard, and the report
+counts nothing that has not been explicitly designated a pilot. Each phase ends with a commit-tested,
 deployable system and an update to `docs/07-IMPLEMENTATION-STATUS.md`.
 
 ## 6. What NOT to do (binding, inherited + new)

@@ -154,9 +154,12 @@ a parent.
 | Real SMS sending | `SMS_PROVIDER` + `SMS_ENDPOINT` + `SMS_API_TOKEN` + `SMS_SENDER_ID` | No aggregator contract | Set all four. Naming a provider **without** the other three throws at startup rather than silently reverting to the stub |
 | Delivery reports | `SMS_DLR_SECRET` | No aggregator to send them | Set it and give the aggregator the value. Unset, `POST /api/v1/sms/dlr` answers **503**, not 401 |
 
-| Web push (R-9) | `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | Not generated | Run `node scripts/generate-vapid-keys.mjs`. **No vendor** — the keys are self-issued. Unset, every message still goes by SMS |
-| SMS allowlist (R-8) | `SMS_TEST_RECIPIENTS` | Not restricted | Set a comma-separated E.164 list to restrict sending to your own team. Every other queued row is written and marked `suppressed`/`not_in_test_allowlist`, so a pilot sees exactly what would have gone out |
-| Per-school subdomains (R-8 §9D) | `WILDCARD_DNS_READY` | `*.shikhonbd.com` has no DNS or TLS | Provision the wildcard record and certificate, load a tenant subdomain over HTTPS, then set it to `true`. Unset, the console marks the subdomain **এখনো চালু হয়নি** and presents the `?tid=` install link as the address to print |
+| Web push (R-9) | `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | Not generated | Run `node scripts/generate-vapid-keys.mjs`. **No vendor** — the keys are self-issued. Unset, every message still goes by SMS |
+
+| SMS allowlist (R-8) | `SMS_TEST_RECIPIENTS` | Not restricted | Set a comma-separated E.164 list to restrict sending to your own team. Every other queued row is written and marked `suppressed`/`not_in_test_allowlist`, so a pilot sees exactly what would have gone out |
+
+| Per-school subdomains (R-8 §9D) | `WILDCARD_DNS_READY` | `*.shikhonbd.com` has no DNS or TLS | Provision the wildcard record and certificate, load a tenant subdomain over HTTPS, then set it to `true`. Unset, the console marks the subdomain **এখনো চালু হয়নি** and presents the `?tid=` install link as the address to print |
+
 | CORS origins (R-8) | `ALLOWED_ORIGINS` | Unrestricted (`*`) | Set to the deployment's own origins. Unset, behaviour is unchanged — the API is bearer-token only, so `*` is broad rather than exploitable |
 
 The login switch is now one-sided. `apps/pwa/src/login-view.ts` reads
@@ -1436,6 +1439,71 @@ refused; raising it let the blocked import complete.
   row is now labelled **লোগো** so it says what it measures.
 - Wildcard DNS/TLS, operator SSO, trial-expiry automation and plan feature
   gating remain open from R-7.
+
+---
+
+## 9n. R-8 production closure pass — the machinery for evidence (R-8 still OPEN)
+
+**2026-08-30.** Everything in R-8 that is code is now done. Nothing in R-8 that
+requires the outside world has been done, because none of it can be done from a
+repository: there is no production deployment, no aggregator contract, no
+production database, no real device and no school.
+
+What this pass added is the machinery that will *record* those things, built so
+it cannot be satisfied by intent.
+
+| Built | What it does | State |
+|---|---|---|
+| `scripts/preflight.mjs` | 32 checks over env, secrets, database separation, roles, origins, bundles, cron, SMS, VAPID, plus 11 externally-attested items | Runs; exits 1 on this deployment |
+| `docs/production-evidence.json` | The human half: `status`/`date`/`environment`/`evidence`/`result` per external item | 9 of 11 null |
+| `scripts/restore-drill.mjs` | Backup → isolated restore → compare every schema object, table and tenant → RTO | **Passes on local Docker.** Not production |
+| `scripts/security-probe.mjs` | 29 live checks over 12 areas, positive and negative | **29/29 against a running deployment.** Not production |
+| `scripts/pilot-report.mjs` | Per-school pilot record from real timestamps | Runs; **0 designated pilots** |
+| `packages/server-core/src/onboarding-metrics.ts` | Onboarding duration derived from `audit.platform_access` | Shown in the console per school |
+| `docs/PILOT-ONBOARDING-RUNBOOK.md` §13–18 | Pilot selection, the evidence tables, the HSC conversation, blockers | **Appended** to the existing manual runbook; every table empty |
+
+### The environment field is what keeps this honest
+
+The preflight compares an attestation's `environment` against the deployment
+being checked, and a mismatch reads as UNVERIFIED. So the restore drill —
+genuinely executed, genuinely passing — does **not** close the production
+restore gate; it reports as "attested against local-docker, NOT production — a
+rehearsal elsewhere". That distinction is the entire point of the mechanism.
+
+### Defects found and fixed during the pass
+
+- The restore drill's own comparison matched tenants **by display name**, and
+  two schools on the development database are both called মোহাম্মদপুর কলেজ. It
+  reported a phantom mismatch. Two real schools sharing a name is ordinary in
+  Bangladesh; it matches by id now.
+- The pilot report summarised **every** tenant, so it duly reported "median 61
+  min" from the author's own browser walks. Nothing counts now unless it is
+  named in `PILOT_TENANT_IDS`.
+- The console rendered a principal who signed in *during* setup as
+  **"-১৭ মিনিট পরে"**. Negative is normal and is a good sign; it now says
+  সেটআপ চলাকালীনই.
+- A seeded tenant rendered as **"০ মিনিট"** — the prettiest lie available on
+  that screen, and exactly the number somebody would later quote as evidence
+  for the under-an-hour target. The server now marks it synthetic.
+
+### Verified, and where
+
+- Restore drill: 121 tables, 355 indexes, 227 RLS policies, 27 table counts and
+  8 tenants identical after restore. RTO 4.0s on 2.6 MB. **local-docker.**
+- Security probe: 29/29 — tenant isolation by header, id, query and body;
+  a cross-tenant *write* refused; RLS verified at the database with no runtime
+  role holding SUPERUSER or BYPASSRLS; 7 SSRF vectors refused; no secret in any
+  bundle; CORS; per-phone OTP limiting. **local-docker.**
+- Settings round-trip: written, re-read after a fresh request, confirmed in the
+  database, and unreachable from another tenant by body, header or query.
+
+### Still shut
+
+Production deployment · wildcard DNS/TLS · real SMS delivery · real push to a
+device · production backup and restore · an alert reaching a human · 3–5 pilot
+institutions · real users · a real offline test.
+
+R-9's pilot gate remains **unsatisfied**.
 
 ---
 

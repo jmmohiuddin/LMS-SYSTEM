@@ -24,7 +24,9 @@ written down, and the difference matters at 08:00 on a Sunday.
 | SMS through a provider adapter | **Exercised against a FAKE aggregator** (localhost). No real aggregator has ever been called |
 | Delivery reports | **Exercised against the fake aggregator** |
 | Web push | **Exercised against a fake push service**, decrypted end to end. No real push service (FCM/Mozilla/Apple) has ever been called, and no real browser has completed `pushManager.subscribe()` |
-| Backup and restore | **NOT exercised.** No production database exists |
+| Backup and restore | **Rehearsed, not production.** `scripts/restore-drill.mjs` against a local Postgres 16.15: dump, restore into an isolated database, and every schema count, table count and per-tenant count compared — all identical. RTO 4.0s on 2.6 MB. **No production database exists to restore** |
+| Live security probe | **Rehearsed, not production.** `scripts/security-probe.mjs` — 29 checks over 12 areas against a running deployment, positive and negative, none failing |
+| Onboarding duration | **Instrumented, not measured.** The console now reports how long a school's setup took, derived from its own audit rows. No real institution has been onboarded, so the "under one hour" target remains unmeasured |
 | Alert evaluation and delivery | **Exercised locally.** Every condition unit-tested at its boundary; the gather run against a real schema; a firing alert POSTed to a stand-in sink. **No alert has ever reached a human** |
 | Service-key hardening | **Exercised.** Browser refusal, rotation slot, production default and the JWT fall-through, probed against the live endpoint |
 | CORS origin allowlist | **Exercised in a browser.** Listed origin served, unlisted origin blocked by Chrome |
@@ -184,9 +186,40 @@ is most likely to fail on the `applicationServerKey` encoding.
 
 ---
 
-## 5. Backups — NOT EXERCISED
+## 5. Backups and restore
 
-No production database exists, so none of this has been run.
+**The drill exists and passes — against a local database.** That is a real
+rehearsal and it is not a production restore:
+
+```bash
+DRILL_SOURCE_URL=…  DRILL_ADMIN_URL=…  DRILL_ENVIRONMENT=production \
+  node scripts/restore-drill.mjs
+```
+
+It takes a backup, restores it into an **isolated** database (and refuses if
+the target is the source), then compares the copy against the original: every
+schema object count, every table count, and every tenant's students, teachers,
+guardians, attendance, marks and invoices. Any difference is a failure, and it
+says which.
+
+That comparison is the whole thing. `pg_restore` exits 0 having skipped objects
+it could not create; a dump taken with the wrong flags restores a schema with
+no rows in it; a partitioned table can come back with its parent and none of
+its children. Every one of those is a successful-looking restore and a database
+that has lost a school's attendance.
+
+**Observed on 2026-08-30, local Docker, Postgres 16.15:** 2.6 MB dumped in
+0.6s, restored in 3.0s, 121 tables / 355 indexes / 227 RLS policies / 86
+functions / 162 triggers / 4 attendance partitions and 27 table counts all
+identical, 8 tenants identical per entity. **RTO 4.0s** — on 2.6 MB, which is
+not a school year.
+
+**Still not done:** the same drill against the production Neon project, which
+is where the failure modes actually differ (branch-based restore, a managed
+control plane, and a database large enough for the timing to mean something).
+
+**RPO is not measurable by a drill.** It is a property of the backup SCHEDULE.
+A drill that claimed to measure it would be measuring nothing.
 
 **What Neon provides:** point-in-time restore within the retention window of
 the plan, plus branch-based copies. Neither is configured, because there is no
@@ -269,6 +302,27 @@ the database can see rather than pretending otherwise.
 **Its own death.** A dead function does not report it. The host's
 scheduled-function failure notification is what covers that, and it is part of
 the monitor rather than hosting trivia: turn it on.
+
+### Host metrics — where the rest lives  (R-8 §7)
+
+Deliberately NOT rebuilt inside the product. The host already records every
+invocation; a table of HTTP responses here would duplicate a source of truth
+and be wrong in a different way from it.
+
+| | Where it lives | Threshold | Who is told | How to investigate |
+|---|---|---|---|---|
+| **API failure rate** | Vercel → Observability → Functions (or Netlify → Functions → the log drain) | 5xx above 2% of invocations over 15 min | the same address as `ALERT_WEBHOOK_URL` | Group by route first. One route is a code path; every route is the database or an env var lost in a redeploy. Cross-check `GET /api/v1/ops/monitor`, which will already say if it is the database |
+| **Function duration** | same panel | p95 above 3s on any route | same | Almost always a cold start against a suspended Neon compute, or a missing index after a migration. Compare against a warm invocation before assuming code |
+| **Scheduled function failure** | Vercel → Crons, or Netlify → Functions → scheduled | any non-2xx, or a skipped run | same | This is the alert that catches the monitor's own death. If it fires alongside silence from `/ops/monitor`, assume the deployment, not the database |
+| **Build / deploy failure** | the host's deploy notifications | any failed production deploy | same | A failed deploy leaves the previous revision serving, which is safe and silent — that is exactly why it needs an alert |
+
+Two rules for whoever configures these:
+
+1. **The destination must be the same one `ALERT_WEBHOOK_URL` points at.**
+   Two alerting channels means one of them is the channel nobody reads.
+2. **Turn the scheduled-function failure notification on before the first
+   pilot.** It is the only thing in this document that can tell you the
+   monitoring itself has stopped.
 
 ### NEVER DEMONSTRATED
 
@@ -363,6 +417,11 @@ the same door.
 ---
 
 ## 8. Pilot checklist
+
+The full per-school procedure — choosing the institutions, what to have ready,
+what usually goes wrong on each wizard step, and the evidence tables — is in
+[PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md). What follows is the
+short form.
 
 Per school, before the first day:
 

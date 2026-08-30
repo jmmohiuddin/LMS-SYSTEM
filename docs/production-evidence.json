@@ -1,24 +1,39 @@
 {
   "_README": [
-    "R-8 §1. The human half of scripts/preflight.mjs.",
+    "R-8 §13. The human half of scripts/preflight.mjs.",
     "",
     "Each key below is something no program can establish from inside a",
     "process: a DNS record resolving, a certificate terminating, a restore",
     "actually performed, an SMS reaching a handset, a push landing on a phone,",
-    "an alert waking a person. The preflight checks whether the CONFIGURATION",
-    "for each exists; this file records whether the THING actually happened.",
+    "an alert waking a person, a school completing an onboarding. The preflight",
+    "checks whether the CONFIGURATION for each exists; this file records",
+    "whether the THING actually happened, and WHERE.",
     "",
-    "An entry counts only when result is \"pass\" and verifiedOn is a real date.",
-    "Attestations lapse after 180 days: 'we restored a backup successfully'",
-    "stops being a fact about the current system fairly quickly.",
+    "Shape, per R-8 §13:",
+    "  status       null | \"rehearsed\" | \"verified\"",
+    "  date         ISO date the observation was made",
+    "  environment  the deployment it was observed on, verbatim",
+    "  evidence     what was actually seen — numbers, not adjectives",
+    "  result       \"pass\" | \"fail\"",
     "",
-    "Do not fill this in from intent, from a plan, or from a strong belief that",
-    "something would work. Every entry is currently null because none of these",
-    "has been done, and a null here is worth more than a confident guess.",
+    "THE ENVIRONMENT FIELD IS LOAD-BEARING. The preflight compares it against",
+    "the deployment being checked and treats a mismatch as UNVERIFIED. That is",
+    "deliberate: a restore rehearsed on a laptop is real work and worth",
+    "recording, and it is NOT a production restore. An evidence file that could",
+    "not tell those apart would let a rehearsal close a production gate, which",
+    "is the exact failure this mechanism exists to prevent.",
     "",
-    "Shape:  { \"verifiedOn\": \"2026-09-14\", \"by\": \"name\",",
-    "          \"result\": \"pass\" | \"fail\", \"environment\": \"production\",",
-    "          \"notes\": \"what was actually observed\" }"
+    "Rules:",
+    "  - null means never tested. Keep it null. A null is worth more than a",
+    "    confident guess, and every one of these was null before it was earned.",
+    "  - Never fill an entry from configuration intent. \"The provider is",
+    "    configured\" is not \"a message arrived\".",
+    "  - Attestations lapse after 180 days: \"we restored a backup successfully\"",
+    "    stops being a fact about the current system fairly quickly.",
+    "  - status \"rehearsed\" means the procedure was executed somewhere that is",
+    "    not the target environment. It closes no production gate. It exists so",
+    "    the production run is a repeat of a rehearsed thing rather than a first",
+    "    attempt during an incident."
   ],
 
   "wildcard_dns": null,
@@ -29,11 +44,25 @@
   "real_push_delivery": null,
 
   "backup_configured": null,
-  "restore_drill": null,
+
+  "restore_drill": {
+    "status": "rehearsed",
+    "date": "2026-08-30",
+    "environment": "local-docker",
+    "result": "pass",
+    "evidence": "scripts/restore-drill.mjs against the local Postgres 16.15 container. pg_dump -Fc 2.6 MB in 0.6s; restored into an isolated database in 3.0s; 7 schema counts (121 tables, 355 indexes, 110 RLS-enabled tables, 227 policies, 86 functions, 162 triggers, 4 attendance partitions) and 27 table counts identical to the source; all 8 tenants identical across students, teachers, guardians, attendance, marks and invoices. RTO observed 4.0s on a 2.6 MB database. NOT a production restore: production is Neon and restores there are branch-based, with different failure modes. RPO is not measured by any drill — it is a property of the backup schedule."
+  },
 
   "alert_delivered": null,
 
   "pilot_onboarding": null,
   "pilot_offline": null,
-  "prod_cross_tenant": null
+
+  "prod_cross_tenant": {
+    "status": "rehearsed",
+    "date": "2026-08-30",
+    "environment": "local-docker-otp-on",
+    "result": "pass",
+    "evidence": "scripts/security-probe.mjs — 29 of 29 checks across 12 areas against a running deployment, positive and negative cases, none failing, none skipped. Covers: positive control (roster, sync/pull, dashboard all serve the right school); forged X-Tenant-ID/X-User-ID/X-Role ignored in favour of signed claims; headers-without-token and garbage-bearer both 401; cross-tenant reads of section, student and attendance by id refused; a cross-tenant WRITE through a payload tenantId not applied; no runtime role holds SUPERUSER or BYPASSRLS; tenant A's DB context cannot see tenant B's rows by primary key while still seeing its own; no tenant context set means nothing visible; every table carrying tenant_id has RLS enabled; a service credential from a browser refused; a user token is not a service credential and cannot run maintenance; 7 hostile push endpoints (http, loopback, 169.254.169.254, private range, userinfo, .internal, .local) all refused; cross-tenant notice and document access refused; the platform health endpoint unreachable with a tenant token; the console refuses both a tenant user and an anonymous caller; no live secret value or connection string in app.js/platform.js/sw.js; error bodies carry no credential; an unlisted CORS origin is not echoed and credentials are never allowed; per-phone OTP requests are rate-limited. NOT run against production — no production deployment exists."
+  }
 }

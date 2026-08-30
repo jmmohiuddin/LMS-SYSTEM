@@ -369,3 +369,143 @@ That list is what makes the wizard fit the work instead of fitting this
 document — and it is the R-9 pilot gate's actual purpose. Section chat, the
 content authoring workspace, trend charts and photo submission are all waiting
 on exactly these notes.
+
+---
+
+## 13. Choosing the 3–5 institutions  (R-8 §10)
+
+Added by R-8's production-closure pass. **No school has used this system yet**,
+so every table in §14 is empty on purpose — filling one in from expectation
+rather than observation would destroy the only thing it is for.
+
+R-8 asks for variety, because the failures live in the differences, not the
+averages:
+
+| Dimension | Why it changes the product's behaviour |
+|---|---|
+| **School** (6–10) | The base case; SSC subject codes |
+| **College** (11–12) | The HSC catalogue is *our* reference set, not the board's — §15 |
+| **Madrasa** | A different subject set, and commonly a Friday-only weekend |
+| **School & college combined** | Both catalogues in one tenant, where a subject-code collision would show |
+| **Small** (<150) | One person does everything; onboarding is one afternoon |
+| **Large** (>1200) | Import size, SMS cost, and the section count the routine editor must hold |
+| **Friday+Saturday vs Friday only** | R-4.1's working-weekend override is exercised only by a school that has one |
+
+Two schools of the same type and size tell you less than one of each.
+
+### Before any of them is contacted
+
+None of this is ready while the production gates in
+[12-PRODUCTION-RUNBOOK.md](12-PRODUCTION-RUNBOOK.md) §0 are shut. In particular
+do **not** onboard a real institution while:
+
+- `SMS_TEST_RECIPIENTS` is unset on a deployment with a live aggregator — the
+  first attendance run would text several hundred real guardians;
+- no restore has been performed **against the production database**;
+- `ALERT_WEBHOOK_URL` is unset, so a stalled queue tells nobody.
+
+```bash
+node scripts/preflight.mjs
+```
+
+Exit 2 means "configured but never demonstrated". That is not a pass.
+
+---
+
+## 14. The pilot record  (R-8 §11)
+
+Re-run at the end of each pilot day. It reads what actually happened rather
+than what anyone remembers:
+
+```bash
+PILOT_TENANT_IDS=<uuid>,<uuid> PILOT_DB_URL=… node scripts/pilot-report.mjs
+```
+
+Only schools named in `PILOT_TENANT_IDS` count toward the summary. That is
+deliberate: designating a pilot is an act, and without it the script would
+happily average an engineer's browser walk into the onboarding time — which it
+did, on the development database, before this was fixed.
+
+The console also shows each school's own setup duration on its page
+(সেটআপে লেগেছে), derived from `audit.platform_access`. A school seeded by a
+script is marked স্বয়ংক্রিয়ভাবে তৈরি and excluded, because rendering it as
+"০ মিনিট" would be the prettiest lie on that screen.
+
+### The measured numbers
+
+| School | Type | Size | Onboarding (min) | Steps | First login after setup | First attendance | First notice | First SMS | First result | First invoice |
+|---|---|---|---|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | — | — | — | — | — |
+
+*Empty because no pilot has occurred. The master plan's "onboarded in under an
+hour" target is **UNMEASURED** and must not be claimed until this table has real
+rows in it.*
+
+### The four fields no database can answer
+
+Write these down **as they happen**; they are usually the ones that matter, and
+they extend §12 above rather than replacing it.
+
+| School | Operator help needed (which step) | Error messages misread | Support contacts, verbatim | Offline test result |
+|---|---|---|---|---|
+| — | — | — | — | — |
+
+---
+
+## 15. The HSC catalogue conversation  (R-8 §11)
+
+For a college or a combined institution, the subject list seeded for classes
+11–12 is **shikhonBD's own reference set**. The codes are ours — they carry an
+`H-` prefix precisely so they cannot be mistaken for board numbers and cannot
+collide with the SSC codes in a combined school.
+
+Say it out loud. The console says it on screen at the moment those classes are
+created, and a registrar who assumes the list was checked against a board
+circular will build a year on it.
+
+Then go through the list with the school and add, remove or rename to match
+what they actually teach. That editing is expected, not a defect.
+
+---
+
+## 16. The offline test  (R-8 §9)
+
+At least one school must do this, on a real phone, on real mobile data — not a
+throttled dev-tools profile. Full procedure in
+[12-PRODUCTION-RUNBOOK.md](12-PRODUCTION-RUNBOOK.md) §8a.
+
+The instruction worth repeating: **check the server, not the phone.** R-7
+shipped a version where every attendance push was rejected and the only symptom
+a teacher saw was a small "১টি পাঠানো যায়নি". A second person on another device
+confirming the register is what catches that.
+
+---
+
+## 17. What counts as a blocker
+
+Stop and fix, rather than working around:
+
+- Attendance that does not reach the server, in any circumstance.
+- Any data from one school visible to another, by any route.
+- An SMS sent to a guardian who should not have received it.
+- A student's record wrong in a way the school cannot correct through the UI.
+- An onboarding step that cannot be completed without SQL. *(This runbook's own
+  SQL is the documented fallback for a deployment without a console — it is not
+  a licence to work around a broken wizard on a pilot day.)*
+
+Everything else — an unclear label, a missing filter, a slow screen — is a
+finding, goes in the table, and does not stop the day.
+
+---
+
+## 18. After the pilot
+
+Record in [production-evidence.json](production-evidence.json), **from
+observation only**:
+
+- `pilot_onboarding` — how many institutions, of which types, and the measured
+  durations. Not the target. The measurement.
+- `pilot_offline` — what the second device saw after reconnection.
+
+Then append the findings to [PHASE_LOG.md](PHASE_LOG.md). R-9's pilot gate opens
+on stability across these schools, not on the pilot having taken place.

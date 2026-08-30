@@ -52,6 +52,7 @@ import { createDb, assertRlsEnforced, type Db } from '../../../packages/server-c
 import { corsHeaders, query, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+import { onboardingMetrics, looksSynthetic } from '../../../packages/server-core/src/onboarding-metrics.ts';
 import { parseBranding } from '../../../packages/ui-core/src/branding.ts';
 import {
   runStudentImport, runTeacherImport, ImportError,
@@ -833,6 +834,20 @@ async function tenantHealth(db: Db, req: IncomingMessage) {
         lastAttendanceOn: att[0].last_attendance_on,
         attendanceSessions7d: Number(att[0].sessions_7d),
       },
+      // R-8 §11. How long this school's setup actually took, derived from the
+      // console's own audit rows. The master plan carries an "under an hour"
+      // target and R-8 forbids claiming it unmeasured — so the number goes on
+      // a screen the operator already opens, rather than into a report nobody
+      // re-runs.
+      onboarding: await (async () => {
+        const m = await onboardingMetrics(c, id);
+        // `synthetic` is computed HERE and not in the browser, so the console
+        // and scripts/pilot-report.mjs cannot disagree about whether a school
+        // was set up by a person. Four console actions inside one second is a
+        // seeding script, and rendering that as "০ মিনিট" would be the
+        // prettiest lie on the screen.
+        return { ...m, synthetic: looksSynthetic(m) };
+      })(),
     };
   });
 }

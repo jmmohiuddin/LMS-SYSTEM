@@ -1302,6 +1302,60 @@ function sendIfRefused(res, cors, verdict) {
   return false;
 }
 
+// packages/server-core/src/onboarding-metrics.ts
+var SETUP_STATEMENTS = [
+  "create_tenant",
+  "set branding",
+  "provision_tenant",
+  "created principal",
+  "created it_admin",
+  "granted principal",
+  "granted it_admin",
+  "import",
+  "set_plan"
+];
+async function onboardingMetrics(c, tenantId) {
+  const { rows } = await c.query(
+    `SELECT to_char(min(created_at), 'YYYY-MM-DD"T"HH24:MI:SSZ')          AS started_at,
+            to_char(max(created_at), 'YYYY-MM-DD"T"HH24:MI:SSZ')          AS finished_at,
+            CASE WHEN count(*) > 1
+                 THEN round(EXTRACT(EPOCH FROM (max(created_at) - min(created_at))) / 60.0, 1)::text
+            END                                                            AS minutes,
+            count(*)::text                                                 AS steps,
+            count(DISTINCT admin_id)::text                                 AS operators
+       FROM audit.platform_access
+      WHERE tenant_id = $1
+        AND (${SETUP_STATEMENTS.map((_, i) => `statement LIKE $${i + 2}`).join(" OR ")})`,
+    [tenantId, ...SETUP_STATEMENTS.map((s) => `${s}%`)]
+  );
+  const { rows: login } = await c.query(
+    `SELECT to_char(min(issued_at), 'YYYY-MM-DD"T"HH24:MI:SSZ') AS first_login_at
+       FROM user_sessions WHERE tenant_id = $1`,
+    [tenantId]
+  );
+  const { rows: att } = await c.query(
+    `SELECT to_char(min(taken_on), 'YYYY-MM-DD') AS first_attendance_on
+       FROM attendance_sessions WHERE tenant_id = $1`,
+    [tenantId]
+  );
+  const finishedAt = rows[0]?.finished_at ?? null;
+  const firstLoginAt = login[0]?.first_login_at ?? null;
+  return {
+    tenantId,
+    startedAt: rows[0]?.started_at ?? null,
+    finishedAt,
+    minutes: rows[0]?.minutes === null || rows[0]?.minutes === void 0 ? null : Number(rows[0].minutes),
+    steps: Number(rows[0]?.steps ?? 0),
+    operators: Number(rows[0]?.operators ?? 0),
+    firstLoginAt,
+    minutesToFirstLogin: finishedAt && firstLoginAt ? Math.round((Date.parse(firstLoginAt) - Date.parse(finishedAt)) / 6e4) : null,
+    firstAttendanceOn: att[0]?.first_attendance_on ?? null
+  };
+}
+function looksSynthetic(m) {
+  return m.minutes !== null && m.minutes < 1 && m.steps > 1;
+}
+
 // packages/ui-core/src/branding.ts
 var DEFAULT_BRANDING = Object.freeze({
   nameBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8",
@@ -3069,7 +3123,16 @@ async function tenantHealth(db, req) {
         activeUsers7d: Number(login[0].active_users_7d),
         lastAttendanceOn: att[0].last_attendance_on,
         attendanceSessions7d: Number(att[0].sessions_7d)
-      }
+      },
+      // R-8 §11. How long this school's setup actually took, derived from the
+      // console's own audit rows. The master plan carries an "under an hour"
+      // target and R-8 forbids claiming it unmeasured — so the number goes on
+      // a screen the operator already opens, rather than into a report nobody
+      // re-runs.
+      onboarding: await (async () => {
+        const m = await onboardingMetrics(c, id);
+        return { ...m, synthetic: looksSynthetic(m) };
+      })()
     };
   });
 }

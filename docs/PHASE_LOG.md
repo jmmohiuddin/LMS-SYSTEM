@@ -5718,3 +5718,88 @@ Unchanged, and now with the cheapest item first:
 3. **Stand up one production deployment.** On that day, in order:
    `scripts/preflight.mjs`, `scripts/restore-drill.mjs`,
    `scripts/security-probe.mjs`.
+
+---
+
+# 2026-08-30 · R-8 enters external-dependency mode · No code, one checklist
+
+**Status: R-8 remains OPEN**, and from this entry onward that is a *correct*
+state rather than an unfinished one.
+
+The repository-side work is accepted and closed. Everything that remains needs
+something from outside the repository: a hosting account, a domain, a signed
+aggregator contract, an alerting destination, a production database, a browser
+with a person in front of it, and three to five schools. None of those can be
+manufactured here, and the explicit rule for this mode is that **no substitute
+may be built to make a gate green**.
+
+So this pass wrote no code. It added one thing.
+
+## The external readiness checklist (12-PRODUCTION-RUNBOOK.md §0a)
+
+Eight groups — Production, DNS/TLS, SMS, Push, Backup, Monitoring, Offline,
+Pilot — with every box unticked, and against each: what the box actually means,
+which key in `docs/production-evidence.json` records it, and what would make it
+tickable.
+
+Three properties it was written to have:
+
+1. **A box is ticked from direct observation only.** Not from configuration. A
+   configured provider is not a delivered message, and that gap is the entire
+   reason the evidence file exists.
+2. **Every box names its evidence key**, so ticking one and forgetting to
+   record it is visibly incomplete rather than silently lost.
+3. **It says which gate is cheapest.** Push needs no contract, no purchase and
+   no deployment — one ordinary browser and one click. Everything else waits on
+   a signature or a host.
+
+The checklist ends with the rule that governs it: a fake aggregator, a stub
+push service and a local restore are all useful for exercising code, and not
+one of them is evidence. R-8 may stay OPEN for as long as the prerequisites are
+genuinely unavailable.
+
+## Evidence file — unchanged, deliberately
+
+`real_push_delivery` keeps its dated `blocked` entry from earlier today. It is
+not upgraded, not softened, and not re-attempted: nothing about this
+environment changed, so re-running it would produce the same result and a
+second identical record. It moves to `pass` when a real browser on a real
+machine completes the sequence in §4, and not before.
+
+Current state of the eleven external items: **2 rehearsed** (restore drill,
+security probe — both `local-docker`, neither closing a production gate),
+**1 blocked** (real push), **8 null**.
+
+## Known issues — carried, none removed
+
+1. DNS/TLS not live.
+2. Real SMS not tested.
+3. Real push not tested — dated `blocked` evidence, reason recorded.
+4. Human monitoring alert not tested.
+5. Production backup/restore not tested.
+6. Real offline connectivity test not done.
+7. Pilot count = 0.
+8. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever calls
+   it. Carried since R-8's first pass.
+9. `docs/09-PRD-AUDIT.md` remains stale (2026-08-12).
+
+## R-9
+
+**Not started. Its pilot gate stays closed.** No remaining R-9 optional
+capability was implemented, and none will be until pilot stability is
+demonstrated.
+
+## What happens next, and it is not code
+
+Nothing in this repository is waiting on this repository. The next commit
+should be triggered by an external dependency arriving — an aggregator
+credential, a deployment, a device — and should be the concrete integration fix
+that dependency requires, verified against the real environment, followed by an
+evidence-file update.
+
+In order of cost:
+
+1. **One browser, one click** — closes the push gate. §4 has the sequence.
+2. **An SMS aggregator contract.**
+3. **One production deployment.** On that day: `scripts/preflight.mjs`, then
+   `scripts/restore-drill.mjs`, then `scripts/security-probe.mjs`, against it.

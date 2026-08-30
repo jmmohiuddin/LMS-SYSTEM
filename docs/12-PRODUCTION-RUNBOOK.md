@@ -38,6 +38,145 @@ Everything below marked ⚠ has never been run against production.
 
 ---
 
+## 0a. External readiness checklist
+
+R-8 is **OPEN** and in external-dependency mode. Everything on the repository
+side is done; every box below needs something from outside it — a host, a
+domain, a contract, a device, or a school.
+
+**How to use this.** Tick a box only from **direct observation**, then record
+it in [production-evidence.json](production-evidence.json) under the key named
+in the last column. `null` = not attempted · `blocked` = attempted, the
+environment prevented it · `pass` = observed. **Never tick from configuration
+intent** — a configured provider is not a delivered message, and that
+distinction is the reason this file exists.
+
+`node scripts/preflight.mjs` is the machine half. It checks configuration and
+refuses to call anything ready without the observation. It compares an
+attestation's `environment` against the deployment being checked, so evidence
+from a laptop cannot close a production gate.
+
+### Production
+
+- [ ] Production deployed
+- [ ] Production commit verified *(the revision serving traffic, not the one you pushed)*
+- [ ] Health check verified — `GET /api/v1/ops/monitor` returns 200 and `alerts: []`
+
+> Blocked on: a hosting account. Nothing else here can start.
+> Evidence key: *(none yet — the deployment is the prerequisite, not an item)*
+
+### DNS / TLS
+
+- [ ] Public domain — `shikhonbd.com` serves the marketing site
+- [ ] Tenant domain — `/app?tid=<uuid>` works on it *(the fallback that must keep working)*
+- [ ] TLS valid, no browser warning
+- [ ] Wildcard DNS + TLS — `monipur.shikhonbd.com` loads, resolves to the right
+      tenant, shows that school's branding, and leaks nothing of another's
+
+> Set `WILDCARD_DNS_READY=true` **only after** a browser has loaded a tenant
+> subdomain over HTTPS. The preflight refuses the flag without the attestation.
+> Evidence keys: `wildcard_dns`, `wildcard_tls`, `subdomain_routing`
+
+### SMS
+
+- [ ] Provider contract signed, sender ID approved
+- [ ] Credentials in the host's environment *(never the repository)*
+- [ ] Test allowlist — `SMS_TEST_RECIPIENTS` set to 1–5 of your own numbers
+- [ ] Real delivery to those numbers, with the provider's message id recorded
+- [ ] DLR — a delivery report comes back and lands on the right row
+- [ ] Failure and retry — a bad number fails cleanly and does not retry into a wall
+- [ ] Cost and cap — segments counted, daily cap enforced, weekend/holiday
+      suppression and the working-weekend override both observed
+
+> **Set the allowlist before the first dispatch on a live aggregator.** Without
+> it the first attendance run texts every real guardian.
+> Evidence key: `real_sms_delivery`
+
+### Push
+
+- [ ] Real browser / device *(any ordinary Chrome, Edge or Firefox)*
+- [ ] Permission granted — a person clicks Allow
+- [ ] Subscription saved
+- [ ] Real delivery — a published notice arrives
+- [ ] Click-through opens the app on that notice
+- [ ] Branding — the **school's** name on the notification, not shikhonBD (D11)
+- [ ] Fallback — with push denied, unsupported or unconfigured, the message
+      still goes by SMS
+- [ ] Unsubscribe removes the device
+
+> **The cheapest gate on this page.** No contract, no purchase, no deployment —
+> one browser and one click. Attempted 2026-08-30 and **blocked**: egress to
+> FCM and Mozilla is open, but the automated browser has notifications
+> permanently denied and will not register a service worker it can otherwise
+> fetch. Full sequence, including the negative cases, in §4.
+> Evidence key: `real_push_delivery` *(currently `blocked`)*
+
+### Backup
+
+- [ ] Production backup configured, retention written down
+- [ ] Isolated restore performed *(never over production)*
+- [ ] Integrity verified — schema, tenants, students, teachers, guardians,
+      attendance, results, finance
+- [ ] RTO measured *(wall clock, decision to verified copy)*
+- [ ] RPO decided *(a property of the backup schedule — no drill can measure it)*
+
+> `scripts/restore-drill.mjs` does all of this and fails on any mismatch.
+> Rehearsed on local Docker: RTO 4.0s on 2.6 MB. That is a rehearsal, not
+> production evidence, and the preflight says so.
+> Evidence keys: `backup_configured`, `restore_drill`
+
+### Monitoring
+
+- [ ] Alert destination configured — `ALERT_WEBHOOK_URL` (https)
+- [ ] Real alert received by a human
+- [ ] Cron-death detection documented and switched on *(§6 — the host's
+      scheduled-function failure notification; the monitor cannot report its
+      own death)*
+
+> Evidence key: `alert_delivered`
+
+### Offline
+
+- [ ] Real connectivity loss *(a phone on mobile data, not a throttled profile
+      and not "the server was stopped")*
+- [ ] Offline attendance recorded, app stays usable across a reload
+- [ ] Reconnect
+- [ ] Sync completes
+- [ ] No duplicates
+- [ ] **Database verified from a second device** — check the server, not the
+      phone. R-7 shipped a version where the whole batch was rejected and the
+      only symptom was a small "১টি পাঠানো যায়নি"
+
+> Full procedure in §8a. Evidence key: `pilot_offline`
+
+### Pilot
+
+- [ ] Pilot 1
+- [ ] Pilot 2
+- [ ] Pilot 3
+- [ ] Pilot 4 *(optional)*
+- [ ] Pilot 5 *(optional)*
+- [ ] Onboarding times measured from **real operator workflows**
+- [ ] Critical issues resolved
+
+> Prefer variety — school, college, madrasa, different sizes, different
+> weekends. Selection guidance and the evidence tables are in
+> [PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md) §13–14.
+> The "under one hour" target stays **UNMEASURED** until this section has real
+> rows: `scripts/pilot-report.mjs` counts nothing that is not explicitly
+> designated a pilot.
+> Evidence key: `pilot_onboarding`
+
+### The rule that governs all of the above
+
+**Do not build a substitute to make a box green.** A fake aggregator, a stub
+push service and a local restore are all useful for exercising code, and not
+one of them is evidence for the boxes on this page. R-8 may stay OPEN for as
+long as these prerequisites are genuinely unavailable; that is a correct state,
+not a failure.
+
+---
+
 ## 1. Environments
 
 Three, and they are separated by **credentials, not by code**. There is one

@@ -1507,6 +1507,39 @@ R-9's pilot gate remains **unsatisfied**.
 
 ---
 
+## 9o. R-8 external-dependency mode (R-8 still OPEN)
+
+**2026-08-30.** The repository side of R-8 is closed and accepted. What remains
+cannot be built: a hosting account, a domain, an SMS aggregator contract, an
+alert destination, a production database, a browser with a person at it, and
+3–5 schools.
+
+The forward-looking checklist lives in
+[12-PRODUCTION-RUNBOOK.md](12-PRODUCTION-RUNBOOK.md) §0a — eight groups, every
+box unticked, each naming the `production-evidence.json` key that records it.
+
+| External item | State | Evidence key |
+|---|---|---|
+| Production deployment | not attempted | — |
+| Wildcard DNS / TLS / subdomain routing | not attempted | `wildcard_dns`, `wildcard_tls`, `subdomain_routing` |
+| Real SMS delivery | not attempted | `real_sms_delivery` |
+| Real push delivery | **blocked 2026-08-30**, reason recorded | `real_push_delivery` |
+| Backup configured / restore drill | rehearsed on `local-docker` only | `backup_configured`, `restore_drill` |
+| Human alert received | not attempted | `alert_delivered` |
+| Real offline test | not attempted | `pilot_offline` |
+| Pilot onboarding | not attempted | `pilot_onboarding` |
+| Cross-tenant probe in production | rehearsed on `local-docker` only | `prod_cross_tenant` |
+
+**The rule for this mode:** no fake substitute may be built to turn a gate
+green, and no external item may be marked complete from configuration intent.
+R-8 stays OPEN for as long as the prerequisites are genuinely unavailable —
+which is a correct state, not an unfinished one.
+
+The cheapest remaining gate is push: one ordinary browser, one click, no
+contract and no deployment.
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The

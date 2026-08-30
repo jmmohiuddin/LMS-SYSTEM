@@ -145,10 +145,17 @@ self.addEventListener('push', (event: PushEvent) => {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     data: { url: n.url },
-    // A school notice is not urgent enough to override a silenced phone, and
-    // absence messages arrive during the school day when a parent may be at
-    // work. The OS default respects Do Not Disturb; renotify would not.
-    renotify: false,
+    // Deliberately NOT setting `renotify`. A school notice is not urgent
+    // enough to override a silenced phone, and absence messages arrive during
+    // the school day when a parent may be at work — the OS default respects
+    // Do Not Disturb, and renotify would not. `false` IS that default, so
+    // omitting it is the same behaviour without the type suppression the
+    // property would need: `renotify` is a real web platform option that the
+    // DOM lib does not declare, and it had been failing tsc since R-9.
+    //
+    // If it is ever set to true, it needs a `tag` alongside it — the spec
+    // makes renotify-without-tag a TypeError, and that would throw inside the
+    // service worker where nobody would see it.
   }));
 });
 

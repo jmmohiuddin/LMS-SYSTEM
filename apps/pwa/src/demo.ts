@@ -20,10 +20,15 @@ import {
   type StudentRef,
 } from '../../../packages/ui-core/src/documents.ts';
 
+// `academicYearId` is required and was missing from all three. The rest of
+// this file already answers 'demo-year' for it, so the demo was internally
+// inconsistent in exactly the way R-7's real bug was: a section carrying no
+// year, and attendance taken against it rejected on save. `tsc` had been
+// saying so since that fix landed.
 const SECTIONS: SectionSummary[] = [
-  { id: 'demo-9a', name: 'ক', shift: 'morning', studentCount: 12, className: { bn: 'নবম শ্রেণি', en: 'Class 9' }, levelNo: 9 },
-  { id: 'demo-9b', name: 'খ', shift: 'morning', studentCount: 12, className: { bn: 'নবম শ্রেণি', en: 'Class 9' }, levelNo: 9 },
-  { id: 'demo-10a', name: 'ক', shift: 'day', studentCount: 12, className: { bn: 'দশম শ্রেণি', en: 'Class 10' }, levelNo: 10 },
+  { id: 'demo-9a', name: 'ক', shift: 'morning', studentCount: 12, academicYearId: 'demo-year', className: { bn: 'নবম শ্রেণি', en: 'Class 9' }, levelNo: 9 },
+  { id: 'demo-9b', name: 'খ', shift: 'morning', studentCount: 12, academicYearId: 'demo-year', className: { bn: 'নবম শ্রেণি', en: 'Class 9' }, levelNo: 9 },
+  { id: 'demo-10a', name: 'ক', shift: 'day', studentCount: 12, academicYearId: 'demo-year', className: { bn: 'দশম শ্রেণি', en: 'Class 10' }, levelNo: 10 },
 ];
 
 const NAMES: [string, string][] = [

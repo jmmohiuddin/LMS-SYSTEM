@@ -97,10 +97,15 @@ describe('R-8 — DLR authentication', () => {
     process.env.SMS_DLR_SECRET = SECRET;
     // Both must get PAST authentication. They stop at the body check below,
     // which proves the secret was accepted without needing a database.
-    for (const headers of [
+    // Annotated, because inference widens the two shapes into a union whose
+    // members each carry the OTHER key as `undefined` — which is not a
+    // `Record<string, string>`, and `tsc` had been rejecting this file since
+    // it was written.
+    const cases: Array<Record<string, string>> = [
       { authorization: `Bearer ${SECRET}` },
       { 'x-dlr-secret': SECRET },
-    ]) {
+    ];
+    for (const headers of cases) {
       const r = await call(dlr, {
         method: 'POST', url: '/api/v1/sms/dlr', body: { status: 'delivered' }, headers,
       });

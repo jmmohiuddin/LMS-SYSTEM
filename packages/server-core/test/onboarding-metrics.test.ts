@@ -15,20 +15,29 @@ import assert from 'node:assert/strict';
 
 import {
   onboardingMetrics, looksSynthetic, SETUP_STATEMENTS,
-  type OnboardingMetrics,
+  type OnboardingMetrics, type Queryable,
 } from '../src/onboarding-metrics.ts';
 
-/** A client that answers the three queries in the order they are issued. */
+/**
+ * A client that answers the three queries in the order they are issued.
+ *
+ * Generic in `R` because `Queryable.query` is, and the row shape is what the
+ * production call sites use it for. Writing the fake non-generically compiled
+ * under `node --test` — which strips types rather than checking them — and was
+ * rejected by `tsc`, which is how the type gate came to be red without the
+ * suite ever going amber.
+ */
 function fakeClient(answers: Array<Record<string, unknown>>) {
   let i = 0;
   const seen: Array<{ text: string; values: unknown[] }> = [];
-  return {
+  const client: Queryable & { seen: typeof seen } = {
     seen,
-    query: async (text: string, values: unknown[] = []) => {
+    async query<R = Record<string, unknown>>(text: string, values: unknown[] = []) {
       seen.push({ text, values });
-      return { rows: [answers[i++] ?? {}] };
+      return { rows: [(answers[i++] ?? {}) as R] };
     },
   };
+  return client;
 }
 
 const AUDIT = {

@@ -24,6 +24,7 @@
  * what was actually created. An estimate that is wrong about money is worse
  * than no estimate.
  */
+import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
@@ -223,7 +224,7 @@ export class InvoiceView {
       const desc = d.createElement('span');
       desc.className = 'system-desc';
       // Amounts printed exactly as the server sent them: decimal strings.
-      desc.textContent = `${inv.billingPeriod} · ৳ ${bnNum(inv.totalAmount)}`;
+      desc.textContent = `${inv.billingPeriod} · ${formatBdt(inv.totalAmount)}`;
       const chip = d.createElement('span');
       chip.className = 'status-chip';
       if (Number(inv.balanceAmount) <= 0) chip.setAttribute('data-state', 'success');

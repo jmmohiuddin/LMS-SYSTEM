@@ -25,6 +25,7 @@
  * doing the hiding, because a hidden card with the numbers still in the
  * response body is exactly the frontend-filtering pattern D13 rules out.
  */
+import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 import { iconSvg } from './icon.ts';
 import { skeleton, errorState, emptyState, bnNum } from './view-states.ts';
@@ -296,7 +297,7 @@ export class PrincipalView {
       row.className = 'fees-row';
       // Amounts stay as the server's decimal strings — never parsed into a
       // JS number on the way to a screen a school reconciles against.
-      row.textContent = `${labelBn}: ৳ ${bnNum(v)}`;
+      row.textContent = `${labelBn}: ${formatBdt(v)}`;
       card.append(row);
     }
     const n = d.createElement('p');

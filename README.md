@@ -174,19 +174,31 @@ guard. Migrations must apply with **zero output** — a warning fails the build.
 
 ## Application code
 
+> **"Deployed" is deliberately absent from this table.** It said *Built and
+> deployed* against seven services until the R-8 audit checked. There **is** a
+> public deployment at `shikhon-lms.vercel.app`, and it is a **stale revision**:
+> `/` serves a build that predates R-1-A's three surfaces, `/app` and
+> `/platform` both 404, and of the API only a couple of functions exist —
+> `/api/v1/ops/*` is not among them. It is not the current system and must not
+> be treated as production. See [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md)
+> and the R-8 audit entry in [docs/PHASE_LOG.md](docs/PHASE_LOG.md).
+>
+> Everything below is built, tested and committed. **Nothing below is running
+> anywhere a school could reach it.**
+
 | Component | Status |
 |---|---|
 | [`packages/offline`](packages/offline) | **Built and tested** — outbox + sync engine, 46 assertions, zero runtime deps. The store contract runs against both the in-memory reference and the `IndexedDbOutboxStore` that ships. |
 | [`packages/ui-core`](packages/ui-core) | **Built and tested** — attendance state machine, Bangla/Latin numerals, SMS cost model. 36 assertions, zero runtime deps. |
 | [`apps/pwa`](apps/pwa) | **Built and tested** — login (phone + OTP), navigation shell, attendance grid, roster view, routine day/week view, **offline marks entry (নম্বর tab)**, service-worker policy, `?demo=1` preview mode. 27 assertions in jsdom. |
 | [`services/sync-svc`](services/sync-svc) | **Built and tested** — `POST /sync/push` + `GET /sync/pull` (entities incl. `exam_mark` with optimistic concurrency), 23 assertions against a real database, including the full DOM→database vertical slice. |
-| [`services/identity-svc`](services/identity-svc) | **Built and deployed** — OTP request/verify (EdDSA JWT, rotating refresh with reuse detection), logout, activation codes. Since R-8 the OTP is queued to `sms_outbox` in the challenge's own transaction and sent by the ordinary dispatcher; issuance is gated on `OTP_SENDING_ENABLED` — [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md). |
-| [`services/academics-svc`](services/academics-svc) | **Built and deployed** — sections, roster, **exams and marks** read endpoints (mark writes ride the offline outbox). |
-| [`services/rms-svc`](services/rms-svc) | **Built and deployed** — greedy-heuristic routine solver, teacher day/week routine endpoint, **substitution finder** (free-period + subject-expertise ranking; DB exclusion constraints guarantee clash-freedom regardless). |
-| [`services/sms-svc`](services/sms-svc) | **Built and deployed** — outbox enqueue + cron-driven dispatch worker; **send is stubbed** pending an aggregator contract. |
-| [`services/finance-svc`](services/finance-svc) | **Built and deployed** — MFS webhooks (bKash/Nagad/Rocket), **invoice + receipt reads, payment initiation** (kill-switched pending merchant credentials). |
-| [`services/ai-svc`](services/ai-svc) | **Built and deployed** — SikhokAI (NCTB-compliant CQ/MCQ/rubric/lesson-plan generation) + ShikhoAI (multilingual Socratic tutor) via the Claude API; PII redaction, session audit, NCTB-scoped retrieval. **Disabled until `ANTHROPIC_API_KEY` is set**; RAG lexical-only until the NCTB corpus is ingested. |
-| [`services/ans-svc`](services/ans-svc) | **Built and deployed** — alumni batch pull (`globalPersonId` unified identifiers, consent-gated contact), HMAC-signed outbound webhook dispatcher, inbound enrichment staging. |
+| [`services/identity-svc`](services/identity-svc) | **Built and tested** — OTP request/verify (EdDSA JWT, rotating refresh with reuse detection), logout, activation codes. Since R-8 the OTP is queued to `sms_outbox` in the challenge's own transaction and sent by the ordinary dispatcher; issuance is gated on `OTP_SENDING_ENABLED` — [docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md). |
+| [`services/academics-svc`](services/academics-svc) | **Built and tested** — sections, roster, **exams and marks** read endpoints (mark writes ride the offline outbox). |
+| [`services/rms-svc`](services/rms-svc) | **Built and tested** — greedy-heuristic routine solver, teacher day/week routine endpoint, **substitution finder** (free-period + subject-expertise ranking; DB exclusion constraints guarantee clash-freedom regardless). |
+| [`services/sms-svc`](services/sms-svc) | **Built and tested** — outbox enqueue + cron-driven dispatch worker; **send is stubbed** pending an aggregator contract. |
+| [`services/finance-svc`](services/finance-svc) | **Built and tested** — MFS webhooks (bKash/Nagad/Rocket), **invoice + receipt reads, payment initiation** (kill-switched pending merchant credentials). |
+| [`services/ai-svc`](services/ai-svc) | **Built and tested** — SikhokAI (NCTB-compliant CQ/MCQ/rubric/lesson-plan generation) + ShikhoAI (multilingual Socratic tutor) via the Claude API; PII redaction, session audit, NCTB-scoped retrieval. **Disabled until `ANTHROPIC_API_KEY` is set**; RAG lexical-only until the NCTB corpus is ingested. |
+| [`services/ans-svc`](services/ans-svc) | **Built and tested** — alumni batch pull (`globalPersonId` unified identifiers, consent-gated contact), HMAC-signed outbound webhook dispatcher, inbound enrichment staging. |
 | Guardian/principal UI surfaces, result publication & report cards, invoice generation | Follow-on work — gap list with phasing in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md) |
 
 ```bash

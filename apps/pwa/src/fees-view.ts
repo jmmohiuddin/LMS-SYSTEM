@@ -11,6 +11,7 @@
  * teacher legitimately sees none — the empty state says so instead of
  * pretending it's an error.
  */
+import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 
 interface InvoiceLine {
@@ -51,19 +52,13 @@ const STATUS_BN: Record<string, string> = {
   cancelled: 'বাতিল',
 };
 
-const BN_DIGITS: Record<string, string> = {
-  '0': '০', '1': '১', '2': '২', '3': '৩', '4': '৪',
-  '5': '৫', '6': '৬', '7': '৭', '8': '৮', '9': '৯',
-};
-
-/** '1250.00' → '৳১,২৫০' (decimals kept only when non-zero). */
-function money(amount: string): string {
-  const n = Number(amount);
-  const s = Number.isInteger(n)
-    ? n.toLocaleString('en-IN')
-    : n.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-  return '৳' + s.replace(/[0-9]/g, (d) => BN_DIGITS[d] ?? d);
-}
+/**
+ * R-8 audit. This file used to carry its own `money()`, rendering Bangla
+ * digits — so a parent read **৳ ১,২৫০** here and **৳ 1,250.00** on the receipt
+ * printed for the same invoice. Two formatters, one decision, two answers.
+ * There is now one, in ui-core, and the reasoning lives with it.
+ */
+const money = formatBdt;
 
 export interface FeesViewOptions {
   root: HTMLElement;

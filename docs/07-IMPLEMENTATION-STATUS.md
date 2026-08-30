@@ -1540,6 +1540,40 @@ contract and no deployment.
 
 ---
 
+## 9p. R-8 repository-only cleanup audit (R-8 still OPEN)
+
+**2026-08-30.** An audit of what can be fixed without leaving the repository.
+No external gate moved.
+
+### Fixed
+
+| Finding | Severity | What it was |
+|---|---|---|
+| `tsc` failing since R-9 | **MUST FIX** | 10 errors across 3 tsconfigs. `node --test` strips types, so the suite was green while CI's type gate was red for six commits |
+| Stale login error | **MUST FIX** | `this.error = ''` on a class with no `error` field — the phone-number error followed the user onto the activation-code screen |
+| Demo sections missing `academicYearId` | **MUST FIX** | The same shape as R-7's real attendance bug, in `?demo=1` |
+| Unpinned `lucide@latest` on the marketing origin | **SHOULD FIX** | Third-party script, mutable, executing on shikhonBD's own domain. Now pinned + SHA-384 SRI |
+| README: "Built and deployed" ×7 | **MUST FIX** | Nothing is deployed. Checking it also surfaced a **stale public deployment** at `shikhon-lms.vercel.app` |
+| Three money formatters | **MUST FIX** | Fees screen showed ৳ ১,২৫০ while the receipt for the same invoice showed ৳ 1,250.00. One formatter now; `en-IN` lakh grouping decided |
+
+### Classified, not implemented (all are new features)
+
+Class/section edit UI · guardian unlink · audit export · object storage · CSV
+export · multi-card ID layout · attendance date-range filter ·
+board-registration index (confirmed a seq scan; fine at pilot size, and an
+index costs write throughput on the student import).
+
+`GET /sync/pull` is **reclassified from bug to unused capability** — built,
+mounted, tested, working, no client. It stays.
+
+### Gates after the audit
+
+1160 tests with a database · 26/26 DB suites · **TypeScript 0/0/0** · 48/48
+migrations · D11 · parameter-property guard · secrets clean over 136 commits ·
+security probe 29/29 · browser acceptance on the pinned CDN and the fees screen.
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The

@@ -51,10 +51,33 @@ export function formatIdentifier(n: number | string): string {
   return toLatinDigits(String(n));
 }
 
+/**
+ * The one money formatter in the product.  (R-8 audit — "money formatting",
+ * carried open since R-5, decided here.)
+ *
+ * It was not the only one. `apps/pwa/src/fees-view.ts` carried a private
+ * `money()` that rendered Bangla digits with `en-IN` grouping, so a parent saw
+ * **৳ ১,২৫০** on the fees screen and **৳ 1,250.00** on the receipt printed for
+ * the same invoice. That is the support ticket the comment above predicted,
+ * and it is also two sources of truth for one decision.
+ *
+ * Two choices, both deliberate:
+ *
+ *   **Latin digits**, per `formatIdentifier` above — money has to be
+ *   cross-checkable against a bank slip, an MFS statement and a paper ledger,
+ *   none of which are in Bangla digits.
+ *
+ *   **`en-IN` grouping**, changed from `en-US` here. Bangladesh reads in lakh
+ *   and crore: ১,২৫,০০০ not 125,000. Below a lakh the two are identical, which
+ *   is why every existing expectation still holds — the difference appears
+ *   exactly where a school's annual figures live.
+ *
+ * Always two decimals: an amount on a receipt must not be ambiguous.
+ */
 export function formatBdt(amount: number | string): string {
   const n = typeof amount === 'string' ? Number(toLatinDigits(amount)) : amount;
   if (!Number.isFinite(n)) return '৳ —';
-  return `৳ ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `৳ ${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /**

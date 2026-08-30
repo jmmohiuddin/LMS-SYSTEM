@@ -112,12 +112,29 @@ type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
  * — a denied prompt, an unsupported browser — because those are states to
  * render, not errors to log.
  */
+/**
+ * `Notification` is a global in the DOM lib but is NOT declared as a property
+ * of the `Window` interface, so reaching it through an injected window is a
+ * type error — which is what `tsc` had been reporting here since R-9. The
+ * window is injected rather than taken from the global precisely so the tests
+ * can drive this with a stub, and that is worth keeping; what it costs is
+ * having to state the shape.
+ *
+ * Optional, because a browser without it is a real case this class handles.
+ */
+type NotificationWindow = Window & {
+  Notification?: {
+    permission: NotificationPermission;
+    requestPermission(): Promise<NotificationPermission>;
+  };
+};
+
 export class PushClient {
   private readonly authedFetch: Fetcher;
   private readonly nav: Navigator;
-  private readonly win: Window;
+  private readonly win: NotificationWindow;
 
-  constructor(authedFetch: Fetcher, win: Window = globalThis.window) {
+  constructor(authedFetch: Fetcher, win: NotificationWindow = globalThis.window) {
     this.authedFetch = authedFetch;
     this.win = win;
     this.nav = win.navigator;
@@ -132,8 +149,9 @@ export class PushClient {
   }
 
   permission(): NotificationPermission | 'unavailable' {
-    if (!this.win || !('Notification' in this.win)) return 'unavailable';
-    return this.win.Notification.permission;
+    const notification = this.win?.Notification;
+    if (!notification) return 'unavailable';
+    return notification.permission;
   }
 
   async status(): Promise<PushStatusResponse | null> {
@@ -207,7 +225,15 @@ export class PushClient {
         message: 'এই ব্রাউজারে নোটিফিকেশন চালু করা যায় না।' };
     }
 
-    const permission = await this.win.Notification.requestPermission();
+    // supported() has already established this, but narrowing does not
+    // survive the call boundary and an assertion here would be a lie waiting
+    // to happen in a browser we have not met.
+    const notification = this.win.Notification;
+    if (!notification) {
+      return { ok: false, reason: 'unsupported',
+        message: 'এই ব্রাউজারে নোটিফিকেশন চালু করা যায় না।' };
+    }
+    const permission = await notification.requestPermission();
     if (permission !== 'granted') {
       return { ok: false, reason: permission === 'denied' ? 'denied' : 'off',
         message: permission === 'denied'

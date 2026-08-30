@@ -5803,3 +5803,189 @@ In order of cost:
 2. **An SMS aggregator contract.**
 3. **One production deployment.** On that day: `scripts/preflight.mjs`, then
    `scripts/restore-drill.mjs`, then `scripts/security-probe.mjs`, against it.
+
+---
+
+# 2026-08-30 · R-8 repository-only cleanup audit · A gate that had been red for six commits
+
+**Status: R-8 remains OPEN.** No external gate moved and none was touched. This
+was an audit of what can be fixed without leaving the repository, and it found
+more than expected.
+
+## The finding that matters: `tsc` had been failing since R-9
+
+The test suite runs under `node --test`, which **strips** TypeScript rather than
+checking it. So `node scripts/test-all.mjs` went green while
+`npx tsc --noEmit` — the gate `.github/workflows/security.yml` actually runs —
+had been failing since the R-9 web push commit. Six commits, three of them R-8
+passes that each ended with a confident quality report.
+
+Traced by checking out HEAD~6, ~8, ~10: **0 errors at R-3, 2 from R-9 onward**,
+and 8 more added by my own closure pass. Ten in total across three tsconfigs.
+
+This is the second time in R-8 that a green suite has concealed something —
+the first was `product_events.sql` passing for the wrong reason. The lesson is
+the same one and it is worth writing down: **a check that cannot fail is not a
+check**, and the way to find out which kind you have is to break it on purpose
+or, failing that, to run the one nobody has run lately.
+
+### Three of the ten were real defects, not type noise
+
+1. **`login-view.ts` — a stale error message on the activation screen.** The
+   handler did `this.error = ''`, and `LoginView` has no `error` field; it
+   clears messages by hiding `errorEl`. So a person who mistyped their phone
+   number, gave up and clicked "সক্রিয়ন কোড দিয়ে প্রবেশ করুন" carried the
+   phone-number error onto the code screen, where it was both wrong and
+   alarming. Introduced by R-7's completion pass, which added that button.
+
+2. **`demo.ts` — three sections with no `academicYearId`.** Required since R-7
+   fixed the real version of this bug, where a hardcoded non-uuid year meant
+   every attendance save was rejected and a teacher saw only "১টি পাঠানো যায়নি".
+   The demo carried the same shape of defect, so a `?demo=1` visitor taking
+   attendance would have hit the same wall.
+
+3. **`harness.ts` — `CallOptions.method` had no `DELETE`.** R-9's `/ops/push`
+   supports it (a person giving up a device) and the harness type was never
+   widened, so `push.test.ts` could not compile even though it ran.
+
+The other seven were `push-client.ts` reaching `Notification` through an
+injected `Window` (the DOM lib declares it globally but not on the interface),
+`sw.ts` setting `renotify: false` (a real platform option the lib does not
+declare — now omitted, since `false` IS the default, with a note that setting
+it `true` without a `tag` is a spec TypeError that would throw invisibly inside
+the service worker), and my own over-tight `Queryable` type in
+`onboarding-metrics.ts`, which demanded pg's entire overload set when all it
+needs is *send text and values, get rows back*.
+
+**All three tsconfigs are now at zero for the first time since R-9.**
+
+## An unpinned third-party script on the platform's own origin
+
+`apps/pwa/public/index.html` and `design.html` loaded
+`https://unpkg.com/lucide@latest` — **unpinned**, so whatever that path serves
+executes on shikhonBD's own domain, and its contents can change without any
+commit here.
+
+It never touched a school's application, so no student data was ever exposed to
+it. What it did expose is the platform's shopfront, which is a credible
+phishing surface. Now pinned to `lucide@1.37.0` with a SHA-384 integrity hash
+and `crossorigin`/`referrerpolicy`: if unpkg ever serves different bytes the
+browser refuses to run them and the icons simply do not draw, which is the
+correct failure for a decorative dependency. Verified in a browser — 92 icons
+render, no placeholders left.
+
+## The README said "Built and deployed" seven times
+
+It is not deployed. There is no production environment, and every R-8 report
+has said so — while the most-read file in the repository claimed the opposite
+about seven services.
+
+**And checking that claim turned up something nobody had recorded: a public
+deployment exists at `shikhon-lms.vercel.app` and answers 200.** It is a
+**stale revision** — `/` serves a build predating R-1-A's three surfaces,
+`/app` and `/platform` both 404, and of the API only a couple of functions
+exist (`/api/v1/ops/*` is not among them). It is not the current system.
+
+Corrected in the README with a note above the table. **The deployment itself
+was not touched**: taking down or redeploying a live public site is an
+outward-facing act and needs the owner's decision, not mine. It is recorded
+here and in the known-issues list as something to resolve deliberately.
+
+## Money: three formatters, one decision, three answers
+
+Carried as "money formatting (still open)" since R-5. What was actually open:
+
+- `packages/ui-core/src/format.ts` → `formatBdt()` — **Latin** digits,
+  `en-US` grouping, used by the printed receipts and report cards.
+- `apps/pwa/src/fees-view.ts` → a private `money()` — **Bangla** digits.
+- `apps/pwa/src/ledger-view.ts` → a private `taka()` — **Bangla** digits, on
+  the double-entry ledger an accounts clerk reconciles against a bank
+  statement.
+
+Plus three call sites rendering `৳ ${bnNum(...)}` by hand. So a parent read
+**৳ ১,২৫০** on the fees screen and **৳ 1,250.00** on the receipt printed for
+the same invoice.
+
+`formatBdt`'s own comment already contained the decision — *"a fee amount in
+Bangla digits is a support ticket"* — it simply was not being followed. Now
+there is one formatter, and two choices are stated where it lives:
+
+- **Latin digits**, because money must be checkable against a bank slip, an MFS
+  statement and a paper ledger, none of which are in Bangla digits.
+- **`en-IN` grouping**, changed from `en-US`. Bangladesh reads in lakh and
+  crore: ১,২৫,০০০, not 125,000. Below a lakh the two are identical, which is
+  why every existing expectation still held and why the new test for the lakh
+  case is the only one that could have caught it.
+
+Browser-verified on the fees screen: `৳ 1,250.00`, matching the receipt.
+
+## Classified but NOT implemented
+
+Every remaining backlog item is a **new product feature**, which this pass was
+explicitly forbidden to add:
+
+| Item | Class | Why not now |
+|---|---|---|
+| Class/section edit UI (R-3) | SHOULD FIX BEFORE PILOT | `structure.ts` has GET and POST only. A typo'd section name needs SQL to fix, and the pilot runbook calls that a blocker. But it is backend + API + UI + tests — a feature, needing approval |
+| Guardian unlink (R-3) | SHOULD FIX BEFORE PILOT | `guardians.ts` has no DELETE. Same reasoning |
+| Audit export / name resolution (R-3) | NICE TO HAVE | Feature |
+| Object storage (R-5) | DEFER UNTIL AFTER PILOT | Documents render and print without it |
+| CSV export (R-5) | NICE TO HAVE | Feature |
+| Multi-card ID layout (R-5) | NICE TO HAVE | Cosmetic |
+| Attendance date-range filter (R-6) | NICE TO HAVE | Feature |
+| Board-registration index (R-6) | DEFER UNTIL AFTER PILOT | Confirmed a **seq scan** today. At pilot size (3–5 schools) that is genuinely fine, and every index costs write throughput on the student import — the biggest write in the product. The pilot produces the numbers that should decide it |
+| `GET /sync/pull` unused | **NOT A BUG — reclassified** | Built, mounted, tested and working; no client calls it. That is an unused capability, not a defect. Deleting it discards working tested code; wiring it up is a feature. It stays, and it stops being listed as a bug |
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| Tests (with database) | **1160**, all passing (1158 before) |
+| Tests (no database) | 862 → 864 |
+| DB/RLS suites | 26/26 |
+| TypeScript ×3 | **0 / 0 / 0** — was 10 / 6 / 1 |
+| Migrations | 48/48 |
+| D11 three-way brand guard | pass |
+| Parameter-property guard | pass |
+| `check-secrets --history` | clean, 136 commits |
+| Security probe | **29/29**, 12 areas, positive and negative |
+| Browser | pinned CDN renders 92 icons; fees screen shows `৳ 1,250.00` |
+
+## Security re-audit
+
+Re-run against the running deployment after every change above: tenant
+isolation by header, id, query and body; a cross-tenant **write** refused; RLS
+verified at the database with no runtime role holding SUPERUSER or BYPASSRLS;
+role boundaries and guardian/student scoping already covered by
+`guardian_links.sql`, `ward.test.ts`, `student-search.test.ts` and
+`documents.sql` (three independent assertions that a guardian cannot open
+another family's child); 7 SSRF vectors refused; no secret in any bundle; CORS;
+per-phone OTP limiting. **No new vulnerabilities.** The one genuine security
+improvement this pass is the pinned CDN script.
+
+## Known issues — carried, plus one new
+
+1. DNS/TLS not live.
+2. Real SMS not tested.
+3. Real push not tested — dated `blocked` evidence.
+4. Human monitoring alert not tested.
+5. Production backup/restore not tested.
+6. Real offline connectivity test not done.
+7. Pilot count = 0.
+8. **NEW — a stale public deployment at `shikhon-lms.vercel.app`** serving a
+   pre-R-1-A revision. Not touched; needs an owner decision to redeploy or
+   remove.
+9. `docs/09-PRD-AUDIT.md` remains stale (2026-08-12).
+
+*Removed from this list:* `GET /sync/pull`, which was never a bug — see the
+classification table above.
+
+## R-9
+
+**Not started. Pilot gate closed.** No R-9 optional capability implemented.
+
+## Next external dependency required
+
+Unchanged and unaffected by this pass: **one ordinary browser on a real machine
+to close the push gate**, then an SMS aggregator contract, then a production
+deployment.

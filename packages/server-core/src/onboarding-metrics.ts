@@ -24,9 +24,22 @@
  * A single-step onboarding — one row — has no duration, and this returns null
  * rather than zero. Zero would be a lie that averages beautifully.
  */
-import type { PoolClient, Client } from 'pg';
-
-type Queryable = Pick<PoolClient | Client, 'query'>;
+/**
+ * What this module actually needs from a connection: send text and values,
+ * get rows back.
+ *
+ * It was `Pick<PoolClient | Client, 'query'>`, which drags in pg's whole
+ * overload set — including `query(config: QueryArrayConfig)` — so nothing
+ * simpler than a real pg client could satisfy it and the tests could not
+ * compile. Naming the narrow contract is both more honest about the
+ * dependency and testable; a real `Client` still satisfies it, because one of
+ * its overloads is exactly this shape.
+ */
+export interface Queryable {
+  query<R = Record<string, unknown>>(
+    text: string, values?: unknown[],
+  ): Promise<{ rows: R[] }>;
+}
 
 export interface OnboardingMetrics {
   tenantId: string;

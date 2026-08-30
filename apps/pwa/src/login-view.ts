@@ -303,7 +303,16 @@ export class LoginView {
       useCode.className = 'btn-secondary login-activate-entry';
       useCode.textContent = 'সক্রিয়ন কোড দিয়ে প্রবেশ করুন';
       useCode.addEventListener('click', () => {
-        this.step = 'activate'; this.error = ''; this.render();
+        // `this.error = ''` was here, and there is no such field — the view
+        // clears its message by hiding `errorEl`. So a person who mistyped
+        // their phone number, gave up and switched to the activation code
+        // carried the phone-number error onto the code screen, where it was
+        // both wrong and alarming. `tsc` had been reporting this since R-7's
+        // completion pass; the suite never could, because node --test strips
+        // types instead of checking them.
+        this.step = 'activate';
+        this.errorEl.hidden = true;
+        this.render();
       });
       form.append(useCode);
     } else {

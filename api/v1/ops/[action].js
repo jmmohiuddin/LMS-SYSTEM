@@ -4558,7 +4558,7 @@ function toBanglaDigits(s) {
 function formatBdt(amount) {
   const n = typeof amount === "string" ? Number(toLatinDigits(amount)) : amount;
   if (!Number.isFinite(n)) return "\u09F3 \u2014";
-  return `\u09F3 ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `\u09F3 ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 var BN_MONTHS = [
   "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",

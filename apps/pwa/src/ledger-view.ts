@@ -7,6 +7,7 @@
  * this is the surface that proves receipts + ledger posting are actually
  * happening, since the writes live inside the webhook processor.
  */
+import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 
 interface AccountBalance {
@@ -29,12 +30,14 @@ interface LedgerPayload {
   reconciliation: { provider: string; posted: string; reconciled: string }[];
 }
 
-const BN_DIGITS: Record<string, string> = { '0':'০','1':'১','2':'২','3':'৩','4':'৪','5':'৫','6':'৬','7':'৭','8':'৮','9':'৯' };
-function taka(amount: string): string {
-  const n = Number(amount);
-  const s = Number.isInteger(n) ? n.toLocaleString('en-IN') : n.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-  return '৳' + s.replace(/[0-9]/g, (c) => BN_DIGITS[c] ?? c);
-}
+/**
+ * R-8 audit — the THIRD private money formatter found in this pass, and on the
+ * surface where it mattered most: a double-entry ledger whose debits and
+ * credits an accounts clerk reconciles against a bank statement. Bangla digits
+ * are the wrong choice there for the same reason they are wrong on a receipt.
+ * One formatter now, in ui-core.
+ */
+const taka = formatBdt;
 
 export interface LedgerViewOptions {
   root: HTMLElement;

@@ -61,6 +61,22 @@ describe('numeral policy by field type', () => {
     assert.equal(formatBdt('১২৫০.৫'), '৳ 1,250.50');
     assert.equal(formatBdt('nonsense'), '৳ —', 'degrades visibly rather than showing NaN');
   });
+
+  test('THE ONE THAT MATTERS — lakh grouping, because that is how BDT is read', () => {
+    // R-8 audit. Bangladesh reads in lakh and crore. 125000 written as
+    // "125,000" makes a school's accounts clerk count digits; ১,২৫,০০০ is the
+    // shape they already know, and Latin digits keep it checkable against a
+    // bank slip. Below a lakh en-IN and en-US agree, which is why this is the
+    // only case that could have caught the change.
+    assert.equal(formatBdt(125000), '৳ 1,25,000.00');
+    assert.equal(formatBdt(12500000), '৳ 1,25,00,000.00');
+  });
+
+  test('zero and negatives are shown, not hidden', () => {
+    // A zero balance is information a parent needs; a blank is not.
+    assert.equal(formatBdt(0), '৳ 0.00');
+    assert.match(formatBdt(-50), /50\.00/);
+  });
 });
 
 describe('dates and times', () => {

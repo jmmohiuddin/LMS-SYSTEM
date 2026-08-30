@@ -9,7 +9,18 @@
      browser tab is exactly what white-labelling removes. -->
 <title>শিক্ষা প্রতিষ্ঠান</title>
 <link rel="stylesheet" href="/design/styles.css">
-<script src="https://unpkg.com/lucide@latest"></script>
+<!-- R-8 audit: pinned and integrity-checked.
+     This was `lucide@latest` — an UNPINNED third-party script executing on
+     shikhonBD's own origin, whose contents could change without any commit
+     here. It is only the marketing site and the design prototype, never a
+     school's application, so no student data was ever exposed to it; what it
+     did expose was the platform's shopfront, which is a credible phishing
+     surface. Pinned to a version and hash: if unpkg ever serves different
+     bytes the browser refuses to run them and the icons simply do not draw,
+     which is the correct failure for a decorative dependency. -->
+<script src="https://unpkg.com/lucide@1.37.0/dist/umd/lucide.min.js"
+        integrity="sha384-Q+SBuMPu2+Rlj/ENVdxcp5LNmVj4xEw5M3/6aY4Uf0yd4NQSO/OyjkvdzTnDCxpr"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
 <!--
   R-1 tenant-branding bootstrap  (docs/11-MASTER-PLAN.md)

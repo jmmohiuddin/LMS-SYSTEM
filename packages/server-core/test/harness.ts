@@ -66,8 +66,12 @@ function captureResponse(): { res: ServerResponse; captured: CapturedResponse } 
 
 export interface CallOptions {
   // PUT is here for /ops/branding (R-1), the first endpoint in the product
-  // to replace a whole resource rather than append to one.
-  method?: 'GET' | 'POST' | 'PUT' | 'OPTIONS';
+  // to replace a whole resource rather than append to one. DELETE arrived
+  // with R-9's /ops/push, where a person gives up a device — and the type was
+  // not widened at the time, so `tsc` had been rejecting push.test.ts ever
+  // since. Nobody saw it because `node --test` strips types instead of
+  // checking them, and the suite went green while the type gate stayed red.
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS';
   url?: string;
   token?: string;
   body?: unknown;

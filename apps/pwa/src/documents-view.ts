@@ -33,6 +33,7 @@
  * office presses print once. Forty requests and forty print dialogues is not
  * a bulk feature.
  */
+import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, bnNum, bnDate,
@@ -397,7 +398,7 @@ export class DocumentsView {
       t.textContent = r.receiptNo;
       const desc = d.createElement('span');
       desc.className = 'system-desc';
-      desc.textContent = `${bnDate(r.issuedAt)} · ৳ ${bnNum(r.amount)}`
+      desc.textContent = `${bnDate(r.issuedAt)} · ${formatBdt(r.amount)}`
         + (r.studentNameBn ? ` · ${r.studentNameBn}` : '');
       row.append(t, desc);
       row.addEventListener('click', () => {

@@ -34,15 +34,36 @@ import { createHmac, createHash } from 'node:crypto';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, readBody, json, header, HttpError } from '../../../packages/server-core/src/http.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+import {
+  matchServiceKey, looksLikeBrowser, keyFingerprint, logServiceKeyEvent,
+} from '../../../packages/server-core/src/service-auth.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * R-8 §2. Same credentials as before; three things changed underneath.
+ *
+ * The comparison is constant-time, `SERVICE_API_KEY_NEXT` is accepted so the
+ * key can be rotated without a window where nothing works, and a *valid* key
+ * arriving from a browser is refused. That last check fires only after the
+ * token matches, so the unauthenticated probes in apps/pwa/src/system-view.ts
+ * still get the 401 they expect — what it catches is the one case worth
+ * catching, a real platform secret that has ended up in page code.
+ */
 function requireServiceAuth(req: IncomingMessage, allowCron: boolean): void {
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  const valid = [process.env.SERVICE_API_KEY, allowCron ? process.env.CRON_SECRET : undefined].filter(Boolean);
-  if (!token || !valid.includes(token)) {
-    throw new HttpError(401, 'service credentials required', 'unauthorized');
+  const label = matchServiceKey(token, process.env, { allowCron });
+  if (!label) throw new HttpError(401, 'service credentials required', 'unauthorized');
+
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: 'service_key_from_browser', endpoint: 'ans',
+      fingerprint: keyFingerprint(token), keyLabel: label, detail: browserHeader,
+    });
+    throw new HttpError(403, 'Service credentials may not be used from a browser',
+      'service_key_from_browser');
   }
 }
 

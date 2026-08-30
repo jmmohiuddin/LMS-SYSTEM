@@ -194,6 +194,35 @@ function sendIfRefused(res, cors, verdict) {
   return false;
 }
 
+// packages/server-core/src/service-auth.ts
+import { createHash, timingSafeEqual } from "node:crypto";
+function keyFingerprint(key) {
+  return createHash("sha256").update(key, "utf8").digest("hex").slice(0, 8);
+}
+function sameSecret(a, b) {
+  if (!a || !b) return false;
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
+}
+function matchServiceKey(token, env = process.env, opts = {}) {
+  if (!token) return null;
+  if (env.SERVICE_API_KEY && sameSecret(token, env.SERVICE_API_KEY)) return "current";
+  if (env.SERVICE_API_KEY_NEXT && sameSecret(token, env.SERVICE_API_KEY_NEXT)) return "next";
+  if (opts.allowCron && env.CRON_SECRET && sameSecret(token, env.CRON_SECRET)) return "cron";
+  return null;
+}
+function looksLikeBrowser(req) {
+  for (const name of ["origin", "cookie", "sec-fetch-site"]) {
+    const v = req.headers[name];
+    if (typeof v === "string" ? v.length > 0 : Array.isArray(v) && v.length > 0) return name;
+  }
+  return null;
+}
+function logServiceKeyEvent(fields) {
+  console.warn(JSON.stringify({ at: "service-auth", ...fields }));
+}
+
 // services/sms-svc/src/provider.ts
 var StubProvider = class {
   name = "stub";
@@ -275,7 +304,7 @@ import {
   createCipheriv,
   hkdfSync,
   randomBytes,
-  createHash,
+  createHash as createHash2,
   createPrivateKey,
   createPublicKey,
   sign as signSync
@@ -414,7 +443,7 @@ async function sendPush(target, payload, keys, opts = {}) {
   }
 }
 function endpointFingerprint(endpoint) {
-  return createHash("sha256").update(endpoint).digest("hex").slice(0, 12);
+  return createHash2("sha256").update(endpoint).digest("hex").slice(0, 12);
 }
 
 // services/sms-svc/src/push-send.ts
@@ -949,9 +978,21 @@ async function handler(req, res) {
   if (!await enforceRateLimit(req, res, cors, "service")) return;
   const authHeader = header(req, "authorization");
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const validTokens = [process.env.SERVICE_API_KEY, process.env.CRON_SECRET].filter(Boolean);
-  if (validTokens.length === 0 || !validTokens.includes(token)) {
+  const keyLabel = matchServiceKey(token, process.env, { allowCron: true });
+  if (!keyLabel) {
     json(res, 401, { error: "unauthorized" }, cors);
+    return;
+  }
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: "service_key_from_browser",
+      endpoint: "sms/dispatch",
+      fingerprint: keyFingerprint(token),
+      keyLabel,
+      detail: browserHeader
+    });
+    json(res, 403, { error: "service_key_from_browser" }, cors);
     return;
   }
   const requestedTenantId = query(req).get("tenantId") ?? "";

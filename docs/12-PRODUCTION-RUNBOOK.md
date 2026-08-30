@@ -25,7 +25,10 @@ written down, and the difference matters at 08:00 on a Sunday.
 | Delivery reports | **Exercised against the fake aggregator** |
 | Web push | **Exercised against a fake push service**, decrypted end to end. No real push service (FCM/Mozilla/Apple) has ever been called, and no real browser has completed `pushManager.subscribe()` |
 | Backup and restore | **NOT exercised.** No production database exists |
-| Monitoring and alerting | **NOT built.** See §7 |
+| Alert evaluation and delivery | **Exercised locally.** Every condition unit-tested at its boundary; the gather run against a real schema; a firing alert POSTed to a stand-in sink. **No alert has ever reached a human** |
+| Service-key hardening | **Exercised.** Browser refusal, rotation slot, production default and the JWT fall-through, probed against the live endpoint |
+| CORS origin allowlist | **Exercised in a browser.** Listed origin served, unlisted origin blocked by Chrome |
+| The preflight itself | **Exercised.** `node scripts/preflight.mjs` runs and refuses to call this deployment ready |
 | Production deployment | **NOT performed.** No production environment exists |
 | A pilot school | **None.** No real institution has used this system |
 
@@ -63,11 +66,36 @@ codebase and one build; what differs is the environment a deployment is given.
 
 ```bash
 node scripts/check-secrets.mjs --env
+node scripts/preflight.mjs
 ```
 
-Refuses a missing, placeholder or dangerously wrong secret — an owner-role
-`DATABASE_URL`, a connection string with no `sslmode`, a `PII_MASTER_KEY_V2`
-set without `V1` — and never prints a value.
+`check-secrets --env` refuses a missing, placeholder or dangerously wrong
+secret — an owner-role `DATABASE_URL`, a connection string with no `sslmode`, a
+`PII_MASTER_KEY_V2` set without `V1` — and never prints a value.
+
+`preflight.mjs` is the wider checklist: environment variables, secret strength
+and distinctness, database separation and TLS, the maintenance and platform
+roles, service-key posture, origins, bundles, the manifest and service worker,
+cron ownership, SMS credentials and allowlist, VAPID keys, and every external
+item. It prints one line per check with its evidence and exits
+
+| code | meaning |
+|---|---|
+| 0 | everything passes **and** every external item is attested |
+| 1 | something FAILED — do not deploy |
+| 2 | configuration is complete but something has never been demonstrated |
+
+**Exit 2 is not success.** It is the state this deployment is in today, and it
+stays that way until somebody records an outcome in
+`docs/production-evidence.json` — with a date, an environment and a result.
+That file is the human half of the preflight; the program checks whether the
+configuration exists, and a person attests whether the thing actually happened.
+Attestations lapse after 180 days, because "we restored a backup successfully"
+stops being a fact about the current system fairly quickly.
+
+Do not fill it in from intent. A null there is worth more than a confident
+guess, and the whole reason this file exists is that R-8's first report could
+have claimed SMS was ready on the strength of a configured provider.
 
 ---
 
@@ -156,7 +184,7 @@ is most likely to fail on the `applicationServerKey` encoding.
 
 ---
 
-## 5. Backups ⚠ NOT EXERCISED
+## 5. Backups — NOT EXERCISED
 
 No production database exists, so none of this has been run.
 
@@ -190,28 +218,130 @@ yet:**
 
 ---
 
-## 6. Monitoring ⚠ NOT BUILT
+## 6. Monitoring and alerting
 
-There is no alerting. This is the largest gap between this system and a
-production one, and it is stated plainly rather than described as if it existed.
+A health dashboard is not monitoring. The console's চলমান অবস্থা panel is a
+**pull** surface — somebody has to open it — and at 9pm on a Thursday nobody
+does. So R-8 added a **push** half: `/api/v1/ops/monitor`, evaluated on a
+schedule, delivering anything firing to `ALERT_WEBHOOK_URL`.
 
-**What exists:** the console's চলমান অবস্থা panel per school (queue depth,
-failures, last login, last attendance, push devices), the go-live readiness
-screen, and `audit.activity_log` / `audit.platform_access`. All are **pull** —
-somebody has to look.
+```
+*/15 * * * *  ->  POST /api/v1/ops/monitor
+                  -> gather platform-wide counts (owner role, counts only)
+                  -> evaluate the conditions below
+                  -> POST anything firing to ALERT_WEBHOOK_URL
+                  -> and log it regardless, so the host's log drain is a
+                     working fallback sink from the first deploy
+```
 
-**What does not exist:** anything that pushes. No error tracking, no latency
-metrics, no alert when the SMS queue stops draining, no page when the cron
-fails.
+`GET` evaluates and returns without delivering — use it to ask "what would
+fire right now?" without paging anybody. Both require the service credential
+and both refuse a browser.
 
-**The minimum before a pilot**, in the order it matters:
+### What it watches, and what to do
 
-1. **Cron failure alerting.** If `/api/v1/sms/dispatch` stops running, no
-   parent is told anything and nothing anywhere says so. The host's own cron
-   monitoring is enough to start.
-2. **Uncaught error reporting** from the serverless functions.
-3. **A daily glance** at the console's health panel for each pilot school —
-   which is a person, not a system, and is honest about being so.
+Most of these conditions detect an **absence**, not an error. Loud failures
+look after themselves — somebody rings. The dangerous ones are the quiet ones,
+where every screen is green and the messages simply stopped.
+
+| Condition | Alert | Investigation path | Recovery |
+|---|---|---|---|
+| No connection to the database | `database_unavailable` · **critical** | Neon console → the production project → Operations, for a compute suspend or a storage incident; then the host log for the failing query | Suspended compute wakes on the next connection — retry before escalating. If the endpoint moved, update `DATABASE_URL` and redeploy. **Tell schools that ring: attendance keeps working offline and queues; nothing is lost** |
+| SMS queued > 0 and the oldest has waited ≥ 2h | `sms_queue_stalled` · **critical** | Did the dispatch cron run? Netlify → Functions → `cron-sms`, or the Vercel cron log. Then `GET /api/v1/ops/health` for per-tenant counts. A stalled head with no failures means the job never fired, not that sending broke | `POST /api/v1/sms/dispatch` by hand with the service key — idempotent per row. If the cron is dead, check `NETLIFY_CRONS_ENABLED` on the host that owns the schedule |
+| ≥ 10 failures and > 25% of attempts (critical above 50%) | `sms_failure_rate` · warning → critical | `GET /api/v1/ops/health` lists the top error codes. One repeated code is the aggregator (credentials, balance, sender identity unapproved); a spread of codes is more likely bad numbers in one school's import | Aggregator: fix the credential or top up, then let the next dispatch retry the failed rows. Data: the numbers are wrong and the school must correct them — do not retry into a wall |
+| Fewer than 1 month of attendance partitions ahead | `maintenance_cron_stopped` · **critical** | Netlify → Functions → `cron-maintenance`, or the Vercel cron log. `DATABASE_MAINTENANCE_URL` must be the **owner** role on the **direct** endpoint; a pooler URL fails here | `POST /api/v1/ops/maintenance` by hand, **today**. This cannot wait for the morning: when the month turns without a partition, every attendance and SMS write fails at once, for every school |
+| > 50% of ≥ 5 push devices failing | `push_failure_rate` · warning | Almost always the VAPID keypair — a changed key invalidates every subscription at once, which is what a jump to near 100% means. Check `VAPID_PUBLIC_KEY` against what the PWA was built with | Nobody misses a message over this: an unaccepted push falls through to SMS, which is why it warns rather than pages. If the keypair changed, browsers resubscribe on their next visit once the key matches |
+| ≥ 10 rejected sync ops and > 10% of the batch | `sync_rejection_rate` · **critical** | `sync_operations.conflict_detail` names the reason. R-7 shipped a version where every attendance push was rejected for a malformed academic-year id, and the only symptom a teacher saw was a small "১টি পাঠানো যায়নি" — assume the client is sending something the server will not take, not that teachers are wrong | The operations are still in each device's outbox and will be retried, so a server-side fix recovers them without anybody re-entering a register. Ship the fix, then **confirm the count falls** rather than assuming |
+| ≥ 20 exhausted login codes and > 30% of those issued | `auth_anomaly` · warning | Compare the two numbers the alert carries. Many exhausted challenges across **few** phones is one person guessing at one account; across **many** phones it is an SMS delivery problem — people are not receiving the code they are typing. The second is far more common and needs the opposite response | Guessing: the per-phone limiter already refuses further attempts; watch. Delivery: check `sms_outbox` for the `auth.*` messages — this is the SMS alert wearing a different hat |
+
+Thresholds live in `THRESHOLDS` in `packages/server-core/src/alerts.ts`, named
+and commented rather than buried as literals, and each is tested at its
+boundary. The first real pilot will move some of them.
+
+### What this cannot see
+
+**API failure rate.** There is no table of HTTP responses, and inventing one
+would duplicate what the host already records for every invocation. That alert
+belongs in the host's own metric alerting — Vercel Observability or Netlify
+Analytics, on 5xx rate and function duration — and the monitor reports what
+the database can see rather than pretending otherwise.
+
+**Its own death.** A dead function does not report it. The host's
+scheduled-function failure notification is what covers that, and it is part of
+the monitor rather than hosting trivia: turn it on.
+
+### NEVER DEMONSTRATED
+
+No alert has reached a human. The sink is unconfigured, and until
+`ALERT_WEBHOOK_URL` is set and one alert is deliberately provoked and
+received, `alert_delivered` in `docs/production-evidence.json` stays null and
+the preflight reports monitoring as unverified.
+
+---
+
+## 6a. SERVICE_API_KEY — the widest credential
+
+Presented as a bearer token to `/sync/push` or `/sync/pull` with an
+`X-Tenant-ID`, this key makes the caller **any user of any school**. It is not
+scoped to a tenant, does not expire, and no RLS policy constrains it — the
+point of it is to choose the tenant context that RLS then enforces.
+
+**Blast radius.** With this key alone, a holder can read and write every record
+of every school on the deployment: rosters, attendance, marks, fees, guardians'
+phone numbers. It is equivalent to the database password for the application
+role. It belongs only in the host's encrypted environment store — never in the
+repository, never in a browser bundle, never in a support ticket. **If it is
+ever pasted into a chat, treat it as burned and rotate.**
+
+**Why it still exists.** It is how an engineer replays a school's stuck sync
+batch at 11pm, and how smoke tests reach a deployment before any human account
+exists on it. Removing it would not make the product safer; it would make the
+first production incident unrecoverable.
+
+**What narrows it** (`packages/server-core/src/service-auth.ts`):
+
+1. **Off in production.** Tenant switching is refused when `NODE_ENV=production`
+   unless `SERVICE_KEY_TENANT_SWITCH=on`. Turn it on for the incident; turn it
+   off after.
+2. **Never from a browser.** A valid key arriving with `Origin`, `Cookie` or
+   `Sec-Fetch-Site` is refused with `service_key_from_browser` and logged. That
+   combination means the key has leaked into page code, and the refusal turns a
+   silent leak into a dated log line. The check fires **only after the token
+   matches**, so unauthenticated probes still get their 401.
+   *`Sec-Fetch-Mode` is deliberately not a marker: Node's own `fetch` sends it,
+   so treating it as one refused the scheduled SMS dispatch. Found by probing
+   the endpoint, not by reading the code.*
+3. **Loud.** Every acceptance and refusal emits one structured line carrying an
+   8-hex fingerprint of the key, never the key. In production a legitimate use
+   is rare, so these are an alerting signal.
+4. **Constant-time comparison**, so a patient attacker learns nothing from
+   timing.
+
+**What it is not.** None of this touches an ordinary user. A logged-in
+teacher's token is compared against the key, does not match, and the request
+falls through to the JWT path — where tenant, user and role come from the
+signature and `X-Tenant-ID` is never read. Verified against the live endpoint:
+a teacher's token plus a forged tenant header returns that teacher's own
+school, byte for byte.
+
+### Rotation, without downtime
+
+```
+1. Generate a new key.
+2. Set SERVICE_API_KEY_NEXT to it.        <- both keys now work
+3. Move every caller to the new key.
+4. Watch the logs: `keyLabel` says which slot each request matched.
+   When nothing has matched "current" for a week, nothing uses the old key.
+5. Promote - SERVICE_API_KEY = the new value; clear SERVICE_API_KEY_NEXT.
+```
+
+Without the second slot, rotating means a window where either the old key still
+works or the ops scripts are broken — which in practice means it is never
+rotated at all.
+
+The same switch also gates the OTP debug echo (`X-Debug-Otp`), because echoing
+a live login code is an account-takeover primitive and belongs behind exactly
+the same door.
 
 ---
 
@@ -250,9 +380,73 @@ Per school, before the first day:
 - [ ] Install link tested on a real phone on a real mobile connection
 - [ ] Attendance taken by a real teacher, and it synced
 
-And record, per school: onboarding start and end time, every step that needed
-help, every error message that was misread, the import sizes, and the time to
-first attendance. That list is what the R-9 pilot gate is actually waiting for.
+### Subdomain activation, in order
+
+Do not tick these from a DNS dashboard; tick them from a browser.
+
+1. Wildcard A/CNAME for `*.shikhonbd.com` points at the deployment.
+2. A wildcard TLS certificate covers it, and a browser shows no warning.
+3. `https://monipur.shikhonbd.com` **loads the application**, not a 404 and not
+   the marketing page.
+4. The slug resolves to the right tenant — the school's own name and colour are
+   on the login screen, not another school's and not the platform's.
+5. A user of that school can log in there.
+6. A user of *another* school cannot see anything of this one from that host.
+7. `/app?tid=<tenant-id>` still works, because it is printed on admission slips
+   and baked into installed PWAs. **It is not replaced by subdomains; it is
+   joined by them.**
+
+Only after 1–7 in a real browser: set `WILDCARD_DNS_READY=true` and record
+`wildcard_dns`, `wildcard_tls` and `subdomain_routing` in
+`docs/production-evidence.json`. The preflight refuses the flag without the
+attestation, precisely so the console cannot promise an operator a subdomain
+that does not resolve.
+
+### What to record, per pilot school
+
+Not a summary at the end — a row per school, written as it happens. Half of
+these are numbers nobody can reconstruct afterwards.
+
+| Field | Why |
+|---|---|
+| Onboarding start → end (wall clock) | The only honest source for "how long does onboarding take". R-7's figures were demo tenants and do not count |
+| Operator assistance needed, per step | Names the screens that do not explain themselves |
+| Every error message that was misread | A message that is technically correct and read wrongly is a defect |
+| Import: rows offered, accepted, rejected, and why | Rejection reasons are the import format's real specification |
+| First login — who, when, how long after handover | An activation code handed over and never used is the commonest silent failure |
+| First attendance — who, when, and whether it synced | The product's actual job |
+| Offline attendance — see §8a | The claim most at risk of being untrue |
+| First notice, first SMS — audience, count, delivered | Cost and trust, together |
+| First result, first invoice, first receipt | The three documents a school judges the product by |
+| Search and history use, unprompted | What people reach for when nobody is watching |
+| Every support contact, verbatim | The support log is the roadmap |
+
+That list is what the R-9 pilot gate is actually waiting for.
+
+---
+
+## 8a. The offline test, exactly
+
+At least one real institution must do this, on a real phone, on real mobile
+data — not a throttled dev tools profile:
+
+```
+online -> open a section -> turn the connection OFF
+       -> take the full register
+       -> reload the page, and continue
+       -> turn the connection ON
+       -> wait for the sync indicator to settle
+       -> a second person checks the server data from another device
+```
+
+Verify: every child's mark present, none duplicated, none silently dropped,
+and the totals match what the teacher entered. **A rejected operation is not a
+sync failure the teacher will see** — R-7 shipped a version where the whole
+batch was rejected and the only symptom was a small "১টি পাঠানো যায়নি". So
+check the server, not the phone.
+
+Until this has happened at a real school, offline production-readiness is not
+claimed anywhere: `pilot_offline` stays null and the preflight says so.
 
 ---
 

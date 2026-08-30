@@ -255,6 +255,41 @@ function otpSendingEnabled(env = process.env) {
   return enabled("OTP_SENDING_ENABLED", env);
 }
 
+// packages/server-core/src/service-auth.ts
+import { createHash as createHash2, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+function keyFingerprint(key) {
+  return createHash2("sha256").update(key, "utf8").digest("hex").slice(0, 8);
+}
+function sameSecret(a, b) {
+  if (!a || !b) return false;
+  const ha = createHash2("sha256").update(a, "utf8").digest();
+  const hb = createHash2("sha256").update(b, "utf8").digest();
+  return timingSafeEqual2(ha, hb);
+}
+function matchServiceKey(token, env = process.env, opts = {}) {
+  if (!token) return null;
+  if (env.SERVICE_API_KEY && sameSecret(token, env.SERVICE_API_KEY)) return "current";
+  if (env.SERVICE_API_KEY_NEXT && sameSecret(token, env.SERVICE_API_KEY_NEXT)) return "next";
+  if (opts.allowCron && env.CRON_SECRET && sameSecret(token, env.CRON_SECRET)) return "cron";
+  return null;
+}
+function looksLikeBrowser(req) {
+  for (const name of ["origin", "cookie", "sec-fetch-site"]) {
+    const v = req.headers[name];
+    if (typeof v === "string" ? v.length > 0 : Array.isArray(v) && v.length > 0) return name;
+  }
+  return null;
+}
+function tenantSwitchAllowed(env = process.env) {
+  const flag = (env.SERVICE_KEY_TENANT_SWITCH ?? "").trim().toLowerCase();
+  if (flag === "on" || flag === "true" || flag === "1") return true;
+  if (flag === "off" || flag === "false" || flag === "0") return false;
+  return env.NODE_ENV !== "production";
+}
+function logServiceKeyEvent(fields) {
+  console.warn(JSON.stringify({ at: "service-auth", ...fields }));
+}
+
 // services/identity-svc/api/otp-request.ts
 var PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 var PURPOSES = /* @__PURE__ */ new Set(["login", "enrol_device", "reset_password", "verify_phone"]);
@@ -336,7 +371,16 @@ async function handler(req, res) {
         ]
       );
       const debugKey = header(req, "x-debug-otp");
-      const isDebugAuthorized = !!process.env.SERVICE_API_KEY && debugKey === process.env.SERVICE_API_KEY;
+      const debugLabel = matchServiceKey(debugKey, process.env);
+      const isDebugAuthorized = debugLabel !== null && tenantSwitchAllowed(process.env) && looksLikeBrowser(req) === null;
+      if (debugLabel !== null) {
+        logServiceKeyEvent({
+          event: isDebugAuthorized ? "otp_debug_echo" : "otp_debug_echo_refused",
+          endpoint: "auth/otp/request",
+          fingerprint: keyFingerprint(debugKey),
+          keyLabel: debugLabel
+        });
+      }
       return {
         challengeId: inserted.rows[0].id,
         expiresAt: inserted.rows[0].expires_at,

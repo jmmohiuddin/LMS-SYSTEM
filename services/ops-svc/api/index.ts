@@ -1,6 +1,6 @@
 /**
  * Dynamic-route dispatcher for
- * /api/v1/ops/{maintenance,events,branding,brand,manifest,notices,inbox,
+ * /api/v1/ops/{maintenance,monitor,events,branding,brand,manifest,notices,inbox,
  *              dashboard,assign,enrol,rollover,settings,users,
  *              structure,guardians,audit,calendar,document}
  * — one Vercel function (api/v1/ops/[action].js) instead of sixteen. See
@@ -36,13 +36,16 @@ import calendar from './calendar.ts';
 import document from './document.ts';
 // R-9 — web push subscriptions, the cheap transport beside SMS.
 import push from './push.ts';
+// R-8 §7 — the scheduled alert evaluator. Service-credentialled like
+// maintenance, and like maintenance it carries its own limiter.
+import monitor from './monitor.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
 const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
   dashboard, assign, enrol, rollover, settings, users,
-  structure, guardians, audit, calendar, document, push,
+  structure, guardians, audit, calendar, document, push, monitor,
 };
 
 /**
@@ -66,7 +69,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // else is bucketed by what it costs: a branding write is a mutation, a
   // pre-auth identity read is a read, and events is a mutation from
   // ordinary users.
-  if (req.method !== 'OPTIONS' && sub !== 'maintenance') {
+  if (req.method !== 'OPTIONS' && sub !== 'maintenance' && sub !== 'monitor') {
     // Publishing a notice fans out to hundreds of receipt rows and can queue
     // SMS, so it is the heaviest mutation on this dispatcher. Marking one read
     // is a mutation too — cheap, but a write.

@@ -170,7 +170,11 @@ export function slugify(name: string): string {
     .slice(0, 63);
 }
 
-class Console_ {
+// Exported for tests. The boot at the foot of this file is still the only
+// caller in the browser; what the export buys is the ability to mount a
+// screen in jsdom and assert what it SAYS, which is where R-8's two
+// remaining console defects lived (§9A, §11).
+export class Console_ {
   private readonly doc = document;
   private readonly root: HTMLElement;
 
@@ -1406,6 +1410,24 @@ class Console_ {
     note.textContent = `${LEVEL_BN[this.draft.level]} স্তরের জন্য সাধারণত `
       + `${bnNum(lo)}–${bnNum(hi)} শ্রেণি। ভিন্ন হলে বদলে নিন।`;
     form.append(note);
+
+    // R-8 §11. Provisioning seeds a subject list, and for classes 11–12 that
+    // list is ours: shikhonBD's default reference set, with codes we assigned
+    // (the H- prefix exists so they cannot be mistaken for board numbers, and
+    // so they cannot collide with the SSC codes in a combined institution).
+    // It is a reasonable starting point and it is NOT the board syllabus, and
+    // the moment to say so is here — before a college's registrar assumes the
+    // list was checked against a circular and builds a year on it.
+    if (hi >= 11) {
+      const hsc = d.createElement('p');
+      hsc.className = 'inline-notice';
+      hsc.dataset.notice = 'hsc-catalogue';
+      hsc.textContent = 'একাদশ–দ্বাদশ শ্রেণির বিষয়তালিকা shikhonBD-এর নিজস্ব '
+        + 'প্রাথমিক তালিকা — বোর্ডের অফিসিয়াল সিলেবাস নয়, এবং বিষয় কোডগুলোও '
+        + 'আমাদের। প্রতিষ্ঠানের সঙ্গে মিলিয়ে নিয়ে পরে বিষয় যোগ, বাদ বা সম্পাদনা '
+        + 'করা যাবে।';
+      form.append(hsc);
+    }
     main.append(form);
 
     this.nav(main, async () => {
@@ -1501,6 +1523,22 @@ class Console_ {
         : 'কোনো ভূমিকা নেই';
       detail.textContent = `${c.existingName} — বর্তমান ভূমিকা: ${roleNames}`;
       warn.append(wh, wp, detail);
+
+      // R-8 §9A, second pass. The panel named the person and their current
+      // role but never the consequence, and "confirm?" without a stated
+      // outcome is how an operator clicks through. The role dictionary lives
+      // here rather than on the server because it already exists here; a
+      // second copy in platform-svc would be a second thing to keep in step.
+      if (!c.alreadyHasRole) {
+        const consequence = d.createElement('p');
+        consequence.className = 'inline-notice';
+        consequence.dataset.consequence = 'role-change';
+        const newRole = ADMIN_ROLE_BN[c.requestedRole] ?? c.requestedRole;
+        consequence.textContent = c.existingRoles.length > 0
+          ? `নিশ্চিত করলে এই অ্যাকাউন্টের ভূমিকা ${newRole} করা হবে।`
+          : `নিশ্চিত করলে এই অ্যাকাউন্টকে ${newRole} ভূমিকা দেওয়া হবে।`;
+        warn.append(consequence);
+      }
 
       const row = d.createElement('div');
       row.className = 'action-row';

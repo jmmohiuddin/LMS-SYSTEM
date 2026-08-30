@@ -203,6 +203,12 @@ for (const [entry, name, routePath] of NETLIFY_ENTRIES) {
 const SCHEDULED_ENTRIES = [
   ['services/sms-svc/api/dispatch.ts', 'cron-sms',         '/api/v1/sms/dispatch',    '0 18 * * *'],
   ['services/ops-svc/api/index.ts',    'cron-maintenance', '/api/v1/ops/maintenance', '0 19 * * *'],
+  // R-8 §7. Every fifteen minutes, because the conditions it watches are
+  // absences — a queue that stopped draining, attendance that stopped
+  // landing — and an absence is only visible in the gap between checks. A
+  // daily monitor would report the outage the following evening, by which
+  // time a school has spent a day wondering why nobody was told anything.
+  ['services/ops-svc/api/index.ts',    'cron-monitor',     '/api/v1/ops/monitor',     '*/15 * * * *'],
 ];
 
 for (const [entry, name, invokePath, schedule] of SCHEDULED_ENTRIES) {

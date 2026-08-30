@@ -14,6 +14,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, json, header } from '../../../packages/server-core/src/http.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+import {
+  matchServiceKey, looksLikeBrowser, keyFingerprint, logServiceKeyEvent,
+} from '../../../packages/server-core/src/service-auth.ts';
 import { SmsDispatchWorker, type DispatchResult } from '../src/dispatch.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -34,11 +37,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // scheduler re-firing the worker, which would send SMS twice.
   if (!(await enforceRateLimit(req, res, cors, 'service'))) return;
 
+  // R-8 §2: constant-time, rotation-aware, and refused if a valid key arrives
+  // from a browser — this endpoint spends a school's SMS budget.
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  const validTokens = [process.env.SERVICE_API_KEY, process.env.CRON_SECRET].filter(Boolean);
-  if (validTokens.length === 0 || !validTokens.includes(token)) {
+  const keyLabel = matchServiceKey(token, process.env, { allowCron: true });
+  if (!keyLabel) {
     json(res, 401, { error: 'unauthorized' }, cors);
+    return;
+  }
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: 'service_key_from_browser', endpoint: 'sms/dispatch',
+      fingerprint: keyFingerprint(token), keyLabel, detail: browserHeader,
+    });
+    json(res, 403, { error: 'service_key_from_browser' }, cors);
     return;
   }
 

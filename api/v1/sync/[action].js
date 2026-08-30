@@ -28,9 +28,9 @@ function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS", requestO
     ].join(", ")
   };
 }
-function json(res, code, body, cors) {
+function json(res, code, body, cors3) {
   const payload = JSON.stringify(body);
-  res.writeHead(code, { ...cors, "Content-Type": "application/json" });
+  res.writeHead(code, { ...cors3, "Content-Type": "application/json" });
   res.end(payload);
 }
 
@@ -167,11 +167,11 @@ async function consumeRateLimit(cls, ip, identity) {
     return { allowed: true, retryAfterSec: 0 };
   }
 }
-async function enforceRateLimit(req, res, cors, cls, identity) {
+async function enforceRateLimit(req, res, cors3, cls, identity) {
   const verdict = await consumeRateLimit(cls, clientIp(req), identity);
-  return sendIfRefused(res, cors, verdict);
+  return sendIfRefused(res, cors3, verdict);
 }
-function sendIfRefused(res, cors, verdict) {
+function sendIfRefused(res, cors3, verdict) {
   if (verdict.allowed) return true;
   json(
     res,
@@ -181,7 +181,7 @@ function sendIfRefused(res, cors, verdict) {
       message: "too many requests \u2014 please wait before trying again",
       retryAfterSec: verdict.retryAfterSec
     },
-    { ...cors, "Retry-After": String(verdict.retryAfterSec) }
+    { ...cors3, "Retry-After": String(verdict.retryAfterSec) }
   );
   return false;
 }
@@ -1826,6 +1826,101 @@ async function verifyAccessToken(token) {
   };
 }
 
+// packages/server-core/src/service-auth.ts
+import { createHash, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+function keyFingerprint(key) {
+  return createHash("sha256").update(key, "utf8").digest("hex").slice(0, 8);
+}
+function sameSecret(a, b) {
+  if (!a || !b) return false;
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual2(ha, hb);
+}
+function matchServiceKey(token, env = process.env, opts = {}) {
+  if (!token) return null;
+  if (env.SERVICE_API_KEY && sameSecret(token, env.SERVICE_API_KEY)) return "current";
+  if (env.SERVICE_API_KEY_NEXT && sameSecret(token, env.SERVICE_API_KEY_NEXT)) return "next";
+  if (opts.allowCron && env.CRON_SECRET && sameSecret(token, env.CRON_SECRET)) return "cron";
+  return null;
+}
+function looksLikeBrowser(req) {
+  for (const name of ["origin", "cookie", "sec-fetch-site"]) {
+    const v = req.headers[name];
+    if (typeof v === "string" ? v.length > 0 : Array.isArray(v) && v.length > 0) return name;
+  }
+  return null;
+}
+function tenantSwitchAllowed(env = process.env) {
+  const flag = (env.SERVICE_KEY_TENANT_SWITCH ?? "").trim().toLowerCase();
+  if (flag === "on" || flag === "true" || flag === "1") return true;
+  if (flag === "off" || flag === "false" || flag === "0") return false;
+  return env.NODE_ENV !== "production";
+}
+function authenticateServiceKey(req, token, env = process.env, endpoint = "unknown") {
+  const label = matchServiceKey(token, env);
+  if (!label) return { kind: "not_service" };
+  const fingerprint = keyFingerprint(token);
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: "service_key_from_browser",
+      endpoint,
+      fingerprint,
+      keyLabel: label,
+      detail: browserHeader
+    });
+    return {
+      kind: "refused",
+      status: 403,
+      error: "Service credentials may not be used from a browser",
+      code: "service_key_from_browser"
+    };
+  }
+  if (!tenantSwitchAllowed(env)) {
+    logServiceKeyEvent({
+      event: "service_key_switch_disabled",
+      endpoint,
+      fingerprint,
+      keyLabel: label
+    });
+    return {
+      kind: "refused",
+      status: 403,
+      error: "Service-key tenant switching is disabled on this deployment",
+      code: "service_tenant_switch_disabled"
+    };
+  }
+  const h = (name) => {
+    const v = req.headers[name];
+    return (Array.isArray(v) ? v[0] : v) ?? "";
+  };
+  const tenantId = h("x-tenant-id").trim();
+  const userId = h("x-user-id").trim();
+  const role = h("x-role").trim() || "teacher";
+  if (!tenantId || !userId) {
+    return {
+      kind: "refused",
+      status: 400,
+      error: "X-Tenant-ID and X-User-ID headers are required",
+      code: "missing_service_context"
+    };
+  }
+  logServiceKeyEvent({
+    event: "service_key_used",
+    endpoint,
+    fingerprint,
+    keyLabel: label,
+    tenantId,
+    userId,
+    role
+  });
+  return { kind: "service", context: { tenantId, userId, role, keyLabel: label } };
+}
+function logServiceKeyEvent(fields) {
+  console.warn(JSON.stringify({ at: "service-auth", ...fields }));
+}
+
 // services/sync-svc/api/push.ts
 var _handler = null;
 async function handler() {
@@ -1837,17 +1932,9 @@ async function handler() {
   _handler = new SyncPushHandler(db);
   return _handler;
 }
-var CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": [
-    "Content-Type",
-    "Authorization",
-    "X-Tenant-ID",
-    "X-User-ID",
-    "X-Role"
-  ].join(", ")
-};
+function cors(req) {
+  return corsHeaders([], "POST, OPTIONS", header(req, "origin") || void 0);
+}
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -1860,39 +1947,38 @@ function header(req, name) {
   const v = req.headers[name.toLowerCase()];
   return Array.isArray(v) ? v[0] ?? "" : v ?? "";
 }
-function json2(res, code, body) {
+function json2(res, code, body, headers) {
   const payload = JSON.stringify(body);
-  res.writeHead(code, { ...CORS, "Content-Type": "application/json" });
+  res.writeHead(code, { ...headers, "Content-Type": "application/json" });
   res.end(payload);
 }
 async function route(req, res) {
+  const CORS = cors(req);
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS);
     res.end();
     return;
   }
   if (req.method !== "POST") {
-    json2(res, 405, { error: "Method Not Allowed" });
+    json2(res, 405, { error: "Method Not Allowed" }, CORS);
     return;
   }
   const authHeader = header(req, "authorization");
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!token) {
-    json2(res, 401, { error: "Unauthorized" });
+    json2(res, 401, { error: "Unauthorized" }, CORS);
     return;
   }
   let tenantId;
   let userId;
   let role;
-  const SERVICE_API_KEY = process.env.SERVICE_API_KEY;
-  if (SERVICE_API_KEY && token === SERVICE_API_KEY) {
-    tenantId = header(req, "x-tenant-id");
-    userId = header(req, "x-user-id");
-    role = header(req, "x-role") || "teacher";
-    if (!tenantId || !userId) {
-      json2(res, 400, { error: "X-Tenant-ID and X-User-ID headers are required" });
-      return;
-    }
+  const svc = authenticateServiceKey(req, token, process.env, "sync/push");
+  if (svc.kind === "refused") {
+    json2(res, svc.status, { error: svc.error, code: svc.code }, CORS);
+    return;
+  }
+  if (svc.kind === "service") {
+    ({ tenantId, userId, role } = svc.context);
   } else {
     try {
       const claims = await verifyAccessToken(token);
@@ -1900,7 +1986,7 @@ async function route(req, res) {
       userId = claims.sub;
       role = claims.role;
     } catch {
-      json2(res, 401, { error: "Unauthorized" });
+      json2(res, 401, { error: "Unauthorized" }, CORS);
       return;
     }
   }
@@ -1909,17 +1995,17 @@ async function route(req, res) {
     const raw = await readBody(req);
     body = JSON.parse(raw);
   } catch {
-    json2(res, 400, { error: "Invalid JSON body" });
+    json2(res, 400, { error: "Invalid JSON body" }, CORS);
     return;
   }
   try {
     const h = await handler();
     const result = await h.handle(body, { tenantId, userId, role });
-    json2(res, 200, result);
+    json2(res, 200, result, CORS);
   } catch (err) {
     console.error("[sync/push]", err);
     const msg = err instanceof Error ? err.message : "Internal error";
-    json2(res, 500, { error: msg });
+    json2(res, 500, { error: msg }, CORS);
   }
 }
 
@@ -2006,54 +2092,45 @@ async function handler2() {
   _handler2 = new SyncPullHandler(db);
   return _handler2;
 }
-var CORS2 = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": [
-    "Content-Type",
-    "Authorization",
-    "X-Tenant-ID",
-    "X-User-ID",
-    "X-Role"
-  ].join(", ")
-};
 function header2(req, name) {
   const v = req.headers[name.toLowerCase()];
   return Array.isArray(v) ? v[0] ?? "" : v ?? "";
 }
-function json3(res, code, body) {
+function cors2(req) {
+  return corsHeaders([], "GET, OPTIONS", header2(req, "origin") || void 0);
+}
+function json3(res, code, body, headers) {
   const payload = JSON.stringify(body);
-  res.writeHead(code, { ...CORS2, "Content-Type": "application/json" });
+  res.writeHead(code, { ...headers, "Content-Type": "application/json" });
   res.end(payload);
 }
 async function route2(req, res) {
+  const CORS = cors2(req);
   if (req.method === "OPTIONS") {
-    res.writeHead(204, CORS2);
+    res.writeHead(204, CORS);
     res.end();
     return;
   }
   if (req.method !== "GET") {
-    json3(res, 405, { error: "Method Not Allowed" });
+    json3(res, 405, { error: "Method Not Allowed" }, CORS);
     return;
   }
   const authHeader = header2(req, "authorization");
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!token) {
-    json3(res, 401, { error: "Unauthorized" });
+    json3(res, 401, { error: "Unauthorized" }, CORS);
     return;
   }
   let tenantId;
   let userId;
   let role;
-  const SERVICE_API_KEY = process.env.SERVICE_API_KEY;
-  if (SERVICE_API_KEY && token === SERVICE_API_KEY) {
-    tenantId = header2(req, "x-tenant-id");
-    userId = header2(req, "x-user-id");
-    role = header2(req, "x-role") || "teacher";
-    if (!tenantId || !userId) {
-      json3(res, 400, { error: "X-Tenant-ID and X-User-ID headers are required" });
-      return;
-    }
+  const svc = authenticateServiceKey(req, token, process.env, "sync/pull");
+  if (svc.kind === "refused") {
+    json3(res, svc.status, { error: svc.error, code: svc.code }, CORS);
+    return;
+  }
+  if (svc.kind === "service") {
+    ({ tenantId, userId, role } = svc.context);
   } else {
     try {
       const claims = await verifyAccessToken(token);
@@ -2061,7 +2138,7 @@ async function route2(req, res) {
       userId = claims.sub;
       role = claims.role;
     } catch {
-      json3(res, 401, { error: "Unauthorized" });
+      json3(res, 401, { error: "Unauthorized" }, CORS);
       return;
     }
   }
@@ -2069,12 +2146,12 @@ async function route2(req, res) {
   const scopeParam = url.searchParams.get("scope") ?? "";
   const scopes = scopeParam.split(",").map((s) => s.trim()).filter(Boolean);
   if (scopes.length === 0) {
-    json3(res, 400, { error: "scope query param is required (comma-separated)" });
+    json3(res, 400, { error: "scope query param is required (comma-separated)" }, CORS);
     return;
   }
   const cursor = Number(url.searchParams.get("cursor") ?? "0");
   if (!Number.isFinite(cursor) || cursor < 0) {
-    json3(res, 400, { error: "cursor must be a non-negative integer" });
+    json3(res, 400, { error: "cursor must be a non-negative integer" }, CORS);
     return;
   }
   const limitParam = url.searchParams.get("limit");
@@ -2082,16 +2159,16 @@ async function route2(req, res) {
   try {
     const h = await handler2();
     const result = await h.handle({ scopes, cursor, limit }, { tenantId, userId, role });
-    json3(res, 200, result);
+    json3(res, 200, result, CORS);
   } catch (err) {
     const code = err.code;
     if (code === "UNKNOWN_SCOPE") {
-      json3(res, 400, { error: err.message });
+      json3(res, 400, { error: err.message }, CORS);
       return;
     }
     console.error("[sync/pull]", err);
     const msg = err instanceof Error ? err.message : "Internal error";
-    json3(res, 500, { error: msg });
+    json3(res, 500, { error: msg }, CORS);
   }
 }
 

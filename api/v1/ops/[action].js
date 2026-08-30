@@ -231,6 +231,37 @@ function sendIfRefused(res, cors, verdict) {
 
 // services/ops-svc/api/maintenance.ts
 import pg2 from "pg";
+
+// packages/server-core/src/service-auth.ts
+import { createHash, timingSafeEqual } from "node:crypto";
+function keyFingerprint(key) {
+  return createHash("sha256").update(key, "utf8").digest("hex").slice(0, 8);
+}
+function sameSecret(a, b) {
+  if (!a || !b) return false;
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
+}
+function matchServiceKey(token, env = process.env, opts = {}) {
+  if (!token) return null;
+  if (env.SERVICE_API_KEY && sameSecret(token, env.SERVICE_API_KEY)) return "current";
+  if (env.SERVICE_API_KEY_NEXT && sameSecret(token, env.SERVICE_API_KEY_NEXT)) return "next";
+  if (opts.allowCron && env.CRON_SECRET && sameSecret(token, env.CRON_SECRET)) return "cron";
+  return null;
+}
+function looksLikeBrowser(req) {
+  for (const name of ["origin", "cookie", "sec-fetch-site"]) {
+    const v = req.headers[name];
+    if (typeof v === "string" ? v.length > 0 : Array.isArray(v) && v.length > 0) return name;
+  }
+  return null;
+}
+function logServiceKeyEvent(fields2) {
+  console.warn(JSON.stringify({ at: "service-auth", ...fields2 }));
+}
+
+// services/ops-svc/api/maintenance.ts
 var STEPS = [
   ["maintain_partitions", "SELECT app.maintain_partitions()"],
   ["purge_expired_data", "SELECT app.purge_expired_data()"],
@@ -260,9 +291,21 @@ async function handler(req, res) {
   if (!await enforceRateLimit(req, res, cors, "service")) return;
   const authHeader = header(req, "authorization");
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  const valid = [process.env.CRON_SECRET, process.env.SERVICE_API_KEY].filter(Boolean);
-  if (!token || !valid.includes(token)) {
+  const keyLabel = matchServiceKey(token, process.env, { allowCron: true });
+  if (!keyLabel) {
     json(res, 401, { error: "unauthorized" }, cors);
+    return;
+  }
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: "service_key_from_browser",
+      endpoint: "ops/maintenance",
+      fingerprint: keyFingerprint(token),
+      keyLabel,
+      detail: browserHeader
+    });
+    json(res, 403, { error: "service_key_from_browser" }, cors);
     return;
   }
   const url = process.env.DATABASE_MAINTENANCE_URL;
@@ -1994,7 +2037,7 @@ import {
   createCipheriv,
   hkdfSync,
   randomBytes,
-  createHash,
+  createHash as createHash2,
   createPrivateKey as createPrivateKey3,
   createPublicKey as createPublicKey3,
   sign as signSync
@@ -2015,7 +2058,7 @@ function vapidFromEnv(env = process.env) {
   return { publicKey: publicKey2, privateKey };
 }
 function endpointFingerprint(endpoint) {
-  return createHash("sha256").update(endpoint).digest("hex").slice(0, 12);
+  return createHash2("sha256").update(endpoint).digest("hex").slice(0, 12);
 }
 
 // services/sms-svc/src/push-send.ts
@@ -5435,6 +5478,325 @@ async function handler19(req, res) {
   }
 }
 
+// packages/server-core/src/alerts.ts
+var WINDOW_HOURS = 24;
+var THRESHOLDS = {
+  /** Two hours of a message sitting unsent. The dispatcher runs daily, so a
+   *  queue is normal; a queue whose OLDEST member predates the last run is
+   *  not. Two hours is short enough to catch a failed run the same evening. */
+  smsQueueStalledMinutes: 120,
+  /** Below ten sends the ratio is noise — one failure out of two is 50%. */
+  smsFailureFloor: 10,
+  smsFailureWarnRatio: 0.25,
+  smsFailureCriticalRatio: 0.5,
+  /** Push is best-effort and falls through to SMS, so it warns, never pages. */
+  pushDeviceFloor: 5,
+  pushFailureRatio: 0.5,
+  /** A rejected sync op is attendance a teacher believes they saved. */
+  syncRejectedFloor: 10,
+  syncRejectedRatio: 0.1,
+  /** Credential stuffing looks like many exhausted challenges across few
+   *  phones; a school's ordinary Monday looks like a few across many. */
+  otpExhaustedFloor: 20,
+  otpExhaustedRatio: 0.3
+};
+function ratio(part, whole) {
+  return whole > 0 ? part / whole : 0;
+}
+function pct(part, whole) {
+  return `${Math.round(ratio(part, whole) * 100)}%`;
+}
+function evaluateAlerts(s) {
+  const out = [];
+  if (!s.databaseReachable) {
+    return [{
+      id: "database_unavailable",
+      severity: "critical",
+      title: "Database unreachable",
+      detail: "The monitor could not open a connection.",
+      investigate: "Neon console \u2192 the production project \u2192 Operations, for a compute suspend or a storage incident. Then the host log for the failing query text.",
+      recover: "If the compute is suspended it wakes on the next connection; retry before escalating. If the endpoint moved, DATABASE_URL must be updated in the host environment and the functions redeployed. While it is down the PWA keeps working offline and queues writes, so no attendance is lost \u2014 say so to the schools that ring."
+    }];
+  }
+  const stalled = s.smsQueuedOldestMinutes;
+  if (s.smsQueuedNow > 0 && stalled !== null && stalled >= THRESHOLDS.smsQueueStalledMinutes) {
+    out.push({
+      id: "sms_queue_stalled",
+      severity: "critical",
+      title: "SMS queue is not draining",
+      detail: `${s.smsQueuedNow} queued; the oldest has waited ${Math.round(stalled / 60)}h (limit ${THRESHOLDS.smsQueueStalledMinutes / 60}h).`,
+      investigate: "Did the dispatch cron run? Netlify \u2192 Functions \u2192 cron-sms, or the Vercel cron log. Then GET /api/v1/ops/health for the same counts per tenant. A queue with a stalled head and no failures usually means the job never fired, not that sending broke.",
+      recover: "Invoke POST /api/v1/sms/dispatch by hand with the service key. It is idempotent per row \u2014 a message already sent is not sent twice. If the cron itself is dead, check NETLIFY_CRONS_ENABLED on the host that owns the schedule (it defaults to off, deliberately)."
+    });
+  }
+  const smsTotal = s.smsFailedRecent + s.smsSentRecent;
+  const smsRatio = ratio(s.smsFailedRecent, smsTotal);
+  if (s.smsFailedRecent >= THRESHOLDS.smsFailureFloor && smsRatio > THRESHOLDS.smsFailureWarnRatio) {
+    const critical = smsRatio > THRESHOLDS.smsFailureCriticalRatio;
+    out.push({
+      id: "sms_failure_rate",
+      severity: critical ? "critical" : "warning",
+      title: `SMS failing at ${pct(s.smsFailedRecent, smsTotal)}`,
+      detail: `${s.smsFailedRecent} failed of ${smsTotal} attempted in the last ${WINDOW_HOURS}h.`,
+      investigate: "GET /api/v1/ops/health shows the top error codes. A single repeated code is the aggregator (credentials, balance, sender identity unapproved); a spread of codes is more likely bad numbers in one school's import.",
+      recover: "Aggregator-side: fix the credential or top up, then re-queue the failed rows \u2014 they keep their attempt count and are retried by the next dispatch. Data-side: the numbers are wrong and the school must correct them; do not retry into a wall."
+    });
+  }
+  if (s.partitionMonthsAhead !== null && s.partitionMonthsAhead < 1) {
+    out.push({
+      id: "maintenance_cron_stopped",
+      severity: "critical",
+      title: "No future partitions \u2014 the maintenance job has stopped",
+      detail: `${s.partitionMonthsAhead} month(s) of partitions exist beyond the current one.`,
+      investigate: "Netlify \u2192 Functions \u2192 cron-maintenance, or the Vercel cron log. DATABASE_MAINTENANCE_URL must be set to the OWNER role on the direct (non-pooled) endpoint; a pooler URL fails here.",
+      recover: "POST /api/v1/ops/maintenance by hand with the service key, today. This is not a warning that can wait for the morning: when the month turns without a partition, every attendance and SMS write fails at once, for every school."
+    });
+  }
+  if (s.pushDevices >= THRESHOLDS.pushDeviceFloor && ratio(s.pushFailingDevices, s.pushDevices) > THRESHOLDS.pushFailureRatio) {
+    out.push({
+      id: "push_failure_rate",
+      severity: "warning",
+      title: `Push failing on ${pct(s.pushFailingDevices, s.pushDevices)} of devices`,
+      detail: `${s.pushFailingDevices} of ${s.pushDevices} subscriptions have a recent failure.`,
+      investigate: "Almost always the VAPID keypair: a changed key invalidates every existing subscription at once, which is what a sudden jump to near 100% means. Check VAPID_PUBLIC_KEY against the value the PWA was built with.",
+      recover: "Nobody misses a message over this \u2014 a push that is not accepted falls through to SMS, which is why this warns rather than pages. If the keypair did change, subscriptions must be re-created: the browser resubscribes on next visit once the key matches."
+    });
+  }
+  const syncTotal = s.syncRejectedRecent + s.syncAppliedRecent;
+  if (s.syncRejectedRecent >= THRESHOLDS.syncRejectedFloor && ratio(s.syncRejectedRecent, syncTotal) > THRESHOLDS.syncRejectedRatio) {
+    out.push({
+      id: "sync_rejection_rate",
+      severity: "critical",
+      title: `Sync rejecting ${pct(s.syncRejectedRecent, syncTotal)} of operations`,
+      detail: `${s.syncRejectedRecent} rejected of ${syncTotal} in the last ${WINDOW_HOURS}h.`,
+      investigate: `SELECT entity, conflict_detail FROM sync_operations WHERE result = 'rejected' ORDER BY received_at DESC \u2014 the detail names the reason. R-7 shipped a version where every attendance push was rejected for a malformed academic year id and the only symptom a teacher saw was a small "1 could not be sent"; assume the client is sending something the server will not take, not that teachers are wrong.`,
+      recover: "The operations are still in each device's outbox and will be retried, so fixing the server side recovers them without anybody re-entering a register. Ship the fix, then confirm the rejection count falls rather than assuming it did."
+    });
+  }
+  if (s.otpExhaustedRecent >= THRESHOLDS.otpExhaustedFloor && ratio(s.otpExhaustedRecent, s.otpIssuedRecent) > THRESHOLDS.otpExhaustedRatio) {
+    out.push({
+      id: "auth_anomaly",
+      severity: "warning",
+      title: "Unusual rate of exhausted login codes",
+      detail: `${s.otpExhaustedRecent} challenges burned all attempts across ${s.otpExhaustedPhones} phone number(s), of ${s.otpIssuedRecent} issued in the last ${WINDOW_HOURS}h.`,
+      investigate: "Compare the two counts. Many exhausted challenges across FEW phones is one person guessing at one account; across many phones it is more likely an SMS delivery problem \u2014 people are not receiving the code they are typing. The second is far more common and needs the opposite response.",
+      recover: "Guessing: the per-phone limiter already refuses further attempts and no action is required beyond watching. Delivery: check sms_outbox for the auth.* messages \u2014 if they are queued or failed, this is the SMS alert wearing a different hat."
+    });
+  }
+  const rank = (a) => a.severity === "critical" ? 0 : 1;
+  return out.sort((a, b) => rank(a) - rank(b));
+}
+function alertWebhookUrl(env = process.env) {
+  const raw = (env.ALERT_WEBHOOK_URL ?? "").trim();
+  if (!raw) return null;
+  if (!raw.startsWith("https://")) return null;
+  return raw;
+}
+function alertText(alerts, environment) {
+  if (alerts.length === 0) return `shikhonBD ${environment}: all clear`;
+  return [`shikhonBD ${environment} \u2014 ${alerts.length} alert(s)`].concat(alerts.map((a) => `[${a.severity.toUpperCase()}] ${a.title} \u2014 ${a.detail}`)).join("\n");
+}
+
+// packages/server-core/src/monitor-signals.ts
+import pg3 from "pg";
+var UNREACHABLE = {
+  databaseReachable: false,
+  smsQueuedNow: 0,
+  smsQueuedOldestMinutes: null,
+  smsFailedRecent: 0,
+  smsSentRecent: 0,
+  partitionMonthsAhead: null,
+  pushDevices: 0,
+  pushFailingDevices: 0,
+  syncRejectedRecent: 0,
+  syncAppliedRecent: 0,
+  otpIssuedRecent: 0,
+  otpExhaustedRecent: 0,
+  otpExhaustedPhones: 0
+};
+async function gatherSignals(connectionString) {
+  const client = new pg3.Client({ connectionString, statement_timeout: 15e3 });
+  try {
+    await client.connect();
+  } catch {
+    return { signals: UNREACHABLE, topErrors: [] };
+  }
+  try {
+    const num2 = (v) => Number(v ?? 0);
+    const queue = await client.query(
+      `SELECT count(*)::text AS queued_now,
+              (EXTRACT(EPOCH FROM (now() - min(queued_at))) / 60)::bigint::text
+                AS oldest_queued_minutes
+         FROM sms_outbox WHERE status = 'queued'`
+    );
+    const sms = await client.query(
+      `SELECT
+         count(*) FILTER (WHERE status = 'failed'
+                            AND COALESCE(sent_at, queued_at) > now() - $1::interval)::text
+                                                      AS failed_recent,
+         count(*) FILTER (WHERE status IN ('sent','delivered')
+                            AND sent_at > now() - $1::interval)::text AS sent_recent
+       -- created_on is the partition key: this bound keeps the scan on the
+       -- current and previous partitions instead of every month ever sent.
+       FROM sms_outbox WHERE created_on >= CURRENT_DATE - 2`,
+      [`${WINDOW_HOURS} hours`]
+    );
+    const errs = await client.query(
+      `SELECT error_code, count(*)::text AS n
+         FROM sms_outbox
+        WHERE status IN ('failed','suppressed')
+          AND error_code IS NOT NULL
+          AND created_on >= CURRENT_DATE - 2
+          AND COALESCE(sent_at, queued_at) > now() - $1::interval
+        GROUP BY 1 ORDER BY count(*) DESC LIMIT 5`,
+      [`${WINDOW_HOURS} hours`]
+    );
+    const part = await client.query(
+      `SELECT max(
+                (EXTRACT(YEAR  FROM to_date(right(c.relname, 7), 'YYYY_MM'))
+                 - EXTRACT(YEAR  FROM CURRENT_DATE)) * 12
+              + (EXTRACT(MONTH FROM to_date(right(c.relname, 7), 'YYYY_MM'))
+                 - EXTRACT(MONTH FROM CURRENT_DATE))
+              )::int::text AS months_ahead
+         FROM pg_inherits i
+         JOIN pg_class c ON c.oid = i.inhrelid
+         JOIN pg_class p ON p.oid = i.inhparent
+        WHERE p.relname = 'attendance_records'
+          AND c.relname ~ '_[0-9]{4}_[0-9]{2}$'`
+    );
+    const push = await client.query(
+      `SELECT count(*)::text AS devices,
+              count(*) FILTER (
+                WHERE last_failure_at IS NOT NULL
+                  AND (last_success_at IS NULL OR last_failure_at > last_success_at)
+              )::text AS failing
+         FROM push_subscriptions`
+    );
+    const sync = await client.query(
+      `SELECT count(*) FILTER (WHERE result = 'rejected')::text AS rejected,
+              count(*) FILTER (WHERE result = 'applied')::text  AS applied
+         FROM sync_operations
+        WHERE received_at > now() - $1::interval`,
+      [`${WINDOW_HOURS} hours`]
+    );
+    const otp = await client.query(
+      `SELECT count(*)::text AS issued,
+              count(*) FILTER (WHERE attempts >= max_attempts
+                                 AND consumed_at IS NULL)::text AS exhausted,
+              count(DISTINCT phone_e164) FILTER (
+                WHERE attempts >= max_attempts AND consumed_at IS NULL
+              )::text AS exhausted_phones
+         FROM otp_challenges
+        WHERE created_at > now() - $1::interval`,
+      [`${WINDOW_HOURS} hours`]
+    );
+    return {
+      signals: {
+        databaseReachable: true,
+        smsQueuedNow: num2(queue.rows[0].queued_now),
+        smsQueuedOldestMinutes: queue.rows[0].oldest_queued_minutes === null ? null : num2(queue.rows[0].oldest_queued_minutes),
+        smsFailedRecent: num2(sms.rows[0].failed_recent),
+        smsSentRecent: num2(sms.rows[0].sent_recent),
+        partitionMonthsAhead: part.rows[0]?.months_ahead == null ? null : num2(part.rows[0].months_ahead),
+        pushDevices: num2(push.rows[0].devices),
+        pushFailingDevices: num2(push.rows[0].failing),
+        syncRejectedRecent: num2(sync.rows[0].rejected),
+        syncAppliedRecent: num2(sync.rows[0].applied),
+        otpIssuedRecent: num2(otp.rows[0].issued),
+        otpExhaustedRecent: num2(otp.rows[0].exhausted),
+        otpExhaustedPhones: num2(otp.rows[0].exhausted_phones)
+      },
+      topErrors: errs.rows.map((r) => ({ code: r.error_code, count: num2(r.n) }))
+    };
+  } catch (err) {
+    console.error("[monitor] gather failed", err);
+    return { signals: UNREACHABLE, topErrors: [] };
+  } finally {
+    await client.end().catch(() => {
+    });
+  }
+}
+
+// services/ops-svc/api/monitor.ts
+function environmentName() {
+  return process.env.APP_ENV ?? process.env.VERCEL_ENV ?? process.env.CONTEXT ?? process.env.NODE_ENV ?? "unknown";
+}
+async function deliver(alerts, env) {
+  const url = alertWebhookUrl();
+  if (!url) return { delivered: false, reason: "ALERT_WEBHOOK_URL is not set (https required)" };
+  if (alerts.length === 0) return { delivered: false, reason: "nothing firing" };
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // `text` is what Slack, Discord and Teams render; the array is for
+      // anything that parses. Sending both costs nothing and means the sink
+      // can be swapped without touching this file.
+      body: JSON.stringify({ text: alertText(alerts, env), environment: env, alerts }),
+      signal: AbortSignal.timeout(1e4)
+    });
+    if (!res.ok) return { delivered: false, reason: `webhook returned ${res.status}` };
+    return { delivered: true };
+  } catch (err) {
+    return { delivered: false, reason: err instanceof Error ? err.message : "webhook failed" };
+  }
+}
+async function route(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS", header(req, "origin") || void 0);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET" && req.method !== "POST") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  if (!await enforceRateLimit(req, res, cors, "service")) return;
+  const authHeader = header(req, "authorization");
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+  const keyLabel = matchServiceKey(token, process.env, { allowCron: true });
+  if (!keyLabel) {
+    json(res, 401, { error: "unauthorized" }, cors);
+    return;
+  }
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: "service_key_from_browser",
+      endpoint: "ops/monitor",
+      fingerprint: keyFingerprint(token),
+      keyLabel,
+      detail: browserHeader
+    });
+    json(res, 403, { error: "service_key_from_browser" }, cors);
+    return;
+  }
+  const url = process.env.DATABASE_MAINTENANCE_URL;
+  if (!url) {
+    json(res, 503, {
+      error: "monitor_unconfigured",
+      message: "DATABASE_MAINTENANCE_URL (owner role, direct endpoint) is not set"
+    }, cors);
+    return;
+  }
+  const env = environmentName();
+  const { signals, topErrors } = await gatherSignals(url);
+  const alerts = evaluateAlerts(signals);
+  for (const a of alerts) {
+    console.error(JSON.stringify({ at: "monitor", environment: env, ...a }));
+  }
+  const delivery = req.method === "POST" ? await deliver(alerts, env) : { delivered: false, reason: "GET does not deliver" };
+  json(res, 200, {
+    environment: env,
+    checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    alerts,
+    delivery,
+    signals,
+    topErrors
+  }, cors);
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -5455,17 +5817,18 @@ var ROUTES = {
   audit: handler16,
   calendar: handler17,
   document: handler18,
-  push: handler19
+  push: handler19,
+  monitor: route
 };
 async function handler20(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
-  const route = ROUTES[sub];
-  if (!route) {
+  const route2 = ROUTES[sub];
+  if (!route2) {
     json(res, 404, { error: "not_found" }, corsHeaders());
     return;
   }
-  if (req.method !== "OPTIONS" && sub !== "maintenance") {
+  if (req.method !== "OPTIONS" && sub !== "maintenance" && sub !== "monitor") {
     const isWrite = req.method === "POST" || req.method === "PUT" || req.method === "PATCH" || req.method === "DELETE";
     const WRITE_ROUTES = /* @__PURE__ */ new Set([
       "events",
@@ -5485,7 +5848,7 @@ async function handler20(req, res) {
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
   }
-  return route(req, res);
+  return route2(req, res);
 }
 export {
   handler20 as default

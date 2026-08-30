@@ -1,0 +1,39 @@
+{
+  "_README": [
+    "R-8 §1. The human half of scripts/preflight.mjs.",
+    "",
+    "Each key below is something no program can establish from inside a",
+    "process: a DNS record resolving, a certificate terminating, a restore",
+    "actually performed, an SMS reaching a handset, a push landing on a phone,",
+    "an alert waking a person. The preflight checks whether the CONFIGURATION",
+    "for each exists; this file records whether the THING actually happened.",
+    "",
+    "An entry counts only when result is \"pass\" and verifiedOn is a real date.",
+    "Attestations lapse after 180 days: 'we restored a backup successfully'",
+    "stops being a fact about the current system fairly quickly.",
+    "",
+    "Do not fill this in from intent, from a plan, or from a strong belief that",
+    "something would work. Every entry is currently null because none of these",
+    "has been done, and a null here is worth more than a confident guess.",
+    "",
+    "Shape:  { \"verifiedOn\": \"2026-09-14\", \"by\": \"name\",",
+    "          \"result\": \"pass\" | \"fail\", \"environment\": \"production\",",
+    "          \"notes\": \"what was actually observed\" }"
+  ],
+
+  "wildcard_dns": null,
+  "wildcard_tls": null,
+  "subdomain_routing": null,
+
+  "real_sms_delivery": null,
+  "real_push_delivery": null,
+
+  "backup_configured": null,
+  "restore_drill": null,
+
+  "alert_delivered": null,
+
+  "pilot_onboarding": null,
+  "pilot_offline": null,
+  "prod_cross_tenant": null
+}

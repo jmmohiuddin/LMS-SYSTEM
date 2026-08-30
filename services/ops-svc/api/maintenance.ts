@@ -25,6 +25,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import pg from 'pg';
 import { corsHeaders, json, header } from '../../../packages/server-core/src/http.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+import {
+  matchServiceKey, looksLikeBrowser, keyFingerprint, logServiceKeyEvent,
+} from '../../../packages/server-core/src/service-auth.ts';
 
 const STEPS = [
   ['maintain_partitions', 'SELECT app.maintain_partitions()'],
@@ -58,11 +61,22 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // connection, so a loop here is the most expensive one to leave unbounded.
   if (!(await enforceRateLimit(req, res, cors, 'service'))) return;
 
+  // R-8 §2. This is the one endpoint holding an owner-role connection, so it
+  // is the one where a leaked key costs the most.
   const authHeader = header(req, 'authorization');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  const valid = [process.env.CRON_SECRET, process.env.SERVICE_API_KEY].filter(Boolean);
-  if (!token || !valid.includes(token)) {
+  const keyLabel = matchServiceKey(token, process.env, { allowCron: true });
+  if (!keyLabel) {
     json(res, 401, { error: 'unauthorized' }, cors);
+    return;
+  }
+  const browserHeader = looksLikeBrowser(req);
+  if (browserHeader) {
+    logServiceKeyEvent({
+      event: 'service_key_from_browser', endpoint: 'ops/maintenance',
+      fingerprint: keyFingerprint(token), keyLabel, detail: browserHeader,
+    });
+    json(res, 403, { error: 'service_key_from_browser' }, cors);
     return;
   }
 

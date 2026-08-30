@@ -18,6 +18,10 @@ import { corsHeaders, readJson, json, header, HttpError } from '../../../package
 import { randomOtpCode, sha256Buf } from '../../../packages/server-core/src/crypto.ts';
 import { enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 import { otpSendingEnabled } from '../../../packages/server-core/src/go-live.ts';
+import {
+  matchServiceKey, looksLikeBrowser, keyFingerprint, logServiceKeyEvent,
+  tenantSwitchAllowed,
+} from '../../../packages/server-core/src/service-auth.ts';
 
 const PHONE_RE = /^\+8801[3-9][0-9]{8}$/;
 const PURPOSES = new Set(['login', 'enrol_device', 'reset_password', 'verify_phone']);
@@ -149,8 +153,24 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         ],
       );
 
+      // R-8 §2. Echoing a live OTP is an account-takeover primitive: whoever
+      // reads it becomes that person. So it now sits behind the same single
+      // switch as service-key tenant switching — off in production unless
+      // SERVICE_KEY_TENANT_SWITCH says otherwise — and is refused outright
+      // from a browser, since no legitimate caller of it is a page. Dev and CI
+      // are unchanged, which is where the acceptance run needs it.
       const debugKey = header(req, 'x-debug-otp');
-      const isDebugAuthorized = !!process.env.SERVICE_API_KEY && debugKey === process.env.SERVICE_API_KEY;
+      const debugLabel = matchServiceKey(debugKey, process.env);
+      const isDebugAuthorized = debugLabel !== null
+        && tenantSwitchAllowed(process.env)
+        && looksLikeBrowser(req) === null;
+      if (debugLabel !== null) {
+        logServiceKeyEvent({
+          event: isDebugAuthorized ? 'otp_debug_echo' : 'otp_debug_echo_refused',
+          endpoint: 'auth/otp/request', fingerprint: keyFingerprint(debugKey),
+          keyLabel: debugLabel,
+        });
+      }
 
       return {
         challengeId: inserted.rows[0].id,

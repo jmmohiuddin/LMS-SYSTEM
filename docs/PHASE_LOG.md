@@ -5116,3 +5116,233 @@ calls it.** Carried unchanged from R-8, R-9 and the R-7 completion pass.
 **Sign an SMS aggregator contract and stand up one production deployment.**
 Every remaining item on this list is behind one of those two, and the code that
 waits on them has been built and tested as far as a fake can take it.
+
+---
+
+# 2026-08-30 · R-8 activation & hardening pass · The gap between configured and demonstrated
+
+**Status: R-8 remains IN PROGRESS.** This pass closed the last of the code-side
+work and built the machinery that will *record* the external work. It did not
+do the external work, because none of it can be done from a repository: there
+is no production deployment to configure, no aggregator contract to exercise,
+no production database to restore, no device to push to, and no school to pilot
+with.
+
+What changed is that those gaps are now enforced rather than described. Before
+this pass, "SMS is ready" and "an SMS reached a handset" were two claims that
+looked the same in a report. Now the first is checked by a program and the
+second requires a dated attestation from a person, and the preflight refuses to
+call a deployment ready without both.
+
+## The preflight (§1)
+
+`scripts/preflight.mjs` — 32 checks over environment variables, secret strength
+and distinctness, database separation and TLS, the maintenance and platform
+roles, service-key posture, origins, committed bundles, the manifest and
+service worker, cron ownership, SMS credentials and allowlist, VAPID keys, and
+eleven external items. One line per check, with its evidence, never a value.
+
+Three states, and the third is the point. PASS and FAIL are what a program can
+decide. **UNVERIFIED** is for the things it cannot: DNS resolving, TLS
+terminating, a restore performed, an SMS reaching a handset, a push landing on
+a device, an alert waking a person. Those read from
+`docs/production-evidence.json`, where a human records an outcome with a date,
+and they lapse after 180 days.
+
+It would have been easy to check the proxy — a key is set, a URL is configured
+— and print PASS. That is the single most dishonest thing this file could have
+done, and it is precisely the mistake the previous R-8 report was written to
+avoid making twice.
+
+Exit 0 all clear · 1 failed · **2 configured but never demonstrated**. This
+deployment exits 1 today (6 fail, 16 unverified) and every one of those lines
+is true.
+
+## SERVICE_API_KEY (§2)
+
+The previous report named this the widest credential in the product and left it
+there. Removal was never the instruction and would have been the reckless
+choice: this key is how an engineer replays a school's stuck sync batch at
+11pm. So it was narrowed instead, in one place —
+`packages/server-core/src/service-auth.ts` — because `/sync/push` and
+`/sync/pull` held two copies of the logic and a change to one would silently
+have left the other open.
+
+1. **Off in production** unless `SERVICE_KEY_TENANT_SWITCH=on`. Dev, CI and
+   staging unchanged; a control that breaks the places people actually run is a
+   control that gets turned off again.
+2. **Refused from a browser** — a valid key arriving with `Origin`, `Cookie` or
+   `Sec-Fetch-Site` means the key has leaked into page code, and the refusal
+   turns a silent leak into a dated log line. The check fires only *after* the
+   token matches, so the PWA's unauthenticated system-screen probes still get
+   their 401.
+3. **Audited** — one structured line per acceptance and refusal, carrying an
+   8-hex fingerprint, never the key.
+4. **Rotatable** — `SERVICE_API_KEY_NEXT` is accepted alongside the current
+   key, and the log's `keyLabel` says which slot each request matched, so a
+   rotation can be finished on evidence rather than hope.
+5. **Constant-time comparison.**
+
+The same switch now gates the OTP debug echo, because echoing a live login code
+is an account-takeover primitive and belongs behind the same door.
+
+### The bug this found in its own first version
+
+`Sec-Fetch-Mode` was in the browser-marker list. **Node's own `fetch` sends
+`Sec-Fetch-Mode: cors` on every request** — and undici is what the Netlify cron
+wrapper and every ops script use. Shipped, it would have refused the scheduled
+SMS dispatch and the nightly maintenance job, silently, on the first production
+run: the exact "a stopped cron silences a school" failure the monitoring work
+in this same pass exists to catch.
+
+It was found by running an acceptance probe against the live endpoint, not by
+reading the code, and it is the strongest argument in this pass for probing
+over reasoning. `Sec-Fetch-Site` covers the same browsers and undici sends
+neither. There is now a test built from the exact header set undici produces.
+
+## Monitoring (§7)
+
+The previous report's most uncomfortable line was that a stopped cron would
+silence a school with nobody noticing. `/api/v1/ops/monitor` is the answer:
+scheduled every fifteen minutes, evaluating seven conditions across the whole
+deployment, POSTing anything firing to `ALERT_WEBHOOK_URL`, and logging it
+regardless so the host's log drain works as a sink from the first deploy.
+
+The evaluation is **pure** (`packages/server-core/src/alerts.ts`) and the
+gather is separate (`monitor-signals.ts`). Every threshold is a judgement call,
+and judgement calls inside a database query are judgement calls nobody can
+test; each is now exercised at its boundary without a database.
+
+Note what most of the conditions watch for: not errors, but the **absence of
+expected work**. A queue that stops draining. A partition that stops being
+pre-created — which is a hard deadline, not a warning, because when the month
+turns without one, every attendance write fails at once. Attendance that stops
+landing. Loud failures look after themselves; somebody rings. The quiet ones
+are invisible to anything that only counts errors.
+
+Each alert carries its own investigation path and recovery procedure, so a
+woken engineer reads what to do rather than remembering it. `sync_rejection_rate`
+names the R-7 defect it exists to catch, because the lesson of that bug — the
+client was sending something the server would not take, and the only symptom a
+teacher saw was "১টি পাঠানো যায়নি" — is worth more than the threshold.
+
+**What it cannot see:** API failure rate. There is no table of HTTP responses
+and inventing one would duplicate what the host already records per invocation;
+that alert belongs in the host's metric alerting, wired as the runbook
+describes. And its own death — a dead function does not report it, so the
+host's scheduled-function failure notification is part of the monitor.
+
+### A second bug caught by reading it back
+
+The gather bounded the SMS queue query to the last two partitions, for
+performance. That would have excluded a message stuck since last week —
+precisely the case `sms_queue_stalled` exists to raise — while leaving the
+check looking like it worked. Split into two queries: recent activity stays
+bounded, the queue is not bounded at all.
+
+## The last two R-7 sharp edges
+
+**§9A** already refused an existing phone number and named the person and their
+current role. What it never named was the **consequence**, and "are you sure?"
+without a stated outcome is how an operator clicks through. It now says, in
+words: নিশ্চিত করলে এই অ্যাকাউন্টের ভূমিকা প্রধান শিক্ষক করা হবে। Not shown when
+the account already holds the role, because a screen that cries wolf on the
+harmless case is not read on the dangerous one.
+
+**§11** The HSC catalogue is shikhonBD's own reference set with codes we
+assigned — the `H-` prefix exists so they cannot be mistaken for board numbers
+and cannot collide with SSC codes in a combined institution. The console now
+says so at the moment classes 11–12 are seeded, before a registrar assumes the
+list was checked against a circular and builds a year on it.
+
+Both verified in a real browser, and both now held by DOM tests — which
+required exporting the console class. That file's own header records that it
+had no test file at all until R-7's completion pass, which is how a college
+spent a phase being listed as a madrasa.
+
+## CORS (§3)
+
+`/sync/push` and `/sync/pull` still carried hardcoded `Access-Control-Allow-Origin: *`
+after the previous pass routed everything else through the allowlist. Both now
+use it. **Verified in Chrome:** with `ALLOWED_ORIGINS` set, a listed origin
+receives the response and an unlisted one is blocked by the browser;
+credentialed requests are refused; `Vary: Origin` is present so a shared cache
+cannot serve one origin's response to another.
+
+## Verification
+
+- **1108 tests** with a database attached (1090 before this pass), **838**
+  without. All passing.
+- The monitor's gather **run against the real schema** — every column, the
+  partition catalogue query, and the alert it produced from real rows.
+- Alert delivery **proven end to end**: `GET` delivers nothing, `POST` produces
+  exactly one webhook call with the right URL, method and content type,
+  carrying the alert text, the environment and the recovery guidance and no
+  secrets. A dead sink returns 200 with the reason, rather than taking the
+  endpoint down with it.
+- **Cross-tenant probes against the live sync endpoints**: a real teacher's
+  token plus forged `X-Tenant-ID` / `X-User-ID` / `X-Role` returns that
+  teacher's own school, byte for byte, with no row of the other tenant present.
+  Headers without a token: 401. Garbage bearer with headers: 401.
+- Browser acceptance of §9A, §11 and the CORS allowlist.
+
+## What is still not done, and cannot be from here
+
+Real SMS delivery · real push to a device · backups and a timed restore ·
+an alert reaching a human · wildcard DNS and TLS · 3–5 pilot institutions ·
+real users · a real offline test · cross-tenant tests against production.
+
+Every one of these now has a named slot in `docs/production-evidence.json` that
+is **null**, a preflight line that reports it as unverified, and a procedure in
+the runbook. None of them is claimed anywhere.
+
+## R-9's pilot gate
+
+**Still not satisfied, and deliberately so.** No pilot has occurred. The web
+push implementation recorded on 2026-08-29 remains an independently implemented
+R-9 capability that did not require pilot feedback; the gate on the remaining
+R-9 optional capabilities is untouched by this pass and stays shut.
+
+
+## Carried backlog — preserved
+
+**R-3:** class/section edit UI · guardian unlink · audit export and entity-name
+resolution · `POST /rms/solve` API-only.
+
+**R-5:** object storage · CSV export · multi-card ID layout · **money
+formatting** (still open).
+
+**R-6:** board-registration index · attendance date-range filter · type-ahead.
+
+**R-7:** operator SSO and key rotation · trial-expiry automation · per-class
+group configuration in the wizard · logo/watermark upload in the wizard ·
+platform audit UI · plan feature gating · teacher→subject assignment is still
+per-section by hand.
+
+**R-8:** SMS retry backoff · backup/restore verification · RPO/RTO decision ·
+a curriculum specialist to fill `verified_against` · per-institution subject
+configuration for colleges beyond add and remove · API failure-rate alerting
+in the host's own metrics · the host's scheduled-function failure notification.
+
+*Closed by this pass: monitoring and alerting is built, scheduled and tested —
+what remains is delivering one alert to a human, which is an attestation rather
+than code. The `SERVICE_API_KEY` blast-radius review is done, and the key is
+narrowed, audited and rotatable.*
+
+**R-9:** push retry/backoff · per-notice channel choice · the iOS Home-Screen
+explanation · a first-contact test against a real push service.
+
+## Unresolved bugs / issues
+
+**1. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+calls it.** Carried unchanged from R-8, R-9, the R-7 completion pass and the
+R-8 production-readiness pass.
+
+**2. `docs/09-PRD-AUDIT.md` remains stale** (2026-08-12).
+
+## Next recommended step
+
+**Sign an SMS aggregator contract and stand up one production deployment**, in
+that order. Everything left on this list is behind one of those two, and the
+first thing to do on the deployment is run `node scripts/preflight.mjs` and
+work the failures down — it is written to be the first command of that day.

@@ -59,7 +59,7 @@ import {
 import {
   generateCode, codeHash, activationConfigured,
 } from '../../identity-svc/src/activation.ts';
-import { goLiveChecks } from '../../../packages/server-core/src/go-live.ts';
+import { goLiveChecks, subdomainsReady } from '../../../packages/server-core/src/go-live.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,62}$/;
@@ -148,6 +148,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       case 'GET tenants':   return json(res, 200, await listTenants(db, req), cors);
       case 'POST tenants':  return json(res, 200, await createTenant(db, op, req), cors);
       case 'GET tenant':    return json(res, 200, await getTenant(db, req), cors);
+      case 'GET health':    return json(res, 200, await tenantHealth(db, req), cors);
       case 'POST provision':return json(res, 200, await provision(db, op, req), cors);
       case 'POST branding': return json(res, 200, await setBranding(db, op, req), cors);
       case 'POST admin':    return json(res, 200, await createAdmin(db, op, req), cors);
@@ -182,7 +183,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return json(res, 409, { error: 'eiin_taken', message: 'এই EIIN আগে থেকেই নিবন্ধিত' }, cors);
     }
     if (/student cap reached/i.test(msg)) {
-      return json(res, 409, { error: 'cap_exceeded', message: msg }, cors);
+      // R-8 §9B. This used to return `msg` — the trigger's own English —
+      // straight to the console. It is a last-resort net now: the student
+      // import classifies the violation itself and answers with the numbers.
+      // Anything reaching here has no numbers to give, so it says what it can
+      // rather than what the database said.
+      return json(res, 409, {
+        error: 'student_cap_reached',
+        message: 'শিক্ষার্থীর সীমা পেরিয়ে গেছে — কিছুই সংরক্ষণ হয়নি। '
+          + '"প্ল্যান ও সীমা" থেকে সীমা বাড়িয়ে আবার চেষ্টা করুন।',
+      }, cors);
     }
     return json(res, 500, { error: 'platform_error' }, cors);
   }
@@ -257,6 +267,10 @@ async function getTenant(db: Db, req: IncomingMessage) {
     // The two gates, computed in one place so the console and the activate
     // endpoint cannot disagree about whether a school is ready.
     canActivate: Number(s.years) > 0 && Number(s.grading_bands) > 0 && Number(s.admins) > 0,
+    // R-8 §9D. Whether the school's own subdomain actually resolves. The
+    // console listed it beside the install link as an equal way in, and
+    // *.shikhonbd.com has never had DNS or a certificate — see go-live.ts.
+    subdomainsLive: subdomainsReady(),
   };
 }
 
@@ -454,6 +468,13 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
 }
 
 interface AdminBody {
+  /**
+   * R-8 §9A. Set only after the operator has been shown WHO the phone number
+   * already belongs to and what they already are. Without it, an existing
+   * person is refused with 409 `user_exists` rather than silently given a new
+   * role.
+   */
+  confirmExisting?: boolean;
   tenantId?: string; nameBn?: string; nameEn?: string;
   phone?: string; email?: string; roleCode?: string;
 }
@@ -489,13 +510,46 @@ async function createAdmin(db: Db, op: Operator, req: IncomingMessage) {
     // scoped to the tenant by RLS. Within one school it is the same person,
     // and the honest answer is to grant them the role rather than create a
     // second account for one human (R-7.15, screen 6).
-    const existing = await c.query<{ id: string }>(
-      `SELECT id FROM users WHERE phone_e164 = $1 AND deleted_at IS NULL`, [phone]);
+    const existing = await c.query<{ id: string; full_name_bn: string; roles: string[] }>(
+      `SELECT u.id, u.full_name_bn,
+              COALESCE(array_agg(r.role_code) FILTER (WHERE r.role_code IS NOT NULL), '{}') AS roles
+         FROM users u
+         LEFT JOIN user_roles r ON r.user_id = u.id AND r.tenant_id = u.tenant_id
+        WHERE u.phone_e164 = $1 AND u.deleted_at IS NULL
+        GROUP BY u.id, u.full_name_bn`, [phone]);
 
     let userId: string;
     let reused = false;
     if (existing.rows[0]) {
-      userId = existing.rows[0].id;
+      // ── R-8 §9A. Reuse is right; reusing SILENTLY is not. ───────────
+      //
+      // Granting the role rather than creating a second account for one human
+      // is the correct behaviour and stays. What was wrong is that it happened
+      // without saying so: an operator who mistyped a digit and landed on an
+      // existing teacher's number, with "principal" selected, promoted that
+      // teacher to principal of the school and saw only `reused: true` in a
+      // response the console did not surface. It happened to me during R-7's
+      // acceptance walk, which is how it got found.
+      //
+      // So an existing person now requires an explicit second act. The refusal
+      // names WHO would be affected and what they already are, because "this
+      // number is already registered" is not enough to decide with.
+      const who = existing.rows[0];
+      const already = who.roles.includes(roleCode);
+      if (!b.confirmExisting) {
+        throw new HttpError(409,
+          already
+            ? `${who.full_name_bn} ইতিমধ্যেই এই ভূমিকায় আছেন — নতুন কোড দিতে নিশ্চিত করুন।`
+            : `এই নম্বরটি ${who.full_name_bn} এর — তাঁকে নতুন ভূমিকা দেওয়া হবে। নিশ্চিত করুন।`,
+          'user_exists',
+          {
+            existingName: who.full_name_bn,
+            existingRoles: who.roles,
+            requestedRole: roleCode,
+            alreadyHasRole: already,
+          });
+      }
+      userId = who.id;
       reused = true;
     } else {
       const u = await c.query<{ id: string }>(
@@ -593,11 +647,73 @@ async function runImport(db: Db, op: Operator, req: IncomingMessage) {
       }
       yearId = y.rows[0].id;
     }
-    return runStudentImport(c, {
-      csv: b.csv ?? '', academicYearId: yearId, tenantId, userId: startedBy,
-      commit: b.commit, digest: b.digest, fileName: b.fileName ?? null,
-    });
+    // ── R-8 §9B. The cap refusal, in the operator's language ──────────
+    //
+    // Migration 045's trigger is the guarantee and its message is written for
+    // whoever reads a database log: "student cap reached: this institution is
+    // capped at 500 students and this would make 512". That sentence reached
+    // the console verbatim, in English, in the middle of an otherwise Bangla
+    // screen. The trigger is left exactly as it is — it must fire under
+    // concurrency and a developer-facing message is right for a
+    // developer-facing surface — and the API stops passing it through.
+    //
+    // The numbers are read BEFORE the import, not after. The trigger aborts
+    // the transaction, so a query issued from a catch block inside it fails
+    // too, with `25P02 current transaction is aborted` — which is what the
+    // first version of this did, turning a 409 into a 500. They are also not
+    // parsed out of the message: a message format is not an interface.
+    const capRow = await c.query<{ cap: number; enrolled: number }>(
+      `SELECT t.student_cap AS cap,
+              (SELECT count(DISTINCT e.student_id)::int FROM enrolments e
+                WHERE e.tenant_id = t.id AND e.status = 'active') AS enrolled
+         FROM tenants t WHERE t.id = $1`, [tenantId]);
+    const cap = capRow.rows[0]?.cap ?? 0;
+    const enrolled = capRow.rows[0]?.enrolled ?? 0;
+
+    try {
+      return await runStudentImport(c, {
+        csv: b.csv ?? '', academicYearId: yearId, tenantId, userId: startedBy,
+        commit: b.commit, digest: b.digest, fileName: b.fileName ?? null,
+      });
+    } catch (err) {
+      if (isStudentCapViolation(err)) {
+        throw new HttpError(409, capMessageBn(cap, enrolled),
+          'student_cap_reached', { cap, enrolled });
+      }
+      throw err;
+    }
   });
+}
+
+/** Bangla numerals, so a number inside a Bangla sentence reads as one. */
+function bn(n: number): string {
+  return String(n).replace(/[0-9]/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]);
+}
+
+/**
+ * What an operator is told when the cap refuses an import.
+ *
+ * Says the limit, says the current roll, says that NOTHING was imported —
+ * which is the fact an operator most needs and the one a raw constraint
+ * message never mentions — and names the screen that fixes it.
+ */
+export function capMessageBn(cap: number, enrolled: number): string {
+  return `শিক্ষার্থীর সীমা পেরিয়ে যাচ্ছে — এই প্রতিষ্ঠানের সীমা ${bn(cap)} জন, `
+    + `এখন ভর্তি আছে ${bn(enrolled)} জন। কিছুই আমদানি হয়নি। `
+    + `"প্ল্যান ও সীমা" থেকে সীমা বাড়িয়ে আবার চেষ্টা করুন।`;
+}
+
+/**
+ * Is this the student-cap trigger, rather than any other check constraint?
+ *
+ * Matched on the constraint's own text because migration 045 raises with
+ * ERRCODE `check_violation` and no constraint name — a `RAISE EXCEPTION` in a
+ * trigger function has none to give. Deliberately narrow: a different check
+ * violation must keep its own error rather than be reported as a cap problem.
+ */
+export function isStudentCapViolation(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  return e?.code === '23514' && /student cap reached/i.test(e.message ?? '');
 }
 
 /**
@@ -621,6 +737,106 @@ async function runImport(db: Db, op: Operator, req: IncomingMessage) {
  * inside the target tenant's own context, exactly as `setBranding` does. There
  * is no cross-tenant statement here to need a DEFINER function for.
  */
+/**
+ * GET health — what an operator needs to answer "is this school all right?"
+ *
+ * R-8 §10. The console could already say what a school HAS — classes, students,
+ * a plan. It could not say how it was DOING: whether its messages were going
+ * out, whether anybody had logged in this week, whether a queue was stuck. In a
+ * pilot those are the only questions, and answering them meant SQL.
+ *
+ * ── What is deliberately NOT here ───────────────────────────────────────
+ * No names, no phone numbers, no student rows. §10 says not to expose
+ * student-level PII unnecessarily and none of it is necessary: an operator
+ * supporting a school needs counts and timestamps, and the school's own staff —
+ * who have a relationship with the children — have the screens that show
+ * people. A platform operator browsing pupil records is exactly the thing
+ * tenant isolation exists to make impossible, and it would be perverse to
+ * rebuild it here for convenience.
+ */
+async function tenantHealth(db: Db, req: IncomingMessage) {
+  const id = (query(req).get('id') ?? query(req).get('tenantId') ?? '').trim();
+  if (!UUID_RE.test(id)) throw new HttpError(400, 'id must be a uuid', 'invalid_id');
+
+  // Inside the tenant's own context. These tables are RLS-protected and a bare
+  // pool query would silently return zeros — the mistake R-7 made three times.
+  return db.withTenant({ tenantId: id, userId: id, role: 'system_ingest' }, async (c) => {
+    const { rows: sms } = await c.query<Record<string, string>>(
+      `SELECT
+         count(*) FILTER (WHERE created_on = CURRENT_DATE)                    AS queued_today,
+         count(*) FILTER (WHERE status IN ('sent','delivered'))               AS sent_total,
+         count(*) FILTER (WHERE status = 'delivered')                         AS delivered_total,
+         count(*) FILTER (WHERE status = 'failed')                            AS failed_total,
+         count(*) FILTER (WHERE status = 'suppressed')                        AS suppressed_total,
+         count(*) FILTER (WHERE status = 'queued')                            AS queued_now,
+         COALESCE(sum(cost_bdt) FILTER (WHERE status IN ('sent','delivered')), 0)::text AS cost_bdt,
+         COALESCE(sum(segments) FILTER (WHERE created_on >= date_trunc('month', CURRENT_DATE)), 0)::text
+                                                                              AS segments_this_month,
+         to_char(max(sent_at), 'YYYY-MM-DD"T"HH24:MI:SSZ')                    AS last_sent_at
+       FROM sms_outbox`);
+
+    // The reasons things did not send, most common first. Codes, not bodies:
+    // a message body is a school's words to a parent.
+    const { rows: errs } = await c.query<{ error_code: string; n: string }>(
+      `SELECT COALESCE(error_code, 'unknown') AS error_code, count(*)::text AS n
+         FROM sms_outbox
+        WHERE status IN ('failed','suppressed') AND error_code IS NOT NULL
+        GROUP BY 1 ORDER BY count(*) DESC LIMIT 5`);
+
+    const { rows: push } = await c.query<Record<string, string>>(
+      `SELECT count(*)::text AS devices,
+              count(*) FILTER (WHERE last_success_at IS NOT NULL)::text AS devices_reached,
+              to_char(max(last_success_at), 'YYYY-MM-DD"T"HH24:MI:SSZ') AS last_push_at
+         FROM push_subscriptions`);
+
+    // "Has anybody actually used this school?" — the single most useful
+    // number during a pilot, and the one that says an onboarding stalled.
+    const { rows: login } = await c.query<Record<string, string>>(
+      `SELECT to_char(max(issued_at), 'YYYY-MM-DD"T"HH24:MI:SSZ') AS last_login_at,
+              count(DISTINCT user_id) FILTER (WHERE issued_at > now() - interval '7 days')::text
+                AS active_users_7d
+         FROM user_sessions`);
+
+    const { rows: att } = await c.query<Record<string, string>>(
+      `SELECT to_char(max(taken_on), 'YYYY-MM-DD') AS last_attendance_on,
+              count(*) FILTER (WHERE taken_on > CURRENT_DATE - 7)::text AS sessions_7d
+         FROM attendance_sessions`);
+
+    const oldest = await c.query<{ age_minutes: string | null }>(
+      `SELECT EXTRACT(EPOCH FROM (now() - min(queued_at)))::bigint / 60 AS age_minutes
+         FROM sms_outbox WHERE status = 'queued'`);
+
+    return {
+      sms: {
+        queuedNow: Number(sms[0].queued_now),
+        queuedToday: Number(sms[0].queued_today),
+        sent: Number(sms[0].sent_total),
+        delivered: Number(sms[0].delivered_total),
+        failed: Number(sms[0].failed_total),
+        suppressed: Number(sms[0].suppressed_total),
+        segmentsThisMonth: Number(sms[0].segments_this_month),
+        costBdt: Number(sms[0].cost_bdt),
+        lastSentAt: sms[0].last_sent_at,
+        // A queue that is not draining is the failure that looks like nothing.
+        oldestQueuedMinutes: oldest.rows[0]?.age_minutes === null
+          ? null : Number(oldest.rows[0]?.age_minutes ?? 0),
+      },
+      errors: errs.map((e) => ({ code: e.error_code, count: Number(e.n) })),
+      push: {
+        devices: Number(push[0].devices),
+        devicesReached: Number(push[0].devices_reached),
+        lastPushAt: push[0].last_push_at,
+      },
+      usage: {
+        lastLoginAt: login[0].last_login_at,
+        activeUsers7d: Number(login[0].active_users_7d),
+        lastAttendanceOn: att[0].last_attendance_on,
+        attendanceSessions7d: Number(att[0].sessions_7d),
+      },
+    };
+  });
+}
+
 async function setPlan(db: Db, op: Operator, req: IncomingMessage) {
   const b = await readJson<{
     tenantId?: string; planCode?: string; studentCap?: number; trialEndsOn?: string;

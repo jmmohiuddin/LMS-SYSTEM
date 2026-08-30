@@ -73,9 +73,22 @@ async function sharedDb() {
 }
 
 // packages/server-core/src/http.ts
-function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS") {
+function allowedOrigins(env = process.env) {
+  return (env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter((o) => o.length > 0);
+}
+function corsOriginFor(requestOrigin, env = process.env) {
+  const allow = allowedOrigins(env);
+  if (allow.length === 0) return { origin: "*", vary: false };
+  if (requestOrigin && allow.includes(requestOrigin)) {
+    return { origin: requestOrigin, vary: true };
+  }
+  return { origin: allow[0], vary: true };
+}
+function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS", requestOrigin) {
+  const { origin, vary } = corsOriginFor(requestOrigin);
   return {
-    "Access-Control-Allow-Origin": "*",
+    ...vary ? { Vary: "Origin" } : {},
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": methods,
     "Access-Control-Allow-Headers": [
       "Content-Type",
@@ -535,6 +548,11 @@ var PushSender = class {
   }
 };
 
+// packages/server-core/src/go-live.ts
+function smsTestRecipients(env = process.env) {
+  return (env.SMS_TEST_RECIPIENTS ?? "").split(",").map((n) => n.trim()).filter((n) => n.length > 0);
+}
+
 // services/sms-svc/src/dispatch.ts
 function nonWorkingReasonFor(isoDay, weekendDays, overrides) {
   if (overrides.has("holiday")) return "holiday";
@@ -574,6 +592,8 @@ var SmsDispatchWorker = class {
   now;
   provider;
   pushSender;
+  /** R-8 §4. Non-null only when the deployment is restricted to test numbers. */
+  allowlist;
   constructor(db, opts = {}) {
     this.db = db;
     this.graceMinutes = opts.graceMinutes ?? 20;
@@ -581,6 +601,8 @@ var SmsDispatchWorker = class {
     this.dispatchBatchSize = opts.dispatchBatchSize ?? 200;
     this.now = opts.now ?? Date.now;
     this.provider = opts.provider ?? resolveProvider();
+    const allow = opts.testRecipients ?? smsTestRecipients();
+    this.allowlist = allow.length > 0 ? new Set(allow) : null;
     const vapid = opts.vapid ?? vapidFromEnv();
     this.pushSender = vapid ? new PushSender(vapid, { fetchImpl: opts.fetchImpl }) : null;
   }
@@ -846,6 +868,7 @@ var SmsDispatchWorker = class {
     await client.query(`UPDATE event_outbox SET published_at = now() WHERE id = $1`, [eventId]);
   }
   async dispatch(client, tenantId) {
+    let withheld = 0;
     const queued = await client.query(
       `SELECT id, created_on, msisdn, body FROM sms_outbox
         WHERE tenant_id = $1 AND status = 'queued'
@@ -854,6 +877,16 @@ var SmsDispatchWorker = class {
     );
     let dispatched = 0;
     for (const row of queued.rows) {
+      if (this.allowlist && !this.allowlist.has(row.msisdn)) {
+        await client.query(
+          `UPDATE sms_outbox
+              SET status = 'suppressed', error_code = 'not_in_test_allowlist'
+            WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
+          [tenantId, row.created_on, row.id]
+        );
+        withheld += 1;
+        continue;
+      }
       let sent;
       try {
         sent = await this.provider.send(row.msisdn, row.body, row.id);
@@ -889,6 +922,12 @@ var SmsDispatchWorker = class {
         ]
       );
       dispatched++;
+    }
+    if (withheld > 0) {
+      console.warn(
+        "[sms] %d message(s) withheld \u2014 SMS_TEST_RECIPIENTS allowlist is set",
+        withheld
+      );
     }
     return dispatched;
   }

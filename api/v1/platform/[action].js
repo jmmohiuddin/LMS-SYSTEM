@@ -76,9 +76,22 @@ async function sharedDb() {
 }
 
 // packages/server-core/src/http.ts
-function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS") {
+function allowedOrigins(env = process.env) {
+  return (env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter((o) => o.length > 0);
+}
+function corsOriginFor(requestOrigin, env = process.env) {
+  const allow = allowedOrigins(env);
+  if (allow.length === 0) return { origin: "*", vary: false };
+  if (requestOrigin && allow.includes(requestOrigin)) {
+    return { origin: requestOrigin, vary: true };
+  }
+  return { origin: allow[0], vary: true };
+}
+function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS", requestOrigin) {
+  const { origin, vary } = corsOriginFor(requestOrigin);
   return {
-    "Access-Control-Allow-Origin": "*",
+    ...vary ? { Vary: "Origin" } : {},
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": methods,
     "Access-Control-Allow-Headers": [
       "Content-Type",
@@ -2369,6 +2382,15 @@ function mfsPaymentsEnabled(env = process.env) {
 function aiEnabled(env = process.env) {
   return !!env.ANTHROPIC_API_KEY;
 }
+function smsTestRecipients(env = process.env) {
+  return (env.SMS_TEST_RECIPIENTS ?? "").split(",").map((n) => n.trim()).filter((n) => n.length > 0);
+}
+function smsRestrictedToAllowlist(env = process.env) {
+  return smsTestRecipients(env).length > 0;
+}
+function subdomainsReady(env = process.env) {
+  return enabled("WILDCARD_DNS_READY", env);
+}
 function smsProviderConfigured(env = process.env) {
   const name = (env.SMS_PROVIDER ?? "").trim().toLowerCase();
   if (!name || name === "stub") return false;
@@ -2432,6 +2454,28 @@ function goLiveChecks(env = process.env) {
       labelBn: "\u09AA\u09C1\u09B6 \u09A8\u09CB\u099F\u09BF\u09AB\u09BF\u0995\u09C7\u09B6\u09A8",
       ready: Boolean((env.VAPID_PUBLIC_KEY ?? "").trim()) && Boolean((env.VAPID_PRIVATE_KEY ?? "").trim()),
       detailBn: (env.VAPID_PUBLIC_KEY ?? "").trim() && (env.VAPID_PRIVATE_KEY ?? "").trim() ? "\u0985\u09CD\u09AF\u09BE\u09AA\u09C7 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AF\u09BE\u09AC\u09C7 \u2014 \u098F\u09B8\u098F\u09AE\u098F\u09B8 \u0996\u09B0\u099A \u0995\u09AE\u09BE\u09A8\u09CB \u09AF\u09BE\u09AC\u09C7" : (env.VAPID_PUBLIC_KEY ?? "").trim() || (env.VAPID_PRIVATE_KEY ?? "").trim() ? "\u0995\u09C0 \u099C\u09CB\u09A1\u09BC\u09BE \u0985\u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 VAPID_PUBLIC_KEY \u0993 VAPID_PRIVATE_KEY \u09A6\u09C1\u099F\u09CB\u0987 \u09B2\u09BE\u0997\u09AC\u09C7" : "\u09AC\u09A8\u09CD\u09A7 \u2014 scripts/generate-vapid-keys.mjs \u099A\u09BE\u09B2\u09BF\u09AF\u09BC\u09C7 \u0995\u09C0 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8",
+      severity: "advisory"
+    },
+    {
+      // R-8 §4. Loud, because a deployment that believes it is texting
+      // parents and is not is the same failure the SMS provider check exists
+      // to prevent, one step further along.
+      key: "sms_allowlist",
+      labelBn: "\u098F\u09B8\u098F\u09AE\u098F\u09B8 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09AE\u09C2\u09B2\u0995 \u09A4\u09BE\u09B2\u09BF\u0995\u09BE",
+      ready: !smsRestrictedToAllowlist(env),
+      detailBn: smsRestrictedToAllowlist(env) ? `\u09B8\u09C0\u09AE\u09BF\u09A4 \u2014 \u0995\u09C7\u09AC\u09B2 ${smsTestRecipients(env).length}\u099F\u09BF \u09A8\u09AE\u09CD\u09AC\u09B0\u09C7 \u09AF\u09BE\u09AC\u09C7, \u09AC\u09BE\u0995\u09BF \u09B8\u09AC \u0986\u099F\u0995\u09C7 \u09A5\u09BE\u0995\u09AC\u09C7` : "\u09B8\u09C0\u09AE\u09BF\u09A4 \u09A8\u09AF\u09BC \u2014 \u09B8\u09AC \u09AA\u09CD\u09B0\u09BE\u09AA\u0995\u09C7\u09B0 \u0995\u09BE\u099B\u09C7 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AF\u09BE\u09AC\u09C7",
+      severity: "advisory"
+    },
+    {
+      // R-8 §9D. Off, the console stops presenting a school's subdomain as a
+      // working address. It had been listed beside the install link under
+      // "both lead to the same institution" — a sentence an operator could
+      // reasonably print on an admission slip, for an address that does not
+      // resolve.
+      key: "subdomains",
+      labelBn: "\u09B8\u09CD\u0995\u09C1\u09B2-\u09AD\u09BF\u09A4\u09CD\u09A4\u09BF\u0995 \u09B8\u09BE\u09AC\u09A1\u09CB\u09AE\u09C7\u0987\u09A8",
+      ready: subdomainsReady(env),
+      detailBn: subdomainsReady(env) ? "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8 \u09A8\u09BF\u099C\u09C7\u09B0 \u09A0\u09BF\u0995\u09BE\u09A8\u09BE\u09AF\u09BC \u09AA\u09CC\u0981\u099B\u09BE\u09AC\u09C7" : "\u09AC\u09A8\u09CD\u09A7 \u2014 *.shikhonbd.com \u098F\u09B0 DNS \u0993 TLS \u098F\u0996\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF; ?tid= \u09B2\u09BF\u0982\u0995 \u099A\u09B2\u099B\u09C7",
       severity: "advisory"
     },
     {
@@ -2524,6 +2568,8 @@ async function handler(req, res) {
         return json(res, 200, await createTenant(db, op, req), cors);
       case "GET tenant":
         return json(res, 200, await getTenant(db, req), cors);
+      case "GET health":
+        return json(res, 200, await tenantHealth(db, req), cors);
       case "POST provision":
         return json(res, 200, await provision(db, op, req), cors);
       case "POST branding":
@@ -2558,7 +2604,10 @@ async function handler(req, res) {
       return json(res, 409, { error: "eiin_taken", message: "\u098F\u0987 EIIN \u0986\u0997\u09C7 \u09A5\u09C7\u0995\u09C7\u0987 \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09BF\u09A4" }, cors);
     }
     if (/student cap reached/i.test(msg)) {
-      return json(res, 409, { error: "cap_exceeded", message: msg }, cors);
+      return json(res, 409, {
+        error: "student_cap_reached",
+        message: '\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B8\u09C0\u09AE\u09BE \u09AA\u09C7\u09B0\u09BF\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7 \u2014 \u0995\u09BF\u099B\u09C1\u0987 \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u09B9\u09AF\u09BC\u09A8\u09BF\u0964 "\u09AA\u09CD\u09B2\u09CD\u09AF\u09BE\u09A8 \u0993 \u09B8\u09C0\u09AE\u09BE" \u09A5\u09C7\u0995\u09C7 \u09B8\u09C0\u09AE\u09BE \u09AC\u09BE\u09A1\u09BC\u09BF\u09AF\u09BC\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964'
+      }, cors);
     }
     return json(res, 500, { error: "platform_error" }, cors);
   }
@@ -2640,7 +2689,11 @@ async function getTenant(db, req) {
     },
     // The two gates, computed in one place so the console and the activate
     // endpoint cannot disagree about whether a school is ready.
-    canActivate: Number(s.years) > 0 && Number(s.grading_bands) > 0 && Number(s.admins) > 0
+    canActivate: Number(s.years) > 0 && Number(s.grading_bands) > 0 && Number(s.admins) > 0,
+    // R-8 §9D. Whether the school's own subdomain actually resolves. The
+    // console listed it beside the install link as an equal way in, and
+    // *.shikhonbd.com has never had DNS or a certificate — see go-live.ts.
+    subdomainsLive: subdomainsReady()
   };
 }
 async function createTenant(db, op, req) {
@@ -2804,13 +2857,33 @@ async function createAdmin(db, op, req) {
   const ctx = { tenantId, userId: op.id, role: "principal" };
   return db.withTenant(ctx, async (c) => {
     const existing = await c.query(
-      `SELECT id FROM users WHERE phone_e164 = $1 AND deleted_at IS NULL`,
+      `SELECT u.id, u.full_name_bn,
+              COALESCE(array_agg(r.role_code) FILTER (WHERE r.role_code IS NOT NULL), '{}') AS roles
+         FROM users u
+         LEFT JOIN user_roles r ON r.user_id = u.id AND r.tenant_id = u.tenant_id
+        WHERE u.phone_e164 = $1 AND u.deleted_at IS NULL
+        GROUP BY u.id, u.full_name_bn`,
       [phone]
     );
     let userId;
     let reused = false;
     if (existing.rows[0]) {
-      userId = existing.rows[0].id;
+      const who = existing.rows[0];
+      const already = who.roles.includes(roleCode);
+      if (!b.confirmExisting) {
+        throw new HttpError(
+          409,
+          already ? `${who.full_name_bn} \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7\u0987 \u098F\u0987 \u09AD\u09C2\u09AE\u09BF\u0995\u09BE\u09AF\u09BC \u0986\u099B\u09C7\u09A8 \u2014 \u09A8\u09A4\u09C1\u09A8 \u0995\u09CB\u09A1 \u09A6\u09BF\u09A4\u09C7 \u09A8\u09BF\u09B6\u09CD\u099A\u09BF\u09A4 \u0995\u09B0\u09C1\u09A8\u0964` : `\u098F\u0987 \u09A8\u09AE\u09CD\u09AC\u09B0\u099F\u09BF ${who.full_name_bn} \u098F\u09B0 \u2014 \u09A4\u09BE\u0981\u0995\u09C7 \u09A8\u09A4\u09C1\u09A8 \u09AD\u09C2\u09AE\u09BF\u0995\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AC\u09C7\u0964 \u09A8\u09BF\u09B6\u09CD\u099A\u09BF\u09A4 \u0995\u09B0\u09C1\u09A8\u0964`,
+          "user_exists",
+          {
+            existingName: who.full_name_bn,
+            existingRoles: who.roles,
+            requestedRole: roleCode,
+            alreadyHasRole: already
+          }
+        );
+      }
+      userId = who.id;
       reused = true;
     } else {
       const u = await c.query(
@@ -2884,15 +2957,120 @@ async function runImport(db, op, req) {
       }
       yearId = y.rows[0].id;
     }
-    return runStudentImport(c, {
-      csv: b.csv ?? "",
-      academicYearId: yearId,
-      tenantId,
-      userId: startedBy,
-      commit: b.commit,
-      digest: b.digest,
-      fileName: b.fileName ?? null
-    });
+    const capRow = await c.query(
+      `SELECT t.student_cap AS cap,
+              (SELECT count(DISTINCT e.student_id)::int FROM enrolments e
+                WHERE e.tenant_id = t.id AND e.status = 'active') AS enrolled
+         FROM tenants t WHERE t.id = $1`,
+      [tenantId]
+    );
+    const cap = capRow.rows[0]?.cap ?? 0;
+    const enrolled = capRow.rows[0]?.enrolled ?? 0;
+    try {
+      return await runStudentImport(c, {
+        csv: b.csv ?? "",
+        academicYearId: yearId,
+        tenantId,
+        userId: startedBy,
+        commit: b.commit,
+        digest: b.digest,
+        fileName: b.fileName ?? null
+      });
+    } catch (err) {
+      if (isStudentCapViolation(err)) {
+        throw new HttpError(
+          409,
+          capMessageBn(cap, enrolled),
+          "student_cap_reached",
+          { cap, enrolled }
+        );
+      }
+      throw err;
+    }
+  });
+}
+function bn(n) {
+  return String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
+}
+function capMessageBn(cap, enrolled) {
+  return `\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B8\u09C0\u09AE\u09BE \u09AA\u09C7\u09B0\u09BF\u09AF\u09BC\u09C7 \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u2014 \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u09B8\u09C0\u09AE\u09BE ${bn(cap)} \u099C\u09A8, \u098F\u0996\u09A8 \u09AD\u09B0\u09CD\u09A4\u09BF \u0986\u099B\u09C7 ${bn(enrolled)} \u099C\u09A8\u0964 \u0995\u09BF\u099B\u09C1\u0987 \u0986\u09AE\u09A6\u09BE\u09A8\u09BF \u09B9\u09AF\u09BC\u09A8\u09BF\u0964 "\u09AA\u09CD\u09B2\u09CD\u09AF\u09BE\u09A8 \u0993 \u09B8\u09C0\u09AE\u09BE" \u09A5\u09C7\u0995\u09C7 \u09B8\u09C0\u09AE\u09BE \u09AC\u09BE\u09A1\u09BC\u09BF\u09AF\u09BC\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964`;
+}
+function isStudentCapViolation(err) {
+  const e = err;
+  return e?.code === "23514" && /student cap reached/i.test(e.message ?? "");
+}
+async function tenantHealth(db, req) {
+  const id = (query(req).get("id") ?? query(req).get("tenantId") ?? "").trim();
+  if (!UUID_RE.test(id)) throw new HttpError(400, "id must be a uuid", "invalid_id");
+  return db.withTenant({ tenantId: id, userId: id, role: "system_ingest" }, async (c) => {
+    const { rows: sms } = await c.query(
+      `SELECT
+         count(*) FILTER (WHERE created_on = CURRENT_DATE)                    AS queued_today,
+         count(*) FILTER (WHERE status IN ('sent','delivered'))               AS sent_total,
+         count(*) FILTER (WHERE status = 'delivered')                         AS delivered_total,
+         count(*) FILTER (WHERE status = 'failed')                            AS failed_total,
+         count(*) FILTER (WHERE status = 'suppressed')                        AS suppressed_total,
+         count(*) FILTER (WHERE status = 'queued')                            AS queued_now,
+         COALESCE(sum(cost_bdt) FILTER (WHERE status IN ('sent','delivered')), 0)::text AS cost_bdt,
+         COALESCE(sum(segments) FILTER (WHERE created_on >= date_trunc('month', CURRENT_DATE)), 0)::text
+                                                                              AS segments_this_month,
+         to_char(max(sent_at), 'YYYY-MM-DD"T"HH24:MI:SSZ')                    AS last_sent_at
+       FROM sms_outbox`
+    );
+    const { rows: errs } = await c.query(
+      `SELECT COALESCE(error_code, 'unknown') AS error_code, count(*)::text AS n
+         FROM sms_outbox
+        WHERE status IN ('failed','suppressed') AND error_code IS NOT NULL
+        GROUP BY 1 ORDER BY count(*) DESC LIMIT 5`
+    );
+    const { rows: push } = await c.query(
+      `SELECT count(*)::text AS devices,
+              count(*) FILTER (WHERE last_success_at IS NOT NULL)::text AS devices_reached,
+              to_char(max(last_success_at), 'YYYY-MM-DD"T"HH24:MI:SSZ') AS last_push_at
+         FROM push_subscriptions`
+    );
+    const { rows: login } = await c.query(
+      `SELECT to_char(max(issued_at), 'YYYY-MM-DD"T"HH24:MI:SSZ') AS last_login_at,
+              count(DISTINCT user_id) FILTER (WHERE issued_at > now() - interval '7 days')::text
+                AS active_users_7d
+         FROM user_sessions`
+    );
+    const { rows: att } = await c.query(
+      `SELECT to_char(max(taken_on), 'YYYY-MM-DD') AS last_attendance_on,
+              count(*) FILTER (WHERE taken_on > CURRENT_DATE - 7)::text AS sessions_7d
+         FROM attendance_sessions`
+    );
+    const oldest = await c.query(
+      `SELECT EXTRACT(EPOCH FROM (now() - min(queued_at)))::bigint / 60 AS age_minutes
+         FROM sms_outbox WHERE status = 'queued'`
+    );
+    return {
+      sms: {
+        queuedNow: Number(sms[0].queued_now),
+        queuedToday: Number(sms[0].queued_today),
+        sent: Number(sms[0].sent_total),
+        delivered: Number(sms[0].delivered_total),
+        failed: Number(sms[0].failed_total),
+        suppressed: Number(sms[0].suppressed_total),
+        segmentsThisMonth: Number(sms[0].segments_this_month),
+        costBdt: Number(sms[0].cost_bdt),
+        lastSentAt: sms[0].last_sent_at,
+        // A queue that is not draining is the failure that looks like nothing.
+        oldestQueuedMinutes: oldest.rows[0]?.age_minutes === null ? null : Number(oldest.rows[0]?.age_minutes ?? 0)
+      },
+      errors: errs.map((e) => ({ code: e.error_code, count: Number(e.n) })),
+      push: {
+        devices: Number(push[0].devices),
+        devicesReached: Number(push[0].devices_reached),
+        lastPushAt: push[0].last_push_at
+      },
+      usage: {
+        lastLoginAt: login[0].last_login_at,
+        activeUsers7d: Number(login[0].active_users_7d),
+        lastAttendanceOn: att[0].last_attendance_on,
+        attendanceSessions7d: Number(att[0].sessions_7d)
+      }
+    };
   });
 }
 async function setPlan(db, op, req) {
@@ -3019,5 +3197,7 @@ function readiness() {
   };
 }
 export {
-  handler as default
+  capMessageBn,
+  handler as default,
+  isStudentCapViolation
 };

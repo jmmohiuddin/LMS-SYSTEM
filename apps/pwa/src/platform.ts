@@ -61,6 +61,11 @@ const LEVEL_BN: Record<string, string> = {
   combined: 'সম্মিলিত (স্কুল ও কলেজ)',
 };
 
+/** The three roles the console can create. Shared by screen 7 and its warning. */
+const ADMIN_ROLE_BN: Record<string, string> = {
+  principal: 'প্রধান শিক্ষক', school_owner: 'পরিচালক', it_admin: 'আইটি অ্যাডমিন',
+};
+
 const STATUS_BN: Record<string, string> = {
   trial: 'ট্রায়াল', active: 'সক্রিয়', suspended: 'স্থগিত', archived: 'সংরক্ষিত',
 };
@@ -181,6 +186,17 @@ class Console_ {
 
   private step = 0;
   /**
+   * R-8 §9A. A pending "this number already belongs to somebody" answer.
+   *
+   * The server refuses an existing person with 409 rather than quietly giving
+   * them a new role, and this holds what it said so the operator can see WHO
+   * before deciding. Cleared on every fresh attempt.
+   */
+  private adminConflict: {
+    existingName: string; existingRoles: string[];
+    requestedRole: string; alreadyHasRole: boolean; message: string;
+  } | null = null;
+  /**
    * Admin accounts created in this wizard run, WITH their activation codes.
    *
    * The codes are held here for the length of the operator's session and
@@ -202,9 +218,29 @@ class Console_ {
   /** Set once screen 3 commits. From here the wizard is resumable. */
   private tenantId: string | null = null;
   private detail: { tenant: TenantRow & { branding: Record<string, string>; weekendDays: number[] };
-                    state: OnboardingState; canActivate: boolean } | null = null;
+                    state: OnboardingState; canActivate: boolean;
+                    /** R-8 §9D — does *.shikhonbd.com resolve yet? */
+                    subdomainsLive?: boolean } | null = null;
   private activationCode = '';
   private busy = false;
+
+  /**
+   * R-8 §10. How a school is DOING, as opposed to what it has.
+   *
+   * Loaded with the tenant detail. Null while it is in flight or if it failed,
+   * and the panel simply does not render — an operator looking at a school's
+   * setup must not be blocked by a health query.
+   */
+  private health: {
+    sms: { queuedNow: number; queuedToday: number; sent: number; delivered: number;
+           failed: number; suppressed: number; segmentsThisMonth: number;
+           costBdt: number; lastSentAt: string | null;
+           oldestQueuedMinutes: number | null };
+    errors: Array<{ code: string; count: number }>;
+    push: { devices: number; devicesReached: number; lastPushAt: string | null };
+    usage: { lastLoginAt: string | null; activeUsers7d: number;
+             lastAttendanceOn: string | null; attendanceSessions7d: number };
+  } | null = null;
 
   /** R-8. Null until the readiness screen is opened. */
   private goLive: { checks: GoLiveCheck[]; ready: boolean; blockingRemaining: number } | null = null;
@@ -268,6 +304,13 @@ class Console_ {
     try {
       this.detail = await this.call(`tenant?id=${encodeURIComponent(id)}`);
       this.tenantId = id;
+      // R-8 §10. Fetched alongside, and allowed to fail on its own: an
+      // operator looking at a school's SETUP must not be blocked because a
+      // health query did not answer.
+      this.health = null;
+      try {
+        this.health = await this.call(`health?id=${encodeURIComponent(id)}`);
+      } catch { /* the panel says so */ }
     } catch (e) {
       this.error = (e as Error).message;
     } finally {
@@ -606,6 +649,7 @@ class Console_ {
     main.append(h, sub);
 
     main.append(this.stateChecklist(det.state, det.canActivate));
+    main.append(this.healthPanel());
     main.append(this.planEditor(det.tenant));
     main.append(this.accessPanel(det.tenant));
     main.append(this.statusActions(det.tenant, det.canActivate));
@@ -685,9 +729,17 @@ class Console_ {
     wrap.append(h);
 
     const host = location.host.replace(/^platform\./, '');
+    // R-8 §9D. The install link is the address that WORKS, so it comes first.
+    // The subdomain is shown only when the deployment says its DNS and
+    // certificate exist — before this it was listed as an equal option under
+    // "both lead to the same institution", which an operator could reasonably
+    // print on an admission slip for an address that does not resolve.
+    const live = this.detail?.subdomainsLive === true;
     const rows: Array<[string, string]> = [
-      ['সাবডোমেইন', `${t.slug}.${host}/app`],
       ['ইনস্টল লিংক', `${location.origin}/app?tid=${t.id}`],
+      ['সাবডোমেইন', live
+        ? `${t.slug}.${host}/app`
+        : `${t.slug}.${host}/app — এখনো চালু হয়নি`],
     ];
     const dl = d.createElement('dl');
     dl.className = 'detail-list';
@@ -701,7 +753,10 @@ class Console_ {
 
     const note = d.createElement('p');
     note.className = 'page-sub';
-    note.textContent = 'দুটোই একই প্রতিষ্ঠানে নিয়ে যায়। পুরোনো ?tid= লিংক কাজ করতেই থাকবে।';
+    note.textContent = live
+      ? 'দুটোই একই প্রতিষ্ঠানে নিয়ে যায়। পুরোনো ?tid= লিংক কাজ করতেই থাকবে।'
+      : 'এখন কেবল ইনস্টল লিংকটি কাজ করে — সেটিই ভর্তি স্লিপে ছাপুন। '
+        + 'সাবডোমেইন চালু হবে *.shikhonbd.com এর DNS ও TLS হওয়ার পর।';
     wrap.append(note);
 
     if (this.activationCode) {
@@ -712,6 +767,87 @@ class Console_ {
       warn.className = 'page-sub';
       warn.textContent = 'কোডটি একবারই দেখানো হয় — সংরক্ষণ করা হয় না। ৭২ ঘণ্টা পর মেয়াদ শেষ।';
       wrap.append(code, warn);
+    }
+    return wrap;
+  }
+
+  /**
+   * R-8 §10. The operational panel: is this school all right?
+   *
+   * Counts and timestamps only. No names, no numbers, no student rows — an
+   * operator supporting a school needs to know whether its messages are going
+   * out and whether anybody has logged in, and the school's own staff have the
+   * screens that show people. A platform operator browsing pupil records is
+   * the thing tenant isolation exists to prevent.
+   */
+  private healthPanel(): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement('div');
+    wrap.className = 'card platform-state';
+    wrap.dataset.panel = 'health';
+    const h = d.createElement('h2');
+    h.className = 'section-heading';
+    h.textContent = 'চলমান অবস্থা';
+    wrap.append(h);
+
+    const hh = this.health;
+    if (!hh) {
+      const p = d.createElement('p');
+      p.className = 'att-sub';
+      p.textContent = 'তথ্য আনা যায়নি।';
+      wrap.append(p);
+      return wrap;
+    }
+
+    const list = d.createElement('dl');
+    list.className = 'detail-list';
+    const row = (label: string, value: string, ok: boolean | null = null): void => {
+      const div = d.createElement('div');
+      const dt = d.createElement('dt'); dt.textContent = label;
+      const dd = d.createElement('dd');
+      dd.textContent = value;
+      if (ok !== null) dd.className = ok ? 'state-ok' : 'state-pending';
+      div.append(dt, dd); list.append(div);
+    };
+
+    // Usage first: during a pilot "has anybody actually used it" is the
+    // question, and a school nobody has logged into is the one to ring.
+    row('শেষ প্রবেশ', hh.usage.lastLoginAt ? bnDate(hh.usage.lastLoginAt) : 'কখনো নয়',
+      hh.usage.lastLoginAt !== null);
+    row('৭ দিনে সক্রিয় ব্যবহারকারী', bnNum(hh.usage.activeUsers7d),
+      hh.usage.activeUsers7d > 0);
+    row('শেষ হাজিরা', hh.usage.lastAttendanceOn
+      ? bnDate(hh.usage.lastAttendanceOn) : 'কখনো নয়',
+      hh.usage.lastAttendanceOn !== null);
+    row('৭ দিনে হাজিরা', bnNum(hh.usage.attendanceSessions7d));
+
+    // A queue that is not draining is the failure that looks like nothing at
+    // all: no error anywhere, and a school whose parents stopped being told.
+    const stuck = (hh.sms.oldestQueuedMinutes ?? 0) > 120;
+    row('এসএমএস সারিতে', hh.sms.queuedNow === 0
+      ? '০'
+      : `${bnNum(hh.sms.queuedNow)}${stuck
+        ? ` · সবচেয়ে পুরনোটি ${bnNum(Math.round((hh.sms.oldestQueuedMinutes ?? 0) / 60))} ঘণ্টা ধরে`
+        : ''}`, !stuck);
+    row('পাঠানো / পৌঁছেছে',
+      `${bnNum(hh.sms.sent)} / ${bnNum(hh.sms.delivered)}`);
+    row('ব্যর্থ / আটকানো',
+      `${bnNum(hh.sms.failed)} / ${bnNum(hh.sms.suppressed)}`, hh.sms.failed === 0);
+    row('এ মাসে সেগমেন্ট', bnNum(hh.sms.segmentsThisMonth));
+    if (hh.sms.costBdt > 0) row('এ পর্যন্ত খরচ', `৳ ${bnNum(hh.sms.costBdt.toFixed(2))}`);
+
+    row('পুশ যন্ত্র', `${bnNum(hh.push.devices)}`
+      + (hh.push.devices > 0 ? ` · ${bnNum(hh.push.devicesReached)} টিতে পৌঁছেছে` : ''));
+
+    wrap.append(list);
+
+    if (hh.errors.length > 0) {
+      const eh = d.createElement('p');
+      eh.className = 'att-sub';
+      // Codes, not message bodies: a body is a school's words to a parent.
+      eh.textContent = 'সাম্প্রতিক কারণ: '
+        + hh.errors.map((e) => `${e.code} (${bnNum(e.count)})`).join(' · ');
+      wrap.append(eh);
     }
     return wrap;
   }
@@ -1344,6 +1480,50 @@ class Console_ {
       main.append(made);
     }
 
+    // R-8 §9A. The number already belongs to somebody: say who, say what they
+    // already are, and make the operator choose. Promoting a teacher to
+    // principal by mistyping one digit was possible before this.
+    if (this.adminConflict) {
+      const c = this.adminConflict;
+      const warn = d.createElement('div');
+      warn.className = 'card platform-state';
+      warn.dataset.conflict = 'admin-exists';
+      const wh = d.createElement('h2');
+      wh.className = 'section-heading';
+      wh.textContent = 'এই নম্বরটি আগে থেকেই আছে';
+      const wp = d.createElement('p');
+      wp.className = 'inline-notice';
+      wp.textContent = c.message;
+      const detail = d.createElement('p');
+      detail.className = 'att-sub';
+      const roleNames = c.existingRoles.length > 0
+        ? c.existingRoles.map((r) => ADMIN_ROLE_BN[r] ?? r).join(' · ')
+        : 'কোনো ভূমিকা নেই';
+      detail.textContent = `${c.existingName} — বর্তমান ভূমিকা: ${roleNames}`;
+      warn.append(wh, wp, detail);
+
+      const row = d.createElement('div');
+      row.className = 'action-row';
+      const yes = d.createElement('button');
+      yes.type = 'button';
+      yes.className = 'btn-primary btn-inline';
+      yes.dataset.action = 'confirm-existing-admin';
+      yes.textContent = c.alreadyHasRole
+        ? 'হ্যাঁ — নতুন কোড দিন'
+        : `হ্যাঁ — ${ADMIN_ROLE_BN[c.requestedRole] ?? c.requestedRole} ভূমিকা দিন`;
+      yes.disabled = this.busy;
+      yes.addEventListener('click', () => { void create(true); });
+      const no = d.createElement('button');
+      no.type = 'button';
+      no.className = 'btn-secondary';
+      no.dataset.action = 'cancel-existing-admin';
+      no.textContent = 'না — নম্বর ঠিক করি';
+      no.addEventListener('click', () => { this.adminConflict = null; this.render(); });
+      row.append(yes, no);
+      warn.append(row);
+      main.append(warn);
+    }
+
     const form = d.createElement('div');
     form.className = 'card card-form';
     const nameBn = this.field('নাম (বাংলা) *', 'text', '');
@@ -1380,7 +1560,7 @@ class Console_ {
      * So the primary action creates and stays. Moving on is a separate,
      * explicit click, available once at least one account exists.
      */
-    const create = async (): Promise<void> => {
+    const create = async (confirmExisting = false): Promise<void> => {
       const p = phone.input.value.trim();
       if (!nameBn.input.value.trim()) { this.error = 'নাম দিন।'; this.render(); return; }
       if (!/^\+8801[3-9]\d{8}$/.test(p)) {
@@ -1393,6 +1573,7 @@ class Console_ {
           body: JSON.stringify({
             tenantId: this.tenantId, nameBn: nameBn.input.value.trim(),
             phone: p, roleCode: role.input.value,
+            ...(confirmExisting ? { confirmExisting: true } : {}),
           }),
         });
         this.activationCode = r.activationCode;
@@ -1405,7 +1586,23 @@ class Console_ {
         this.notice = r.reused
           ? 'এই নম্বরের ব্যবহারকারী আগেই ছিল — নতুন অ্যাকাউন্ট না বানিয়ে ভূমিকা দেওয়া হয়েছে।'
           : 'প্রশাসক অ্যাকাউন্ট তৈরি হয়েছে — কোডটি নিচে দেখুন।';
-      } catch (e) { this.error = (e as Error).message; }
+        this.adminConflict = null;
+      } catch (e) {
+        const err = e as Error & { detail?: Record<string, unknown>; code?: string };
+        if (err.code === 'user_exists' && err.detail) {
+          // Not an error to read and dismiss — a decision to make. Held so the
+          // next render can name the person and offer the confirm.
+          this.adminConflict = {
+            existingName: String(err.detail.existingName ?? ''),
+            existingRoles: (err.detail.existingRoles as string[] | undefined) ?? [],
+            requestedRole: String(err.detail.requestedRole ?? ''),
+            alreadyHasRole: err.detail.alreadyHasRole === true,
+            message: err.message,
+          };
+        } else {
+          this.error = err.message;
+        }
+      }
       finally { this.busy = false; this.render(); }
     };
 

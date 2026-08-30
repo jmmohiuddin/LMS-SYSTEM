@@ -257,9 +257,39 @@ describe('R-7 — platform console', { skip }, () => {
       assert.equal(await countIn(tenantId, 'SELECT count(*)::int AS n FROM activation_codes'), 1);
     });
 
-    test('the same phone twice grants the role rather than duplicating the person', async () => {
+    test('R-8 §9A — an existing number is REFUSED until the operator confirms', async () => {
+      // Reuse is right; reusing silently was not. An operator who mistypes a
+      // digit and lands on an existing teacher's number, with "principal"
+      // selected, used to promote that teacher and see only `reused: true` in
+      // a response the console never surfaced. It happened during R-7's
+      // acceptance walk, which is how it was found.
       const r = await asOperator('/api/v1/platform/admin', {
         tenantId, nameBn: 'প্রধান শিক্ষক', phone: '+8801799910001', roleCode: 'it_admin',
+      });
+      assert.equal(r.status, 409);
+      const body = r.body as {
+        error: string; existingName: string; existingRoles: string[];
+        requestedRole: string; alreadyHasRole: boolean;
+      };
+      assert.equal(body.error, 'user_exists');
+      // The refusal must name WHO and WHAT THEY ALREADY ARE — "this number is
+      // already registered" is not enough to decide with.
+      assert.ok(body.existingName.length > 0);
+      assert.ok(Array.isArray(body.existingRoles));
+      assert.equal(body.requestedRole, 'it_admin');
+
+      // Nothing was granted by the refusal.
+      assert.equal(
+        await countIn(tenantId,
+          "SELECT count(*)::int AS n FROM user_roles r JOIN users u ON u.id = r.user_id"
+          + " WHERE u.phone_e164 = '+8801799910001' AND r.role_code = 'it_admin'"),
+        0, 'a refused request granted the role anyway');
+    });
+
+    test('R-8 §9A — confirmed, it grants the role rather than duplicating the person', async () => {
+      const r = await asOperator('/api/v1/platform/admin', {
+        tenantId, nameBn: 'প্রধান শিক্ষক', phone: '+8801799910001', roleCode: 'it_admin',
+        confirmExisting: true,
       });
       assert.equal(r.status, 200);
       assert.equal((r.body as { reused: boolean }).reused, true);
@@ -344,12 +374,21 @@ describe('R-7 — platform console', { skip }, () => {
         tenantId, kind: 'student', csv, commit: true, digest: d.digest,
       });
       assert.equal(r.status, 409);
-      const body = r.body as { error: string; message: string };
-      assert.equal(body.error, 'cap_exceeded');
-      // "cap exceeded" tells an operator nothing; the numbers tell them
-      // whether to trim the file or raise the plan.
-      assert.match(body.message, /3/);
-      assert.match(body.message, /4/);
+      const body = r.body as {
+        error: string; message: string; cap?: number; enrolled?: number;
+      };
+      assert.equal(body.error, 'student_cap_reached');
+      // R-8 §9B. The numbers still have to be there — they are what tells an
+      // operator whether to trim the file or raise the plan — but they arrive
+      // as fields AND in Bangla numerals in the message, rather than as the
+      // database trigger's English sentence passed through verbatim.
+      assert.equal(body.cap, 3);
+      assert.equal(typeof body.enrolled, 'number');
+      assert.match(body.message, /৩/, 'the cap, in Bangla numerals');
+      assert.doesNotMatch(body.message, /student cap reached/i,
+        'the database trigger English must not reach an operator');
+      assert.match(body.message, /কিছুই আমদানি হয়নি/,
+        'an operator must be told that nothing was written');
 
       assert.equal(await countIn(tenantId, 'SELECT count(*)::int AS n FROM student_profiles'), 2,
         'an over-cap import wrote rows anyway');

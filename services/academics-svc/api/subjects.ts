@@ -48,6 +48,7 @@ interface Row {
   name_bn: string;
   name_en: string | null;
   nctb_code: string | null;
+  code_verified?: boolean;
   requirement_type: string;
   paper_structure: string;
   assessment_scheme: string;
@@ -126,6 +127,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
               ORDER BY m.subject_id, c.chapter_no
            )
            SELECT m.subject_id, sub.name_bn, sub.name_en, sub.nctb_code,
+                  -- R-8 section 9C. Whether OUR seed for this code was ever
+                  -- checked against a board publication. subject_catalogue's
+                  -- verified_against column has existed since migration 012 and
+                  -- is NULL on all 73 rows, so today this is false for
+                  -- everything -- which is the truth, and was invisible.
+                  -- Migration 048's H-prefixed identifiers are ours outright
+                  -- and looked exactly as official as any other code.
+                  EXISTS (SELECT 1 FROM subject_catalogue sc
+                           WHERE sc.nctb_code = sub.nctb_code
+                             AND sc.verified_against IS NOT NULL) AS code_verified,
                   m.requirement_type,
                   sub.paper_structure::text, sub.assessment_scheme::text,
                   COALESCE(cc.total_chapters, 0)     AS total_chapters,
@@ -155,6 +166,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         nameBn: r.name_bn,
         nameEn: r.name_en,
         nctbCode: r.nctb_code,
+        // False until a curriculum specialist signs the code off; see
+        // 06-DEPLOYMENT.md §6, which has carried that task since R-7.
+        codeVerified: r.code_verified === true,
         requirementType: r.requirement_type,
         requirementLabelBn: REQUIREMENT_LABEL[r.requirement_type] ?? r.requirement_type,
         paperStructure: r.paper_structure,

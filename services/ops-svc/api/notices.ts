@@ -36,8 +36,12 @@ import { authenticate, requireRole } from '../../../packages/server-core/src/aut
 import {
   parseNotice,
   NoticeError,
+  smsSegmentsFor,
   type NoticeDraft,
 } from '../../../packages/ui-core/src/notice.ts';
+// The sender's own body builder and length rule, so the estimate and the bill
+// are computed by one function rather than two that agree until they do not.
+import { noticeSmsBody, noticeSmsMaxChars } from '../../sms-svc/src/dispatch.ts';
 
 /**
  * Who may publish at all. Mirrors the notice_write_scope RLS policy — the
@@ -127,6 +131,28 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // ── Create (+ publish) ────────────────────────────────────────────
     requireRole(claims, AUTHOR_ROLES);
 
+    // ── R-8 §4. How many people, and how many messages — BEFORE sending.
+    //
+    // The composer already restated the audience as a sentence and showed the
+    // segments per person. What it could not say was how many people "সব
+    // অভিভাবক" actually is. A head teacher choosing between "this section" and
+    // "all guardians" was choosing between two phrases, one of which costs a
+    // hundred times more than the other, with nothing on screen to say so.
+    //
+    // `resolve_notice_audience` is STABLE, so counting from it writes nothing
+    // and needs no new function: the same resolver that decides who receives
+    // the notice decides who is counted, and the two cannot disagree.
+    //
+    // `smsRecipients` is deliberately narrower than `recipients`: it is the
+    // people who would actually be TEXTED — a phone on file, and consent if
+    // they are a guardian — which is the number the bill is made of. The
+    // difference between the two is usually large and always surprising.
+    if (query(req).get('preview') === '1') {
+      const preview = await previewAudience(db, ctx, await readJson(req));
+      json(res, 200, preview, cors);
+      return;
+    }
+
     const body = await readJson<{
       notice?: unknown; publish?: boolean; publishAt?: string | null;
     }>(req);
@@ -207,4 +233,93 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
     json(res, 500, { error: 'internal_error' }, cors);
   }
+}
+
+/** What a notice would cost, computed from the audience that would receive it. */
+export interface AudiencePreview {
+  /** Everyone who would get the in-app notice. */
+  recipients: number;
+  /** Of those, the ones who would be sent an SMS. Always ≤ recipients. */
+  smsRecipients: number;
+  /** UCS-2 segments for this body, per person. */
+  segmentsEach: number;
+  /** `smsRecipients × segmentsEach` — the number the invoice is made of. */
+  segmentsTotal: number;
+  /** Above this, the composer demands a second, explicit confirmation. */
+  confirmThreshold: number;
+  /** Whether this send is large enough to need that confirmation. */
+  needsConfirmation: boolean;
+}
+
+/**
+ * The threshold above which sending needs a second act.
+ *
+ * 200 messages is roughly one section's guardians twice over: comfortably more
+ * than any routine send, comfortably less than a whole school. The number is
+ * deliberately not configurable — a per-tenant setting for "when to warn me"
+ * is a setting that gets raised once, in a hurry, and never lowered.
+ */
+export const SMS_CONFIRM_THRESHOLD = 200;
+
+async function previewAudience(
+  db: Awaited<ReturnType<typeof sharedDb>>,
+  ctx: { tenantId: string; userId: string; role: string },
+  body: { audience?: unknown; body?: unknown; title?: unknown; sendSms?: unknown },
+): Promise<AudiencePreview> {
+  const audience = (body.audience ?? { type: 'all' }) as Record<string, unknown>;
+  const text = typeof body.body === 'string' ? body.body : '';
+  const title = typeof body.title === 'string' ? body.title : '';
+
+  const counts = await db.withTenant(ctx, async (c) => {
+    // The school's own name and its configured alert length, because the
+    // message that gets SENT is neither the notice body nor a fixed length:
+    // `noticeSmsBody` trims to the tenant's cap and signs with the school.
+    // Estimating from the raw body would be wrong in both directions — short
+    // by the signature, long by the truncation — and the whole point of this
+    // number is that an operator can trust it.
+    const { rows: t } = await c.query<{ name_bn: string; settings: unknown }>(
+      `SELECT name_bn, settings FROM tenants WHERE id = app.current_tenant()`);
+    const orgName = t[0]?.name_bn ?? 'বিদ্যালয়';
+    const maxChars = noticeSmsMaxChars(t[0]?.settings ?? null);
+    const sent = noticeSmsBody(title, text, orgName, maxChars);
+
+    const { rows } = await c.query<{ recipients: string; sms_recipients: string }>(
+      `WITH a AS (
+         SELECT DISTINCT user_id
+           FROM app.resolve_notice_audience(app.current_tenant(), $1::jsonb)
+       )
+       SELECT count(*)::text AS recipients,
+              count(*) FILTER (
+                WHERE u.status = 'active' AND u.phone_e164 IS NOT NULL
+                  -- The same consent rule the notice sender applies, so the
+                  -- estimate and the bill are computed from one predicate.
+                  AND (NOT EXISTS (SELECT 1 FROM guardianships g
+                                    WHERE g.tenant_id = app.current_tenant()
+                                      AND g.guardian_id = u.id)
+                       OR EXISTS (SELECT 1 FROM guardianships g
+                                   WHERE g.tenant_id = app.current_tenant()
+                                     AND g.guardian_id = u.id
+                                     AND g.receives_sms = true))
+              )::text AS sms_recipients
+         FROM a JOIN users u ON u.id = a.user_id`,
+      [JSON.stringify(audience)],
+    );
+    return {
+      ...(rows[0] ?? { recipients: '0', sms_recipients: '0' }),
+      segments: smsSegmentsFor(sent),
+    };
+  });
+
+  const segmentsEach = counts.segments;
+  const recipients = Number(counts.recipients);
+  const smsRecipients = body.sendSms === true ? Number(counts.sms_recipients) : 0;
+  const segmentsTotal = smsRecipients * segmentsEach;
+  return {
+    recipients,
+    smsRecipients,
+    segmentsEach,
+    segmentsTotal,
+    confirmThreshold: SMS_CONFIRM_THRESHOLD,
+    needsConfirmation: segmentsTotal > SMS_CONFIRM_THRESHOLD,
+  };
 }

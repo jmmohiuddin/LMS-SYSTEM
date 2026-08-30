@@ -1206,6 +1206,18 @@ delivered nothing while the readiness screen reported it green. See
 - [ ] Data-residency decision (Singapore → BD) **before real student PII lands**.
 - [ ] Pilot: 3–5 institutions of different shapes (with/without groups, school+college,
       madrasah weekend config) per `05` Phase-1 exit criteria.
+- [x] **Send safety before the first real batch** (2026-08-30): the composer states
+      the audience size and total message count, a send above 200 messages needs an
+      explicit acknowledgement that names the numbers, and `SMS_TEST_RECIPIENTS`
+      restricts a deployment to an allowlist while still writing and showing every
+      row that was withheld.
+- [x] **Operational health per school** — `GET /platform/health` and the চলমান
+      অবস্থা panel: queue depth, failures, last login, last attendance, push devices.
+      Counts and timestamps only; no student PII.
+- [ ] **Backups, restore test, RPO/RTO** — untested, no production database.
+- [ ] **Monitoring and alerting** — not built. Cron-failure alerting is the minimum.
+- See [12-PRODUCTION-RUNBOOK.md](12-PRODUCTION-RUNBOOK.md), whose first section is
+  a table of what has and has not actually been exercised.
 
 ### R-9 — Post-roadmap add-ons (only after pilot stability)
 
@@ -1264,7 +1276,7 @@ from this side of a pilot.
 | R-5 | Branded print engine | M | R-1 | **done 2026-08-29** (object storage + CSV export deferred) |
 | R-6 | Search + history | S–M | — | **done 2026-08-29** (1 index; no history table, no search engine) |
 | R-7 | Onboarding + platform console | M | R-1 | **done 2026-08-29** + completion pass same day (4 institution types, resumable wizard, staff activation codes, HSC subjects, attendance fixed; wildcard DNS/TLS is a deploy step) |
-| R-8 | Go-live unlocks | M | any | **code done 2026-08-29** (provider adapter + DLR, switches, AI budget, readiness screen); contracts, PII key, MFS and pilot remain externally blocked |
+| R-8 | Go-live unlocks + production readiness | M | any | **code done 2026-08-30** (provider adapter + DLR, switches, AI budget, readiness screen, SMS send-safety, operator health panel, CORS allowlist, R-7 sharp edges); **NOT production-complete** — no deployment, no aggregator, no backup test, no monitoring, **no pilot** |
 | R-9 | Add-ons | — | **pilot — NOT satisfied** | web push implemented pre-pilot as an independent capability (2026-08-29); **the pilot gate stands for the other six items** |
 
 Recommended execution order: **R-0 → R-1 → R-2 → R-3 → R-4 → R-5 → R-6 → R-7**, with

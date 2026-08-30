@@ -60,6 +60,25 @@ export class NoticeComposeView {
   private audienceType: AudienceType = 'all';
   private selectedSections = new Set<string>();
   private sendSms = false;
+  /**
+   * R-8 §4. How many people this would reach and what it would cost, from the
+   * server's own audience resolver.
+   *
+   * The screen already restated the audience as a sentence and showed the
+   * segments per person. What it could not say was how many people "সব
+   * অভিভাবক" IS. Choosing between "this section" and "all guardians" was
+   * choosing between two phrases, one of which costs a hundred times more,
+   * with nothing on screen saying so.
+   */
+  private estimate: {
+    recipients: number; smsRecipients: number;
+    segmentsEach: number; segmentsTotal: number;
+    confirmThreshold: number; needsConfirmation: boolean;
+  } | null = null;
+  /** Set by the operator, for a send big enough to need saying out loud. */
+  private bigSendAcknowledged = false;
+  private estimateSeq = 0;
+  private estimateTimer: ReturnType<typeof setTimeout> | null = null;
   /** ISO local datetime, or '' for "send now". */
   private publishAt = '';
   /** Set once by the category picker; after that the author owns the toggle. */
@@ -204,18 +223,105 @@ export class NoticeComposeView {
   }
 
   /** Refresh only the parts that depend on the body: never re-render mid-type. */
+  /**
+   * R-8 §4. Ask again, but not on every keystroke.
+   *
+   * The estimate is a database query over the audience; firing it per
+   * character would be a request per keystroke on a 2G connection, which is
+   * the exact pattern docs/01 §8 forbids. 400 ms after typing stops is late
+   * enough to be cheap and early enough to be read before the send button.
+   */
+  private scheduleEstimate(): void {
+    if (this.estimateTimer !== null) clearTimeout(this.estimateTimer);
+    this.estimateTimer = setTimeout(() => {
+      this.estimateTimer = null;
+      void this.refreshEstimate();
+    }, 400);
+  }
+
   private syncLive(): void {
     const root = this.o.root;
+    const est = this.estimate;
+    const scale = root.querySelector<HTMLElement>('[data-estimate]');
+    if (scale) {
+      scale.textContent = !est ? ''
+        : est.smsRecipients > 0
+          ? `${bn(est.recipients)} জন পাবে · ${bn(est.smsRecipients)} জনকে এসএমএস`
+            + ` · আনুমানিক ${bn(est.segmentsTotal)}টি এসএমএস`
+          : `${bn(est.recipients)} জন পাবে`;
+    }
     const seg = root.querySelector<HTMLElement>('[data-sms-cost]');
     if (seg) {
-      seg.textContent = this.body
-        ? `প্রতি জনে ${bn(smsSegmentsFor(this.body))}টি এসএমএস`
-        : '';
+      // The server's figure when there is one, because it is computed from the
+      // message that would actually be SENT — title, trimmed body, and the
+      // school's signature — while `smsSegmentsFor(this.body)` measures the
+      // notice text alone and under-reports every message. Two numbers on one
+      // screen disagreeing is worse than one number arriving a moment late.
+      const each = est ? est.segmentsEach : smsSegmentsFor(this.body);
+      seg.textContent = this.body ? `প্রতি জনে ${bn(each)}টি এসএমএস` : '';
     }
     const line = root.querySelector<HTMLElement>('[data-audience-line]');
     if (line) line.textContent = this.audienceSentence();
     const send = root.querySelector<HTMLButtonElement>('[data-send]');
-    if (send) send.disabled = this.busy || !this.title.trim() || !this.body.trim();
+    // R-8 §4. A send large enough to be a mistake needs the mistake said out
+    // loud first. Below the threshold nothing changes.
+    const blockedByScale = this.estimate?.needsConfirmation === true
+      && !this.bigSendAcknowledged;
+    if (send) {
+      send.disabled = this.busy || !this.title.trim() || !this.body.trim()
+        || blockedByScale;
+    }
+  }
+
+  /**
+   * Ask the server what this would cost.
+   *
+   * Debounced by sequence rather than by timer: the audience picker fires on
+   * every click and the body on every keystroke, and a stale reply arriving
+   * after a newer one would show the cost of a message that is no longer being
+   * written. Only the newest answer is allowed to land.
+   */
+  private async refreshEstimate(): Promise<void> {
+    const seq = ++this.estimateSeq;
+    if (!this.title.trim() && !this.body.trim()) { this.estimate = null; return; }
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/ops/notices?preview=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audience: this.audienceType === 'section'
+            ? { type: 'section', ids: [...this.selectedSections] }
+            : { type: this.audienceType },
+          title: this.title, body: this.body, sendSms: this.sendSms,
+        }),
+      });
+      if (seq !== this.estimateSeq) return;
+      if (!res.ok) { this.estimate = null; this.syncLive(); return; }
+      const next = await res.json() as NonNullable<typeof this.estimate>;
+      if (seq !== this.estimateSeq) return;
+      // A changed audience invalidates an acknowledgement: saying yes to
+      // "৮টি এসএমএস" must not carry over to "৪,৫০০টি".
+      if (this.estimate && next.segmentsTotal !== this.estimate.segmentsTotal) {
+        this.bigSendAcknowledged = false;
+      }
+      // A full render when the GATE changes, not just the numbers.
+      //
+      // `syncLive` updates text and button state in place — it does not build
+      // the acknowledgement checkbox, which exists only in `render`. So an
+      // estimate that arrived and flipped `needsConfirmation` to true disabled
+      // the send button and drew nothing to re-enable it: a dead end, and a
+      // worse outcome than having no gate at all. Caught by the test that asks
+      // for the checkbox after a large estimate.
+      const gateChanged = (this.estimate?.needsConfirmation ?? false)
+        !== next.needsConfirmation;
+      this.estimate = next;
+      if (gateChanged) this.render(); else this.syncLive();
+    } catch {
+      // Offline: no estimate rather than a wrong one. The send button stays
+      // enabled — the composer already works offline and the server counts
+      // again at publish.
+      if (seq === this.estimateSeq) { this.estimate = null; this.syncLive(); }
+    }
   }
 
   private field(
@@ -240,6 +346,9 @@ export class NoticeComposeView {
       this[key] = (input as HTMLInputElement).value;
       this.fieldError = null;
       this.syncLive();
+      // The body decides the segment count and the title is part of the sent
+      // message, so both change the estimate.
+      this.scheduleEstimate();
     });
     label.append(input);
 
@@ -333,7 +442,14 @@ export class NoticeComposeView {
       chip.className = 'audience-chip';
       chip.setAttribute('aria-pressed', String(this.audienceType === a));
       chip.textContent = AUDIENCE_LABELS_BN[a];
-      chip.addEventListener('click', () => { this.audienceType = a; this.render(); });
+      chip.addEventListener('click', () => {
+        this.audienceType = a;
+        // The audience IS the cost. Changing it invalidates any
+        // acknowledgement of the previous one.
+        this.bigSendAcknowledged = false;
+        void this.refreshEstimate();
+        this.render();
+      });
       chips.append(chip);
     }
     who.append(chips);
@@ -356,6 +472,8 @@ export class NoticeComposeView {
         box.addEventListener('change', () => {
           if (box.checked) this.selectedSections.add(s.id);
           else this.selectedSections.delete(s.id);
+          this.bigSendAcknowledged = false;
+          void this.refreshEstimate();
           this.syncLive();
         });
         const name = d.createElement('span');
@@ -396,6 +514,11 @@ export class NoticeComposeView {
     smsBox.addEventListener('change', () => {
       this.sendSms = smsBox.checked;
       this.smsTouched = true;
+      // Turning SMS on is the single change that takes the cost from zero to
+      // whatever the audience is, so it re-asks immediately rather than after
+      // the typing debounce.
+      this.bigSendAcknowledged = false;
+      void this.refreshEstimate();
       this.render();
     });
     const smsText = d.createElement('span');
@@ -408,7 +531,9 @@ export class NoticeComposeView {
       cost.className = 'sms-cost';
       cost.setAttribute('data-sms-cost', '');
       cost.setAttribute('role', 'status');
-      cost.textContent = this.body ? `প্রতি জনে ${bn(smsSegmentsFor(this.body))}টি এসএমএস` : '';
+      cost.textContent = this.body
+        ? `প্রতি জনে ${bn(this.estimate?.segmentsEach ?? smsSegmentsFor(this.body))}টি এসএমএস`
+        : '';
       how.append(cost);
       const warn = d.createElement('p');
       warn.className = 'att-sub';
@@ -456,6 +581,51 @@ export class NoticeComposeView {
     lineLabel.textContent = 'পাবে:';
     confirm.append(lineLabel, line);
 
+    // ── R-8 §4. The scale of what is about to happen ────────────────
+    const scale = d.createElement('p');
+    scale.className = 'sms-cost';
+    scale.setAttribute('data-estimate', '');
+    scale.setAttribute('role', 'status');
+    confirm.append(scale);
+
+    const est = this.estimate;
+    if (est) {
+      // Two numbers, and the second is almost always the surprise: everyone
+      // who gets the in-app notice, and the far smaller set who have a phone
+      // on file and (for guardians) have consented. The bill is made of the
+      // second one.
+      scale.textContent = est.smsRecipients > 0
+        ? `${bn(est.recipients)} জন পাবে · ${bn(est.smsRecipients)} জনকে এসএমএস`
+          + ` · আনুমানিক ${bn(est.segmentsTotal)}টি এসএমএস`
+        : `${bn(est.recipients)} জন পাবে`;
+    }
+
+    if (est?.needsConfirmation) {
+      // Above the threshold the send button is not enough. A notice to a whole
+      // school cannot be recalled from nine hundred phones, and the moment to
+      // notice that is before the click, not in the invoice.
+      const ack = d.createElement('label');
+      ack.className = 'sms-toggle';
+      ack.setAttribute('data-big-send', '');
+      const box = d.createElement('input');
+      box.type = 'checkbox';
+      box.checked = this.bigSendAcknowledged;
+      box.addEventListener('change', () => {
+        this.bigSendAcknowledged = box.checked;
+        this.syncLive();
+      });
+      const txt = d.createElement('span');
+      txt.textContent = `আমি নিশ্চিত — ${bn(est.smsRecipients)} জনকে `
+        + `${bn(est.segmentsTotal)}টি এসএমএস পাঠানো হবে`;
+      ack.append(box, txt);
+      confirm.append(ack);
+
+      const why = d.createElement('p');
+      why.className = 'att-sub';
+      why.textContent = 'পাঠানো হয়ে গেলে আর ফেরানো যায় না।';
+      confirm.append(why);
+    }
+
     const actions = d.createElement('div');
     actions.className = 'action-row';
     const send = d.createElement('button');
@@ -465,7 +635,8 @@ export class NoticeComposeView {
     send.textContent = this.busy
       ? 'পাঠানো হচ্ছে…'
       : this.publishAt ? 'নির্ধারিত সময়ে পাঠান' : 'পাঠান';
-    send.disabled = this.busy || !this.title.trim() || !this.body.trim();
+    send.disabled = this.busy || !this.title.trim() || !this.body.trim()
+      || (this.estimate?.needsConfirmation === true && !this.bigSendAcknowledged);
     send.addEventListener('click', () => { void this.send(); });
     actions.append(send);
 

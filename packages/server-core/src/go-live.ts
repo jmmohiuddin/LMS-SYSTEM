@@ -70,6 +70,49 @@ export function aiEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
  * credentials is not configured, it is broken, and the readiness screen must
  * say so rather than showing a tick.
  */
+/**
+ * R-8 §9D. Are per-school subdomains actually reachable?
+ *
+ * R-7 shipped the resolver and 06-DEPLOYMENT.md has carried the two remaining
+ * DEPLOYMENT actions ever since — point *.shikhonbd.com at the deployment, and
+ * issue a wildcard certificate. Neither is code, neither has been done, and
+ * nothing in the product could tell. There is no way to detect it either: a DNS
+ * lookup from a serverless function proves nothing about a visitor's resolver.
+ * So it is an explicit switch, set only after provisioning, and it fails closed.
+ */
+/**
+ * R-8 §4. The numbers a deployment is allowed to text, if it is restricted.
+ *
+ * Empty means unrestricted — every deployment today, and the state a school in
+ * production is in. Set, it is an ALLOWLIST: the dispatcher sends to these
+ * numbers and suppresses everything else with a recorded reason, so a pilot
+ * can run a real aggregator against real school data without a single message
+ * reaching a real parent.
+ *
+ * This exists because the first real send is the one that cannot be taken
+ * back. Between "no aggregator at all" and "texting nine hundred guardians"
+ * there was nothing, and that step is where a wrong audience, a wrong template
+ * or a leftover test fixture costs a school its standing rather than costing a
+ * developer an afternoon.
+ *
+ * Comma-separated E.164: `+8801711000001,+8801711000002`.
+ */
+export function smsTestRecipients(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.SMS_TEST_RECIPIENTS ?? '')
+    .split(',')
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0);
+}
+
+/** Is this deployment restricted to an allowlist at all? */
+export function smsRestrictedToAllowlist(env: NodeJS.ProcessEnv = process.env): boolean {
+  return smsTestRecipients(env).length > 0;
+}
+
+export function subdomainsReady(env: NodeJS.ProcessEnv = process.env): boolean {
+  return enabled('WILDCARD_DNS_READY', env);
+}
+
 export function smsProviderConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   const name = (env.SMS_PROVIDER ?? '').trim().toLowerCase();
   if (!name || name === 'stub') return false;
@@ -183,6 +226,32 @@ export function goLiveChecks(env: NodeJS.ProcessEnv = process.env): GoLiveCheck[
         : (env.VAPID_PUBLIC_KEY ?? '').trim() || (env.VAPID_PRIVATE_KEY ?? '').trim()
           ? 'কী জোড়া অসম্পূর্ণ — VAPID_PUBLIC_KEY ও VAPID_PRIVATE_KEY দুটোই লাগবে'
           : 'বন্ধ — scripts/generate-vapid-keys.mjs চালিয়ে কী তৈরি করুন',
+      severity: 'advisory',
+    },
+    {
+      // R-8 §4. Loud, because a deployment that believes it is texting
+      // parents and is not is the same failure the SMS provider check exists
+      // to prevent, one step further along.
+      key: 'sms_allowlist',
+      labelBn: 'এসএমএস পরীক্ষামূলক তালিকা',
+      ready: !smsRestrictedToAllowlist(env),
+      detailBn: smsRestrictedToAllowlist(env)
+        ? `সীমিত — কেবল ${smsTestRecipients(env).length}টি নম্বরে যাবে, বাকি সব আটকে থাকবে`
+        : 'সীমিত নয় — সব প্রাপকের কাছে বার্তা যাবে',
+      severity: 'advisory',
+    },
+    {
+      // R-8 §9D. Off, the console stops presenting a school's subdomain as a
+      // working address. It had been listed beside the install link under
+      // "both lead to the same institution" — a sentence an operator could
+      // reasonably print on an admission slip, for an address that does not
+      // resolve.
+      key: 'subdomains',
+      labelBn: 'স্কুল-ভিত্তিক সাবডোমেইন',
+      ready: subdomainsReady(env),
+      detailBn: subdomainsReady(env)
+        ? 'প্রতিষ্ঠান নিজের ঠিকানায় পৌঁছাবে'
+        : 'বন্ধ — *.shikhonbd.com এর DNS ও TLS এখনো হয়নি; ?tid= লিংক চলছে',
       severity: 'advisory',
     },
     {

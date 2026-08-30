@@ -35,6 +35,7 @@ import { resolveProvider, type SmsProvider } from './provider.ts';
 // R-9 — the cheaper transport, tried before the paid one.
 import { PushSender, pushReplacesSms, EMPTY_PUSH_RESULT, type PushStageResult } from './push-send.ts';
 import { vapidFromEnv, type VapidKeys } from '../../../packages/server-core/src/web-push.ts';
+import { smsTestRecipients } from '../../../packages/server-core/src/go-live.ts';
 
 interface AttendanceMarkedPayload {
   studentId: string;
@@ -63,6 +64,11 @@ export interface DispatchOptions {
   vapid?: VapidKeys | null;
   /** Injected for tests, so a push service can be stood in for. */
   fetchImpl?: typeof fetch;
+  /**
+   * R-8 §4. Restrict sending to these numbers. Absent, the environment
+   * decides; empty, nothing is restricted.
+   */
+  testRecipients?: string[];
 }
 
 /**
@@ -251,6 +257,8 @@ export class SmsDispatchWorker {
   private readonly now: () => number;
   private readonly provider: SmsProvider;
   private readonly pushSender: PushSender | null;
+  /** R-8 §4. Non-null only when the deployment is restricted to test numbers. */
+  private readonly allowlist: Set<string> | null;
 
   constructor(db: Db, opts: DispatchOptions = {}) {
     this.db = db;
@@ -262,6 +270,10 @@ export class SmsDispatchWorker {
     // No VAPID keys means push is simply not part of this deployment. Unlike a
     // half-configured SMS provider, that is not an error worth throwing over:
     // the pipeline is complete without it and every message still goes.
+    // R-8 §4. Empty means unrestricted, which is every real deployment.
+    const allow = opts.testRecipients ?? smsTestRecipients();
+    this.allowlist = allow.length > 0 ? new Set(allow) : null;
+
     const vapid = opts.vapid ?? vapidFromEnv();
     this.pushSender = vapid
       ? new PushSender(vapid, { fetchImpl: opts.fetchImpl })
@@ -608,6 +620,7 @@ export class SmsDispatchWorker {
   }
 
   private async dispatch(client: pg.PoolClient, tenantId: string): Promise<number> {
+    let withheld = 0;
     const queued = await client.query<{ id: string; created_on: string; msisdn: string; body: string }>(
       `SELECT id, created_on, msisdn, body FROM sms_outbox
         WHERE tenant_id = $1 AND status = 'queued'
@@ -617,6 +630,26 @@ export class SmsDispatchWorker {
 
     let dispatched = 0;
     for (const row of queued.rows) {
+      // ── R-8 §4. The allowlist, checked at the last possible moment ──
+      //
+      // Deliberately HERE, immediately before the provider call, rather than
+      // at enqueue. The outbox row is still written, still counted, still
+      // visible to the school — what is withheld is the send itself. A pilot
+      // can therefore run the real pipeline against real school data and see
+      // exactly what would have gone out, with nothing reaching a real parent.
+      //
+      // Checking at enqueue would have hidden the message entirely, which
+      // tests a different system than the one that will run in production.
+      if (this.allowlist && !this.allowlist.has(row.msisdn)) {
+        await client.query(
+          `UPDATE sms_outbox
+              SET status = 'suppressed', error_code = 'not_in_test_allowlist'
+            WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
+          [tenantId, row.created_on, row.id]);
+        withheld += 1;
+        continue;
+      }
+
       // The outbox row's own id is the provider's idempotency key, so a cron
       // that fires twice cannot text a parent the same message twice.
       let sent;
@@ -650,6 +683,12 @@ export class SmsDispatchWorker {
          sent.providerMsgId, sent.provider, sent.costBdt ?? null],
       );
       dispatched++;
+    }
+    if (withheld > 0) {
+      // Never silent: a deployment that withheld messages must say so, or the
+      // allowlist becomes the thing that quietly stopped a school's SMS.
+      console.warn('[sms] %d message(s) withheld — SMS_TEST_RECIPIENTS allowlist is set',
+        withheld);
     }
     return dispatched;
   }

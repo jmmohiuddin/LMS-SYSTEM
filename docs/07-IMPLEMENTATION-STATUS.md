@@ -152,8 +152,12 @@ a parent.
 | MFS payment initiation | `MFS_PAYMENTS_ENABLED` | No live merchant credentials | Wire gateway calls + credentials, then set it to `true` |
 | AI engines | `ANTHROPIC_API_KEY` (presence) | No API key configured | Set the key. Per-tenant budget enforcement (R-8) is live and applies immediately |
 | Real SMS sending | `SMS_PROVIDER` + `SMS_ENDPOINT` + `SMS_API_TOKEN` + `SMS_SENDER_ID` | No aggregator contract | Set all four. Naming a provider **without** the other three throws at startup rather than silently reverting to the stub |
-| Delivery reports | `SMS_DLR_SECRET` | No aggregator to send them | Set it and give the aggregator the value. Unset, `POST /api/v1/sms/dlr` answers **503**, not 401 |
-| Web push (R-9) | `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | Not generated | Run `node scripts/generate-vapid-keys.mjs`. **No vendor** — the keys are self-issued. Unset, every message still goes by SMS |
+| Delivery reports | `SMS_DLR_SECRET` | No aggregator to send them | Set it and give the aggregator the value. Unset, `POST /api/v1/sms/dlr` answers **503**, not 401 |
+
+| Web push (R-9) | `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` | Not generated | Run `node scripts/generate-vapid-keys.mjs`. **No vendor** — the keys are self-issued. Unset, every message still goes by SMS |
+| SMS allowlist (R-8) | `SMS_TEST_RECIPIENTS` | Not restricted | Set a comma-separated E.164 list to restrict sending to your own team. Every other queued row is written and marked `suppressed`/`not_in_test_allowlist`, so a pilot sees exactly what would have gone out |
+| Per-school subdomains (R-8 §9D) | `WILDCARD_DNS_READY` | `*.shikhonbd.com` has no DNS or TLS | Provision the wildcard record and certificate, load a tenant subdomain over HTTPS, then set it to `true`. Unset, the console marks the subdomain **এখনো চালু হয়নি** and presents the `?tid=` install link as the address to print |
+| CORS origins (R-8) | `ALLOWED_ORIGINS` | Unrestricted (`*`) | Set to the deployment's own origins. Unset, behaviour is unchanged — the API is bearer-token only, so `*` is broad rather than exploitable |
 
 The login switch is now one-sided. `apps/pwa/src/login-view.ts` reads
 `isLoginDisabled()`, which reads a value cached from the server's `otpLogin` — so
@@ -1454,9 +1458,13 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 | CP-SAT solver upgrade; coordinator routine-editing UI (substitution finder ships now) | 02 §3 | 3 |
 | `ANTHROPIC_API_KEY` + NCTB corpus ingestion + embedding service → upgrades AI from disabled/lexical to grounded hybrid RAG (gateway ships now) | 01 §6 | 3 |
 | ANS: register real endpoints (`ans_endpoints`), KMS for per-endpoint signing secrets (batch pull, dispatcher, inbound staging ship now) | 03 §4 | 4 |
-| Answer-script photo pipeline | 01 §2.7 | 2–3 |
-| ~~Web push to cut SMS cost~~ — **closed by R-9** (§9l): a delivered push can cancel the same message's SMS, opt-in per school | 05 R-9 | done |
-| Content authoring workspace (F-403) — **the last open P0**, code-only. Every consumer of content is built; the producer is not | 09 audit | R-9 remainder |
-| Report trend charts (F-1505) — code-only, unbuilt | 09 audit | R-9 remainder |
+| Answer-script photo pipeline | 01 §2.7 | 2–3 |
+
+| ~~Web push to cut SMS cost~~ — **closed by R-9** (§9l): a delivered push can cancel the same message's SMS, opt-in per school | 05 R-9 | done |
+
+| Content authoring workspace (F-403) — **the last open P0**, code-only. Every consumer of content is built; the producer is not | 09 audit | R-9 remainder |
+
+| Report trend charts (F-1505) — code-only, unbuilt | 09 audit | R-9 remainder |
+
 | Section chat — optional per the master plan; a child-safety design problem first | 11 §R-9 | R-9 remainder |
 | ~~AI per-tenant token budgets (`ai_budget_periods` enforcement)~~ — **closed by R-8** (§9k): reserved before the call, 402 on refusal. Answer-leak detector still needs embeddings | 01 §6.3 | 3 |

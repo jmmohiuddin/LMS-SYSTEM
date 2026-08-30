@@ -31,6 +31,7 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 | 9 | [docs/09-PRD-AUDIT.md](docs/09-PRD-AUDIT.md) | Coverage of the PRD's 128 prioritised requirements, audited against the repository |
 | 10 | [docs/10-NETLIFY.md](docs/10-NETLIFY.md) | Netlify as a second deployment target sharing every handler |
 | 11 | [docs/11-MASTER-PLAN.md](docs/11-MASTER-PLAN.md) | **The plan of record**: decisions D1–D12, the R-0…R-9 roadmap, and what not to do |
+| 12 | [docs/12-PRODUCTION-RUNBOOK.md](docs/12-PRODUCTION-RUNBOOK.md) | **Before a real school**: environment separation, the order to turn SMS on, support and recovery, the pilot checklist — and a table of what has and has not actually been exercised |
 | — | [docs/PHASE_LOG.md](docs/PHASE_LOG.md) | **Start here.** Chronological history of everything that has been built, why, and what is still open |
 | — | [docs/PILOT-ONBOARDING-RUNBOOK.md](docs/PILOT-ONBOARDING-RUNBOOK.md) | How to onboard a pilot institution by hand today — the manual rehearsal of the R-7 wizard |
 

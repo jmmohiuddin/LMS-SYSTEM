@@ -150,6 +150,24 @@ END $$;
 
 RESET ROLE;
 
+-- The rollup runs as the MAINTENANCE CRON does: as the owner, with NO tenant
+-- in context. That is not a detail — `app.enforce_tenant` permits a
+-- cross-tenant insert only when `app.current_tenant()` is NULL and the caller
+-- is a member of `shikhon_platform`, which is exactly the cron's position.
+--
+-- The suite used to arrive here with `app.tenant_id` still set from the fixture
+-- block above, and passed anyway: with only ONE tenant's events in the window
+-- every rollup row matched the set tenant, so the cross-tenant path this test
+-- claims to cover was never taken. It surfaced the moment a second tenant had
+-- events in the last seven days — the real state of any database that has been
+-- used — and failed with 'cross-tenant insert blocked'.
+--
+-- Cleared explicitly, so the test exercises the production path rather than a
+-- single-tenant shadow of it.
+SELECT set_config('app.tenant_id', '', false);
+SELECT set_config('app.user_id', '', false);
+SELECT set_config('app.role', '', false);
+
 DO $$
 DECLARE r record; v_n integer;
 BEGIN

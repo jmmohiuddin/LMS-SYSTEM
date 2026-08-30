@@ -76,9 +76,22 @@ async function sharedDb() {
 }
 
 // packages/server-core/src/http.ts
-function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS") {
+function allowedOrigins(env = process.env) {
+  return (env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter((o) => o.length > 0);
+}
+function corsOriginFor(requestOrigin, env = process.env) {
+  const allow = allowedOrigins(env);
+  if (allow.length === 0) return { origin: "*", vary: false };
+  if (requestOrigin && allow.includes(requestOrigin)) {
+    return { origin: requestOrigin, vary: true };
+  }
+  return { origin: allow[0], vary: true };
+}
+function corsHeaders(extraHeaders = [], methods = "GET, POST, OPTIONS", requestOrigin) {
+  const { origin, vary } = corsOriginFor(requestOrigin);
   return {
-    "Access-Control-Allow-Origin": "*",
+    ...vary ? { Vary: "Origin" } : {},
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": methods,
     "Access-Control-Allow-Headers": [
       "Content-Type",

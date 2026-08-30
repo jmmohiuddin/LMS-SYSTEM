@@ -4842,3 +4842,277 @@ still calls push and nothing else.
 contracts, and this pass has now walked the full operator path end to end
 against a real database. The product's next real information comes from a
 school, not from another phase.
+
+---
+
+# 2026-08-30 · R-8 production-readiness pass · Everything that is code
+
+**Status: the code half is complete. The pilot half has not started, and R-8
+cannot be called complete without it.**
+
+R-8 as specified is production readiness *and* a pilot: real environments, a
+real SMS aggregator, real backups, real monitoring, and three to five real
+institutions with real teachers and real children. A large part of that is not
+code and could not be done from this repository:
+
+| Asked for | Why it did not happen |
+|---|---|
+| Production/staging environments configured | No deployment, no host credentials. Nothing in this environment can reach a Vercel, Netlify or Neon project |
+| Real Bangladesh SMS provider | No aggregator contract and no credentials. Unchanged since the first R-8 pass |
+| Real push delivery test | No real push service credentials and no device; the automation browser denies notifications by policy and blocks service-worker registration |
+| Backup and restore, with a restore test | No production database to back up or restore |
+| Monitoring and alerting | No production infrastructure to monitor |
+| 3–5 pilot institutions, real users, offline pilot | Real schools, real teachers and real children cannot be recruited from a repository |
+
+**Reporting any of those as done would be the exact failure the previous R-8
+pass was written to prevent** — a readiness screen going green while nothing is
+actually going out. So they are recorded as not done, and this entry covers
+what genuinely was.
+
+## What was built
+
+### §4 — SMS safety, which is the part that mattered most
+
+The single most valuable thing buildable here, because it guards the step
+nobody has taken yet: pointing a real aggregator at a real school.
+
+**The composer now says how big a send is.** It already restated the audience
+as a sentence and showed the segments per person. What it could never say was
+how many people "সব অভিভাবক" IS — so choosing between "this section" and "all
+guardians" was choosing between two phrases, one of which costs a hundred times
+more, with nothing on screen saying so. `POST /ops/notices?preview=1` counts
+from `app.resolve_notice_audience`, the same STABLE resolver the publish path
+uses, so the estimate and the send cannot disagree. No migration.
+
+Two numbers, and the second is the surprise: on the acceptance school, "সবাই"
+is **22 people and 4 SMS** — the rest have no phone on file or have not
+consented. The bill is made of the smaller number.
+
+The segment count is computed from `noticeSmsBody(...)` — the message the
+sender actually transmits, trimmed to the tenant's cap and signed with the
+school — not from the raw notice body, which is wrong in both directions at
+once. The composer's per-person line now uses the server's figure too, because
+two numbers disagreeing on one screen is worse than one arriving a moment late.
+
+**Above 200 messages the send button is disabled** until a box stating the
+actual numbers is ticked, and changing the audience revokes that
+acknowledgement. Without the revoke, ticking for a section and then switching
+to "everyone" would carry consent to a batch a hundred times larger — a gate
+that made things worse than no gate.
+
+▶ **The gate's first version was a dead end**, and a test caught it. The
+estimate arrives asynchronously; `syncLive()` disabled the send button but only
+`render()` draws the checkbox, so an operator saw a permanently disabled button
+with nothing to enable it. The gate now forces a full render when it flips.
+
+**`SMS_TEST_RECIPIENTS` is an allowlist**, checked immediately before the
+provider call rather than at enqueue. The row is still written, still counted,
+still visible — only the send is withheld, recorded as `suppressed` /
+`not_in_test_allowlist`. A pilot can therefore run the real pipeline against
+real school data and read exactly what would have gone out. Withholding does
+not consume a retry attempt, so lifting the allowlist leaves the message
+sendable.
+
+### §9 — the four R-7 sharp edges
+
+**A. An existing teacher was silently promoted.** Reusing an account rather
+than creating a second one for a human is right and stays; doing it silently
+was not. An operator who mistyped a digit onto an existing teacher's number,
+with "principal" selected, promoted that teacher — and saw only `reused: true`
+in a response the console never surfaced. It happened to me during R-7's
+acceptance walk, which is how it was found. The endpoint now answers **409
+`user_exists`** naming who the number belongs to and what they already are, and
+the console asks. `confirmExisting: true` is the second act.
+
+**B. The cap refusal reached operators in English**, straight from migration
+045's trigger. The trigger is the invariant and is unchanged — it must fire
+under concurrency and its message is right for a database log. The API stops
+passing it through and answers with the numbers in Bangla, plus the fact an
+operator most needs and a constraint message never gives: **nothing was
+imported**.
+
+▶ **The first version of that fix returned 500.** The trigger aborts the
+transaction, so the catch block's re-read query failed too with `25P02`. The
+numbers are now read *before* the import, and not parsed out of the message —
+a message format is not an interface.
+
+**C. HSC subject codes.** Migration 048's `H`-prefixed identifiers are ours,
+not board paper numbers, and 048's header says so — which is a fact living in a
+file nobody reads while the column goes on being called `nctb_code`.
+`subject_catalogue.verified_against` has existed since migration 012 and is
+**NULL on all 73 rows**: nothing has ever been checked against a circular. The
+subjects API now reports `codeVerified` per subject from that column, so the
+provenance travels with the data.
+
+Finding, stated plainly: **no user-facing surface renders a subject code at
+all** — not the subjects screen, not any printed document. The risk §9C names
+is latent rather than live, and the field is there for when a surface does show
+one.
+
+**D. Subdomains were presented as working.** The console listed a school's
+subdomain beside the install link under "both lead to the same institution",
+and `*.shikhonbd.com` has never had DNS or a certificate. An operator could
+reasonably have printed that on an admission slip. `WILDCARD_DNS_READY` is a
+switch set only after provisioning; unset, the install link comes first and the
+subdomain is marked **এখনো চালু হয়নি**. There is no way to detect this from
+the product — a DNS lookup in a serverless function proves nothing about a
+visitor's resolver — so an explicit switch that fails closed is the honest
+mechanism.
+
+### §10 — operational admin
+
+`GET /platform/health` and a চলমান অবস্থা panel: SMS queue depth and the age of
+the oldest queued message, sent/delivered/failed/suppressed, segments this
+month, cost, the top failure codes, push devices and last push, **last login,
+active users in 7 days, last attendance**. All counts and timestamps.
+
+Deliberately **no names, no phone numbers, no student rows**. An operator
+supporting a school needs to know whether its messages are going out and
+whether anybody has logged in; the school's own staff have the screens that
+show people. A platform operator browsing pupil records is what tenant
+isolation exists to prevent, and rebuilding it here for convenience would be
+perverse.
+
+### §1/§8 — CORS
+
+`Access-Control-Allow-Origin: *` was never a CSRF hole — this API authenticates
+by bearer token and never by cookie, so a browser sends no ambient credential
+and a hostile page has nothing to ride on. What it cost was defence in depth.
+`ALLOWED_ORIGINS` narrows it, echoing the request origin with `Vary: Origin`;
+**unset, behaviour is exactly what it was**, because a production control that
+breaks an unconfigured deployment is one nobody turns on.
+
+## §8 — the security review, and what it found
+
+Run against the real database rather than read off the source.
+
+| Check | Result |
+|---|---|
+| RLS on every tenant-scoped table | **Pass.** 12 tables lack FORCE; 10 are platform-global reference data with no `tenant_id` |
+| `product_events` / `product_event_rollups` | Tenant-scoped and not FORCEd — **verified safe**. RLS is *enabled*, so the runtime role is bound; FORCE is off only so the maintenance cron's owner can aggregate. Probed directly: owner sees both tenants, `shikhon_app` sees exactly one |
+| Service roles | **Pass.** Neither `shikhon_app` nor `shikhon_platform` has `BYPASSRLS` or `SUPERUSER` |
+| Secrets in browser bundles | **Pass.** One hit is the string `PLATFORM_API_KEY` as a form *label*; the operator types the key and it lives in memory for the session |
+| Secrets in git history | **Pass.** All 134 commits clean |
+| XSS | **Pass.** `innerHTML` is used for icons from literal maps, and for the letterhead, which applies `escapeHtml()` to every interpolated value |
+| CSRF | **Structurally absent.** No cookie authentication anywhere; nothing to ride on |
+| SSRF | **Pass.** The push-subscription endpoint refuses non-https, URL credentials, IP literals and internal names. DNS rebinding remains undefended and is documented |
+| Rate limiting | **Pass.** All 10 service dispatchers |
+| Cross-tenant | **Pass.** Re-verified in R-7's acceptance: 404 not 403 for another school's rows, `x-tenant-id` ignored, `?tid=` ignored, sync push answered `TENANT_MISMATCH` |
+| Platform authorization | **Pass.** A tenant token is refused 403 even when presented *with* `PLATFORM_API_KEY` — both factors required |
+
+**Finding, recorded rather than fixed:** `SERVICE_API_KEY` is a full
+cross-tenant impersonation credential on `/sync/push` and `/sync/pull` — it
+permits `X-Tenant-ID` / `X-User-ID` / `X-Role` headers to be trusted. That is
+the documented machine-to-machine design and the key is never in a browser, but
+it is the widest tenant-scoped credential in the product and its rotation
+matters more than its blast-radius note currently conveys.
+
+## A test that was passing for the wrong reason
+
+`db/tests/product_events.sql` claims to prove the rollup crosses tenants. It
+arrived at that assertion with `app.tenant_id` still set from an earlier
+fixture block — so with only one tenant's events in the window, every rollup
+row matched the set tenant and **the cross-tenant path was never taken**.
+
+It surfaced the moment a second tenant had events in the last seven days, which
+is the state of any database that has been used: the R-7 acceptance logins put
+telemetry in for two schools, and the suite failed with `cross-tenant insert
+blocked`.
+
+The production path was verified to be correct — the maintenance cron runs as
+the owner with no tenant context, `shikhon_owner` is a member of
+`shikhon_platform`, and `app.enforce_tenant` permits exactly that — so this was
+a fixture fault. The context is now cleared explicitly before the rollup, and
+the test exercises the production path rather than a single-tenant shadow of it.
+
+## Tests
+
+**1090 across 12 workspaces, all passing. 26 DB suites green.** New:
+
+| suite | what it holds |
+|---|---|
+| `services/sms-svc/test/allowlist.test.ts` (7) | an unset allowlist means unrestricted, not "send to nobody"; a withheld row is recorded, not hidden; withholding costs no retry attempt |
+| `services/ops-svc/test/notice-preview.test.ts` (8) | it counts who would be TEXTED, not who is in the audience; segments come from the sent message; preview **writes nothing**; a student cannot size the school's guardian list |
+| `apps/pwa/test/notice-safety.test.ts` (6) | a big send cannot go without acknowledgement; the acknowledgement states the numbers; **changing the audience revokes it**; an offline estimate does not block sending |
+| `packages/server-core/test/http.test.ts` (9) | unset `ALLOWED_ORIGINS` behaves exactly as before; an unlisted origin gets neither an echo nor a wildcard; credentials are never allowed |
+
+Updated: the platform suite's reuse test now asserts the 409-then-confirm
+contract, and its cap test asserts Bangla numerals and the absence of the
+trigger's English.
+
+## Browser verification
+
+- **§9A** — the console refuses an existing number and names the person.
+- **§9B** — an over-cap import answers 409 with "সীমা ১১ জন, এখন ভর্তি আছে ১০
+  জন। কিছুই আমদানি হয়নি।" and the roll is unchanged at 10.
+- **§9D** — the tenant detail lists the install link first and the subdomain as
+  **এখনো চালু হয়নি**, with the note telling the operator which to print.
+- **§4** — the composer shows "২২ জন পাবে · ৪ জনকে এসএমএস · আনুমানিক ৮টি
+  এসএমএস" live as the audience and body change.
+- **§10** — the চলমান অবস্থা panel shows last login ৩০ আগস্ট, 5 active users in
+  7 days, last attendance ২৯ আগস্ট.
+
+## Documentation
+
+`docs/12-PRODUCTION-RUNBOOK.md` is new, and its **first section is a table of
+what has and has not been exercised**, because every procedure in a runbook
+reads identically whether it has been rehearsed or merely written down, and the
+difference matters at 08:00 on a Sunday. It carries environment separation, the
+domain position, the order in which to turn SMS on (allowlist first), SMS
+troubleshooting, the untested backup/restore procedure with the RPO/RTO
+decision still open, the absence of monitoring, a support matrix, and a pilot
+checklist.
+
+## What R-8 still needs, in the order it blocks a pilot
+
+1. **An SMS aggregator contract.** Everything downstream of it is built and
+   tested against a fake.
+2. **A production deployment**, its environment variables, and its Neon
+   project.
+3. **A backup restored, and timed.** RPO and RTO are undecided.
+4. **Cron-failure alerting.** If the dispatcher stops, no parent is told
+   anything and nothing says so.
+5. **Wildcard DNS and TLS**, or the acceptance that `?tid=` is the address.
+6. **Three to five schools.**
+
+## R-9's pilot gate
+
+**Still not satisfied, and nothing in this pass changes that.** Web push
+remains recorded as an independently implemented pre-pilot capability. Section
+chat, content authoring, photo/voice, trend charts, native wrappers and
+library/transport/hostel/payroll stay gated, and none was touched.
+
+## Carried backlog — preserved
+
+**R-3:** class/section edit UI · guardian unlink · audit export and entity-name
+resolution · `POST /rms/solve` API-only.
+
+**R-5:** object storage · CSV export · multi-card ID layout · **money
+formatting** (still open).
+
+**R-6:** board-registration index · attendance date-range filter · type-ahead.
+
+**R-7:** operator SSO and key rotation · trial-expiry automation · per-class
+group configuration in the wizard · logo/watermark upload in the wizard ·
+platform audit UI · plan feature gating · teacher→subject assignment is still
+per-section by hand.
+
+**R-8 (new):** SMS retry backoff · monitoring and alerting · backup/restore
+verification · RPO/RTO decision · `SERVICE_API_KEY` blast-radius review · a
+curriculum specialist to fill `verified_against`.
+
+**R-9:** push retry/backoff · per-notice channel choice · the iOS Home-Screen
+explanation · a first-contact test against a real push service.
+
+## Unresolved bugs / issues
+
+**1. `GET /api/v1/sync/pull` is built, mounted, tested — and no client ever
+calls it.** Carried unchanged from R-8, R-9 and the R-7 completion pass.
+
+**2. `docs/09-PRD-AUDIT.md` remains stale** (2026-08-12).
+
+## Next recommended step
+
+**Sign an SMS aggregator contract and stand up one production deployment.**
+Every remaining item on this list is behind one of those two, and the code that
+waits on them has been built and tested as far as a fake can take it.

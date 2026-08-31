@@ -51,60 +51,106 @@
    conjunct. The 16px body floor of Override 3 is --text-base, unchanged. */
 
 :root {
-  /* ── From the "Ata Ekta LMS" design system (imported 2026-08-22) ────
-     Brand primary is #e53935 (red). White ground, warm neutral text.
-     Rounded corners (8/12/16). Hind Siliguri Bangla + Inter Latin.
-     The four accessibility overrides in the header (font, letter-spacing,
-     type scale floor, tap targets) still apply. */
-  --color-bg:      #ffffff;
-  --color-surface: #f9fafb;
-  --color-text:    #1f2937;
-  --color-accent:  #e53935;
-  --color-accent-2:#8b5cf6;    /* purple — tertiary, exams/assignments only */
-  --color-divider: color-mix(in srgb, #1f2937 40%, transparent);
+  /* ── Ata Ekta design system — canonical palette (P0, 2026-09-01) ────
+     Copied from apps/pwa/public/design/tokens/colors.css, NOT imported:
+     `/design` is a prototype that may be edited freely, and production must
+     not inherit a prototype's edits or pay for a second stylesheet request.
 
-  /* Neutral ramp — cool gray, matches design's #f9fafb/#f1f5f9/#e5e7eb/
-     #d1d5db/#6b7280/#1f2937 tokens; extended into a 100-900 ramp. */
-  --color-neutral-100: #f9fafb;  --color-neutral-200: #f1f5f9;
-  --color-neutral-300: #e5e7eb;  --color-neutral-400: #d1d5db;
-  --color-neutral-500: #9ca3af;  --color-neutral-600: #6b7280;
-  --color-neutral-700: #4b5563;  --color-neutral-800: #374151;
-  --color-neutral-900: #1f2937;
+     What changed in P0: the palette. What did not: spacing, radius, shadows,
+     tap targets and font families were ALREADY identical to Ata Ekta before
+     this phase, so they are untouched below.
 
-  /* Brand red ramp — anchored to #e53935 with matching soft/hover/ink. */
-  --color-accent-100: #fef2f2;   --color-accent-200: #fee2e2;
-  --color-accent-300: #fecaca;   --color-accent-400: #fca5a5;
-  --color-accent-500: #f87171;   --color-accent-600: #e53935;
-  --color-accent-700: #dc2626;   --color-accent-800: #b91c1c;
-  --color-accent-900: #7f1d1d;
+     Every value here was checked with a WCAG contrast calculator against
+     BOTH grounds (white cards and the Muslin page) before being adopted;
+     the ratios are recorded beside the tokens that carry a text obligation.
+     Where a canonical hue could not clear 4.5:1 in a given ROLE, the hue is
+     kept and only the STEP moves — the same discipline the previous palette
+     used, and the reason `-text` steps exist below. */
 
-  /* Design's semantic status colors (added — no equivalents existed). */
-  --color-primary:        #e53935;
-  --color-primary-hover:  #dc2626;
-  --color-primary-soft:   #fee2e2;
-  --color-primary-ink:    #7f1d1d;
-  --color-success:        #22c55e;
-  --color-success-soft:   #dcfce7;
-  --color-success-ink:    #166534;
-  --color-warning:        #f59e0b;
-  --color-warning-soft:   #fef3c7;
-  --color-warning-ink:    #92400e;
-  --color-danger:         #dc2626;
-  --color-danger-soft:    #fee2e2;
-  --color-danger-ink:     #7f1d1d;
-  --color-info:           #3b82f6;
-  --color-info-soft:      #dbeafe;
-  --color-info-ink:       #1e40af;
-  --color-accent-2-soft:  #ede9fe;
-  --color-accent-2-ink:   #5b21b6;
-  --color-surface-muted:  #f1f5f9;
-  --color-border:         #e5e7eb;
-  --color-border-strong:  #d1d5db;
-  --color-text-muted:     #6b7280;
-  --color-text-faint:     #9ca3af;
+  /* Grounds. Muslin is the page; white is the card sitting on it. This is
+     the single most recognisable Ata Ekta trait and the one visual change
+     P0 makes to every screen at once. */
+  --color-bg:            #FFFFFF;   /* cards, panels, inputs */
+  --color-surface:       #F1EFE6;   /* Muslin — the page ground */
+  --color-surface-muted: #E9E3D4;   /* recessed fills, chips, tracks */
+
+  --color-border:        #E2DACB;
+  --color-border-strong: #C8BCA6;
+
+  /* Text. Clove-brown, not grey — the warm family the grounds belong to.
+     text 9.28:1 on white / 8.06:1 on Muslin; muted 5.77 / 5.01. */
+  --color-text:          #53443D;
+  --color-text-muted:    #756256;
+  /* Canonical, but DECORATIVE ONLY: 3.49:1 on white and 3.03:1 on Muslin,
+     so it fails AA as body text. No text token below aliases it. Kept
+     because it is part of the canonical set and is correct for non-text
+     ornament (disabled glyphs, placeholder rules). */
+  --color-text-faint:    #97867B;
+  --color-text-on-primary: #FFFFFF;
+
+  /* Brand. #D23B2E replaces #e53935, which measured 4.23:1 on white and
+     FAILED AA — the correction is the whole reason the design system
+     re-cut the red, and F-812 makes the floor a requirement. */
+  --color-primary:       #D23B2E;   /* fill w/ white text — 4.77:1 */
+  --color-primary-hover: #B32E22;
+  --color-primary-soft:  #F9E4E0;
+  --color-primary-ink:   #8A2318;   /* on primary-soft — 7.37:1 */
+  /* The accent AS TEXT is a different obligation from the accent as a fill:
+     #D23B2E is only 4.14:1 on Muslin. Same hue, one step darker — 5.47:1. */
+  --color-primary-text:  #B32E22;
+
+  --color-success:       #557C52;   /* fill w/ white — 4.78:1 */
+  --color-success-soft:  #E6EEE2;
+  --color-success-ink:   #33502F;
+  --color-success-text:  #4A6E47;   /* as text on Muslin — 5.05:1 */
+
+  --color-warning:       #B08427;
+  --color-warning-soft:  #F5EBD3;
+  --color-warning-ink:   #6F5316;
+  /* Warning is the one canonical hue that fails BOTH as text (2.95:1 on
+     Muslin) and under white text (3.40:1). A filled warning button uses
+     -text as its fill; nothing uses the raw hue with white on it. */
+  --color-warning-text:  #7C5C1B;   /* 5.36:1 on Muslin, 4.94:1 under white */
+
+  --color-danger:        #B3392C;   /* 5.15:1 on Muslin — passes as text */
+  --color-danger-soft:   #F7E1DD;
+  --color-danger-ink:    #7A2418;
+  --color-danger-text:   #B3392C;
+
+  --color-info:          #4E7A94;   /* Chambray */
+  --color-info-soft:     #E4EEF4;
+  --color-info-ink:      #32546A;
+  --color-info-text:     #436A81;   /* 5.04:1 on Muslin */
+
+  --color-accent-2:      #A76A47;   /* Terracotta — academics, AI, extras */
+  --color-accent-2-soft: #F2E4D9;
+  --color-accent-2-ink:  #6B4028;
+  --color-accent-2-text: #8E5A3C;   /* 4.96:1 on Muslin, 5.71:1 under white */
+
+  --color-accent:        var(--color-primary);
+  --color-divider:       color-mix(in srgb, #53443D 32%, transparent);
+
+  /* Warm neutral ramp. Seventeen rules reference these directly, so the
+     ramp is re-cut in the Ata Ekta family rather than left cool — a grey
+     divider on a Muslin ground reads as dirt. */
+  --color-neutral-100: #F7F5EE;  --color-neutral-200: #EFEBE0;
+  --color-neutral-300: #E2DACB;  --color-neutral-400: #C8BCA6;
+  --color-neutral-500: #A99B8B;  --color-neutral-600: #8A7A6E;
+  --color-neutral-700: #6E5D52;  --color-neutral-800: #5E4E45;
+  --color-neutral-900: #53443D;
+
+  /* Brand ramp, re-anchored on #D23B2E. -600 is the fill step, -700 the
+     text step; both keep the hue and move only the lightness. */
+  --color-accent-100: #F9E4E0;   --color-accent-200: #F2CCC6;
+  --color-accent-300: #E8AAA1;   --color-accent-400: #DE7C70;
+  --color-accent-500: #D8564A;   --color-accent-600: #D23B2E;
+  --color-accent-700: #B32E22;   --color-accent-800: #8A2318;
+  --color-accent-900: #5F170F;
 
   --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
   --space-4: 16px; --space-6: 24px; --space-8: 32px;
+  /* Added in P0 — present in the canonical set, absent here. */
+  --space-5: 20px; --space-10: 40px; --space-12: 48px;
 
   /* Rounded corners now — design uses 8/12/16 for sm/md/lg + 999 pill. */
   --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
@@ -114,6 +160,11 @@
   --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.07);
   --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.10);
 
+  /* Canonical motion, added in P0. Both sit behind the existing
+     prefers-reduced-motion block further down this file. */
+  --transition-fast: 150ms cubic-bezier(.4,0,.2,1);
+  --transition-base: 200ms cubic-bezier(.4,0,.2,1);
+
   /* Override 1 — Inter named for Latin, Hind Siliguri primary for Bangla.
      Design system uses these; still not self-hosted for the SW-precache
      reason in the header. Google Fonts loaded via index.html <link>. */
@@ -121,6 +172,10 @@
   --font-heading-weight: 700;
   --font-body: 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-bn: 'Hind Siliguri', 'Noto Sans Bengali', 'SolaimanLipi', sans-serif;
+  /* Numerals only. Hind Siliguri's Bangla digits are ambiguous with
+     Latin I/l at table-row sizes — the wrong ambiguity for a ledger
+     balance or a mark. Letters stay on Hind Siliguri. */
+  --font-bn-num: 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
 
   /* ── Semantic aliases ──────────────────────────────────────────────────
      Every rule below this block is written against these names, so the
@@ -133,50 +188,41 @@
        -600 for fills carrying white text  (4.74:1)
        -700 for text and links on the bg   (6.41:1)
      The brand hue is unchanged; only the step moves. */
-  --c-primary:      var(--color-accent-600);
-  /* The accent as TEXT, which is a different obligation from the accent as
-     a fill. #dd2b0f measures 3.91:1 on --c-surface, 4.25:1 on the page and
-     4.35:1 on cards — under AA on all three, at every size this product
-     uses it. accent-700 clears 5.91:1 on the worst of them. A button
-     filled with accent-600 and white text is unaffected; this token is only
-     for accent-coloured type. */
-  --c-primary-text: var(--color-accent-700);
-  --c-primary-ink:  var(--color-accent-800);
-  --c-primary-soft: var(--color-accent-100);
-  --c-primary-flat: var(--color-accent);       /* fills with no text over them */
-  --c-accent:       var(--color-accent-700);   /* destructive / error */
-  --c-link:         var(--color-accent-700);
+  --c-primary:      var(--color-primary);        /* fill, white text 4.77:1 */
+  --c-primary-text: var(--color-primary-text);   /* accent as TYPE 5.47:1 */
+  --c-primary-ink:  var(--color-primary-ink);
+  --c-primary-soft: var(--color-primary-soft);
+  --c-primary-flat: var(--color-primary);        /* fills with no text over them */
+  --c-accent:       var(--color-danger);         /* destructive / error */
+  --c-link:         var(--color-primary-text);
 
-  /* Status colours are NOT in the design system's palette — it ships one
-     accent. Warning and success are drawn from the same warm neutral
-     lightness scale so they sit in the family rather than looking imported,
-     and both clear 4.5:1 on --color-surface. */
-  --c-warn:    #8a5a00;
-  --c-success: #1f6b3a;
-  --c-info:    #2c5aa0;
+  /* Status. These now come FROM the canonical set rather than being
+     hand-mixed, and each resolves to the step that clears 4.5:1 on the
+     Muslin ground — the surface they actually sit on most often. */
+  --c-warn:    var(--color-warning-text);
+  --c-success: var(--color-success-text);
+  --c-info:    var(--color-info-text);
 
   --c-ink:    var(--color-text);
   /* --c-ink-1 is the strongest ink, same as --c-ink. Nine rules referenced
-     it without it ever being defined (import-why, gen-*, inline-form input,
-     ward-result-line, issued-code-value…), so they were silently inheriting
-     their colour instead of resolving to it. Aliased rather than find-and-
-     replaced so both names keep working. */
+     it without it ever being defined, so they were silently inheriting
+     their colour instead of resolving to it. Aliased rather than
+     find-and-replaced so both names keep working. */
   --c-ink-1:  var(--color-text);
-  --c-ink-2:  var(--color-neutral-700);
-  /* Tertiary text. NOT an alias of --color-neutral-600 (#7d7979), which is
-     what it used to be: at 11–13px that failed WCAG AA on both surfaces it
-     actually sits on — 3.50:1 on --color-surface and 3.94:1 on --color-bg,
-     against a 4.5:1 requirement. It showed up as five separate findings on
-     five screens (role codes, system chips, attendance status, reconciliation
-     provider, empty-state text) and was one token the whole time.
-     #656161 measures 4.97:1 on surface and 5.47:1 on page background.
-     The palette rung is unchanged and still correct for borders and fills;
-     it is the semantic role that carries the contrast obligation. */
-  --c-ink-3:  #656161;
-  --c-line:   var(--color-neutral-300);
+  --c-ink-2:  var(--color-neutral-700);          /* 6.27:1 / 5.44:1 */
+  /* Tertiary text carries a contrast obligation the palette rung does not.
+     It is deliberately NOT --color-text-faint (3.49:1 on white, 3.03:1 on
+     Muslin), which is the same failure this token was created to fix in the
+     previous palette — five findings on five screens, one token. It resolves
+     to the muted step: 5.77:1 on white, 5.01:1 on Muslin, 4.51:1 on chips. */
+  --c-ink-3:  var(--color-text-muted);
+  --c-line:   var(--color-border);
   --c-line-2: var(--color-neutral-200);
 
-  --c-surface:   var(--color-neutral-100);
+  /* Muslin is the page; white is the card. --c-surface is the RECESSED
+     fill (tab bars, insets, table headers) and so steps one deeper than
+     the page, or it would vanish against it. */
+  --c-surface:   var(--color-surface-muted);
   --c-surface-2: var(--color-bg);
   --c-surface-3: var(--color-neutral-200);
 
@@ -199,6 +245,29 @@
   --text-2xl:  24px;   /* page titles (h1), result GPA */
   --text-3xl:  28px;   /* stat displays, graded score */
   --text-4xl:  32px;   /* the single largest number on a screen — F-202 code */
+
+  /* ── Semantic type names (P0) ──────────────────────────────────────────
+     Ata Ekta names its scale h1/h2/h3/body/small/caption and bundles weight
+     and line-height with each. Those NAMES are adopted; its SIZES are not.
+     The canonical body size is 14px, and this ladder's floor is 16px for
+     body and 13px for chips — deliberately larger, because Bangla conjuncts
+     lose legibility before Latin does at the same optical size (Override 3
+     in this file's header, and F-812's accessibility floor).
+     Adopting 14px body would have shrunk every screen and regressed the one
+     thing this product cannot regress. So the names map onto the ladder that
+     is already tuned for Bangla; only weight and line-height come across. */
+  --text-h1:        var(--text-2xl);   /* 24px */
+  --text-h1-weight: 700;  --text-h1-line: 1.25;
+  --text-h2:        var(--text-xl);    /* 20px */
+  --text-h2-weight: 600;  --text-h2-line: 1.3;
+  --text-h3:        var(--text-lg);    /* 18px */
+  --text-h3-weight: 500;  --text-h3-line: 1.4;
+  --text-body:      var(--text-base);  /* 16px — Bangla floor */
+  --text-body-weight: 400; --text-body-line: 1.55;
+  --text-body-small: var(--text-sm);   /* 15px */
+  --text-label:     var(--text-xs);    /* 14px */
+  --text-caption:   var(--text-2xs);   /* 13px — Bangla-safe floor */
+  --text-caption-line: 1.4;
 
   /* Line-height rungs, paired to the type scale by role. Applied where it
      earns its keep — display numbers must not have body leading, and long
@@ -256,7 +325,11 @@ body { overflow-wrap: break-word; }
 
 body {
   margin: 0;
-  background: var(--color-bg);
+  /* P0 — the Muslin page ground. Cards keep --color-bg (white) and now sit
+     ON the page rather than being indistinguishable from it, which is the
+     Ata Ekta reading and the single change that makes every screen look
+     like the design system rather than like a white document. */
+  background: var(--color-surface);
   color: var(--color-text);
   font-family: var(--font-body);
   /* Override 3 — 16px floor. Bangla conjuncts like ক্ষ্ম are unreadable
@@ -984,8 +1057,16 @@ h2.section-heading { letter-spacing: normal; }
 
 /* ============================================================== system */
 .system-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+/* .system-row is a <button> (documents-view, system-view, student search).
+   It never set a background, so it inherited the USER-AGENT button face —
+   invisible in the light theme, and #6B6B6B under `color-scheme: dark`,
+   where --c-ink-2 on it measures 2.59:1 and fails AA. Found by the P0
+   contrast sweep; the defect pre-dates P0 in both palettes. A row in a list
+   belongs to the card it sits on, so it takes no fill of its own. */
 .system-row {
   display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); padding: var(--s-3);
+  background: none; border: 0; color: inherit; font: inherit; text-align: start;
+  width: 100%;
 }
 .system-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .system-title { font-weight: 600; font-size: var(--text-sm); }
@@ -1923,54 +2004,90 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --color-bg:      #1a1817;
-  --color-surface: #232120;
-  --color-text:    #f2efee;
-  --color-divider: color-mix(in srgb, #f2efee 30%, transparent);
+  /* ── Ata Ekta dark (P0, 2026-09-01) ────────────────────────────────────
+     The canonical set is light-only — `/design` has no dark handling at
+     all. Rather than drop a shipped, tested accessibility feature to match
+     a prototype that never addressed the question, the palette is EXTENDED
+     here into the same warm family: Clove-brown grounds, not the cool
+     near-black this file used before and not the legacy green.
 
-  /* The ramp, inverted. 100 is now the darkest step, so --c-surface
-     (= neutral-100) stays "the raised surface" without touching its rule. */
-  --color-neutral-100: #232120;  --color-neutral-200: #2c2a29;
-  --color-neutral-300: #3a3736;  --color-neutral-400: #4e4a49;
-  --color-neutral-500: #6e6a69;  --color-neutral-600: #928d8c;
-  --color-neutral-700: #b5b0af;  --color-neutral-800: #d5d0cf;
-  --color-neutral-900: #efeae9;
+     The relationship is the light theme's, inverted: --color-surface is the
+     PAGE (darkest), --color-bg is the CARD sitting on it. body resolves to
+     --color-surface in both themes, so the same rule works either way.
 
-  /* Accent fills keep the brand step: white on #dd2b0f is 4.74:1 in either
+     Every value below was measured against all three grounds. Where a
+     canonical hue could not clear 4.5:1 on near-black, the hue is kept and
+     the step moves UP — the mirror of the light theme, same obligation,
+     opposite direction. */
+
+  --color-surface:       #1B1714;   /* page — warm near-black */
+  --color-bg:            #241E1A;   /* cards */
+  --color-surface-muted: #302821;   /* recessed fills, chips, tracks */
+
+  --color-border:        #3A312A;
+  --color-border-strong: #4E4339;
+
+  --color-text:          #EDE7DA;   /* 14.45:1 on page, 13.36:1 on card */
+  --color-text-muted:    #BFB3A4;   /* 8.65:1 / 8.00:1 */
+  --color-text-faint:    #A99B8B;   /* decorative only, as in light */
+  --color-divider: color-mix(in srgb, #EDE7DA 28%, transparent);
+
+  /* The ramp, inverted and kept warm. 100 is the raised surface so
+     --c-surface-3 and friends stay "a step away from the card" without any
+     rule below this block changing. */
+  --color-neutral-100: #241E1A;  --color-neutral-200: #302821;
+  --color-neutral-300: #3A312A;  --color-neutral-400: #4E4339;
+  --color-neutral-500: #6E6055;  --color-neutral-600: #8A7A6E;
+  --color-neutral-700: #BFB3A4;  --color-neutral-800: #D6CCBE;
+  --color-neutral-900: #EDE7DA;
+
+  /* Brand FILLS keep the light step: white on #D23B2E is 4.77:1 in either
      theme, so a primary button looks the same at midnight as at noon.
-     Accent TEXT has to move up the ramp — accent-700 on near-black is
-     unreadable, which is the mirror of why it moved DOWN in the light
-     theme. Same obligation, opposite direction. */
-  --c-primary-text: var(--color-accent-400);
-  --c-primary-ink:  var(--color-accent-300);
-  --c-link:         var(--color-accent-400);
-  --c-accent:       var(--color-accent-400);
-  --c-primary-soft: #3a1c14;
+     Brand TEXT has to move up the ramp — #B32E22 on near-black is
+     unreadable, which is the mirror of why it moved down in light. */
+  --color-primary-text:  #E8837A;   /* 6.75 page / 6.24 card / 5.48 muted */
+  --color-primary-ink:   #EF9A92;
+  --color-primary-soft:  #3A211D;
 
-  --c-ink-3: #9a9594;
+  --color-success-text:  #7FA57B;   /* 6.42 / 5.93 / 5.22 */
+  --color-success-ink:   #95B891;
+  --color-success-soft:  #22301F;
+  --color-warning-text:  #D0A64B;   /* 7.83 / 7.24 / 6.37 */
+  --color-warning-ink:   #DDBA6E;
+  --color-warning-soft:  #332714;
+  --color-danger-text:   #E88C80;   /* 7.20 / 6.66 / 5.85 */
+  --color-danger-ink:    #E88C80;
+  --color-danger-soft:   #3A1F1A;
+  --color-info-text:     #7FA8C0;   /* 7.01 / 6.48 / 5.70 */
+  --color-info-ink:      #9BBDD1;
+  --color-info-soft:     #1D2B33;
+  --color-accent-2-text: #C89170;   /* 6.56 / 6.07 / 5.33 */
+  --color-accent-2-ink:  #D6AA8E;
+  --color-accent-2-soft: #33251C;
+
+  /* Brand ramp lifted, so anything reading it directly stays legible. */
+  --color-accent-100: #3A211D;   --color-accent-200: #4E2A24;
+  --color-accent-300: #EF9A92;   --color-accent-400: #E8837A;
+  --color-accent-500: #E0685C;   --color-accent-600: #D23B2E;
+  --color-accent-700: #E8837A;   --color-accent-800: #EF9A92;
+  --color-accent-900: #F5C3BE;
+
+  /* --c-accent is destructive TYPE, not a fill, so it takes the lifted
+     danger step rather than the fill hue. */
+  --c-accent: var(--color-danger-text);
 
   /* The status TINTS, which are backgrounds. Missing these was the whole of
      the first dark-mode failure: the neutral ramp inverted, so text went
      light, while these four stayed pale and every chip and notice became
      light-on-light — worst case 1.02:1 on the routine screen, which is
      invisible rather than merely poor. Inverting a ramp only carries the
-     tokens that ALIAS it, and these are hand-set values outside it.
-
-     Each is the same hue at a dark weight, so a warning still reads amber
-     and an error still reads red without either one glowing. */
-  --c-primary-soft: #3a1c14;
-  --c-danger-soft:  #3d1a13;
-  --c-warn-soft:    #33280f;
-  --c-success-soft: #14301f;
-  --c-info-soft:    #17233a;
-
-  /* Status colours are hand-set in both themes because the product ships
-     one accent and these are not on its ramp. The light-theme values are
-     dark inks; on near-black they vanish, so each is lifted to the same
-     visual weight it carries in the light theme. */
-  --c-warn:    #e5a83f;
-  --c-success: #5fc98d;
-  --c-info:    #86aeea;
+     tokens that ALIAS it, and these are hand-set values outside it. That
+     lesson is why they are set explicitly here in the new palette too. */
+  --c-primary-soft: var(--color-primary-soft);
+  --c-danger-soft:  var(--color-danger-soft);
+  --c-warn-soft:    var(--color-warning-soft);
+  --c-success-soft: var(--color-success-soft);
+  --c-info-soft:    var(--color-info-soft);
 
   /* Shadows do almost nothing on a dark ground and a heavier one just
      muddies the edge. Structure is carried by the surface step and the
@@ -1980,10 +2097,11 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
   --shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
 }
 
+
 /* Browser surfaces follow the theme. The light-theme selection tint is a
    pale pink that would flare on near-black, and the scrollbar thumb needs
    to sit above the track rather than below it. */
-:root[data-theme='dark'] ::selection { background: #5a2418; color: #f2efee; }
+:root[data-theme='dark'] ::selection { background: #5F170F; color: #EDE7DA; }
 :root[data-theme='dark'] ::-webkit-scrollbar-thumb { border-color: var(--color-bg); }
 
 /* F-1607 theme picker (More screen). Three equal segments — the choice is

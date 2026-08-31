@@ -6468,3 +6468,108 @@ housekeeping (P7).
 
 **Nothing implemented.** This document is the target; the integration plan is
 the route. Awaiting approval to begin P0.
+
+---
+
+# 2026-09-01 · UI P0 · The palette moved, and the app did not notice
+
+**Delivered. P1 has not begun.** One file changed: `apps/pwa/public/app.css`.
+No TypeScript, no API, no schema, no routing, no `design.html`, no marketing
+page. Rollback is a single `git checkout`.
+
+## The discovery that set the scope
+
+The plan budgeted P0 as "re-point the 373 `--c-*` selectors family by family".
+Reading the file first showed that was unnecessary: `--c-*` is a **semantic
+alias layer** of 29 tokens, and its own comment had promised exactly this —
+*"the palette can be re-pointed at a different design system by editing this
+block alone rather than 800 lines of rules."*
+
+The promise held. The palette moved by editing the primitives and the aliases.
+**424 usages and every one of the 59 view modules were untouched.** A phase
+estimated in screens became a phase in one file, which is also why its rollback
+is trivial.
+
+## Colour, decided by measurement
+
+Every value was run through a WCAG calculator against both grounds before
+adoption, because the canonical palette is **not** automatically accessible:
+
+- The brand red is the correction the design system exists for — `#e53935` was
+  **4.23:1 on white and failed AA**; `#D23B2E` is 4.77:1.
+- But five canonical hues fail **as text on the Muslin ground**: warning at
+  **2.95:1**, accent-2 3.80, info 4.02, success 4.15, primary 4.14. Each got a
+  `-text` step one shade darker — hue kept, step moved, which is the discipline
+  the previous palette already used for the same reason.
+- `--color-text-faint` (#97867B) is 3.03:1 on Muslin. It is kept because it is
+  canonical, but **no text token aliases it** and a test now enforces that —
+  it is precisely the defect `--c-ink-3` was created to fix, which had already
+  shipped once across five screens.
+
+## Typography — the canonical sizes were rejected, deliberately
+
+Ata Ekta's body is 14px. This ladder's is 16px with a 13px chip floor, because
+Bangla conjuncts lose legibility before Latin does at the same optical size
+(Override 3, F-812). Adopting the canonical **sizes** would have shrunk every
+screen and regressed the one thing this product cannot regress.
+
+So the canonical **names** were adopted — h1/h2/h3/body/body-small/label/
+caption — mapped onto the Bangla-tuned ladder, carrying weight and line-height
+across but not size. Same vocabulary, same readability.
+
+## Dark mode — kept and re-cut, not deferred
+
+The plan's §8 decision was to keep dark mode as a user preference; P0 authored
+the palette rather than leaving it for later, because a token phase that broke
+dark mode would have been a regression shipped on purpose. The grounds are warm
+Clove (`#1B1714` page, `#241E1A` card) — not the cool near-black they replace,
+not the legacy green. Brand fills keep the light step so a primary button is
+identical at midnight and noon; brand and status text move UP the ramp, the
+mirror of how they move down in light. Every dark text step measures ≥4.8:1.
+
+## Two defects, and how each was found
+
+**`.system-row` had no background.** It is a `<button>`, so it inherited the
+*user-agent button face* — harmless-looking in light, `#6B6B6B` under
+`color-scheme: dark`, where the description text on it measures **2.59:1**. It
+pre-dates P0 in both palettes and was invisible to every screenshot ever taken
+of that screen. The rendered contrast sweep found it; looking would not have.
+
+**The new test was wrong three times before it was right.** Its first run
+reported tokens that exist only inside comments (this file's comments name
+tokens deliberately, as records of fixed bugs). Its second missed tokens
+declared several-per-line in the ramps. Its third flagged
+`var(--c-danger, var(--c-primary))` — a deliberate fallback — as an undefined
+token. Each was a false positive that would have taught a future reader to
+ignore the test. A check that cries wolf is worse than no check, so each was
+fixed before the test was trusted.
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| Rendered contrast sweep | **956 element-checks**, 12 routes × 2 themes → **0 failures** |
+| Horizontal overflow | none at 1440 / 1024 / 390 / 375, both themes |
+| Touch targets | 0 interactive elements under 44px |
+| Tenant branding | A `#156a3f` and B `#1b3e7a` both render; grounds and status stay canonical |
+| Tests | **1172** with a database (1160 before) |
+| TypeScript ×3 | 0 / 0 / 0 |
+| DB suites | 26/26 |
+| D11 brand guard | pass, both directions |
+| Security probe | **29/29** across 12 areas — tenant isolation unaffected |
+| Secrets | clean across history |
+| Size | `app.css` +2.6 KB gzipped (32.3 → 34.9). `app.js` unchanged — no TS touched |
+
+## Legacy tokens: 29 definitions, 424 usages, unchanged
+
+Deliberately. They all resolve to Ata Ekta primitives now. They are retired in
+**P8**, when usage reaches zero, exactly as the plan says. Nothing deleted.
+
+## What P0 did not do
+
+No shell. `/app` remains mobile-first at every width, and its only desktop
+breakpoint still styles the branding editor — so on a laptop it is still a
+stretched phone layout with the correct colours. That is **P1**, and keeping it
+out of P0 is what made this a one-file rollback.
+
+**P1 has not begun.**

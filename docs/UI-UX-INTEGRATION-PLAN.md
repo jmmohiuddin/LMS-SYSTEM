@@ -615,4 +615,109 @@ Sequential by dependency: P0 → P1 → P2 → (P3 → P4 → P5) → P6 → P7 
 
 ---
 
-**No implementation has begun. Awaiting approval to start P0.**
+## 21. P0 — DELIVERED (2026-09-01)
+
+**Status: complete. P1 has not begun.**
+
+One file changed: `apps/pwa/public/app.css`. No TypeScript, no API, no schema,
+no routing, no `design.html`, no marketing page. Rollback is
+`git checkout apps/pwa/public/app.css`.
+
+### What made it a one-file change
+
+`--c-*` turned out to be a pure **semantic alias layer** — 29 tokens that every
+one of the 424 `var(--c-*)` usages resolves through. Its own comment promised
+this: *"the palette can be re-pointed at a different design system by editing
+this block alone rather than 800 lines of rules."* That promise held. The
+palette was migrated by re-pointing the aliases at new primitives; **not one
+view module or component rule was touched.**
+
+### Token decisions
+
+| Decision | Reasoning |
+|---|---|
+| Tokens **copied**, not `@import`ed | `/design` is a prototype that may be edited freely; production must not inherit its edits, nor pay for a second stylesheet request on 2G |
+| Spacing, radius, shadows, `--tap-min`, fonts **untouched** | already byte-identical to the canonical set before P0 |
+| Added `--space-5/10/12`, `--transition-fast/base`, `--font-bn-num` | canonical, and absent here |
+| Muslin (`#F1EFE6`) becomes the **page**; white stays the **card** | the single most recognisable Ata Ekta trait; `body` now resolves to `--color-surface` in both themes |
+| `-text` steps introduced (`--color-primary-text` etc.) | five canonical hues fail AA **as text on Muslin**. Hue kept, step moved — the discipline the previous palette already used |
+| Type scale: canonical **names**, existing **sizes** | see below |
+
+### Colour migration, by role
+
+Every value was measured before adoption. Ratios are on white / Muslin.
+
+| Role | Value | Evidence |
+|---|---|---|
+| Brand fill | `#D23B2E` | 4.77:1 under white. Replaces `#e53935` which was **4.23:1 and failed AA** — the correction the design system exists for |
+| Brand as text | `#B32E22` | 4.14:1 was the raw hue on Muslin; this is 5.47:1 |
+| Text / muted / tertiary | `#53443D` / `#756256` / `#756256` | 9.28 / 5.77 / 5.77 on white; 8.06 / 5.01 / 5.01 on Muslin |
+| Status as text | success `#4A6E47`, warning `#7C5C1B`, info `#436A81`, danger `#B3392C` | all ≥5.0:1 on Muslin; the raw canonical hues were 4.15 / **2.95** / 4.02 / 5.15 |
+| Badge ink on soft | canonical `-ink` on `-soft` | 6.05–8.01:1 |
+| `--color-text-faint` | `#97867B`, **decorative only** | 3.49 / 3.03 — no text token aliases it, guarded by a test |
+
+### Typography mapping
+
+Canonical Ata Ekta body is **14px**; this ladder's is **16px**, with a 13px
+chip floor. That gap is deliberate — Bangla conjuncts lose legibility before
+Latin does at the same optical size (Override 3 in the file header, F-812's
+accessibility floor). **Adopting the canonical sizes would have shrunk every
+screen and regressed the one thing this product cannot regress.** So the
+canonical *names* were adopted and mapped onto the existing ladder; only
+weight and line-height came across:
+
+`--text-h1` → 24px/700/1.25 · `--text-h2` → 20px/600/1.3 ·
+`--text-h3` → 18px/500/1.4 · `--text-body` → 16px/400/1.55 ·
+`--text-body-small` → 15px · `--text-label` → 14px · `--text-caption` → 13px/1.4
+
+### Dark mode — kept, and re-cut warm
+
+Per §8 the decision was **C (optional user preference)**, and P0 authored the
+palette rather than deferring it: light is the default, `data-theme` still
+drives the toggle, and the grounds are a warm Clove family (`#1B1714` page,
+`#241E1A` card) — **not** the cool near-black it replaced and not the legacy
+green. Brand fills keep the light step so a primary button is identical at
+midnight and noon; brand and status **text** move up the ramp, the mirror of
+how they move down in light. Every dark text step measured ≥4.8:1 on all three
+grounds.
+
+### Two defects found and fixed
+
+1. **`.system-row` had no background.** It is a `<button>`, so it inherited the
+   *user-agent button face* — invisible in light, `#6B6B6B` under
+   `color-scheme: dark`, where `--c-ink-2` on it is **2.59:1**. Pre-dates P0 in
+   both palettes; found by the contrast sweep, not by looking.
+2. **The new test's own first three runs were wrong** — it read tokens named
+   inside comments, missed tokens declared several-per-line, and conflated
+   `var(--x, fallback)` (safe, deliberate) with `var(--x)` (silent
+   inheritance). Each was fixed before the test was trusted.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Contrast sweep, rendered | **956 element-checks**, 12 routes × 2 themes → **0 failures** |
+| Overflow | none at 1440 / 1024 / 390 / 375, both themes |
+| Touch targets | 0 interactive elements under 44px |
+| Tenant branding | Tenant A (`#156a3f`) and Tenant B (`#1b3e7a`) both render; grounds and status stay canonical, only brand hue changes |
+| Tests | **1172** with a database (1160 before; +12 new token tests) |
+| TypeScript ×3 | 0 / 0 / 0 |
+| DB suites · D11 · secrets | 26/26 · pass · clean |
+| Security probe | **29/29** across 12 areas |
+| Size | `app.css` +7.2 KB raw, **+2.6 KB gzipped** (32.3 → 34.9 KB). `app.js` unchanged |
+
+### Legacy tokens
+
+29 `--c-*` definitions and 424 usages — **unchanged by design**. They now all
+resolve to Ata Ekta primitives. They are retired in **P8**, when their usage
+reaches zero, exactly as the plan states. Nothing was deleted.
+
+### What P0 deliberately did not do
+
+No shell. `/app` is still mobile-first at every width — its only desktop
+breakpoint still styles the branding editor. That is **P1**, and keeping it out
+of P0 is what makes this phase a one-file rollback.
+
+---
+
+**P0 complete. P1 has not begun.**

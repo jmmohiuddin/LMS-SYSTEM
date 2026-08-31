@@ -1620,6 +1620,36 @@ Nothing under `design/` was ever deleted. `index.html` → `design.html` and
 
 ---
 
+## 9r. UI migration P0 — the Ata Ekta token foundation (2026-09-01)
+
+**Delivered. P1 not begun.** One file: `apps/pwa/public/app.css`.
+
+`--c-*` proved to be a pure alias layer, so the palette moved by re-pointing 29
+tokens — **424 usages and every view module untouched**.
+
+| | Before | After |
+|---|---|---|
+| Brand | `#e53935` — **4.23:1, fails AA** | `#D23B2E` — 4.77:1 |
+| Page ground | white | Muslin `#F1EFE6` (cards stay white) |
+| Text | `#1f2937` cool grey | `#53443D` Clove |
+| Dark ground | `#1a1817` cool | `#1B1714` warm Clove |
+| Type scale | px ladder only | canonical **names** mapped onto it — 16px Bangla floor kept |
+| Legacy `--c-*` | 29 defs / 424 uses | unchanged; now resolve to Ata Ekta. Retired in P8 |
+
+**Contrast:** 956 rendered element-checks across 12 routes × 2 themes, **0
+failures**. Five canonical hues needed a darker `-text` step to clear AA on
+Muslin (warning was 2.95:1); hue kept, step moved.
+
+**Found and fixed:** `.system-row` is a `<button>` that never set a background,
+so it inherited the UA button face — `#6B6B6B` in dark, 2.59:1. Pre-dated P0.
+
+**Gates:** 1172 tests · TS 0/0/0 · 26/26 DB · D11 · security probe 29/29 ·
+tenant A/B verified · no overflow at 1440/1024/390/375 · +2.6 KB gzipped.
+
+**Still true:** `/app` is mobile-first at every width. The desktop shell is P1.
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The

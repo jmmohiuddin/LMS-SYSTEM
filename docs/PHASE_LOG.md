@@ -6380,3 +6380,91 @@ and no data.
 **Nothing implemented. Awaiting approval to begin P0 (tokens + dark palette).**
 The UI is not claimed complete; `/app` remains functionally strong and visually
 a generation behind, which is exactly what the audit found.
+
+---
+
+# 2026-09-01 · Product surface architecture · Five surfaces, written down at last
+
+**Specification only. No application code, routing, database, API, `design.html`,
+`app.css` or deployment changed. P0 has not begun.**
+
+The UI integration plan settled *how* the visual migration happens. This entry
+settles *what surfaces exist and who reaches each one* — recorded as **D15** in
+the Master Plan, specified in
+[FINAL-PRODUCT-SURFACE-ARCHITECTURE.md](FINAL-PRODUCT-SURFACE-ARCHITECTURE.md).
+
+## The five surfaces
+
+| Address | Surface | Brand | Audience |
+|---|---|---|---|
+| `sikhon.systems/` | public marketing | **shikhonBD** | anyone |
+| `/demo` (**new**) | isolated demo | tenant-style + marker | prospects |
+| `<slug>.sikhon.systems` · `/app?tid=` | tenant application | **school** | a school's people |
+| `platform.sikhon.systems` · `/platform` | Platform Console | **shikhonBD** | Super Admin only |
+| `/design` | visual reference | tenant-style | developers only |
+
+## Three findings from reading the code
+
+**The subdomain plan is already built.** `tenantKeyFromHost()` in `branding.ts`
+resolves by label count, not against a hardcoded domain, so
+`monipur.sikhon.systems → monipur` needs **no code change** — and it already
+reserves `www`, `app`, `platform`, `api`, `staging`, `localhost`. That last
+point matters more than it looks: **`platform.sikhon.systems` can never be
+mistaken for a tenant**, so moving the console to its own door is DNS and a
+Caddy block, nothing more. The architecture asked for was already defended.
+
+**The demo is isolated but homeless — and the fallback is a defect.** `demo.ts`
+is entirely client-side ("no request ever leaves the device"), with all seven
+roles as sample data. But there is no `/demo` route: the marketing CTA points at
+`/app`, and `/app` enters demo mode implicitly whenever nobody is logged in:
+
+```
+demoMode = params.get('demo') === '1' || (!cachedOtpLogin() && !realAuth.isLoggedIn())
+```
+
+That second clause means **a real teacher who is simply logged out sees
+fabricated students under their own school's door** — confusing on a personal
+phone, misleading on a shared staffroom device. The specification gives the demo
+its own route and its own banner, and makes a logged-out `/app` show the login
+screen. Small change, real correctness fix.
+
+**The domain drifted.** `shikhonbd.com` is still written into source comments,
+two operator-facing Bangla strings, the marketing footer's contact address and
+the default VAPID subject, while production serves `sikhon.systems`. **No logic
+depends on it** — the resolver is domain-agnostic — so this is prose, not a
+fault. Scheduled as housekeeping inside P7 rather than an urgent fix, and listed
+so no future reader is misled by a stale string. `shikhonbd` remains the brand;
+`sikhon.systems` is the address; D11 governs the brand, not the domain.
+
+## What the specification fixes by construction
+
+Naming the surfaces resolves two things that were true but unwritten: the
+operator console shared an origin with the marketing site — the one surface that
+should be hardest to find — and the demo had no identity of its own. Both are
+now addressed by where things live, not by a rule somebody has to remember.
+
+The console is **never** a public navigation destination: no link, no footer
+entry, no sitemap presence. Publishing it would advertise the existence of a
+customer list.
+
+## What did not change
+
+The tenant application remains **one** application with role-scoped navigation
+(not five sites), driven by the **existing** `dashboardFor(role)` plus
+`requireRole`/`requireStaff` and RLS — no permission is invented here. `?tid=`
+keeps priority over the subdomain forever, because it is printed on admission
+slips and baked into installed PWAs. No school-picker at any stage (D12).
+`WILDCARD_DNS_READY` stays off until a browser has actually loaded a tenant
+subdomain over HTTPS.
+
+## Additions to the migration plan
+
+Two items fold into P1 and P7 without changing the P0–P8 order: `/demo` as a
+real route with the implicit-demo fallback removed (P1), and
+`platform.sikhon.systems` as the preferred console door plus the domain-string
+housekeeping (P7).
+
+## Status
+
+**Nothing implemented.** This document is the target; the integration plan is
+the route. Awaiting approval to begin P0.

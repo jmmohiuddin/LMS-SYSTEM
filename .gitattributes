@@ -37,3 +37,5 @@ api/**/*.js       text eol=lf
 *.png             binary
 *.webp            binary
 *.zip             binary
+deploy/*.service text eol=lf
+deploy/*.mjs text eol=lf

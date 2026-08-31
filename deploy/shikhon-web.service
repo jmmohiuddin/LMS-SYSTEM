@@ -1,0 +1,33 @@
+# systemd unit for the ShikhonBD web app on a single VPS.
+#   sudo cp deploy/shikhon-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now shikhon-web
+#
+# Secrets live in /etc/shikhon/shikhon.env (root-owned, 0600) and are NEVER in
+# this repo. The app runs as a dedicated unprivileged user; it connects to
+# PostgreSQL over TCP with a password, so the OS user needs no DB privilege.
+[Unit]
+Description=ShikhonBD web (sikhon.systems)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shikhon
+Group=shikhon
+WorkingDirectory=/opt/shikhon
+EnvironmentFile=/etc/shikhon/shikhon.env
+# NODE_BIN is filled in at install time (the path `which node` reports).
+ExecStart=/usr/bin/node deploy/server.mjs
+Restart=on-failure
+RestartSec=3
+
+# Least privilege — the app reads /opt/shikhon and writes nothing to disk
+# (logs go to journald via stdout). It must not be able to touch the rest of
+# the box, which also runs other production apps.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

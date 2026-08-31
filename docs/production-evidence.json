@@ -40,41 +40,46 @@
     "    worth more to the next person than a bare null, and it stops the same",
     "    dead end being walked into twice."
   ],
-
   "wildcard_dns": null,
   "wildcard_tls": null,
   "subdomain_routing": null,
-
   "real_sms_delivery": null,
-
   "real_push_delivery": {
     "status": "blocked",
-    "date": "2026-08-30",
-    "environment": "local-docker",
+    "date": "2026-08-31",
+    "environment": "production",
     "result": null,
-    "evidence": "ATTEMPTED against a real push service and could not be completed. What worked: real VAPID keys generated (P-256, 87-char public key); network egress to real push services confirmed (fcm.googleapis.com answered HTTP 400 and updates.push.services.mozilla.com answered 406 — real responses, not connection failures); the app served over a secure context (127.0.0.1); PushManager, ServiceWorker and Notification all present. What blocked it, in the automated browser available here: (1) Notification.permission was already 'denied' and requestPermission() returned 'denied' without prompting, so pushManager.subscribe({userVisibleOnly:true}) can never be reached; (2) navigator.serviceWorker.register('/sw.js') fails with 'An unknown error occurred when fetching the script' even though the page itself fetches that exact URL with HTTP 200, content-type text/javascript, 5551 bytes, and it parses as valid JavaScript — so the failure is the browser profile disabling service workers, NOT a defect in the product; (3) no real Chrome instance is connected to this account (list_connected_browsers returned empty), so no real device was reachable. CONCLUSION: real push delivery remains unverified and must not be claimed. It needs a browser where notifications can be granted — an ordinary Chrome, Edge or Firefox on a real machine — pointed at a deployment with these VAPID keys. Everything on our side of the boundary is in place; only the device is missing."
+    "evidence": "Production now has a real HTTPS origin (https://sikhon.systems, valid Let's Encrypt cert) with real VAPID keys configured, so the earlier blocker (no secure real-device target) is removed. Remaining: the full subscribe -> publish -> deliver -> click -> branding -> unsubscribe flow needs (a) a notifications-granted real browser and (b) an onboarded tenant with a notice to publish. It is now a ~10-minute manual test from any ordinary Chrome/Edge/Firefox once a pilot school exists. Do not mark pass until a real push is observed on a device."
   },
-
-  "backup_configured": null,
-
-  "restore_drill": {
-    "status": "rehearsed",
-    "date": "2026-08-30",
-    "environment": "local-docker",
+  "backup_configured": {
+    "status": "verified",
+    "date": "2026-08-31",
+    "environment": "production",
     "result": "pass",
-    "evidence": "scripts/restore-drill.mjs against the local Postgres 16.15 container. pg_dump -Fc 2.6 MB in 0.6s; restored into an isolated database in 3.0s; 7 schema counts (121 tables, 355 indexes, 110 RLS-enabled tables, 227 policies, 86 functions, 162 triggers, 4 attendance partitions) and 27 table counts identical to the source; all 8 tenants identical across students, teachers, guardians, attendance, marks and invoices. RTO observed 4.0s on a 2.6 MB database. NOT a production restore: production is Neon and restores there are branch-based, with different failure modes. RPO is not measured by any drill — it is a property of the backup schedule."
+    "evidence": "Daily pg_dump -Fc of shikhon_lms via /usr/local/bin/shikhon-backup.sh (cron 02:30), 14-day retention in /var/backups/shikhon. First backup taken and confirmed (913K). RPO is bounded by the daily schedule; tighten to hourly before real student data lands."
   },
-
+  "restore_drill": {
+    "status": "verified",
+    "date": "2026-08-31",
+    "environment": "production",
+    "result": "pass",
+    "evidence": "scripts/restore-drill.mjs against the PRODUCTION shikhon-postgres container: pg_dump -Fc (0.8 MB) -> restore into an isolated database -> 7 schema counts (121 tables, 227 RLS policies, functions, triggers, partitions) and 27 table counts identical to source. RTO 1.5s (on a near-empty pre-pilot DB; re-measure at pilot size). Supersedes the 2026-08-30 local-docker rehearsal."
+  },
   "alert_delivered": null,
-
   "pilot_onboarding": null,
   "pilot_offline": null,
-
   "prod_cross_tenant": {
     "status": "rehearsed",
     "date": "2026-08-30",
     "environment": "local-docker-otp-on",
     "result": "pass",
-    "evidence": "scripts/security-probe.mjs — 29 of 29 checks across 12 areas against a running deployment, positive and negative cases, none failing, none skipped. Covers: positive control (roster, sync/pull, dashboard all serve the right school); forged X-Tenant-ID/X-User-ID/X-Role ignored in favour of signed claims; headers-without-token and garbage-bearer both 401; cross-tenant reads of section, student and attendance by id refused; a cross-tenant WRITE through a payload tenantId not applied; no runtime role holds SUPERUSER or BYPASSRLS; tenant A's DB context cannot see tenant B's rows by primary key while still seeing its own; no tenant context set means nothing visible; every table carrying tenant_id has RLS enabled; a service credential from a browser refused; a user token is not a service credential and cannot run maintenance; 7 hostile push endpoints (http, loopback, 169.254.169.254, private range, userinfo, .internal, .local) all refused; cross-tenant notice and document access refused; the platform health endpoint unreachable with a tenant token; the console refuses both a tenant user and an anonymous caller; no live secret value or connection string in app.js/platform.js/sw.js; error bodies carry no credential; an unlisted CORS origin is not echoed and credentials are never allowed; per-phone OTP requests are rate-limited. NOT run against production — no production deployment exists."
+    "evidence": "scripts/security-probe.mjs — 29 of 29 checks across 12 areas against a running deployment, positive and negative cases, none failing, none skipped. Covers: positive control (roster, sync/pull, dashboard all serve the right school); forged X-Tenant-ID/X-User-ID/X-Role ignored in favour of signed claims; headers-without-token and garbage-bearer both 401; cross-tenant reads of section, student and attendance by id refused; a cross-tenant WRITE through a payload tenantId not applied; no runtime role holds SUPERUSER or BYPASSRLS; tenant A's DB context cannot see tenant B's rows by primary key while still seeing its own; no tenant context set means nothing visible; every table carrying tenant_id has RLS enabled; a service credential from a browser refused; a user token is not a service credential and cannot run maintenance; 7 hostile push endpoints (http, loopback, 169.254.169.254, private range, userinfo, .internal, .local) all refused; cross-tenant notice and document access refused; the platform health endpoint unreachable with a tenant token; the console refuses both a tenant user and an anonymous caller; no live secret value or connection string in app.js/platform.js/sw.js; error bodies carry no credential; an unlisted CORS origin is not echoed and credentials are never allowed; per-phone OTP requests are rate-limited. A production deployment now exists (https://sikhon.systems), but its database has 0 tenants, so this two-tenant probe cannot run there yet; re-run against production once the first pilot schools are onboarded. The DB-level RLS posture WAS verified on production directly: shikhon_app/platform are non-superuser non-bypassrls, and shikhon_app sees 0 tenants with no context set."
+  },
+  "production_deployment": {
+    "status": "verified",
+    "date": "2026-08-31",
+    "environment": "production",
+    "result": "pass",
+    "evidence": "Live at https://sikhon.systems on a Hostinger KVM2 VPS (Ubuntu 24.04, 200.234.43.179), deployed commit 52d1609 via git archive (the verified local tree, NOT the stale GitHub snapshots). Node 22.23 systemd service (unprivileged user) on 172.16.1.1:4100; isolated pgvector 0.8.6 container (shikhon_lms, 48 migrations, 227 RLS policies, shikhon_app/platform non-superuser non-bypassrls, 0 tenants visible with no context); Caddy reverse-proxy with a valid Let's Encrypt cert (CN=sikhon.systems, through 2026-11-29). Browser-verified: /, /app, /platform all 200 with zero console errors; API auth 401 unauth / 200 public; sibling apps on the shared box unaffected. NOT a full pilot readiness — see the null items below."
   }
 }

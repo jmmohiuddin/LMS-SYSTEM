@@ -6073,3 +6073,97 @@ touched, no gate turned green, and no evidence written to
 
 Unchanged: one ordinary browser on a real machine to close the push gate, then
 an SMS aggregator contract, then a production deployment.
+
+---
+
+# 2026-08-31 · R-8 external milestone · The product is deployed and public
+
+**A real host and a real domain arrived, so the production-deployment gate —
+open since R-8 began — is now closed.** ShikhonBD is live at
+**https://sikhon.systems**. This entry records what was done, because it is the
+first time any of this system has run somewhere a school could reach it.
+
+## The provenance decision, made on evidence
+
+The owner named `github.com/jmmohiuddin/LMS-SYSTEM` as the "main" repo. Before
+deploying a system that will hold children's data, I compared it against the
+verified local tree and surfaced what I found rather than deploying blind:
+jmmohiuddin is an **Aug-23 snapshot** — 38 migrations, no onboarding console,
+none of the R-8 hardening (**221 files / +72k lines behind**). The current,
+audited product was never on either GitHub repo; it lives in the local working
+tree at `0b6df00`. The owner chose to deploy that. So the deploy ships the
+exact verified commit via `git archive`, not a GitHub clone.
+
+## Coexistence, not takeover
+
+The VPS (`voltix-prod`, Hostinger KVM2, Ubuntu 24.04) is **not a blank box** —
+it already runs Voltix, Nexus, Meridian SATS, Meraki PMS and the owner's Nimikh
+FOS API, with **Caddy owning 80/443**. So ShikhonBD was added **additively**:
+
+- A **dedicated `pgvector/pgvector:pg16` container** (`shikhon-postgres`, port
+  127.0.0.1:5433) — the same isolation pattern the sibling apps already use, so
+  a new PG superuser was never created on the shared cluster that holds the
+  other apps' data. pgvector 0.8.6, migrations run exactly as in CI.
+- A **systemd service** (`shikhon-web`, unprivileged user, `ProtectSystem=full`)
+  running `deploy/server.mjs` on `172.16.1.1:4100` — the same host-service
+  pattern Caddy already uses for `accounting.phoyev.com`.
+- **One added Caddy block** for `sikhon.systems`, appended after backing up the
+  shared Caddyfile and validating before a graceful reload. The five sibling
+  sites stayed up throughout (`accounting.phoyev.com` verified 200 after).
+
+## The one piece of new code
+
+`deploy/server.mjs` — a production HTTP server that reproduces what Vercel did:
+serve the three static surfaces and route `/api/v1/<svc>` to the same
+dispatcher the edge would have called. It is a hardened promotion of the
+`.claude/static-server.mjs` that sat behind every R-7/R-8 browser acceptance,
+so the routing is unchanged. Node 22.23's type-stripping runs the TypeScript
+dispatchers directly (verified on the box). Committed as `52d1609`.
+
+## Verified, on production
+
+| Check | Result |
+|---|---|
+| HTTPS | Valid Let's Encrypt cert, CN=sikhon.systems, through 2026-11-29 |
+| Marketing / app / console | `/`, `/app`, `/platform` all 200 in a real browser, **zero console errors**, `shikhonBD` brand intact on the console (D11) |
+| API auth | unauth 401, public 200, service-key 200 |
+| DB posture | 48 migrations, 227 RLS policies, `shikhon_app`/`platform` non-super non-bypassrls, **0 tenants visible with no context** |
+| **Restore drill (production)** | `restore-drill.mjs` on the production DB: every schema + table count identical, **RTO 1.5s**. Real production evidence, not a rehearsal |
+| **Backups** | daily `pg_dump -Fc`, 14-day retention, first backup (913K) confirmed |
+| Maintenance cron | ran once: partitions pre-created, dashboards refreshed |
+| **Monitoring** | `/ops/monitor` every 15 min, evaluated against production, **all-clear** |
+| Reboot survival | service enabled, container `unless-stopped`, cron in `/etc/cron.d` |
+| Siblings | unaffected — no collateral damage to the shared box |
+
+## Gates closed, and still open
+
+**Closed with production evidence:** production deployment · apex DNS + TLS ·
+backup configured · restore drill (production) · monitoring running.
+
+**Still open — genuinely, not for lack of trying:**
+- **Real SMS** — no aggregator contract. `OTP_SENDING_ENABLED` is off; login
+  uses activation codes, so no SMS is needed to run a pilot.
+- **Real push to a device** — the last blocker (no real HTTPS origin) is now
+  gone: production has a valid cert and real VAPID keys. It is a ~10-minute
+  test from any ordinary browser once a pilot tenant exists. Still `blocked`
+  until observed on a device.
+- **Alert to a human** — `ALERT_WEBHOOK_URL` unset; the monitor logs but pages
+  nobody. One env var away.
+- **Cross-tenant probe on production** — the probe needs ≥2 tenants and the DB
+  has none yet. The DB-level RLS posture WAS verified on production directly.
+- **Pilot** — 0 institutions. The wildcard-subdomain feature stays off;
+  `/app?tid=` is the tenant door.
+
+## R-8 status
+
+**Still IN PROGRESS**, but materially advanced: the largest gate (a real
+production deployment) is closed, and backup/restore now have production
+evidence. What remains is an aggregator contract, an alert webhook, and a real
+pilot — none of which is code.
+
+## What the deploy did NOT do
+
+No pilot school was onboarded (the ask was to host the site). The stale
+`shikhon-lms.vercel.app` was left untouched. Nothing was pushed to GitHub — the
+local tree remains the source of truth, and pushing it (to make a repo current)
+is a separate decision the owner has not yet made.

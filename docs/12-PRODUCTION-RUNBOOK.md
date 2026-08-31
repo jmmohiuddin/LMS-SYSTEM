@@ -31,8 +31,8 @@ written down, and the difference matters at 08:00 on a Sunday.
 | Service-key hardening | **Exercised.** Browser refusal, rotation slot, production default and the JWT fall-through, probed against the live endpoint |
 | CORS origin allowlist | **Exercised in a browser.** Listed origin served, unlisted origin blocked by Chrome |
 | The preflight itself | **Exercised.** `node scripts/preflight.mjs` runs and refuses to call this deployment ready |
-| Production deployment | **NOT performed.** No production environment exists |
-| A pilot school | **None.** No real institution has used this system |
+| Production deployment | **LIVE (2026-08-31).** https://sikhon.systems on a Hostinger VPS, commit 52d1609, valid Let's Encrypt TLS. Browser-verified. See the R-8 external-milestone entry in PHASE_LOG |
+| A pilot school | **None yet.** The platform is live but no institution has been onboarded |
 
 Everything below marked ⚠ has never been run against production.
 

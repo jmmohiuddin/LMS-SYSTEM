@@ -7,6 +7,7 @@
  * back to descriptive counts in demo mode.
  */
 import { iconSvg } from './icon.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 export interface RolesViewOptions {
   root: HTMLElement;
@@ -35,14 +36,10 @@ export class RolesView {
     const d = o.doc;
     o.root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'ভূমিকা ও অ্যাক্সেস';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'PostgreSQL Row-Level Security দ্বারা প্রতিষ্ঠান-ভিত্তিক আলাদা';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'ভূমিকা ও অ্যাক্সেস',
+      subtitle: 'PostgreSQL Row-Level Security দ্বারা প্রতিষ্ঠান-ভিত্তিক আলাদা',
+    });
     o.root.append(header);
 
     // Isolation banner — visually confirms the tenant isolation invariant.

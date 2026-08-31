@@ -9,6 +9,9 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": []
   },
-  "include": ["src/**/*.ts"],
+  // dev/ is the component gallery (scripts/build-gallery.mjs). It ships
+  // nowhere, but it is the only caller that exercises every component
+  // signature at once, so a type error there is a real API break.
+  "include": ["src/**/*.ts", "dev/**/*.ts"],
   "exclude": ["src/sw.ts"]
 }

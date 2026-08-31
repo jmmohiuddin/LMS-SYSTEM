@@ -19,6 +19,7 @@ import {
   planCompression, checkMedia, formatDuration, MEDIA_PROBLEM_BN, MAX_VOICE_MS,
   type MediaDraft,
 } from '../../../packages/ui-core/src/media.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 /**
  * F-902 kill switch. Mirrors SUBMISSION_MEDIA_ENABLED in the sync applier
@@ -465,14 +466,10 @@ export class AssignmentsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'বাড়ির কাজ';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.isStaff ? 'দেওয়া কাজ ও জমা পড়া উত্তর' : 'তোমার জমা দিতে হবে যেসব';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'বাড়ির কাজ',
+      subtitle: this.isStaff ? 'দেওয়া কাজ ও জমা পড়া উত্তর' : 'তোমার জমা দিতে হবে যেসব',
+    });
     root.append(header);
 
     if (this.offline) root.append(this.banner('অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));

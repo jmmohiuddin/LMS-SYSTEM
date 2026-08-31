@@ -10,6 +10,7 @@
  * endpoints — no auth needed.
  */
 import type { Auth } from './auth.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 type State = 'on' | 'dark' | 'invisible' | 'unknown';
 
@@ -123,14 +124,10 @@ export class SystemView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'সিস্টেম ও ইন্টিগ্রেশন';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'পটভূমিতে যা চলছে — কিল-সুইচ, ওয়ার্কার, ডাটাবেস অদৃশ্য গ্যারান্টি';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'সিস্টেম ও ইন্টিগ্রেশন',
+      subtitle: 'পটভূমিতে যা চলছে — কিল-সুইচ, ওয়ার্কার, ডাটাবেস অদৃশ্য গ্যারান্টি',
+    });
     root.append(header);
 
     const list = d.createElement('ul');

@@ -29,6 +29,7 @@
 import type { Auth } from './auth.ts';
 import { skeleton, errorState, emptyState, bnNum, bnDate } from './view-states.ts';
 import { ROLE_BN } from './ui/roles.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface Entry {
   id: string;
@@ -148,14 +149,10 @@ export class AuditView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'কার্যবিবরণী';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'কে কখন কী পরিবর্তন করেছেন — শুধু পড়ার জন্য';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'কার্যবিবরণী',
+      subtitle: 'কে কখন কী পরিবর্তন করেছেন — শুধু পড়ার জন্য',
+    });
     root.append(header);
 
     if (this.error) {

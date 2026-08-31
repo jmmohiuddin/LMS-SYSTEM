@@ -87,3 +87,10 @@ Shikhon Screens*
 # apps/pwa/public/design/ and ARE committed.
 Ata Ekta LMS Design System*.zip
 _design_import/
+
+# The P2 component gallery, built on demand by scripts/build-gallery.mjs.
+# Its SOURCE lives in apps/pwa/dev/ and is tracked; these two outputs land in
+# public/, which is deployed, and a component gallery served from a school's
+# own domain is a platform page on a tenant surface (D11).
+apps/pwa/public/ui-gallery.js
+apps/pwa/public/ui-gallery.html

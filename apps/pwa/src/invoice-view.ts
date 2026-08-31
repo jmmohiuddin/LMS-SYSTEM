@@ -29,6 +29,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface InvoiceRow {
   id: string; invoiceNo: string; billingPeriod: string;
@@ -122,14 +123,10 @@ export class InvoiceView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'ইনভয়েস তৈরি';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'ফি কাঠামো অনুযায়ী মাসিক বিল তৈরি হয়।';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'ইনভয়েস তৈরি',
+      subtitle: 'ফি কাঠামো অনুযায়ী মাসিক বিল তৈরি হয়।',
+    });
     root.append(header);
 
     if (this.notice) root.append(successNote(d, this.notice));

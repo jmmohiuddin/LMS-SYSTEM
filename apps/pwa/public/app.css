@@ -304,14 +304,30 @@
   --shadow-1: var(--shadow-sm);
   --shadow-2: var(--shadow-sm);
 
-  /* Status tints. The old palette used cool blue-greens (var(--c-success-soft)) and
-     pink-whites (var(--c-danger-soft)) that read as a different product beside the warm
-     #f3f2f2 ground. These are the same hues pulled toward the neutral
-     ramp's warmth, each still ≥4.5:1 against its paired ink. */
-  --c-danger-soft:  var(--color-accent-100);   /* #fff2ef, from the system */
-  --c-warn-soft:    #fbf1e0;
-  --c-success-soft: #e9f2ea;
-  --c-info-soft:    #e8eef7;
+  /* Status tints, canonical.  (Corrected in P2 — a P0 miss.)
+     ────────────────────────────────────────────────────────────────────────
+     These four were the LAST pre-Ata-Ekta colours in the light theme. P0 moved
+     the grounds, the ink ramp, the brand and the dark equivalents of these
+     same four, and left these because nothing pointed at them: they were
+     hand-set hex, not aliases, so re-pointing the alias layer did not reach
+     them and no contrast test failed — `#e8eef7` is a COOL blue-grey and
+     still cleared 4.98:1 against its ink.
+
+     What it cost: every absent tile, failed sync chip, overdue fee row and
+     invalid marks input was tinted from the old palette on a Muslin ground.
+     Close enough to look deliberate, which is why it survived a phase whose
+     whole subject was the palette.
+
+     `--c-danger-soft` was the worst of the four — it aliased
+     `--color-accent-100`, the BRAND ramp's palest step. That was a pink-white
+     in the old palette and is a pink-white now, so "absent" and "primary"
+     have been drawing from the same token by coincidence rather than by
+     intent. Ratios after the swap: danger 4.74, warn 5.20, success 4.90,
+     info 4.93 — all measured, all AA. */
+  --c-danger-soft:  var(--color-danger-soft);
+  --c-warn-soft:    var(--color-warning-soft);
+  --c-success-soft: var(--color-success-soft);
+  --c-info-soft:    var(--color-info-soft);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -2790,6 +2806,558 @@ main > .page-sub { padding-inline: var(--s-4); }
 
 
 /* ==========================================================================
+   COMPONENT SYSTEM  (UI integration plan, P2)
+
+   Everything here is written against the semantic aliases (--c-*), never a
+   literal colour, so a tenant's brand and both themes reach these surfaces
+   through the same seam every other rule uses.
+
+   Mobile-first: the rules below are the phone. The desktop half lives in the
+   responsive block at the END of this file, for the reason recorded there —
+   a single-class override written here loses on source order to any component
+   rule declared after it, silently, with the media query matching.
+   ========================================================================== */
+
+/* -- visually hidden, but present for a screen reader --------------------- */
+/* Not `display:none` and not `visibility:hidden` — both remove it from the
+   accessibility tree, which is the one thing this class must not do. */
+.ui-sr-only {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+
+/* -- focus, once, for everything ------------------------------------------ */
+/* 04-UIUX §5: a visible 2px outline with 2px offset on every interactive
+   element, and never `outline: none`. Declared here so a component cannot
+   forget it, and `:focus-visible` so a mouse click does not draw a ring. */
+.ui-card-interactive:focus-visible, .ui-icon-btn:focus-visible,
+.ui-list-hit:focus-visible, .ui-tab:focus-visible, .ui-crumb-link:focus-visible,
+.ui-back:focus-visible, .ui-filter-chip:focus-visible, .ui-page-btn:focus-visible,
+.ui-row-open:focus-visible, .ui-search-clear:focus-visible,
+.ui-search-submit:focus-visible, .ui-dialog-close:focus-visible,
+.ui-toast-action:focus-visible, .ui-toast-close:focus-visible,
+.ui-upload-trigger:focus-within, .ui-input:focus-visible {
+  outline: 2px solid var(--c-primary); outline-offset: 2px;
+}
+
+.ui-icon { display: inline-flex; width: 1em; height: 1em; }
+.ui-icon svg { width: 100%; height: 100%; }
+
+/* -- buttons -------------------------------------------------------------- */
+/* .btn-primary/.btn-secondary/.btn-ghost already exist above and are used by
+   130 call sites; these add only what the system needs on top of them, so the
+   two can coexist while P3–P6 migrate screen by screen. */
+.btn-danger, .btn-success {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--s-2); min-height: var(--tap-min); padding: 0 var(--s-4);
+  border: 0; border-radius: var(--radius-md);
+  font: inherit; font-size: var(--text-xs); font-weight: 600; cursor: pointer;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+/* Destructive is its own colour, never a tinted primary: a delete that looks
+   like save is how a section disappears under a hand reaching for save. */
+.btn-danger  { background: var(--c-danger-soft); color: var(--color-danger-ink);
+               box-shadow: inset 0 0 0 1px var(--color-danger-ink); }
+.btn-danger:hover  { background: var(--color-danger); color: var(--c-on-primary); }
+.btn-success { background: var(--color-success); color: #fff; }
+
+/* `.btn-primary` and `.btn-success` set `width: 100%` far above — correct for
+   the phone-only app they were written for, wrong for a button in a table row
+   or a page header. This marker restores intrinsic width for every button the
+   component system builds; `.btn-block` opts back in where full width is the
+   design (a form's submit, a sheet's confirm). Legacy call sites carry neither
+   class and are untouched. */
+/* Also a flex container. `.btn-primary` computes to `display: block`, so a
+   glyph, a label and a spinner inside it laid out as inline flow — which is
+   why the busy spinner rendered as a 4x30 vertical bar instead of a 16px ring
+   until the gallery showed it. Legacy buttons contain one text node and never
+   noticed. */
+.ui-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--s-2); width: auto;
+}
+.ui-btn.btn-block, .btn-block { width: 100%; }
+.btn-spinner, .ui-spinner { display: block; }
+.btn-glyph { display: inline-flex; width: 18px; height: 18px; flex: none; }
+.btn-glyph svg { width: 100%; height: 100%; }
+.btn-label { min-width: 0; }
+
+/* A busy button keeps its width (pinned in JS) so nothing beside it moves. */
+.btn-spinner {
+  width: 16px; height: 16px; flex: none; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: ui-spin 700ms linear infinite;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+[data-busy='true'] { cursor: progress; opacity: .85; }
+
+.ui-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  border: 0; border-radius: var(--radius-md);
+  background: none; color: var(--c-ink-2); cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.ui-icon-btn:hover { background: var(--c-surface-3); color: var(--c-ink); }
+.ui-icon-btn.is-danger:hover { background: var(--c-danger-soft); color: var(--c-accent); }
+.ui-icon-btn svg { width: 18px; height: 18px; }
+.ui-icon-btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* Primary LAST in the DOM. On a phone the column reverses so the primary is
+   bottom-most under the thumb; on desktop the row keeps source order and the
+   primary finishes the line on the right. */
+/* One rule, everywhere: DOM order is PRIORITY order, least important first.
+   On a phone that column puts the primary action at the BOTTOM, under the
+   thumb; on desktop the same source order becomes a row and the primary
+   finishes the line on the right. `column-reverse` was the first attempt and
+   did the opposite of what its own comment claimed — the rendered gallery is
+   what caught it. */
+.ui-button-row { display: flex; flex-direction: column; gap: var(--s-2); }
+.ui-button-row > * { width: 100%; }
+
+/* -- cards ---------------------------------------------------------------- */
+.ui-card {
+  display: block; width: 100%; text-align: start;
+  padding: var(--s-4);
+  background: var(--color-bg);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  font: inherit; color: inherit;
+}
+.ui-card-accent { background: var(--c-primary-soft); border-color: transparent; }
+.ui-card-interactive {
+  position: relative; cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.ui-card-interactive:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-md); }
+.ui-card-head { display: flex; align-items: flex-start; gap: var(--s-3); min-width: 0; }
+.ui-card-titles { min-width: 0; flex: 1; }
+.ui-card-title { margin: 0; font-size: var(--text-h3); font-weight: var(--text-h3-weight);
+                 line-height: var(--text-h3-line); color: var(--c-ink); }
+.ui-card-sub { margin: 2px 0 0; font-size: var(--text-2xs); color: var(--c-ink-3); }
+.ui-card-action { margin-inline-start: auto; flex: none; }
+.ui-card-chevron { display: flex; color: var(--c-ink-3); flex: none; align-self: center; }
+.ui-card-chevron svg { width: 18px; height: 18px; }
+.ui-card-body { margin-top: var(--s-3); }
+.ui-card-head + .ui-card-body:empty { margin-top: 0; }
+
+.ui-card-glyph, .ui-stat-glyph {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 38px; height: 38px; border-radius: var(--radius-md);
+}
+.ui-card-glyph svg, .ui-stat-glyph svg { width: 19px; height: 19px; }
+[data-tone='primary'] { background: var(--c-primary-soft); color: var(--c-primary-text); }
+[data-tone='info']    { background: var(--c-info-soft);    color: var(--c-info); }
+[data-tone='success'] { background: var(--c-success-soft); color: var(--c-success); }
+[data-tone='warn']    { background: var(--c-warn-soft);    color: var(--c-warn); }
+[data-tone='accent2'] { background: var(--color-accent-2-soft); color: var(--color-accent-2-text); }
+
+/* -- stat cards ----------------------------------------------------------- */
+.ui-stat {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-4); min-width: 0;
+  background: var(--color-bg); border: 1px solid var(--c-line);
+  border-radius: var(--radius-lg); text-align: start; font: inherit; color: inherit;
+}
+.ui-stat-text { display: flex; flex-direction: column; min-width: 0; }
+/* The label reads first to a screen reader and second to the eye. */
+.ui-stat-label { font-size: var(--text-2xs); color: var(--c-ink-3); order: 1; }
+.ui-stat-value { font-size: var(--text-xl); font-weight: 700; color: var(--c-ink);
+                 line-height: 1.2; order: 2; font-variant-numeric: tabular-nums; }
+.ui-stat-note  { font-size: var(--text-3xs); color: var(--c-ink-3); order: 3; margin-top: 2px; }
+.ui-stat-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
+
+/* -- avatar --------------------------------------------------------------- */
+.ui-avatar {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 50%; object-fit: cover;
+  font-weight: 700; line-height: 1; color: #fff;
+}
+.ui-avatar.is-sm { width: 28px; height: 28px; font-size: var(--text-3xs); }
+.ui-avatar.is-md { width: 36px; height: 36px; font-size: var(--text-2xs); }
+.ui-avatar.is-lg { width: 52px; height: 52px; font-size: var(--text-base); }
+/* Six fixed tints, each chosen to carry white at AA. Not tenant-branded: a
+   roster is scannable because the colours DIFFER, and a class of sixty in one
+   brand hue would defeat the point. */
+.ui-avatar[data-tint='0'] { background: #6E5D52; }
+.ui-avatar[data-tint='1'] { background: #4E7A94; }
+.ui-avatar[data-tint='2'] { background: #557C52; }
+.ui-avatar[data-tint='3'] { background: #A76A47; }
+.ui-avatar[data-tint='4'] { background: #7C5C1B; }
+.ui-avatar[data-tint='5'] { background: #8A5A7A; }
+
+/* -- page header ---------------------------------------------------------- */
+.page-header-main { display: flex; flex-direction: column; gap: var(--s-3); }
+.page-header-text { min-width: 0; }
+.page-title-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.page-header-actions { display: flex; flex-direction: column; gap: var(--s-2); }
+.page-header-actions > * { width: 100%; }
+
+.ui-crumb { margin-bottom: var(--s-2); }
+.ui-crumb-list { display: flex; flex-wrap: wrap; align-items: center;
+                 gap: var(--s-1); margin: 0; padding: 0; list-style: none;
+                 font-size: var(--text-2xs); }
+.ui-crumb-item { display: flex; align-items: center; gap: var(--s-1); min-width: 0; }
+/* 24px minimum height even though these are inline links in a trail, which
+   WCAG 2.2 exempts from target size. The exemption is about not breaking
+   prose; a breadcrumb is a control strip that happens to read like prose, and
+   23px was what the sweep measured. */
+.ui-crumb-link, .ui-crumb-current { display: inline-flex; align-items: center;
+                                    min-height: 24px; }
+.ui-crumb-link { color: var(--c-ink-3); text-decoration: none; }
+.ui-crumb-link:hover { color: var(--c-primary-text); text-decoration: underline; }
+.ui-crumb-current { color: var(--c-ink-2); font-weight: 600; }
+.ui-crumb-sep { color: var(--c-ink-3); }
+
+.ui-back {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  min-height: var(--tap-min); padding: 0 var(--s-2) 0 0;
+  border: 0; background: none; color: var(--c-ink-2);
+  font: inherit; font-size: var(--text-xs); cursor: pointer;
+}
+.ui-back:hover { color: var(--c-primary-text); }
+.ui-back svg { width: 18px; height: 18px; }
+
+.ui-section-head { display: flex; align-items: center; gap: var(--s-3);
+                   margin: var(--s-5) 0 var(--s-2); }
+.ui-section-title { margin: 0; font-size: var(--text-h3); font-weight: 600;
+                    color: var(--c-ink); }
+.ui-section-action { margin-inline-start: auto; font-size: var(--text-2xs); }
+
+/* -- badges --------------------------------------------------------------- */
+.ui-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px var(--s-2); border-radius: var(--radius-pill);
+  font-size: var(--text-3xs); font-weight: 600; white-space: nowrap;
+  background: var(--c-surface-3); color: var(--c-ink-2);
+}
+.ui-badge-glyph { display: inline-flex; width: 13px; height: 13px; }
+.ui-badge-glyph svg { width: 100%; height: 100%; }
+.ui-badge[data-tone='primary'] { background: var(--c-primary-soft); color: var(--c-primary-text); }
+.ui-badge[data-tone='info']    { background: var(--c-info-soft);    color: var(--c-info); }
+.ui-badge[data-tone='success'] { background: var(--c-success-soft); color: var(--c-success); }
+.ui-badge[data-tone='warn']    { background: var(--c-warn-soft);    color: var(--c-warn); }
+.ui-badge[data-tone='danger']  { background: var(--c-danger-soft);  color: var(--c-accent); }
+
+.ui-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--c-primary); color: var(--c-on-primary);
+  font-size: var(--text-3xs); font-weight: 700; line-height: 1;
+}
+
+/* -- fields --------------------------------------------------------------- */
+.ui-field { display: flex; flex-direction: column; gap: var(--s-1);
+            margin-bottom: var(--s-4); }
+.ui-field-label { display: flex; align-items: center; gap: 3px;
+                  font-size: var(--text-2xs); font-weight: 600; color: var(--c-ink-2); }
+.ui-req { color: var(--c-accent); font-weight: 700; }
+.ui-field-control { display: flex; align-items: center; gap: var(--s-2); }
+.ui-input {
+  flex: 1; min-width: 0; width: 100%;
+  min-height: var(--tap-min); padding: 0 var(--s-3);
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-bg); color: var(--c-ink);
+  font: inherit; font-size: var(--text-xs);
+}
+textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: vertical; }
+.ui-input::placeholder { color: var(--color-text-faint); }
+.ui-input:focus { border-color: var(--c-primary); }
+.ui-input[disabled] { background: var(--c-surface); color: var(--c-ink-3); cursor: not-allowed; }
+.ui-select { appearance: none; padding-inline-end: var(--s-6);
+             background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                               linear-gradient(135deg, currentColor 50%, transparent 50%);
+             background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%;
+             background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.ui-field-help { margin: 0; font-size: var(--text-3xs); color: var(--c-ink-3); }
+/* Icon + text, never colour alone (04-UIUX §5). */
+.ui-field-error { margin: 0; font-size: var(--text-3xs); font-weight: 600;
+                  color: var(--c-accent); }
+.ui-field-error::before { content: '⚠ '; }
+.ui-field[data-invalid='true'] .ui-input { border-color: var(--c-accent); }
+.ui-field[data-invalid='true'] .ui-input:focus { outline-color: var(--c-accent); }
+
+/* -- search --------------------------------------------------------------- */
+.ui-search { display: flex; flex-direction: column; gap: var(--s-1); }
+.ui-search-box {
+  display: flex; align-items: center;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+.ui-search-box:focus-within { border-color: var(--c-primary);
+                              outline: 2px solid var(--c-primary); outline-offset: 2px; }
+.ui-search-input { border: 0; background: none; }
+.ui-search-input:focus-visible { outline: none; }
+.ui-search-input::-webkit-search-cancel-button { display: none; }
+.ui-search-submit, .ui-search-clear {
+  display: flex; align-items: center; justify-content: center; flex: none;
+  width: var(--tap-min); min-height: var(--tap-min);
+  border: 0; background: none; color: var(--c-ink-3); cursor: pointer;
+}
+.ui-search-submit svg, .ui-search-clear svg { width: 17px; height: 17px; }
+.ui-search-note { margin: 0; font-size: var(--text-3xs); color: var(--c-ink-3); }
+
+/* -- upload --------------------------------------------------------------- */
+.ui-upload { display: flex; flex-direction: column; gap: var(--s-2);
+             align-items: flex-start; }
+.ui-upload-trigger { display: inline-flex; align-items: center; gap: var(--s-2);
+                     min-height: var(--tap-min); padding: 0 var(--s-4);
+                     border-radius: var(--radius-md); cursor: pointer; }
+.ui-upload-chosen { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
+.ui-upload-chosen:empty { display: none; }
+
+/* -- tables and lists ----------------------------------------------------- */
+.ui-data { display: block; }
+/* The desktop table is hidden on a phone; the list is hidden on desktop. Both
+   are in the DOM and `display:none` removes one from the accessibility tree
+   as well as the page — see the module header for why this beats re-rendering
+   on a breakpoint cross. */
+.ui-table-scroll { display: none; }
+.ui-table { width: 100%; border-collapse: collapse; font-size: var(--text-2xs); }
+.ui-table th, .ui-table td {
+  padding: var(--s-3); text-align: start; vertical-align: middle;
+  border-bottom: 1px solid var(--c-line);
+}
+.ui-table thead th {
+  font-size: var(--text-3xs); font-weight: 700; letter-spacing: .03em;
+  text-transform: uppercase; color: var(--c-ink-3);
+  background: var(--c-surface); position: sticky; top: 0; z-index: 1;
+}
+.ui-table tbody th { font-weight: 600; color: var(--c-ink); }
+.ui-table tbody tr:last-child th, .ui-table tbody tr:last-child td { border-bottom: 0; }
+.ui-table tbody tr:hover { background: var(--c-surface); }
+.ui-table [data-numeric='true'] { text-align: end; font-variant-numeric: tabular-nums; }
+.ui-table-action { width: var(--tap-min); }
+.ui-row-open {
+  display: flex; align-items: center; justify-content: center;
+  width: var(--tap-min); height: var(--tap-min);
+  border: 0; background: none; color: var(--c-ink-3); cursor: pointer;
+  border-radius: var(--radius-md);
+}
+.ui-row-open:hover { background: var(--c-surface-3); color: var(--c-ink); }
+.ui-row-open svg { width: 18px; height: 18px; }
+
+.ui-list { display: flex; flex-direction: column; gap: var(--s-2);
+           margin: 0; padding: 0; list-style: none; }
+.ui-list-item { min-width: 0; }
+.ui-list-hit {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%;
+  min-height: var(--tap-min); padding: var(--s-3);
+  background: var(--color-bg); border: 1px solid var(--c-line);
+  border-radius: var(--radius-md);
+  font: inherit; color: inherit; text-align: start; cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+.ui-list-hit.is-static { cursor: default; }
+.ui-list-hit:not(.is-static):hover { border-color: var(--color-border-strong); }
+.ui-list-glyph { display: flex; width: 20px; height: 20px; flex: none; color: var(--c-ink-3); }
+.ui-list-glyph svg { width: 100%; height: 100%; }
+.ui-list-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ui-list-title { font-size: var(--text-xs); font-weight: 600; color: var(--c-ink);
+                 overflow-wrap: anywhere; }
+.ui-list-sub { font-size: var(--text-2xs); color: var(--c-ink-2); overflow-wrap: anywhere; }
+.ui-list-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+                font-size: var(--text-3xs); color: var(--c-ink-3); }
+.ui-list-dot { color: var(--c-ink-3); }
+.ui-list-status { flex: none; }
+.ui-list-chevron { display: flex; flex: none; color: var(--c-ink-3); }
+.ui-list-chevron svg { width: 18px; height: 18px; }
+
+.ui-pagination { display: flex; align-items: center; justify-content: center;
+                 gap: var(--s-3); padding: var(--s-4) 0; }
+.ui-page-btn {
+  display: flex; align-items: center; justify-content: center;
+  min-width: var(--tap-min); min-height: var(--tap-min);
+  border: 1px solid var(--c-line); border-radius: var(--radius-md);
+  background: var(--color-bg); color: var(--c-ink-2); cursor: pointer;
+}
+.ui-page-btn[disabled] { opacity: .4; cursor: not-allowed; }
+.ui-page-btn svg { width: 17px; height: 17px; }
+.ui-page-pos { font-size: var(--text-2xs); color: var(--c-ink-2);
+               font-variant-numeric: tabular-nums; }
+
+/* -- timeline ------------------------------------------------------------- */
+.ui-timeline { display: flex; flex-direction: column; margin: 0;
+               padding: 0 0 0 var(--s-5); list-style: none; }
+.ui-timeline-item { position: relative; padding: 0 0 var(--s-4) var(--s-4); }
+/* The rail and dot are decoration, so they are pseudo-elements: a reader hears
+   the entries, not a column of bullets. */
+.ui-timeline-item::before {
+  content: ''; position: absolute; inset-inline-start: 0; top: 6px; bottom: -6px;
+  width: 2px; background: var(--c-line);
+}
+.ui-timeline-item:last-child::before { bottom: auto; height: 0; }
+.ui-timeline-mark {
+  position: absolute; inset-inline-start: -6px; top: 2px;
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--c-ink-3); box-shadow: 0 0 0 3px var(--color-bg);
+}
+.ui-timeline-mark svg { width: 9px; height: 9px; color: #fff; }
+.ui-timeline-item[data-tone='success'] .ui-timeline-mark { background: var(--color-success); }
+.ui-timeline-item[data-tone='warn'] .ui-timeline-mark { background: var(--color-warning-text); }
+.ui-timeline-item[data-tone='danger'] .ui-timeline-mark { background: var(--color-danger); }
+.ui-timeline-when { margin: 0; font-size: var(--text-3xs); color: var(--c-ink-3); }
+.ui-timeline-title { margin: 2px 0 0; font-size: var(--text-2xs); font-weight: 600;
+                     color: var(--c-ink); }
+.ui-timeline-detail { margin: 2px 0 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+/* -- tabs ----------------------------------------------------------------- */
+.ui-tabs {
+  display: flex; gap: var(--s-1); overflow-x: auto;
+  padding-bottom: 2px; border-bottom: 1px solid var(--c-line);
+  scrollbar-width: none;
+}
+.ui-tabs::-webkit-scrollbar { display: none; }
+.ui-tab {
+  display: inline-flex; align-items: center; gap: var(--s-2); flex: none;
+  min-height: var(--tap-min); padding: 0 var(--s-3);
+  border: 0; border-bottom: 2px solid transparent; background: none;
+  color: var(--c-ink-3); font: inherit; font-size: var(--text-xs); font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+}
+.ui-tab:hover { color: var(--c-ink); }
+.ui-tab[aria-selected='true'] { color: var(--c-primary-text); font-weight: 600;
+                                border-bottom-color: var(--c-primary); }
+.ui-tab-count { padding: 1px 6px; border-radius: var(--radius-pill);
+                background: var(--c-surface-3); color: var(--c-ink-2);
+                font-size: var(--text-3xs); font-weight: 600; }
+
+/* -- filters -------------------------------------------------------------- */
+.ui-filters { display: flex; flex-direction: column; gap: var(--s-2);
+              margin-bottom: var(--s-3); }
+.ui-filters-inline { display: none; }
+.ui-filters-open {
+  display: inline-flex; align-items: center; gap: var(--s-2); align-self: flex-start;
+  min-height: var(--tap-min); padding: 0 var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--radius-md);
+  background: var(--color-bg); color: var(--c-ink-2);
+  font: inherit; font-size: var(--text-xs); cursor: pointer;
+}
+.ui-filters-open svg { width: 17px; height: 17px; }
+.ui-filter-field { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+.ui-filter-field.is-stacked { margin-bottom: var(--s-3); }
+.ui-filter-active { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.ui-filter-chip {
+  display: inline-flex; align-items: center; gap: var(--s-1);
+  min-height: 34px; padding: 0 var(--s-2);
+  border: 1px solid var(--c-primary); border-radius: var(--radius-pill);
+  background: var(--c-primary-soft); color: var(--c-primary-text);
+  font: inherit; font-size: var(--text-3xs); font-weight: 600; cursor: pointer;
+}
+.ui-filter-chip svg { width: 13px; height: 13px; }
+/* Compact for a mouse, full size for a finger — the same question the sidebar
+   asks. A chip that removes a filter is recoverable if mis-tapped, but a row
+   of three 34px targets on a phone is a row of three mistakes. */
+@media (pointer: coarse) {
+  .ui-filter-chip, .ui-filter-clear { min-height: var(--tap-min); }
+}
+.ui-filter-clear { min-height: 34px; padding: 0 var(--s-2);
+                   border: 0; background: none; color: var(--c-ink-2);
+                   font: inherit; font-size: var(--text-3xs); font-weight: 600;
+                   text-decoration: underline; cursor: pointer; }
+.ui-filter-sheet { display: flex; flex-direction: column; }
+
+/* -- overlays ------------------------------------------------------------- */
+.ui-scrim {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgb(0 0 0 / 45%);
+  padding: 0;
+}
+.ui-dialog {
+  display: flex; flex-direction: column; width: 100%; max-height: 88dvh;
+  background: var(--color-bg); color: var(--c-ink);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-lg);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.ui-dialog:focus { outline: none; }
+.ui-dialog-head { display: flex; align-items: center; gap: var(--s-3);
+                  padding: var(--s-4) var(--s-4) var(--s-2); }
+.ui-dialog-title { margin: 0; flex: 1; min-width: 0;
+                   font-size: var(--text-h3); font-weight: 600; color: var(--c-ink); }
+.ui-dialog-close {
+  display: flex; align-items: center; justify-content: center; flex: none;
+  width: var(--tap-min); height: var(--tap-min);
+  border: 0; border-radius: var(--radius-md); background: none;
+  color: var(--c-ink-3); cursor: pointer;
+}
+.ui-dialog-close:hover { background: var(--c-surface-3); color: var(--c-ink); }
+.ui-dialog-close svg { width: 18px; height: 18px; }
+.ui-dialog-body { flex: 1; overflow-y: auto; padding: 0 var(--s-4) var(--s-4);
+                  overscroll-behavior: contain; }
+.ui-dialog-text { margin: 0; font-size: var(--text-xs); color: var(--c-ink-2);
+                  line-height: var(--text-body-line); }
+.ui-dialog-foot { padding: var(--s-3) var(--s-4) var(--s-4);
+                  border-top: 1px solid var(--c-line); }
+
+/* A sheet rises; a modal fades. Both respect the reduced-motion block below. */
+@media (prefers-reduced-motion: no-preference) {
+  .ui-dialog { animation: ui-rise 200ms cubic-bezier(.4, 0, .2, 1); }
+  @keyframes ui-rise { from { transform: translateY(12px); opacity: 0; } }
+}
+
+/* -- toasts --------------------------------------------------------------- */
+.ui-toast-host {
+  position: fixed; z-index: 60;
+  inset-inline: var(--s-3); bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: var(--s-2);
+  pointer-events: none;
+}
+.ui-toast {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-3); border-radius: var(--radius-md);
+  background: var(--color-neutral-900); color: var(--color-neutral-100);
+  box-shadow: var(--shadow-lg); font-size: var(--text-2xs);
+  pointer-events: auto;
+}
+.ui-toast[data-tone='success'] { background: var(--color-success-ink); color: #fff; }
+.ui-toast[data-tone='error']   { background: var(--color-danger-ink);  color: #fff; }
+.ui-toast-glyph { display: flex; width: 17px; height: 17px; flex: none; }
+.ui-toast-glyph svg { width: 100%; height: 100%; }
+.ui-toast-text { flex: 1; min-width: 0; }
+.ui-toast-action { min-height: 34px; padding: 0 var(--s-2); border: 0;
+                   background: none; color: inherit; font: inherit;
+                   font-size: var(--text-3xs); font-weight: 700;
+                   text-decoration: underline; cursor: pointer; flex: none; }
+.ui-toast-close { display: flex; align-items: center; justify-content: center;
+                  width: 32px; height: 32px; flex: none; border: 0;
+                  background: none; color: inherit; cursor: pointer; opacity: .8; }
+.ui-toast-close svg { width: 15px; height: 15px; }
+
+/* -- loaders and progress ------------------------------------------------- */
+.ui-inline-loader { display: flex; align-items: center; justify-content: center;
+                    padding: var(--s-5); }
+.ui-spinner { width: 22px; height: 22px; border-radius: 50%;
+              border: 2px solid var(--c-line); border-top-color: var(--c-primary);
+              animation: ui-spin 700ms linear infinite; }
+.ui-progress { display: flex; flex-direction: column; gap: var(--s-1); }
+.ui-progress-label { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
+.ui-progress-track { height: 8px; border-radius: 4px; overflow: hidden;
+                     background: var(--c-surface-3); }
+.ui-progress-fill { display: block; height: 100%; background: var(--c-primary);
+                    transition: width var(--transition-base); }
+
+.ui-list-skeleton { display: flex; flex-direction: column; gap: var(--s-3);
+                    padding: var(--s-4); }
+.ui-skel-row { display: flex; align-items: center; gap: var(--s-3); }
+.skel-avatar { width: 36px; height: 36px; border-radius: 50%; flex: none; }
+.ui-skel-lines { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.ui-skel-lines .skel-bar.is-short { width: 55%; }
+
+/* -- permission / error states -------------------------------------------- */
+.ui-state { display: flex; flex-direction: column; align-items: center;
+            gap: var(--s-2); padding: var(--s-6) var(--s-4); text-align: center; }
+.ui-state-glyph { display: flex; width: 26px; height: 26px; color: var(--c-ink-3); }
+.ui-state-glyph svg { width: 100%; height: 100%; }
+.ui-state-title { margin: 0; font-size: var(--text-xs); font-weight: 600; color: var(--c-ink); }
+.ui-state-detail { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+
+/* ==========================================================================
    RESPONSIVE — the desktop layouts, deliberately LAST in this file  (P1)
 
    Placement is load-bearing, not tidiness. Custom properties cascade by
@@ -2877,6 +3445,46 @@ main > .page-sub { padding-inline: var(--s-4); }
   .secondary-grid { grid-template-columns: repeat(4, 1fr); }
   .card-grid { gap: var(--s-3); }
   .home-card-primary { min-height: 112px; }
+
+  /* ── component system: the desktop half (P2) ─────────────────────────── */
+
+  /* Buttons sit in a row again, primary last on the right where the eye
+     finishes. The mobile rule is column-reverse so the primary is bottom-most
+     under the thumb; this is the same source order, laid out the other way. */
+  .ui-button-row { flex-direction: row; justify-content: flex-end; }
+  .ui-button-row > * { width: auto; }
+
+  .page-header-main { flex-direction: row; align-items: flex-start;
+                      justify-content: space-between; gap: var(--s-4); }
+  .page-header-actions { flex-direction: row; align-items: center; flex: none; }
+  .page-header-actions > * { width: auto; }
+
+  .ui-stat-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
+
+  /* The table appears and the list disappears. Neither is re-rendered — see
+     the ui/table.ts header for why both live in the DOM. */
+  .ui-table-scroll { display: block; overflow-x: auto; }
+  .ui-data > .ui-list { display: none; }
+
+  .ui-filters { flex-direction: row; align-items: center; flex-wrap: wrap; }
+  .ui-filters-inline { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+  .ui-filters-open { display: none; }
+  .ui-filter-active { margin-inline-start: auto; }
+
+  /* A modal, not a sheet: centred, with breathing room, and capped so a long
+     form scrolls inside the dialog rather than growing past the viewport. */
+  .ui-scrim { align-items: center; padding: var(--s-5); }
+  .ui-dialog { max-width: 520px; max-height: 84vh; border-radius: var(--radius-lg); }
+  .ui-scrim[data-kind='drawer'] { align-items: stretch; justify-content: flex-end;
+                                  padding: 0; }
+  .ui-scrim[data-kind='drawer'] .ui-dialog {
+    max-width: 420px; max-height: none; height: 100%;
+    border-radius: 0; animation: none;
+  }
+
+  .ui-toast-host { inset-inline: auto var(--s-5); bottom: var(--s-5);
+                   max-width: 420px; }
+
 }
 
 /* Large desktop: more air in the gutters, same 1200px column. */

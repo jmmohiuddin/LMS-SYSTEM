@@ -26,6 +26,7 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount, formatTime } from '../../../packages/ui-core/src/format.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -172,14 +173,10 @@ export class GenerationView {
     root.textContent = '';
     root.setAttribute('lang', 'bn');
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'রুটিন তৈরি হয়েছে';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.loading ? 'লোড হচ্ছে…' : (this.data?.routine.nameBn ?? '');
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'রুটিন তৈরি হয়েছে',
+      subtitle: this.loading ? 'লোড হচ্ছে…' : (this.data?.routine.nameBn ?? ''),
+    });
     root.append(header);
 
     if (this.error) {

@@ -39,6 +39,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum, bnDate,
 } from './view-states.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 export interface CalendarEntry {
   id: string;
@@ -248,14 +249,10 @@ export class CalendarView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'শিক্ষাপঞ্জি';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = `${MONTH_BN[this.month]} ${bnNum(this.year)}`;
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'শিক্ষাপঞ্জি',
+      subtitle: `${MONTH_BN[this.month]} ${bnNum(this.year)}`,
+    });
     root.append(header);
 
     root.append(this.monthNav());

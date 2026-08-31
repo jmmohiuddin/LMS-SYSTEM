@@ -30,6 +30,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface Preview {
   years: { id: string; label: string; isCurrent: boolean }[];
@@ -160,14 +161,10 @@ export class RolloverView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'বার্ষিক উন্নয়ন';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'আগের বছরের রেকর্ড মুছে যায় না।';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'বার্ষিক উন্নয়ন',
+      subtitle: 'আগের বছরের রেকর্ড মুছে যায় না।',
+    });
     root.append(header);
 
     if (this.notice) root.append(successNote(d, this.notice));

@@ -9,6 +9,7 @@
  * every Android browser without the MediaDevices permission dance.
  */
 import type { Auth } from './auth.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 const TARGET_LONG_EDGE = 1600;
 const JPEG_QUALITY = 0.7;
@@ -157,14 +158,10 @@ export class ScriptsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'উত্তরপত্র আপলোড';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'হাতে-লেখা উত্তরপত্রের ছবি — অন-ডিভাইস কম্প্রেশন সহ';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'উত্তরপত্র আপলোড',
+      subtitle: 'হাতে-লেখা উত্তরপত্রের ছবি — অন-ডিভাইস কম্প্রেশন সহ',
+    });
     root.append(header);
 
     const card = d.createElement('div');

@@ -30,6 +30,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface ExamRow {
   examId: string;
@@ -117,14 +118,10 @@ export class PublishView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'ফলাফল প্রকাশ';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'প্রকাশের পর নম্বর আর পরিবর্তন করা যায় না।';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'ফলাফল প্রকাশ',
+      subtitle: 'প্রকাশের পর নম্বর আর পরিবর্তন করা যায় না।',
+    });
     root.append(header);
 
     if (this.notice) root.append(successNote(d, this.notice));

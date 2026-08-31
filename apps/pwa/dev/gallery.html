@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>P2 উপাদান সংগ্রহ</title>
+<script>
+(function(){try{var s=localStorage.getItem('shikhon_theme');var mq=matchMedia('(prefers-color-scheme: dark)');
+document.documentElement.setAttribute('data-theme',(s==='dark'||(s!=='light'&&mq.matches))?'dark':'light');}catch(e){}})();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/app.css">
+<style>
+  body { background: var(--color-surface); margin: 0; }
+  #root { max-width: 1200px; margin: 0 auto; padding: var(--s-4); }
+  .gal-section { margin-bottom: var(--s-6); }
+  .gal-body { display: flex; flex-direction: column; gap: var(--s-3); }
+  .gal-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+  .gal-grid { display: grid; gap: var(--s-3); grid-template-columns: 1fr; }
+  .gal-form { max-width: 520px; }
+  @media (min-width: 1024px) { .gal-grid { grid-template-columns: repeat(3, 1fr); } }
+</style>
+</head>
+<body>
+<main id="root" lang="bn"></main>
+<script type="module" src="/ui-gallery.js"></script>
+</body>
+</html>

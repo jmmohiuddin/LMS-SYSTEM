@@ -24,6 +24,7 @@ import {
   type PushState, type PushDevice, type PushStatusResponse,
 } from './push-client.ts';
 import { skeleton, errorState, successNote, emptyState, bnDate } from './view-states.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 export interface NotificationsViewOptions {
   root: HTMLElement;
@@ -128,14 +129,10 @@ export class NotificationsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'নোটিফিকেশন';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'এই যন্ত্রে বিদ্যালয়ের বার্তা পান';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'নোটিফিকেশন',
+      subtitle: 'এই যন্ত্রে বিদ্যালয়ের বার্তা পান',
+    });
     root.append(header);
 
     if (this.notice) root.append(successNote(d, this.notice));

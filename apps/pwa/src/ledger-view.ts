@@ -9,6 +9,7 @@
  */
 import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface AccountBalance {
   code: string;
@@ -79,14 +80,10 @@ export class LedgerView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'লেজার ও পুনর্মিলন';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'দ্বৈত-এন্ট্রি হিসাব — bKash/Nagad পুনর্মিলন সহ';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'লেজার ও পুনর্মিলন',
+      subtitle: 'দ্বৈত-এন্ট্রি হিসাব — bKash/Nagad পুনর্মিলন সহ',
+    });
     root.append(header);
 
     if (this.notice) {

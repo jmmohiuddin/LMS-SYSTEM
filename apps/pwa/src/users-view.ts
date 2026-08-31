@@ -24,6 +24,7 @@ import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
 import { ROLE_BN } from './ui/roles.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface UserRow {
   id: string; nameBn: string; nameEn: string | null; phone: string | null;
@@ -150,14 +151,10 @@ export class UsersView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'ব্যবহারকারী';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'শিক্ষক, কর্মী ও অ্যাকাউন্ট';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'ব্যবহারকারী',
+      subtitle: 'শিক্ষক, কর্মী ও অ্যাকাউন্ট',
+    });
     root.append(header);
 
     if (this.notice) root.append(successNote(d, this.notice));

@@ -18,6 +18,7 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -110,14 +111,10 @@ export class MyAttendanceView {
     root.textContent = '';
     root.setAttribute('lang', 'bn');
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'আমার হাজিরা';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'মাস ও বিষয় অনুযায়ী নিজের উপস্থিতির হিসাব';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'আমার হাজিরা',
+      subtitle: 'মাস ও বিষয় অনুযায়ী নিজের উপস্থিতির হিসাব',
+    });
     root.append(header);
 
     if (this.offline) {

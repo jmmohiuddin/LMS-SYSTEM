@@ -16,6 +16,7 @@
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { PracticeView, type PracticeQuestion } from './practice-view.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 export interface Chapter {
   id: string;
@@ -259,14 +260,10 @@ export class LearnView {
     if (this.mode.kind === 'topics') { this.renderTopics(); return; }
 
     // ---------------------------------------------------------- chapter list
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'পড়াশোনা';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'তোমার শ্রেণির অধ্যায় ও পাঠ';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'পড়াশোনা',
+      subtitle: 'তোমার শ্রেণির অধ্যায় ও পাঠ',
+    });
     root.append(header);
 
     if (this.offline) root.append(this.offlineBanner());

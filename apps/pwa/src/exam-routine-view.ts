@@ -27,6 +27,7 @@ import type { Auth } from './auth.ts';
 import {
   formatCount, formatIdentifier, formatDayMonth, formatTime,
 } from '../../../packages/ui-core/src/format.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -167,14 +168,10 @@ export class ExamRoutineView {
 
     const exam = this.data?.exam ?? this.exams.find((e) => e.id === this.selected) ?? null;
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'পরীক্ষার রুটিন';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.loading ? 'লোড হচ্ছে…' : (exam?.nameBn ?? '');
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'পরীক্ষার রুটিন',
+      subtitle: this.loading ? 'লোড হচ্ছে…' : (exam?.nameBn ?? ''),
+    });
     root.append(header);
 
     if (this.exams.length > 1) root.append(this.selector());

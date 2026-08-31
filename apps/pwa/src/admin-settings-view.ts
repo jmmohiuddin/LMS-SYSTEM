@@ -23,6 +23,7 @@
  */
 import type { Auth } from './auth.ts';
 import { skeleton, errorState, successNote, bnNum } from './view-states.ts';
+import { pageHeader } from './ui/page-header.ts';
 
 interface SmsSettings {
   noticeMaxChars: number;
@@ -110,14 +111,10 @@ export class AdminSettingsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'সেটিংস';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = 'নোটিফিকেশন ও এসএমএস';
-    header.append(h1, sub);
+    const header = pageHeader(d, {
+      title: 'সেটিংস',
+      subtitle: 'নোটিফিকেশন ও এসএমএস',
+    });
     root.append(header);
 
     if (this.notice) root.append(successNote(d, this.notice));

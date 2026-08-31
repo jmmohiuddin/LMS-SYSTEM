@@ -783,3 +783,53 @@ what); two theme implementations became one.
 - The rail toggle is 32px with a fine pointer (48px under `pointer: coarse`).
 - Dashboards are reflowed, not redesigned. Tables are still tables at every
   width. `.page-header` is still per-view. All **P2–P6**.
+
+
+---
+
+## 22. P2 — delivered (2026-09-01)
+
+The component system. Commit `6145592`.
+
+### Components created
+
+`el` `append` `icon` `lang` `clear` `uid` · `button` `iconButton` `buttonRow`
+`setBusy` `onClickBusy` · `card` `statCard` `statRow` `avatar` · `pageHeader`
+`breadcrumb` `backLink` `sectionHeading` · `badge` `statusBadge` `countBadge` ·
+`field` `searchField` `setFieldError` `clearFieldError` `reportErrors` ·
+`fileUpload` · `dataTable` `listItem` `list` `pagination` `timeline` ·
+`openOverlay` `openDrawer` `confirmOverlay` `setOverlayBody` · `tabs`
+`filterBar` · `toast` `announce` `inlineLoader` `progress` `tooltip`
+`listSkeleton` `permissionState` `humanError`.
+
+### Components reused rather than rewritten
+
+`skeleton` `emptyState` `errorState` `successNote` from `view-states.ts`,
+which 20+ modules already use. Re-exported through `ui/index.ts` so there is
+one import surface and one implementation.
+
+### Token usage
+
+Every rule resolves to a `--c-*` or `--color-*` token; no literal colour
+appears in the component CSS. Two token corrections were needed and are
+recorded above: `--c-on-primary` (P1) and the four status tints (P2).
+
+### Acceptance
+
+| Area | 360 | 375 | 390 | 1024 | 1280 | 1440 | Light | Dark |
+|---|---|---|---|---|---|---|---|---|
+| Contrast | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ |
+| Overflow | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Nameless controls | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ |
+| Table → list swap | list | list | list | table | table | table | ✅ | ✅ |
+| Overlay presentation | sheet | sheet | sheet | modal | modal | modal | ✅ | ✅ |
+
+### Known limitations
+
+- Breadcrumb links are 24px (WCAG 2.2 AA minimum; inline-exempt) and filter
+  chips 34px with a fine pointer, 48px under `pointer: coarse`.
+- The legacy `.btn-*`, `.card`, `.field` and `.chip` families still exist and
+  are still used by every unmigrated screen. They retire in **P8**, at zero
+  usage, exactly as this plan states — not before.
+- Only `pageHeader` is adopted. The rest of the system ships nothing until a
+  screen imports it, which is why `app.js` grew 0.4 KB.

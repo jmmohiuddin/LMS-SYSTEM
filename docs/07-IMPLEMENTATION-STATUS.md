@@ -1699,3 +1699,21 @@ every view module. 1,224 tests, TypeScript 3/3, 48/48 migrations.
 
 Not yet done: the screens themselves (P2–P6) — dashboards, tables→mobile lists,
 the shared page-header, and the component library.
+
+
+## P2 — component system (2026-09-01)
+
+`apps/pwa/src/ui/` — Card, StatCard, PageHeader, Breadcrumb, Button, IconButton,
+Input/Select/Textarea (FormField), SearchField, FilterBar, Badge, StatusBadge,
+Tabs, DataTable + MobileList + ListItem, Pagination, Timeline, Modal/Drawer/
+BottomSheet (one focus trap), ConfirmationDialog, Toast, EmptyState,
+ErrorState, PermissionState, LoadingSkeleton, ListSkeleton, InlineLoader,
+ProgressIndicator, Tooltip, Avatar, FileUpload.
+
+One declaration produces both a desktop table and a mobile list. `pageHeader()`
+adopted in 18 views (byte-identical DOM). 91 component tests.
+
+Not built: DatePicker (native `<input type="date">` is better), charts
+(server-rendered SVG per 04-UIUX §6), any component taking a colour.
+
+Backend, APIs, RLS, auth and every workflow: unchanged.

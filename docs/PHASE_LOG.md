@@ -6782,3 +6782,131 @@ modules, notification policy, calendar, fee configuration, subscription state.
 It does **not** mean arbitrary code, HTML, SQL or runtime scripting from an
 admin screen. That is not customisation, it is a remote-execution feature with
 a friendly name, and D4 already forbids its cousin (per-school code).
+
+
+---
+
+# P2 — the shared component system   (2026-09-01)
+
+**Commit:** `6145592`. Eleven modules under `apps/pwa/src/ui/`, one import for
+every screen built from P3 onward.
+
+## Built against the duplication that is actually there
+
+Measured before writing anything:
+
+| Pattern | Files | Uses |
+|---|---|---|
+| Hand-built `.page-header` (the same 7 lines) | 29 | 37 |
+| Hand-typed button class strings | 44 | 130 |
+| `createElement('table')` | 9 | 9 |
+| Field constructions | 24 | 268 |
+
+None of the 268 fields associated its label, helper and error with its input;
+none of the 9 tables had a mobile form; none of the 130 buttons guaranteed
+`type="button"` or guarded a double submit.
+
+## The piece that mattered most
+
+§7 wants a table on desktop and a list on a phone. The only way both stay
+correct is **one column declaration producing both** — a list is not a table
+with the borders removed, it is the same record with a different thing in
+charge of it. Each column declares what it is on a phone (`title` /
+`subtitle` / `meta` / `status` / `hidden`), and the list carries each value's
+column header as visually-hidden text, because on a list there is no header row
+and "০১৭xxxxxxxx" read without "অভিভাবকের ফোন" is a number from nowhere.
+
+Both renderings live in the DOM and a media query hides one — the shell's
+decision from P1, for the same reason: `display:none` removes a subtree from
+the accessibility tree as well as the page, so a screen reader meets exactly
+one. `pagination()` exists so row counts stay bounded, since the cost is about
+five extra nodes per row.
+
+## What rendering it caught that no unit test could
+
+The gallery renders every component with every state on one page. Five defects,
+all found by looking, none findable by asserting:
+
+1. **`.btn-primary` has been `width: 100%` since the app was phone-only.**
+   There has never been an intrinsic-width primary button, so a "save" in a
+   table row or a page header stretched the whole column. Fixed behind a
+   `ui-btn` marker so the 130 legacy call sites keep the full-width bar they
+   were written for.
+2. **`.btn-primary` computes to `display: block`**, so a glyph, a label and a
+   spinner inside it laid out as inline flow — the busy spinner rendered as a
+   4×30 vertical bar. Legacy buttons contain one text node and never noticed.
+3. **The stacked action order did the opposite of its own comment.**
+   `column-reverse` put the primary on top; the comment said "under the thumb".
+   One rule now: DOM order is priority order, least important first.
+4. **Breadcrumb links measured 23px** — one pixel under WCAG 2.2 AA's target
+   minimum.
+5. **The four light-theme status tints were still the pre-Ata-Ekta palette.**
+   P0 moved the grounds, the ink ramp, the brand and the DARK equivalents of
+   these same four. These survived because they were hand-set hex rather than
+   aliases, so re-pointing the alias layer never reached them — and `#e8eef7`,
+   a cool blue-grey on a warm Muslin ground, still cleared 4.98:1, so no
+   contrast test failed. `--c-danger-soft` was the worst: it aliased
+   `--color-accent-100`, the BRAND ramp's palest step, so "absent" and
+   "primary" had been drawing from one token by coincidence rather than by
+   intent. All four are canonical now; ratios measured at 4.74 / 5.20 / 4.90 /
+   4.93.
+
+One further note, recorded because it is the kind of thing that becomes a
+false memory: a dark-theme sweep reported two contrast failures on
+`.btn-danger`. They were an artifact of flipping `data-theme` mid-batch and
+measuring a half-updated tree — the direct measurement is 6.6:1, and a clean
+reload shows zero. Chasing it is what found defect 5, so the bad measurement
+earned its keep, but it was not a defect.
+
+## Adoption
+
+`pageHeader()` adopted in the 18 views that build its exact DOM: **90 lines in,
+144 out**, byte-identical output, zero visual change. The other 11 deviate —
+a conditional subtitle, an extra child — and are left for the phase that
+redesigns them, which is where they were going to be touched anyway.
+
+## The gallery is not deployable, structurally
+
+Source in `apps/pwa/dev/`, built on demand by `scripts/build-gallery.mjs`, both
+outputs gitignored. Everything under `public/` is deployed, and a component
+gallery served from a school's own domain is a platform page on a tenant
+surface (D11). It is also the only caller that exercises every component
+signature at once, so `tsconfig.json` now includes `dev/` — a type error there
+is a real API break.
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| Contrast | **0 failures** at 360 / 375 / 390 / 1024 / 1280 / 1440, light and dark |
+| Element checks | ~150 per configuration, 12 configurations |
+| Horizontal overflow | none at any width, including 360 |
+| Accessible names | 0 nameless controls |
+| Focus trap | measured live: focus in → Cancel, siblings `aria-hidden`, survives Escape when non-dismissible, focus returns to opener, `aria-hidden` restored |
+| Tests | **1,315** with a database (1,224 before) — 91 new component tests |
+| TypeScript ×3 | 0 / 0 / 0 (now including the gallery) |
+| Migrations | 48/48, schema untouched |
+| D11 brand guard | pass |
+| Secrets | clean |
+| `app.css` | 39.1 → **45.7 KB gzipped** (+6.6) |
+| `app.js` | 132.9 → **133.3 KB gzipped** (+0.4) — the modules tree-shake, so nothing but `pageHeader` ships until P3 uses it |
+
+Remaining below the 44px iOS guideline and deliberately so: breadcrumb links
+(24px, WCAG 2.2 AA's minimum, and inline-exempt) and filter chips (34px with a
+fine pointer, 48px under `pointer: coarse`).
+
+## What P2 deliberately did not build
+
+**A DatePicker.** `field({ kind: 'date' })` is `<input type="date">`, which
+opens the OS picker, is localised by the phone, works offline and costs
+nothing. A hand-built calendar popover would be kilobytes on the critical path
+(04-UIUX §6) to reproduce something the platform does better.
+
+**A charting primitive.** 04-UIUX §6: charts are server-rendered inline SVG and
+no charting library ships to the client. Nothing here draws a chart, so nothing
+here can become the reason one gets installed.
+
+**A style or colour prop on anything.** Every visual decision resolves to a
+token. A component that accepts a colour will be given one outside the palette.
+
+**The screens.** P2 is the system; P3–P6 are the screens.

@@ -1359,3 +1359,19 @@ Two findings from P1 belong to the product, not the migration:
   time. The pair is minted once per deployment, so an unlucky school would have
   had push permanently dead — which R-8's still-open "push on a real device"
   gate would have masked.
+
+
+### UI integration — P2 complete (2026-09-01)
+
+The shared component system exists (`apps/pwa/src/ui/`, commit `6145592`), so
+P3–P6 build screens without inventing styles. Its gallery lives in
+`apps/pwa/dev/` and is built on demand; it is gitignored out of `public/`
+because everything there is deployed (D11).
+
+Rendering it found five defects that had shipped, the oldest of them the
+`width: 100%` on `.btn-primary` that has meant this product never had an
+intrinsic-width primary button.
+
+Next: **P3** teacher screens · P4 student + guardian · P5 principal + IT admin ·
+P6 the screens that need designing · **P7** platform console **and D16's
+commercial controls** · P8 retire `--c-*`.

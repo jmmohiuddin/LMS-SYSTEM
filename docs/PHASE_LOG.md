@@ -6706,3 +6706,79 @@ columns on desktop, not redesigned); tables are still tables at every width;
 and keeping them out is what makes P1 reviewable.
 
 **P2 has not begun.**
+
+
+---
+
+# D16 — the Platform Console owns the commercial relationship   (2026-09-01)
+
+Recorded before P2 begins, because the owner raised it as a requirement and a
+requirement that is not written down gets invented ad hoc inside whichever
+phase first trips over it.
+
+## What was already true
+
+`tenants` has carried the commercial columns since **migration 001**:
+`plan_code`, `student_cap`, `trial_ends_on`, `status`
+(`trial | active | suspended | archived`), and a `features jsonb` that nothing
+has ever read. Migration **045** gave the platform `app.create_tenant()`,
+`app.set_tenant_status()`, `app.platform_tenants()`, `app.log_platform_action()`
+and `app.enforce_student_cap()`, all `SECURITY DEFINER`, granted to
+`shikhon_platform` and to nobody else — `shikhon_app` cannot execute one of
+them, so a fully compromised school application still cannot suspend a school.
+
+So an operator can already suspend a tenant. What they cannot do is say **why**,
+record that a school **paid**, or tell a school two days late from one three
+months gone.
+
+## What R-7 said, and what it got wrong
+
+> "Billing the schools is **out of scope** for R-7 — invoicing is manual, and a
+> payments integration for our own subscriptions is a separate decision."
+
+Right about the gateway. Wrong about the model. Those are different things: a
+gateway is an integration; the commercial state is a *fact about a school* that
+the product already half-stores. Without a payment record the lifecycle has no
+input, so suspension becomes a judgement someone makes in a spreadsheet and
+applies by hand — which is precisely the state in which a paying school gets
+locked out and an unpaying one does not.
+
+The R-7 sentence is **kept verbatim** in the Master Plan (D10) with a
+supersession note beside it.
+
+## What D16 requires
+
+| Area | Requirement |
+|---|---|
+| Institution | profile · tenant id · type · slug · status |
+| Subscription | plan · billing cycle · price · student cap · enabled modules · start date · next due date · trial · grace period |
+| Payment | amount · date · method · reference · note · history · outstanding balance |
+| Lifecycle | `active → payment_due → grace_period → limited → suspended`, **derived from the payment record**, never typed in |
+| Reactivation | payment recorded → re-evaluate → reactivate, one platform action |
+| Audit | every commercial act writes `audit.platform_access` **in the same transaction as the act** (the 045 rule, unchanged) |
+| Isolation | no tenant role reaches any of it — principal, IT admin, teacher, student, guardian alike |
+| Data | **suspension is an access state, never a data operation.** No deletion, no anonymisation, no export block (R-7.11, unchanged and now load-bearing) |
+
+Explicitly **not** authorised: an online payment gateway. Manual recording is
+the whole of the requirement at this business stage. A gateway is a separate
+phase requiring its own approval.
+
+## Schema this will need (P7, not now)
+
+- `tenant_status` gains `payment_due`, `grace_period`, `limited` — an enum
+  extension, so forward and rollback both need writing carefully.
+- A `subscription` and a `payment` table, both under D8: `tenant_id`,
+  `app.enforce_tenant()`, RLS, rollback file, probe in `migration-status.mjs`.
+- `features jsonb` finally gets a reader — the module entitlement set.
+
+Nothing is built now. **Implementation is P7.** P2–P6 are UI phases.
+
+## "100% customisable", bounded
+
+The operator configures *supported settings* without editing code: identity,
+branding, academic structure, subjects, users, student cap, plans, enabled
+modules, notification policy, calendar, fee configuration, subscription state.
+
+It does **not** mean arbitrary code, HTML, SQL or runtime scripting from an
+admin screen. That is not customisation, it is a remote-execution feature with
+a friendly name, and D4 already forbids its cousin (per-school code).

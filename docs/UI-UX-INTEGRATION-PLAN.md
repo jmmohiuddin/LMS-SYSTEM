@@ -721,3 +721,65 @@ of P0 is what makes this phase a one-file rollback.
 ---
 
 **P0 complete. P1 has not begun.**
+
+
+---
+
+## 21. P1 — delivered (2026-09-01)
+
+The shell, and only the shell. Commits `0466861` (A–D), `2c4d68d` (E–F).
+
+### Acceptance
+
+| Area | Desktop | Mobile | Light | Dark | Tenant A | Tenant B | Tests |
+|---|---|---|---|---|---|---|---|
+| Shell layout | ✅ 1024–1600 | ✅ 375–768 | ✅ | ✅ | ✅ | ✅ | ✅ 28 |
+| Sidebar + groups | ✅ 5 role maps | n/a | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Icon rail 1024–1279 | ✅ 68px | n/a | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Topbar + breadcrumb | ✅ | ✅ compact | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Profile menu | ✅ Esc · outside · focus | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 6 |
+| Bottom bar (role) | hidden | ✅ 5 tabs | ✅ | ✅ | ✅ | ✅ | ✅ 18 |
+| Contrast | ✅ 0 fail | ✅ 0 fail | ✅ | ✅ | ✅ 246 | ✅ 246 | ✅ |
+| Overflow / targets | ✅ none | ✅ none | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `/demo` vs `/app` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+### Component inventory — built
+
+`AppShell` · `DesktopSidebar` (grouped, rail, tooltips) · `MobileNav` ·
+`TopBar` · `Breadcrumb` · `ProfileMenu` · `ThemeControl` · `DemoBanner` ·
+`SkipLink` · `OfflineBanner` (kept) · `BellBadge` (kept) · `navFor(role)` ·
+`crumbFor(role, path)` · `roleLabel(code)` · 9 new icons.
+
+**Not built, deliberately:** Card, StatCard, Button, Input, Select, Table,
+MobileList, Modal, Drawer, BottomSheet, Tabs, Badge, Toast, ConfirmDialog,
+EmptyState, ErrorState, Skeleton, Timeline, FilterBar, SearchField, PageHeader.
+These are **P2**. A component invented before the screen that needs it is a
+guess, and §39 says to create one only when the abstraction is genuinely
+reusable.
+
+### Files changed
+
+`apps/pwa/src/shell.ts` (rewritten) · `src/ui/nav.ts`, `ui/theme.ts`,
+`ui/roles.ts` (new) · `src/icon.ts`, `src/app.ts`, `src/more-view.ts`,
+`src/users-view.ts`, `src/audit-view.ts`, `src/demo.ts` ·
+`public/app.css` · `packages/ui-core/src/branding.ts` ·
+`packages/server-core/src/web-push.ts` · 4 test files ·
+`vercel.json`, `netlify.toml`, `deploy/server.mjs` (the `/demo` route).
+
+**No** database, API, RLS, auth, tenant-resolution, attendance, notification,
+SMS, calendar, finance, result, document or onboarding change.
+
+### Duplication removed rather than added
+
+Three role-label maps became one (the audit log's was a seven-role subset, so
+`dept_head` rendered as `dept_head` to a head teacher reading who changed
+what); two theme implementations became one.
+
+### Known limitations
+
+- **Security probe unrun** — needs a seeded two-tenant deployment.
+- `.btn-small` is 44px and `.cal-day` is 45px wide at 390px. Both pre-date P1,
+  both clear 44 and WCAG 2.2 AA's 24px; they are component work for **P2**.
+- The rail toggle is 32px with a fine pointer (48px under `pointer: coarse`).
+- Dashboards are reflowed, not redesigned. Tables are still tables at every
+  width. `.page-header` is still per-view. All **P2–P6**.

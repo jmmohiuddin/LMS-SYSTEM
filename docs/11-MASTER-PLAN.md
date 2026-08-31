@@ -1312,3 +1312,27 @@ deployable system and an update to `docs/07-IMPLEMENTATION-STATUS.md`.
 - No Elasticsearch/Redis/queues until Postgres measurably fails at the job.
 - Don't edit `api/v1/*.js` or `netlify/functions/*` bundles — sources live in `services/`.
 - Don't touch `PII_MASTER_KEY_V1` rotation without `08` §5.
+
+
+### UI integration — P1 complete (2026-09-01)
+
+**P0** established the Ata Ekta token foundation (one file, `app.css`).
+**P1** built the application shell: desktop sidebar + topbar, deliberate mobile
+shell, role-aware navigation, `/demo` separated from `/app`. Commits `0466861`,
+`2c4d68d` and the doc commit that follows them.
+
+Remaining, in order: **P2** components (Card, StatCard, DataTable/MobileList,
+Drawer, BottomSheet, FormField, states) · **P3** teacher screens · **P4**
+student + guardian · **P5** principal + IT admin · **P6** the twelve screens
+that need designing · **P7** platform console · **P8** retire `--c-*`.
+
+Two findings from P1 belong to the product, not the migration:
+
+- A tenant may pick a pale brand colour. Until P1 that put white on the brand
+  fill in seventeen places at ratios as low as 1.95:1, and made the active
+  sidebar row unreadable at 3.38:1. `brandingCssVars` now derives an accessible
+  label colour and text step in the school's own hue.
+- `generateVapidKeys` produced an unusable 31-byte private key 0.41% of the
+  time. The pair is minted once per deployment, so an unlucky school would have
+  had push permanently dead — which R-8's still-open "push on a real device"
+  gate would have masked.

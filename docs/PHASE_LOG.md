@@ -6573,3 +6573,136 @@ stretched phone layout with the correct colours. That is **P1**, and keeping it
 out of P0 is what made this a one-file rollback.
 
 **P1 has not begun.**
+
+
+---
+
+# P1 — Application shell: desktop and mobile   (2026-09-01)
+
+**Commits:** `0466861` (A/B/C/D), `2c4d68d` (E/F), `HEAD` (G + docs).
+**Scope:** the shell. Not the screens inside it — those are P2–P6.
+
+## What the app was
+
+A mobile shell a desktop browser could open. **One** `@media (min-width: …)`
+rule existed in 2,542 lines of `app.css`, and it styled the branding editor;
+every list, table and form was the phone layout stretched to the window. The
+bottom bar was built from **route order**, which knows nothing about who is
+holding the device, so a fourteen-year-old's phone offered "হাজিরা নিন" and a
+section roster.
+
+## What it is now
+
+One DOM, two layouts, chosen by CSS. `display:none` removes a subtree from the
+accessibility tree as well as the page, so a screen reader only ever meets the
+navigation that is on screen. The alternative — re-rendering on resize — drops
+focus, remounts the current route, and would lose a half-entered attendance
+register when a phone is rotated.
+
+| | ≥1024px | <1024px |
+|---|---|---|
+| Navigation | persistent grouped sidebar, 240px | bottom bar, 5 role-chosen tabs |
+| 1024–1279 | 68px icon rail (forced) | — |
+| Chrome | breadcrumb · search · bell · profile menu | identity · bell · profile |
+| Content | centred column, max 1200px | full width |
+
+`ui/nav.ts` **invents no permissions**. Every path it lists is already
+registered and already reachable by every role through the unfiltered More
+menu, which still closes every sidebar. Narrowing a sidebar changes what a
+person is *offered*, never what they may do — the server decides that, and a
+403 is the answer for anyone who should not.
+
+## Defects found by rendering it
+
+Five, none of which reading the code would have surfaced.
+
+1. **The offline banner had been on screen for 58 commits.** `.offline-banner`
+   sets `display:flex`, which beats the UA sheet's `[hidden]{display:none}` at
+   equal specificity. `banner.hidden = navigator.onLine` was correct the whole
+   time and did nothing: every user, every screen, online, has been reading
+   "অফলাইন — কাজ চালিয়ে যান" since 2026-08-11. Fixed globally with
+   `[hidden]{display:none !important}`, which also stops the next component
+   that sets `display` on something it hides.
+2. **The school's name rendered twice on desktop.** `.shell-org{display:flex}`
+   was declared 1,700 lines below the rule hiding the mobile plate and won on
+   source order. Both halves of the fix landed: the identity rules moved up
+   beside the shell, and the responsive block now goes **last in the file**.
+   That placement is load-bearing and is written into the stylesheet as a rule
+   for every later phase.
+3. **The icon rail never engaged.** It listened to `(max-width: 1279px)`;
+   resizing 768 → 1024 does not change that query, so the band the rail exists
+   for showed a 240px sidebar taking a quarter of a 1024px screen.
+4. **My own demo chip was 1.85:1 in dark.** `--color-warning-ink` is the dark
+   step in light mode and the *lifted* step in dark — its job is to be readable
+   against its own ground, never to be a fill. Fill and label now come from the
+   same pair and invert together: 6.0:1 light, 7.9:1 dark.
+5. **`CARD.students` has asked for a `search` icon since R-6.** There isn't
+   one, and `iconSvg`'s fallback is a silent neutral dot. A rail of icons with
+   one meaningless dot in it is what made it visible.
+
+## The one that was never P1's
+
+A school may choose a pale brand — a yellow crest, a light teal. `app.css` put
+white on the brand fill in **seventeen** places: the primary button, the
+notification badge, the avatar, the calendar's selected day, the audience
+chips. On `#E5B300` that is **1.95:1**. Worse, `--c-primary-text` on
+`--c-primary-soft` measured **3.38:1**, and that pair paints the **active
+sidebar row** — a school with a yellow crest could not read which page it was
+on.
+
+The branding editor has warned about this since R-1 ("advice, not a refusal" —
+a school may have a light brand and we do not get to veto it). Nothing acted on
+the warning, so choosing a pale colour quietly degraded every screen at once.
+
+`brandingCssVars` now derives `--c-on-primary` and steps the text colour until
+it clears AA, **in the school's own hue** rather than a neutral — black on a
+yellow button reads as a different palette leaking in. The fill stays exactly
+the colour the school chose; only the label moves. Verified across yellow,
+teal, near-white, white, black and grey, in both themes, and **byte-identical**
+for every brand that never needed help.
+
+## And one the stability gate stumbled into
+
+`generateVapidKeys` returned a **31-byte private key 0.41% of the time** (83 in
+20,000 measured). Node's `getPrivateKey()` trims leading zero bytes; the PKCS#8
+envelope is fixed-width DER declaring 32, so those pairs throw on every send.
+
+Not a test flake. The pair is minted **once per deployment and kept**: a school
+unlucky at setup would have had push silently dead for its whole life — with
+R-8's "push verified on a real device" gate still open to explain it away.
+Left-padding restores what SEC 1 §2.3.7 already says a P-256 scalar is.
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| Rendered sweep | **3,000+ element-checks** — 8 widths × 2 themes × 5 roles × 12 routes |
+| Contrast | **0 failures** at 375 / 390 / 640 / 768 / 1024 / 1280 / 1440 / 1600, both themes |
+| Horizontal overflow | **none** at any width |
+| Touch targets | 0 under 44px; `pointer: coarse` restores 48px on the sidebar |
+| Accessible names | 0 nameless controls, menu open and closed |
+| Keyboard | skip link is the first stop; focus order skip → rail → sidebar → content |
+| Offline | banner hidden online, **shown offline** — working for the first time |
+| Tenant A / B | `#156a3f`, `#1b3e7a` — 246 checks each, 0 failures |
+| Hostile brands | yellow · teal · near-white · white · black · grey all clear AA |
+| Tests | **1,224** with a database (1,172 before) — 52 new |
+| TypeScript ×3 | 0 / 0 / 0 |
+| Migrations | 48/48 applied, schema untouched |
+| D11 brand guard | pass, both directions |
+| Secrets | clean across 150 commits |
+| `app.css` | 34.0 → **39.3 KB gzipped** (+5.3) |
+| `app.js` | 132.7 → **132.9 KB gzipped** (+0.2) |
+
+**Security probe: not run.** It needs a seeded two-tenant deployment and this
+machine's CI database has none. P1 changed no RLS, auth, API or tenant
+resolution, so there is nothing in it for the probe to see — but that is an
+argument, not evidence, and it is recorded as unrun rather than as a pass.
+
+## What P1 did not do
+
+The screens inside the shell. Dashboards are still card grids (reflowed to four
+columns on desktop, not redesigned); tables are still tables at every width;
+`.page-header` is still whatever each of 26 views renders. Those are **P2–P6**,
+and keeping them out is what makes P1 reviewable.
+
+**P2 has not begun.**

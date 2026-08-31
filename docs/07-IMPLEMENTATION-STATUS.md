@@ -1679,3 +1679,23 @@ substitution — what remains is mostly credentials, content, and follow-on UI:
 
 | Section chat — optional per the master plan; a child-safety design problem first | 11 §R-9 | R-9 remainder |
 | ~~AI per-tenant token budgets (`ai_budget_periods` enforcement)~~ — **closed by R-8** (§9k): reserved before the call, 402 on refusal. Answer-leak detector still needs embeddings | 01 §6.3 | 3 |
+
+
+## P1 — application shell (2026-09-01)
+
+`/app` has a real desktop layout for the first time. Persistent grouped sidebar
+at ≥1024px (68px icon rail at 1024–1279), breadcrumb + search + bell + profile
+menu in the topbar, content column capped at 1200px; below 1024px the mobile
+shell keeps its bottom bar, now carrying **five role-chosen tabs** instead of
+the first five registered routes.
+
+`/demo` is its own address. `/app` logged out is the **login screen** — it used
+to enter demo mode automatically whenever OTP login was disabled, showing a
+logged-out teacher fabricated students under their own school's name.
+
+Unchanged: database, API, RLS, auth, tenant resolution, attendance, marks,
+notices, SMS, push delivery, calendar, finance, documents, onboarding, and
+every view module. 1,224 tests, TypeScript 3/3, 48/48 migrations.
+
+Not yet done: the screens themselves (P2–P6) — dashboards, tables→mobile lists,
+the shared page-header, and the component library.

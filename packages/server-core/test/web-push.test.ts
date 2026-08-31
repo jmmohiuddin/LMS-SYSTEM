@@ -292,7 +292,7 @@ describe('VAPID key generation is fixed-width (found by the P1 gate)', () => {
     // key survives being turned into a signing key.
     for (let i = 0; i < 400; i++) {
       const k = generateVapidKeys();
-      assert.doesNotThrow(() => vapidHeader('https://fcm.googleapis.com/x', k, 'mailto:a@b.c'),
+      assert.doesNotThrow(() => vapidHeader('https://fcm.googleapis.com/x', k, { subject: 'mailto:a@b.c' }),
         `draw ${i} produced a key that cannot sign`);
     }
   });

@@ -6284,3 +6284,99 @@ patterns inside `design.html`.
 
 **No redesign has been performed.** This entry exists so the decision is made
 against evidence rather than memory.
+
+---
+
+# 2026-09-01 · UI integration plan · Ata Ekta becomes the app's visual direction
+
+**Planning only. No application code changed, no screen redesigned, `/design`
+untouched, routing/API/schema unchanged.**
+
+Following the UI/UX audit entry above, the owner accepted **Option B**:
+integrate the Ata Ekta design system from `/design` into the functional `/app`.
+This entry records the decision and the roadmap; the plan itself lives in
+[UI-UX-INTEGRATION-PLAN.md](UI-UX-INTEGRATION-PLAN.md) and is written to be
+implementation-ready without chat history.
+
+## The decision
+
+**D14 (new, recorded in the Master Plan):** Ata Ekta is the canonical visual
+direction for the functional `/app`. `/design` remains a visual reference and
+prototype — it is not the production application and will not be promoted into
+one.
+
+## The finding that changed the estimate
+
+Comparing `app.css` against `design/tokens/*.css` in detail produced a genuinely
+good surprise: **radius, shadows, spacing and `--tap-min` already match the Ata
+Ekta values exactly** — 8/12/16/999px, `0 1px 2px rgba(15,23,42,.04)` and the
+rest, 4/8/12/16/24/32, 48px. Both surfaces already use Hind Siliguri and Inter.
+
+So the two systems share their geometry and rhythm already. What actually
+diverges is **colour** (every value) and the **type scale** (`/app` uses a px
+ladder, `/design` a semantic h1…caption scale with weight and line-height
+bundled). That reframes the work from "rewrite the design system" to "swap the
+palette, reconcile the type scale, and build the desktop half that was never
+built".
+
+`/design` also carries one idea `/app` lacks and should adopt: `--font-bn-num`,
+Noto Sans Bengali for **numerals only**, because Hind Siliguri's Bangla digits
+are ambiguous with Latin `I`/`l` at table-row sizes — the wrong ambiguity for a
+ledger balance or a mark.
+
+## What the plan contains
+
+Twenty sections: a token audit and migration (T1–T6, one token system at the
+end, no permanent two-family tax); a three-generation cleanup classifying every
+component group as KEEP / ADAPT / REPLACE / REMOVE AFTER MIGRATION with nothing
+deleted yet; the final dual-mode shell (desktop `.d-shell` sidebar, mobile
+bottom nav) with per-role navigation taken **verbatim from the existing
+`dashboardFor(role)`** — no invented permissions; a 33-row screen-by-screen
+matrix; a 26-component library specified for desktop, mobile, accessibility and
+variants, marking what already exists so nothing is duplicated; and phases P0–P8
+with tags and revert points.
+
+## Three judgements worth recording
+
+**Dark mode: keep it, as an explicit user preference.** `/app` ships a 122-line
+dark palette (F-1607) applied before first paint; `/design` has none. Removing
+shipped, tested behaviour to match a prototype that never addressed the question
+would be a regression, and dark mode is an accessibility feature for low-light
+use — a teacher marking attendance at 6am in a dim staffroom is a real case. So
+a **dark Ata Ekta palette must be authored** as part of the token phase rather
+than deferred, or the first phase would break dark mode.
+
+**Breakpoints: 640 / 1024 / 1440, not the existing 900.** A real sidebar needs
+~240px plus ≥720px of content, so 1024 is the honest switch point. Tablets
+(640–1023) keep the bottom nav — a 768px tablet is held in hand. The existing
+480/700/900 rules are absorbed, not stacked on top.
+
+**Migration order: shell-first, then role-by-role.** Screen-by-screen would
+leave two shells alive at once; role-by-role cannot start without a shell.
+Shell-first front-loads the dependency, then each subsequent phase ends with a
+complete, testable persona.
+
+## Constraints carried into every phase
+
+The plan states them as gates, not aspirations: `/design`'s hardcoded data may
+never reach production (visual language only); the offline outbox path for
+attendance and marks is restyled but never restructured, with offline
+acceptance a gate on its phase; D11's three-way brand guard stays green;
+D13's states are required per screen, and a screen that lands without them is
+reported *"restyled — states pending"*, never complete; and the critical path
+must not exceed today's 180 KB gzipped budget, with no framework introduced.
+
+## Twelve screen families need new design
+
+`/design` covers roughly 33 of ~37 routes. Student history, notices,
+notifications, calendar, documents, user management, onboarding, the platform
+console, publish, invoice, rollover and audit have **no** prototype counterpart.
+They are scheduled after the component system exists (P6), so they are designed
+*in* the Ata Ekta language rather than ported from screens that have no states
+and no data.
+
+## Status
+
+**Nothing implemented. Awaiting approval to begin P0 (tokens + dark palette).**
+The UI is not claimed complete; `/app` remains functionally strong and visually
+a generation behind, which is exactly what the audit found.

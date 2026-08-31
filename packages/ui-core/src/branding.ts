@@ -302,17 +302,26 @@ export function brandingCssVars(
 ): BrandingCssVars {
   const p = b.primaryColor;
   const a = b.accentColor;
+  // Derived once, used by both blocks. A pale brand needs a different label
+  // colour and a deeper text step; a normal one gets exactly what it always
+  // got, because the loops return on their first iteration.
+  const onFill = onBrandFill(p);
+  const softLight = mixWithWhite(p, 0.88);
+  const softDark = shade(p, -0.62);
   return {
     light: {
+      // The label for anything filled with --c-primary. Seventeen rules in
+      // app.css used a literal #fff; they read this instead.
+      '--c-on-primary': onFill,
       // Semantic aliases — what every rule in app.css actually reads.
       '--c-primary': p,
       '--c-primary-flat': p,
       // Text has a stricter contrast obligation than a fill carrying white
       // label text, so it steps down the same hue rather than reusing it.
-      '--c-primary-text': shade(p, -0.28),
+      '--c-primary-text': readableBrandText(p, softLight, -0.28, -0.05),
       '--c-primary-ink': shade(p, -0.45),
-      '--c-primary-soft': mixWithWhite(p, 0.88),
-      '--c-link': shade(p, -0.28),
+      '--c-primary-soft': softLight,
+      '--c-link': readableBrandText(p, softLight, -0.28, -0.05),
       '--c-info': a,
       '--c-info-soft': mixWithWhite(a, 0.88),
       // Raw palette names, for public/design/styles.css.
@@ -323,14 +332,15 @@ export function brandingCssVars(
       '--color-info': a,
     },
     dark: {
+      '--c-on-primary': onFill,
       '--c-primary': p,
       '--c-primary-flat': p,
       // Lightened, mirroring how app.css moves from accent-700 to
       // accent-400 on a near-black ground.
-      '--c-primary-text': shade(p, 0.42),
+      '--c-primary-text': readableBrandText(p, softDark, 0.42, 0.05),
       '--c-primary-ink': shade(p, 0.58),
-      '--c-primary-soft': shade(p, -0.62),
-      '--c-link': shade(p, 0.42),
+      '--c-primary-soft': softDark,
+      '--c-link': readableBrandText(p, softDark, 0.42, 0.05),
       '--c-info': shade(a, 0.38),
       '--c-info-soft': shade(a, -0.6),
       '--color-primary': p,
@@ -389,6 +399,54 @@ export function contrastRatio(a: string, b: string): number {
   const lb = luminance(b);
   const [hi, lo] = la > lb ? [la, lb] : [lb, la];
   return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * The label colour for text sitting ON a brand fill.
+ *
+ * White for most school colours, but a school may legitimately choose a pale
+ * one — a yellow, a light teal, the sort of colour a crest is actually
+ * printed in. White on `#E5B300` is **1.95:1**, and the app puts white on the
+ * brand in seventeen places: the primary button, the notification badge, the
+ * avatar, the calendar's selected day, the audience chips.
+ *
+ * The branding editor already WARNED about this ("advice, not a refusal" —
+ * a school may have a light brand and we do not get to veto it), but nothing
+ * acted on the warning, so choosing a pale colour quietly degraded every
+ * screen at once. This acts on it: the fill stays exactly the colour the
+ * school chose, and only the LABEL moves.
+ *
+ * A deep shade of the school's own hue rather than black — black on a brand
+ * fill reads as a different palette leaking in, and this way the button still
+ * looks like it belongs to the school.
+ */
+export function onBrandFill(fill: string): string {
+  if (contrastRatio(fill, '#ffffff') >= 4.5) return '#ffffff';
+  for (let a = -0.6; a >= -0.95; a -= 0.05) {
+    const c = shade(fill, a);
+    if (contrastRatio(fill, c) >= 4.5) return c;
+  }
+  return '#141414';
+}
+
+/**
+ * A brand-hued text colour guaranteed to clear AA on the ground it sits on.
+ *
+ * `shade(p, -0.28)` is the right step for most hues and not enough for a
+ * pale one: on `#E5B300` it lands at `#A58100`, which is 3.38:1 on that
+ * brand's own soft tint — and that pair is what paints the ACTIVE sidebar
+ * row, so a school with a yellow crest could not read which page it was on.
+ * Keeps stepping the same hue until the ratio is met rather than jumping to
+ * a neutral, so the result is still recognisably the school's colour.
+ */
+export function readableBrandText(hue: string, ground: string, start: number, step: number): string {
+  let a = start;
+  for (let i = 0; i < 16; i++) {
+    const c = shade(hue, a);
+    if (contrastRatio(c, ground) >= 4.5) return c;
+    a += step;
+  }
+  return shade(hue, a);
 }
 
 /** WCAG AA for normal-size text is 4.5:1. Buttons carry white label text. */

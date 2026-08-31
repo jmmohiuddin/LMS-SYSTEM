@@ -138,10 +138,32 @@ export interface VapidKeys {
 export function generateVapidKeys(): VapidKeys {
   const ecdh = createECDH('prime256v1');
   ecdh.generateKeys();
+  // `getPrivateKey()` returns the scalar with LEADING ZERO BYTES TRIMMED, so
+  // about one key in 256 comes back 31 bytes (measured: 83 of 20,000). The
+  // PKCS#8 envelope below is fixed-length DER that declares a 32-byte key, so
+  // a short scalar is rejected outright — that pair can never send a single
+  // push notification.
+  //
+  // The consequence is not a test flake. `scripts/generate-vapid-keys.mjs`
+  // mints the pair a deployment uses forever: a school unlucky at setup would
+  // have had push silently dead for its whole life, with no error anywhere
+  // except a rejected send, and R-8 lists "push verified on a real device" as
+  // a gate nobody has been able to close yet. Found because the P1 stability
+  // gate happened to draw a short key.
+  //
+  // A P-256 scalar is a fixed-width 32-byte big-endian integer by definition
+  // (SEC 1 §2.3.7); the trimming is Node's, not the format's. Left-padding
+  // restores the definition.
   return {
     publicKey: b64url(ecdh.getPublicKey()),
-    privateKey: b64url(ecdh.getPrivateKey()),
+    privateKey: b64url(pad32(ecdh.getPrivateKey())),
   };
+}
+
+/** Left-pad a big-endian scalar to the 32 bytes P-256 defines it to be. */
+function pad32(raw: Buffer): Buffer {
+  if (raw.length >= 32) return raw;
+  return Buffer.concat([Buffer.alloc(32 - raw.length), raw]);
 }
 
 /**

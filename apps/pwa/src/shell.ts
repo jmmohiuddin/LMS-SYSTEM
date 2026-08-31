@@ -696,7 +696,14 @@ export class Shell {
     };
     paint();
     if (typeof matchMedia === 'function') {
-      this.railQuery = matchMedia(`(max-width: ${RAIL_MAX}px)`);
+      // The FORCING query, not `(max-width: RAIL_MAX)`. Listening to the
+      // upper bound alone misses the lower one: resizing 768 → 1024 does not
+      // change `(max-width: 1279px)`, so the rail never engaged when the
+      // sidebar first appeared — the 1024–1279 band showed a 240px sidebar
+      // taking a quarter of the screen. Found by the responsive sweep, which
+      // read `rail: "off"` at 1024 where it should read "on".
+      this.railQuery = matchMedia(
+        `(min-width: ${DESKTOP_MIN}px) and (max-width: ${RAIL_MAX}px)`);
       this.onRailQuery = paint;
       this.railQuery.addEventListener('change', paint);
     }
@@ -794,7 +801,9 @@ export class Shell {
     if (this.booted) {
       this.viewEl.focus({ preventScroll: true });
       this.viewEl.scrollTop = 0;
-      scrollTo({ top: 0 });
+      // jsdom defines scrollTo but refuses to implement it, and the refusal
+      // is an error on the virtual console — noise that buries a real one.
+      try { scrollTo({ top: 0 }); } catch { /* not a browser */ }
     }
     this.booted = true;
   }

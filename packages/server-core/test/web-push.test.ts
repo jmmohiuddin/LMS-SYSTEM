@@ -269,3 +269,31 @@ describe('R-9 — endpoints stay out of logs', () => {
     assert.notEqual(endpointFingerprint(`${ep}x`), fp);
   });
 });
+
+describe('VAPID key generation is fixed-width (found by the P1 gate)', () => {
+  test('THE ONE THAT MATTERS — a generated private key is always 32 bytes', () => {
+    // Node's `getPrivateKey()` trims leading zero bytes, so ~1 scalar in 256
+    // came back 31 bytes long — measured at 83 of 20,000 before the fix. The
+    // PKCS#8 envelope is fixed-length DER declaring 32, so those pairs threw
+    // "VAPID private key must be 32 bytes" on every send.
+    //
+    // Nobody would have seen this as a flake: the pair is minted ONCE per
+    // deployment and kept. A school unlucky at setup would have had push
+    // silently dead forever. 4,000 draws makes a 1-in-256 miss a certainty
+    // rather than a coin toss.
+    for (let i = 0; i < 4000; i++) {
+      const raw = Buffer.from(generateVapidKeys().privateKey, 'base64url');
+      assert.equal(raw.length, 32, `draw ${i} produced a ${raw.length}-byte scalar`);
+    }
+  });
+
+  test('every generated pair can actually sign a token', () => {
+    // The property that matters downstream: not the byte count, but that the
+    // key survives being turned into a signing key.
+    for (let i = 0; i < 400; i++) {
+      const k = generateVapidKeys();
+      assert.doesNotThrow(() => vapidHeader('https://fcm.googleapis.com/x', k, 'mailto:a@b.c'),
+        `draw ${i} produced a key that cannot sign`);
+    }
+  });
+});

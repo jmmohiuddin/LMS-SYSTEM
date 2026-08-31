@@ -6167,3 +6167,120 @@ No pilot school was onboarded (the ask was to host the site). The stale
 `shikhon-lms.vercel.app` was left untouched. Nothing was pushed to GitHub — the
 local tree remains the source of truth, and pushing it (to make a repo current)
 is a separate decision the owner has not yet made.
+
+---
+
+# 2026-09-01 · UI/UX audit · Three generations of interface, and a decision that was never implemented
+
+**Audit only. No redesign, no code changed, no file deleted.** This entry
+records what the repository actually contains, because the owner reported that
+`/app` looks materially different from the polished design they expected — and
+the evidence says they are right, for a reason that is documented here for the
+first time.
+
+## The finding
+
+There are **three** generations of interface in this repository, not two:
+
+| Gen | Where | Palette | Scope |
+|---|---|---|---|
+| 1 | `app.css` `--c-*` family | original app colours | **373 selectors** — nearly all of `/app` |
+| 2 | `app.css` `--color-*` family | `#e53935`, `#f9fafb`, `#8b5cf6` (Material/Tailwind-ish) | **~30 selectors** — login, home/hero, buttons, `.card`, branding, notices |
+| 3 | `design/tokens/*.css` — the real Ata Ekta system | `#D23B2E`, `#F1EFE6` Muslin, `#A76A47` Terracotta | **`/design` only** (and the UI kit) |
+
+Generations 2 and 3 **share variable names and disagree on every value**.
+`--color-primary` is `#e53935` in `/app` and `#D23B2E` in `/design`. Not one of
+the six Ata Ekta colours appears anywhere in `app.css`.
+
+The token file states its own reason: the red was deepened because `#e53935`
+"sits at 3.9:1" and fails WCAG AA on white. **The Ata Ekta palette was written
+as a correction to the palette `/app` still uses.**
+
+## How it happened
+
+Commit `c93bddc` (2026-08-23) is titled *"Add the ShikhonBD marketing landing
+page and rebuild the app on the Ata Ekta design system"*. It did the first half.
+It did **not** rebuild the app:
+
+- it added `design/` (tokens + `.jsx` components) as a reference kit;
+- it rewrote `index.html` into the marketing site (+4 274 lines);
+- it added a *parallel* `--color-*` block to `app.css` whose values are **not**
+  the Ata Ekta tokens;
+- of **59** view modules under `apps/pwa/src/`, it changed exactly **one**
+  (`login-view.ts`, 23 lines).
+
+R-1-A later renamed that design surface to `design.html` (`/design`) and the
+real shell to `app.html` (`/app`). The R-1-A discovery entry above already
+recorded the file movement; what it did not record — and what this audit adds —
+is that **the design system itself was never applied to the application.**
+
+## Decision D7 has never been implemented
+
+The Master Plan says, and has said since it was written:
+
+> **D7 — New agent surfaces follow the Ata Ekta design system** (tokens in
+> `apps/pwa/public/design/tokens/`).
+
+`app.css` does not import those tokens and does not contain their values. Every
+phase from R-1 to R-8 added UI to `app.css` in the older idiom. D7 is a
+standing decision that the codebase has silently not followed — this is the
+mismatch between product intent and implementation the audit was asked to find.
+
+## What `/design` actually is
+
+- **66 screens**, of which **32 are mobile/desktop PAIRS** (`s-attendance` +
+  `s-attendance-desktop`, and so on) — the intentionally different desktop and
+  mobile layouts the owner remembered.
+- A **desktop shell** (`.dnav` sidebar, 9 `dpage-*` pages: dashboard, academic,
+  attendance, students, teachers, results, finance, reports, settings).
+- A **mobile shell** (`.phone` frame, `.bottomnav`).
+- A hard **899/900px** split — genuinely separate layouts, not one fluid grid.
+
+And it is **a mockup**: 1 `fetch` in the whole file (tenant branding), 0
+imports, hardcoded arrays. The repository's own `surfaces.test.ts` asserts it —
+*"/design is the prototype: many static screens, no API, no app boot"*. The
+answer to "was the design ever connected to real functionality" is **no**.
+
+## What `/app` actually is
+
+Mobile-first and it stays that way. Its only `min-width: 900px` rule styles the
+**branding editor's** two-column grid — nothing else. There is no sidebar, no
+desktop navigation, no responsive table strategy; the `shell-tabbar` bottom nav
+is what a desktop user gets too. That is why `/app` reads as a stretched phone
+layout on a laptop.
+
+Against that, `/app` holds everything `/design` does not: real API wiring across
+26+ views, loading/empty/error states, the offline outbox, and a **122-line
+dark palette** (F-1607) that `/design` has **no equivalent for at all**.
+
+## Nothing was lost
+
+`git log --diff-filter=D` over `design/` returns nothing. The hero assets are
+referenced by `index.html`. Both HTML files were **moved and renamed**, never
+deleted. Whatever else this is, it is not asset loss.
+
+## Recommendation recorded
+
+**Option B — `/design` is the intended visual system and should be integrated
+into `/app`** — on the evidence of D7, of the tokens being an explicit WCAG
+correction to `/app`'s palette, and of `/design` holding the desktop layouts
+`/app` has never had.
+
+With three constraints that the integration must respect, or it will regress
+the product:
+
+1. `/design` has **no dark mode**. `/app`'s 122-line dark palette must survive.
+2. `/design` has **no loading, empty or error states**. D13 forbids trading
+   those for visual polish.
+3. `/design` covers roughly **33 of ~37** app routes. Notices/inbox, calendar,
+   documents, user management, publish, invoices, rollover, audit, student
+   history and the whole `/platform` console have **no design counterpart** and
+   need new design work in the Ata Ekta idiom rather than a port.
+
+The `.jsx` components under `design/components/` are **not** directly reusable:
+React is not a dependency of this project and the app is deliberately
+framework-free (D1). What is reusable is the token CSS and the plain HTML/CSS
+patterns inside `design.html`.
+
+**No redesign has been performed.** This entry exists so the decision is made
+against evidence rather than memory.

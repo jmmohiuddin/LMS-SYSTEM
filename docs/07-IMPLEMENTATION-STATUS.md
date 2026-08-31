@@ -1574,6 +1574,52 @@ security probe 29/29 · browser acceptance on the pinned CDN and the fees screen
 
 ---
 
+## 9q. UI/UX audit — the design system was never applied to `/app` (2026-09-01)
+
+**Audit only; nothing redesigned.** Full reasoning in the 2026-09-01 entry of
+[PHASE_LOG.md](PHASE_LOG.md).
+
+### Three generations, not two
+
+| Gen | Location | Primary colour | Reach |
+|---|---|---|---|
+| 1 — legacy | `app.css` `--c-*` | original | **373 selectors** (most of `/app`) |
+| 2 — partial pass | `app.css` `--color-*` | `#e53935` | ~30 selectors (login, home, buttons, card, branding, notices) |
+| 3 — Ata Ekta | `design/tokens/*.css` | `#D23B2E` | `/design` only |
+
+Gens 2 and 3 use the **same names with different values**. No Ata Ekta colour
+appears in `app.css`. The token file says the red was deepened because
+`#e53935` fails WCAG AA — the design palette is a **correction to the one
+`/app` still ships**.
+
+### Status by surface
+
+| | `/design` | `/app` |
+|---|---|---|
+| Screens | 66 (32 desktop/mobile pairs) | ~37 routes |
+| Desktop layout | `.dnav` sidebar, 9 `dpage-*` | **none** — one `min-width:900px` rule, for the branding editor |
+| Mobile layout | `.phone` + `.bottomnav` | `shell-tabbar` (used at all widths) |
+| Real data | **1 fetch** (branding) — a mockup | 26+ views on real APIs |
+| UX states | none | loading / empty / error present in most views |
+| Dark mode | **none** | 122-line palette (F-1607) |
+| Tech | plain HTML/CSS + `.jsx` kit (React not a dependency) | framework-free TS (D1) |
+
+**Shared already:** `--tap-min: 48px`, `Hind Siliguri` / `Inter`, and the
+`--font-bn` token name.
+
+### D13 consequence
+
+`/app` is not "UI complete". It is **functionally** complete on most screens and
+**visually** on the older system, with no desktop layout at all. The UI is
+reported as **in progress**, not done.
+
+### Not lost
+
+Nothing under `design/` was ever deleted. `index.html` → `design.html` and
+`index.legacy.html` → `app.html` were renames (R-1-A).
+
+---
+
 ## 10. Gap list → what's next
 
 Mapped to the phasing of [05-DELIVERY-ROADMAP.md](05-DELIVERY-ROADMAP.md). The

@@ -23,6 +23,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
+import { ROLE_BN } from './ui/roles.ts';
 
 interface UserRow {
   id: string; nameBn: string; nameEn: string | null; phone: string | null;
@@ -38,19 +39,6 @@ export interface UsersViewOptions {
   canManage: boolean;
 }
 
-const ROLE_BN: Record<string, string> = {
-  school_owner: 'প্রতিষ্ঠান মালিক',
-  principal: 'প্রধান শিক্ষক',
-  academic_coordinator: 'একাডেমিক সমন্বয়কারী',
-  dept_head: 'বিভাগীয় প্রধান',
-  accountant: 'হিসাবরক্ষক',
-  class_teacher: 'শ্রেণি শিক্ষক',
-  subject_teacher: 'বিষয় শিক্ষক',
-  librarian: 'গ্রন্থাগারিক',
-  it_admin: 'আইটি অ্যাডমিন',
-  student: 'শিক্ষার্থী',
-  guardian: 'অভিভাবক',
-};
 
 const STATUS_BN: Record<string, string> = {
   active: 'সক্রিয়', invited: 'আমন্ত্রিত', suspended: 'স্থগিত',

@@ -53,9 +53,6 @@ import {
   fetchFullBranding,
   fetchPublicBranding,
   tenantKeyFromHost,
-  cachedOtpLogin,
-  otpLoginAnswered,
-  type Branding,
 } from './branding.ts';
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
 import { Tracker } from './track.ts';
@@ -105,6 +102,19 @@ const placeholderStudents: Student[] = Array.from({ length: 60 }, (_, i) => ({
   nameBn:    `শিক্ষার্থী ${i + 1}`,
   nameEn:    `Student ${i + 1}`,
 }));
+
+/**
+ * Is this the demo surface?
+ *
+ * `/demo` is its own address (P1 §31, and the surface architecture doc §2):
+ * the free trial anyone may open, with fabricated data and a marker in the
+ * chrome that says so. `/app` is a school's real application and never
+ * fabricates. The two must not be reachable from one another by accident,
+ * which is what a query parameter alone could not guarantee.
+ */
+function isDemoSurface(): boolean {
+  return location.pathname.replace(/\/+$/, '').toLowerCase() === '/demo';
+}
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -355,30 +365,23 @@ async function main() {
 
   // Demo mode: DemoAuth answers every API call locally with sample data —
   // no session needed, no request leaves the device, real tenant data
-  // unreachable. Entered explicitly via ?demo=1, and AUTOMATICALLY for any
-  // visitor without a session while login is disabled (LOGIN_DISABLED),
-  // so the plain URL never dead-ends on the disabled-login notice. The
-  // moment LOGIN_DISABLED flips back to false, the automatic path turns
-  // itself off and session-less visitors see the login form again.
-  const realAuth = new Auth({ apiBase, deviceId: deviceId('d') });
-
-  // R-8. A device that has never reached the server has no answer about
-  // whether OTP login works, and the two possible readings are not equally
-  // safe HERE. On the login screen an unknown answer means "offer the
-  // activation-code path", which works either way. At this gate it would
-  // mean demo mode — so the first person at a newly live school would be
-  // dropped into a sample school instead of a login form.
+  // unreachable.
   //
-  // So a cold device asks once, and falls back to demo only if nothing
-  // answers. Every later boot reads the cached answer synchronously, which
-  // is what keeps the 2G/offline start immediate.
-  let coldBrand: Promise<Branding> | null = null;
-  if (!realAuth.isLoggedIn() && !otpLoginAnswered()) {
-    coldBrand = fetchPublicBranding(tenantId);
-    await coldBrand;
-  }
-
-  const demoMode = params.get('demo') === '1' || (!cachedOtpLogin() && !realAuth.isLoggedIn());
+  // P1 §31. Demo is now entered ONLY on purpose: the /demo address, or an
+  // explicit ?demo=1. It used to be entered AUTOMATICALLY by any visitor
+  // without a session while OTP login was disabled — which meant a teacher
+  // opening their own school's URL, logged out, was shown fabricated
+  // students under the school's own name and branding. That is a trust
+  // problem before it is a UX one: nothing on the screen said the children
+  // were invented, and the screenshot a head teacher takes of it is
+  // indistinguishable from their real roll.
+  //
+  // Removing it is safe because the login screen always has a working door:
+  // when OTP is disabled it offers the activation-code path, which is how
+  // every newly onboarded school signs in anyway. The dead-end the fallback
+  // existed to avoid does not exist.
+  const realAuth = new Auth({ apiBase, deviceId: deviceId('d') });
+  const demoMode = params.get('demo') === '1' || isDemoSurface();
   const auth = demoMode ? new DemoAuth() : realAuth;
   // F-1503. One tracker for the session; flushed on boot (draining
   // whatever a previous offline session queued) and after login.
@@ -424,9 +427,12 @@ async function main() {
     // Signed in: fetch the full letterhead, since documents need the
     // contact block a public read deliberately withholds.
     ? fetchFullBranding((path, init) => auth.authedFetch(path, init), brandingKey)
-    // Reuse the cold-start fetch above rather than repeating it: on a first
-    // visit it has already asked this exact question of this exact tenant.
-    : (coldBrand && brandingKey === tenantId ? coldBrand : fetchPublicBranding(brandingKey));
+    // Logged out (the login screen, or demo): the public read is enough, and
+    // it is no longer awaited before boot — the blocking round-trip it used
+    // to cost existed only to decide the demo gate that P1 removed. A cold
+    // 2G start now paints the cached branding and reconciles in the
+    // background, like every warm start already did.
+    : fetchPublicBranding(brandingKey);
 
   function startShell(): Shell {
     const { students, sectionId } = loadRosterStudents();
@@ -962,6 +968,13 @@ async function main() {
       displayName: auth.displayName,
       // R-1: whose school this is, on every screen.
       institution: { name: brandName(brand), logoUrl: brand.logoUrl },
+      // P1: the role drives the sidebar's groups and which five routes reach
+      // the bottom bar. Before this the bar was the first five REGISTERED
+      // routes, identical for everyone — which is why a student's phone
+      // offered "হাজিরা নিন" and a section roster.
+      role: auth.role,
+      // P1 §30: a demo must say so, in the chrome, on every screen.
+      demo: demoMode,
       // R-2: the bell, on every screen, for every role.
       bell: { onOpen: () => { location.hash = '/inbox'; } },
       onLogout: () => { void doLogout(); },

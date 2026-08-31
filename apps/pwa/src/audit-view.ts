@@ -28,6 +28,7 @@
  */
 import type { Auth } from './auth.ts';
 import { skeleton, errorState, emptyState, bnNum, bnDate } from './view-states.ts';
+import { ROLE_BN } from './ui/roles.ts';
 
 interface Entry {
   id: string;
@@ -81,12 +82,6 @@ const ENTITY_BN: Record<string, string> = {
   tenant: 'প্রতিষ্ঠান', year_rollover: 'বার্ষিক উন্নয়ন',
 };
 
-const ROLE_BN: Record<string, string> = {
-  principal: 'প্রধান শিক্ষক', school_owner: 'প্রতিষ্ঠান মালিক',
-  it_admin: 'আইটি অ্যাডমিন', academic_coordinator: 'একাডেমিক সমন্বয়কারী',
-  accountant: 'হিসাবরক্ষক', class_teacher: 'শ্রেণি শিক্ষক',
-  subject_teacher: 'বিষয় শিক্ষক',
-};
 
 /** Keys worth naming in a diff; anything else is shown by its raw key. */
 const FIELD_BN: Record<string, string> = {

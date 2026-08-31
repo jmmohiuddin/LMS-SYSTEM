@@ -137,6 +137,7 @@ const server = createServer(async (req, res) => {
   /* ── The three surfaces (R-1-A), exactly as vercel.json rewrites them ── */
   if (path === '/') path = '/index.html';
   else if (path === '/app' || path.startsWith('/app/')) path = '/app.html';
+  else if (path === '/demo') path = '/app.html';
   else if (path === '/platform' || path.startsWith('/platform/')) path = '/platform.html';
   else if (path === '/design') path = '/design.html';
   else if (path === '/offline') path = '/offline.html';

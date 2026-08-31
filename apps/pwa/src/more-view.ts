@@ -4,6 +4,7 @@
  * lives here as a hash link, so deep links like #/fees keep working too.
  */
 import { iconSvg } from './icon.ts';
+import { readTheme, setTheme, THEME_OPTIONS, type ThemePref } from './ui/theme.ts';
 
 export interface MoreItem {
   path: string;
@@ -66,11 +67,9 @@ export class MoreView {
  * Lives here rather than in a settings screen because this product has no
  * settings screen, and inventing one for a single control would bury it.
  *
- * 'system' is the default and is stored as the ABSENCE of a key, so a
- * student who never touches this follows their phone forever — including
- * when Android flips it at sunset. Pinning writes the key; going back to
- * system removes it. Storing the literal string 'system' would work until
- * someone read it as a third theme and tried to render it.
+ * The storage rule and the three options live in ./ui/theme.ts, shared with
+ * the shell's profile menu — the same control is offered in both places, so
+ * only one of them may own how it is stored.
  */
 function themePicker(d: Document): HTMLElement {
   const wrap = d.createElement('section');
@@ -86,17 +85,9 @@ function themePicker(d: Document): HTMLElement {
   group.setAttribute('role', 'radiogroup');
   group.setAttribute('aria-label', 'রঙের ধরন');
 
-  const current = (() => {
-    try { return localStorage.getItem('shikhon_theme'); } catch { return null; }
-  })();
+  const current: ThemePref = readTheme();
 
-  const options: Array<{ value: string | null; labelBn: string }> = [
-    { value: null, labelBn: 'ফোন অনুযায়ী' },
-    { value: 'light', labelBn: 'উজ্জ্বল' },
-    { value: 'dark', labelBn: 'অন্ধকার' },
-  ];
-
-  for (const opt of options) {
+  for (const opt of THEME_OPTIONS) {
     const btn = d.createElement('button');
     btn.type = 'button';
     btn.className = 'theme-option';
@@ -106,11 +97,7 @@ function themePicker(d: Document): HTMLElement {
     btn.dataset.chosen = String(chosen);
     btn.textContent = opt.labelBn;
     btn.addEventListener('click', () => {
-      try {
-        if (opt.value === null) localStorage.removeItem('shikhon_theme');
-        else localStorage.setItem('shikhon_theme', opt.value);
-      } catch { /* private mode: the choice applies for this session only */ }
-      applyTheme(opt.value);
+      setTheme(opt.value);
       for (const other of group.querySelectorAll('.theme-option')) {
         const isThis = other === btn;
         other.setAttribute('aria-checked', String(isThis));
@@ -124,9 +111,3 @@ function themePicker(d: Document): HTMLElement {
   return wrap;
 }
 
-/** Mirrors the boot script in index.html — same rule, applied live. */
-function applyTheme(pref: string | null): void {
-  const dark = pref === 'dark'
-    || (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-}

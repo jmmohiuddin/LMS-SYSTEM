@@ -52,6 +52,15 @@
   to = "/platform.html"
   status = 200
 
+# P1 §31. The free trial has its own address. It serves the same bundle,
+# which then enters demo mode from the PATH — so a logged-out visitor to a
+# school's own /app gets the login screen, never fabricated students under
+# that school's name and branding.
+[[redirects]]
+  from = "/demo"
+  to = "/app.html"
+  status = 200
+
 [[redirects]]
   from = "/app"
   to = "/app.html"

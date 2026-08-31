@@ -310,12 +310,26 @@ describe('application shell', () => {
     assert.equal(b, COLLEGE_B.nameBn);
   });
 
-  test('omits the block entirely when no institution is known', () => {
-    // A shell with an empty name plate would look broken; absent is right.
-    new Shell({
+  test('shows no name plate when no institution is known', () => {
+    // A shell with an empty name plate would look broken.
+    //
+    // Until P1 this was achieved by not creating the node — and
+    // `setInstitution` opened with `if (!org) return`, so a shell built
+    // before branding resolved could never be GIVEN a name; it waited for a
+    // reload. The node is now present and hidden, which is patchable, and
+    // the assertion moved to what a user can actually see.
+    const shell = new Shell({
       root: root(), doc: doc(), routes, defaultPath: 'home',
       displayName: 'x', onLogout: () => {},
     });
-    assert.equal(root().querySelector('.shell-org'), null);
+    const plate = root().querySelector<HTMLElement>('.shell-org-mobile');
+    assert.ok(plate, 'the plate exists so it can be patched later');
+    assert.equal(plate.hidden, true, 'but nothing empty is shown');
+    assert.equal(plate.querySelector('.shell-org-name')?.textContent, '');
+
+    // The bug the old shape hid: branding lands a round-trip after boot.
+    shell.setInstitution({ name: SCHOOL_A.nameBn });
+    assert.equal(plate.hidden, false);
+    assert.equal(plate.querySelector('.shell-org-name')?.textContent, SCHOOL_A.nameBn);
   });
 });

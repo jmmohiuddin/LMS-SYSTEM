@@ -1244,6 +1244,9 @@ export class DemoAuth extends Auth {
       class_teacher: 'ডেমো (শ্রেণি শিক্ষক)',
       principal: 'ডেমো (অধ্যক্ষ)',
       accountant: 'ডেমো (হিসাবরক্ষক)',
+      // P1 added it_admin to the demo role picker so the IT-admin sidebar —
+      // the one navigation set with no teaching rows in it — is previewable.
+      it_admin: 'ডেমো (আইটি অ্যাডমিন)',
     };
     return label[this.role] ?? 'ডেমো (নমুনা তথ্য)';
   }

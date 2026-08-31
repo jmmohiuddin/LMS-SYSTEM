@@ -26,6 +26,10 @@
       "destination": "/platform.html"
     },
     {
+      "source": "/demo",
+      "destination": "/app.html"
+    },
+    {
       "source": "/app",
       "destination": "/app.html"
     },

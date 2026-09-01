@@ -1023,3 +1023,64 @@ file appears outside every config.
 **States touched:** the *permission* state is now reachable on nine screens
 that previously had only loading / empty / error / offline. `permissionState()`
 existed since P2 and no student screen could reach it.
+
+## 27. P5 — Principal + IT Admin (2026-09-01) · **PARTIAL**
+
+Two pieces delivered; the IT Admin surface is not started. Full detail in
+`PHASE_LOG.md` under "P5 — Principal + IT Admin".
+
+### Delivered
+
+| Screen | Role | State |
+|---|---|---|
+| Home / প্রতিষ্ঠান | principal · school_owner | **rebuilt** on P2 (`principal-home-view.ts`) |
+| Guardian panel — end a relationship | principal · owner · IT admin | **new flow** (B-7) |
+
+### The dashboard's order, and why
+
+The brief asks the top of the screen to answer three questions, so the blocks
+are in that order: **what needs attention** (the pending queue, non-zero rows
+only), **what changed** (today's attendance and absences — the only figures
+that differ from yesterday's), **what can I act on** (exams, notices, fees).
+Standing counts last. No charts: 04-UIUX prohibits client-side charting on the
+device floor, and nothing here is a trend.
+
+| State | What it shows |
+|---|---|
+| loading | five-row skeleton |
+| nothing pending | one calm line, `সব কিছু নির্ধারিত আছে` — not four ০s |
+| attendance not yet taken | `এখনো নেওয়া হয়নি` and the denominator. **Never ০%** |
+| no academic year | what to do, with a route — not a screen of zeroes |
+| no `finance` in the response | the fee block does not exist. Not hidden (D13) |
+| 403 | the canonical permission sentence, no retry |
+| network failure | the error state, with a retry |
+
+### Desktop vs mobile
+
+`.ph-cols` stacks on a phone, 2 columns at 1024, 3 at 1440+. The responsive
+rules sit at the **end** of `app.css`, where source order lets them win.
+
+### Two component-level fixes this screen forced
+
+- **`.ui-stat-row` was `repeat(4, 1fr)` at desktop** — right for four cards and
+  wrong for two. The guardian home has carried two since P4 and was rendering
+  them at a quarter width each on a wide screen. Now `auto-fit`.
+- The permission and error states are now distinct on this screen, per B-30.
+
+### Acceptance
+
+| Area | 360 | 390 | 1024 | 1440 | 1600 | Light | Dark | Tenant A | Tenant B |
+|---|---|---|---|---|---|---|---|---|---|
+| Contrast | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| Overflow | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Unnamed controls | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| `undefined` in a11y text | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| Layout | stacked | stacked | 2-col | 3-col | 3-col | ✅ | ✅ | ✅ | ✅ |
+
+### NOT delivered — `B-34`
+
+Every IT Admin screen (academic structure, users, teachers, students,
+guardians, imports, branding, settings, audit, system health) and every other
+Principal screen keep their pre-P2 markup. The audit viewer's UX — actor names,
+filters, changed fields, permission-aware redaction — is still what R-3
+shipped. P5 continues from here.

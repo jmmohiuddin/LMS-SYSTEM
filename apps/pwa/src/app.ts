@@ -60,6 +60,7 @@ import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { TeacherHomeView } from './teacher-home-view.ts';
 import { StudentHomeView } from './student-home-view.ts';
+import { PrincipalHomeView } from './principal-home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
 import { LedgerView } from './ledger-view.ts';
@@ -416,6 +417,17 @@ async function main() {
           // keeps the grid until its own phase (P4/P5).
           // P4. A student's home answers "what needs attention", from
           // /academics/next — not the same grid of tiles every role got.
+          // P5. The principal and the owner get the rebuilt dashboard; the
+          // generic card grid stays for every other management role until
+          // its own phase.
+          if (auth.role === 'principal' || auth.role === 'school_owner') {
+            new PrincipalHomeView({
+              root: container, doc: document, auth,
+              displayName: auth.displayName,
+              go: (path) => { location.hash = `#/${path}`; },
+            });
+            return;
+          }
           if (auth.role === 'student') {
             new StudentHomeView({
               root: container, doc: document, auth,

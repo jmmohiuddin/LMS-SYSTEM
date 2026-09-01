@@ -8197,3 +8197,210 @@ ungated, `/finance/generate` is POST-only and already in `DEMO_GATES`, and
 by nothing, 73 errors to fix) and `B-33` (the `index.ts` blind spot) opened.
 
 **P5 proper begins next: Principal and IT Admin.**
+
+---
+
+# P5 — Principal + IT Admin   (2026-09-01) · **IN PROGRESS**
+
+**This entry records a PARTIAL phase.** B-7 and the Principal dashboard are
+done to the D13 bar; the IT Admin screens are not started. P5 is **not**
+complete and is not recorded as complete — see "What P5 has not done" below.
+
+---
+
+## B-7 — a guardianship can end, without ever being deleted
+
+### The audit, before any code
+
+Migration 042 refused DELETE on `guardianships` deliberately, and its own
+comment gives the reason: a family relationship is a record, and the receipts,
+attendance rows and audit entries covering that period must stay readable.
+That reasoning is right and is not reversed.
+
+What it did not provide is the thing it assumed existed — a way to say the
+relationship **ended**. `is_primary` and `receives_sms` are permissions
+*within* a relationship; turning them off left a former guardian still reading
+a child's attendance, results and fees, because `app.my_ward_ids()` asks only
+whether the row exists.
+
+### The dangerous part, and the shape of the fix
+
+`guardianships` is read at **twelve** places. Eleven would have kept working
+after a revocation, and the worst of them is `sms-svc/dispatch.ts`: a missed
+filter there texts a former guardian about a child every time that child is
+marked absent.
+
+Eleven hand-edits is a list somebody forgets. So the filter went where it
+cannot be forgotten — a RESTRICTIVE SELECT policy that makes revoked rows
+**invisible**:
+
+```sql
+CREATE POLICY guardianship_hide_revoked ON guardianships
+  AS RESTRICTIVE FOR SELECT TO shikhon_app
+  USING (revoked_at IS NULL
+         OR app.has_role('principal','school_owner','it_admin'));
+```
+
+Every one of those eleven queries runs as `shikhon_app` — including the
+dispatcher, under its `system_ingest` role — so all eleven are corrected and
+**not one of them changed a character**. Management is exempt because the
+office must be able to see that a link ended and when. `app.has_role` reads a
+GUC and touches no table, so this cannot recurse through `users_scope`.
+
+Three readers a policy cannot reach, because they are SECURITY DEFINER or a
+different database role. There are exactly three, and all three are rewritten
+in migration 050: `app.my_ward_ids`, `app.resolve_notice_audience` (both
+guardian branches — the payers one and the general one) and
+`app.tenant_onboarding_state`.
+
+### The rest of the design
+
+- `revoked_at` / `revoked_by` / `revoked_reason`, **all three or none**. A
+  revocation with no actor is an audit gap; one with no reason is
+  indistinguishable from a bug.
+- **Both unique constraints become partial.** Without that a revoked link
+  could never be re-created — and the commonest reason to revoke is a typo
+  whose fix is to link the right person. The primary-guardian index had the
+  same problem in a worse form: a student whose primary guardian was revoked
+  could never be given another.
+- `app.revoke_guardianship()` is SECURITY INVOKER, so RLS decides who may
+  write, exactly as 042's `set_guardian_permissions` does.
+- **It refuses to remove the last contactable guardian** of a student with no
+  phone or email of their own. Migration 031 will not CREATE a child in that
+  state; revocation was the back door into it, because that trigger fires on
+  `users` and not on this table.
+
+### What the UI says
+
+"**সম্পর্ক শেষ করুন**", not "মুছে ফেলুন". The label is the design: nothing is
+deleted, and a delete button on a family relationship would promise otherwise.
+The confirmation carries the required reason field in the same step — a yes/no
+followed by a 400 the person cannot act on is an obstacle, not a confirmation.
+Consequences first, reassurance last, because the office's first fear is that
+they are destroying a record.
+
+### A defect found on the way, worse than the one it hid
+
+`writeAudit`'s documented contract is "never throws", implemented as a bare
+`catch`. **Inside a transaction that is a trap, not a safety net.** PostgreSQL
+aborts the whole transaction on any statement error, so swallowing the
+exception leaves the caller running in a poisoned transaction whose COMMIT
+silently becomes a ROLLBACK.
+
+The revocation endpoint passed `${studentId}:${guardianId}` into `entity_id`,
+which is a `uuid` column. The result: **HTTP 200, carrying a real timestamp,
+for a revocation that had not happened.** Nothing logged an error. Every
+`writeAudit` call site in this repository had the same exposure.
+
+`writeAudit` now brackets its insert in a SAVEPOINT, so a failed audit rolls
+back only itself. The audit row is lost — the documented trade-off — and the
+operation is not, which was always the intent. Four tests hold it, including
+that two audits in one transaction do not share a savepoint name.
+
+### Tests
+
+`services/ops-svc/test/b7-guardian-revoke.test.ts`, 16 tests, twice. The two
+that carry the weight are named as such: **the former guardian stops reading
+the child** (`app.my_ward_ids()` returns `[]`, which is what
+`can_see_student` asks and therefore what every guardian-facing RLS policy
+asks), and **the absence SMS stops going to them** — asserted by running the
+dispatcher's exact query under the dispatcher's exact role.
+
+Also asserted: the row still exists, the relation is unchanged, the office can
+still see it, the same guardian can be re-linked, the audit entry names people
+rather than uuids, a class teacher cannot, a guardian cannot unlink
+themselves, another school's principal gets 404 rather than 403, and a child
+is never left with no contactable adult.
+
+---
+
+## The Principal dashboard
+
+`apps/pwa/src/principal-home-view.ts`, on the P2 components. **No API change
+was needed**: `GET /ops/dashboard` already returned every field the brief asks
+for, so this was a UI job on a complete endpoint.
+
+### Ordered by the three questions the brief asks
+
+1. **What needs attention** — the pending queue, and only its non-zero rows.
+   An empty queue is one calm line ("সব কিছু নির্ধারিত আছে"), not four ০s: a
+   row of zeroes is a wall a person reads to learn nothing.
+2. **What changed** — today's attendance and today's absences, the only
+   figures on the screen that differ from yesterday's.
+3. **What can be acted on** — exams, notices, the fee position.
+4. Standing counts last, because they are the same as yesterday.
+
+### Carried over from R-3, because they were right
+
+- **`percent: null` is "nobody has taken attendance yet", not 0%.** A
+  dashboard reading ০% at 8:05 puts a head teacher on the phone to a class
+  teacher who has done nothing wrong.
+- **The fee block is absent, not hidden.** `finance` is null in the response
+  for a coordinator; there is no CSS doing the hiding, because a hidden card
+  with the numbers still in the body is the pattern D13 rules out.
+
+### Genuinely desktop, genuinely mobile
+
+`.ph-cols` stacks on a phone and becomes 2 columns at 1024 and 3 at 1440. The
+responsive block sits at the END of `app.css` on purpose — those overrides are
+equal in specificity to the base rules, so source order decides, and P1 spent a
+day on a school name that rendered twice because a hide rule sat 1,700 lines
+above the thing it hid.
+
+### Two defects the browser found
+
+- **`.ui-stat-row` was hard-coded to `repeat(4, 1fr)` at desktop.** Right for a
+  row of four and wrong for every other count: this screen's "today" band and
+  the guardian home both carry TWO cards, and at 1440 they rendered at a
+  quarter width each with half the row empty — a P4 regression nobody had
+  looked at on a wide screen. Now `auto-fit, minmax(200px, 1fr)`.
+- **"undefinedটি ইনভয়েস বাকি".** The first draft invented `collectedThisMonth`
+  and `invoicesDue`; the endpoint returns `{invoiced, collected, outstanding,
+  unpaidCount}` summed over the ACADEMIC YEAR. Both the field names and the
+  label were wrong, and the label being wrong is the worse of the two — "এ
+  মাসে আদায়" over a year's total is a wrong number dressed as a right one.
+
+### Tests and browser
+
+13 tests, asserting mostly about **order and absence**: the queue leads, a zero
+is not a task, `null` is not 0%, the fee block does not exist for a role
+without it, no charts, and no platform or subscription wording anywhere near
+school tuition (D16).
+
+Browser: **1024 / 1440 / 1600 / 390 / 360 × light + dark**, tenant A and B.
+96 element-checks per desktop configuration, 68 per mobile — **0 contrast
+failures, 0 overflow, 0 unnamed controls, 0 `undefined` in accessible text**
+after the two fixes above.
+
+---
+
+## What P5 has NOT done
+
+Stated plainly, because the completion gate says a phase is complete only when
+its whole scope is:
+
+- **The IT Admin screens are not started.** Academic structure, users,
+  teachers, students, guardians, imports, branding, settings, audit and system
+  health all keep their pre-P2 markup.
+- **The Principal's other screens are not restyled.** Only the dashboard.
+  `academic`, `students`, `publish`, `calendar`, `documents`, `audit` and the
+  settings screens are unchanged.
+- **The audit viewer UX** (actor, filters, changed fields, permission-aware
+  redaction) is not built beyond what R-3 shipped.
+- **No browser acceptance across the full P5 matrix** — only the dashboard and
+  the guardian-unlink flow were driven.
+
+`B-7` is **RESOLVED**. The dashboard is one screen of P5's scope.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,463 passing**, 12 workspaces |
+| B-7 suite ×2 | 16/16, 16/16 |
+| TypeScript — all three CI configs | 0 errors (`npm run typecheck`) |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | **50/50 applied**, fully migrated; 050 probed by `app.revoke_guardianship` |
+| Rollback | `db/rollback/050_*.sql` — and it says out loud that running it gives a former guardian their access back |
+| Browser | dashboard at 1024/1440/1600/390/360 × light+dark × tenant A/B, 0 failures; guardian unlink both paths |
+| `index.html` | SHA `496199bd` — unchanged |

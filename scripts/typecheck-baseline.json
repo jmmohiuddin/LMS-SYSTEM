@@ -40,6 +40,7 @@
     "apps/pwa/test/permission-ux.test.ts",
     "apps/pwa/test/platform-console-dom.test.ts",
     "apps/pwa/test/platform-console.test.ts",
+    "apps/pwa/test/principal-home-view.test.ts",
     "apps/pwa/test/push-ui.test.ts",
     "apps/pwa/test/shell-desktop.test.ts",
     "apps/pwa/test/shell-tabs.test.ts",

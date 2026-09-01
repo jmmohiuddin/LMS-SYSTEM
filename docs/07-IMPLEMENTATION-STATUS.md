@@ -4,7 +4,7 @@ Documents 01–06 are the design blueprint. This document is the reconciliation:
 actually in the repository today, where the implementation deliberately diverges from the
 blueprint, how to operate it, and what remains.
 
-**Last reconciled 2026-09-01, at the end of P6** (complete — see the status
+**Last reconciled 2026-09-02, at the end of P7** (complete — see the status
 board), under D17.
 New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
 
@@ -26,10 +26,10 @@ New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
 | **Database (as-built)** | `pgvector/pgvector:pg16` Docker container `shikhon-postgres`, bound to `127.0.0.1:5433`, dedicated — not the shared cluster that holds the sibling apps. **The blueprint says Neon PostgreSQL 18.4 (`ap-southeast-1`); [06-DEPLOYMENT.md](06-DEPLOYMENT.md) documents the Neon pooler and is not what production runs** (`B-27`) |
 | **Deployed commit** | cut by `git archive` from the 2026-08-31 tree (`0b6df00` + `52d1609`). **Nothing from P0–P4 is deployed.** That no deploy has run since is INFERRED from the absence of a later PHASE_LOG entry, not re-observed on the box |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main`, current at `95c34bf` |
-| **Tests** | **1,521 passing, 0 failing** — 2026-09-01, run twice, against a real PostgreSQL 16 (pgvector). offline 50 · server-core 203 · ui-core 161 · academics-svc 141 · identity-svc 20 · ops-svc 98 · platform-svc 26 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 662 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
-| **TypeScript** | **0 errors across all THREE configs** — `tsconfig.json`, `apps/pwa/tsconfig.json`, `apps/pwa/tsconfig.sw.json`. Run them with **`npm run typecheck`**, which parses the CI workflow for its list so local and CI scope cannot drift (`B-31`, closed in P5-0). The root config **excludes `apps/pwa`**, so `tsc -p .` alone typechecks the services and not the application. Coverage: **236 of 297** repo `.ts` files; the other 61 are checked by no config and frozen in `scripts/typecheck-baseline.json` (`B-32`) |
+| **Tests** | **1,565 passing, 0 failing** — 2026-09-02, run twice, against a real PostgreSQL 16 (pgvector). offline 50 · server-core 236 · ui-core 161 · academics-svc 141 · identity-svc 20 · ops-svc 98 · platform-svc 40 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 659 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
+| **TypeScript** | **0 errors across all THREE configs** — `tsconfig.json`, `apps/pwa/tsconfig.json`, `apps/pwa/tsconfig.sw.json`. Run them with **`npm run typecheck`**, which parses the CI workflow for its list so local and CI scope cannot drift (`B-31`, closed in P5-0). The root config **excludes `apps/pwa`**, so `tsc -p .` alone typechecks the services and not the application. Coverage: **239 of 305** repo `.ts` files; the other 66 are checked by no config and frozen in `scripts/typecheck-baseline.json` (`B-32`) |
 | **Build** | `app.js` + `sw.js` + 11 API bundles |
-| **Schema** | **50 migrations**, 49 rollback files, 26 SQL assertion suites. Verified on production: **227 RLS policies · 110 RLS-enabled tables · 108 carrying `tenant_id` · 0 tenants visible with no tenant context** |
+| **Schema** | **58 migrations**, 57 rollback files, 26 SQL assertion suites. **P7 added 051–058**: the commercial model, and the enforcement that made three inert console controls real. Verified on production: **227 RLS policies · 110 RLS-enabled tables · 108 carrying `tenant_id` · 0 tenants visible with no tenant context** |
 | **Login** | R-8 turned the kill switch from three hardcoded constants into environment switches that **default OFF** (`packages/server-core/src/go-live.ts`). Whether login is enabled on production is a property of `/etc/shikhon/shikhon.env` and is **NOT OBSERVED from this repository**. `OTP_SENDING_ENABLED` was off at the R-8 deployment; a pilot is designed to run on activation codes, needing no SMS |
 | **Surfaces (D15)** | five — `/` shikhonBD marketing (**frozen**) · `/demo` the isolated demo, its own address since P1 · `<slug>.sikhon.systems` the white-labelled tenant app, `/app?tid=` kept as the compatibility door · `platform.sikhon.systems` the Platform Console, `/platform` as compatibility · `/design` a development reference, never a customer destination |
 | **UI/UX (D14)** | **P0–P4 complete.** Token foundation · application shell (real desktop, real mobile) · ~30 shared components · teacher screens · student + guardian screens. **P5–P8 not started**; principal, IT-admin and console screens still carry pre-P2 markup. Per-phase detail: [UI-UX-INTEGRATION-PLAN.md](UI-UX-INTEGRATION-PLAN.md) |
@@ -1815,3 +1815,59 @@ server-side file P4 touched is a new test); no D16 commercial controls on
 either persona; seven student/guardian screens keep their legacy markup —
 accessible, responsive, green in every sweep, and not worth the risk of a
 rewrite with no user-visible benefit.
+
+---
+
+## P7 — the Platform Operations Center (2026-09-02)
+
+D16's commercial model, and the enforcement without which it would have been
+decoration. Full narrative in [PHASE_LOG.md](PHASE_LOG.md).
+
+### What an operator can do without SQL
+
+Institution state (active · maintenance · limited · suspended) · per-service
+enable/disable/maintenance with dependency refusal · role portals open/close
+with lock-out refusal · plan assignment · **the plan catalogue itself**
+(create, edit, retire) · student caps · manual payments with duplicate
+refusal · grace periods · the per-institution audit trail.
+
+Every one states its consequence before it happens, demands a written reason,
+confirms, and writes `audit.platform_access` carrying that reason.
+
+### The finding the phase turned on
+
+Three of the console's headline controls were **inert**: `tenants.status`
+(R-7), `tenant_operations.portals` and `tenant_operations.services` (052) were
+all written, all audited, and read by no application code. An operator could
+suspend a school, be told it worked, and the school kept working.
+
+The gate now lives in `withTenant` — the one function every tenant request
+already passes through — so **0 of 109 endpoint call sites** had to be edited
+and none can forget it. Read-only is `SET LOCAL transaction_read_only = on`,
+enforced by PostgreSQL rather than by discipline. `TenantBlocked extends
+HttpError`, so all 54 existing catch sites already refuse it in Bangla.
+
+### Enforcement points, for anyone changing this later
+
+| Layer | What it decides |
+|---|---|
+| `app.tenant_access(t)` | may this school act at all — deleted, archived, legacy-suspended, ops-suspended, maintenance, limited-by-bill |
+| `app.tenant_access(t, role)` | …and is this role's portal open (054) |
+| `app.tenant_access(t, role, service)` | …and is this service bought and switched on (055). May only ever RESTRICT |
+| `TenantContext.service` | which service an endpoint belongs to. Absent = ungated, which is correct for login, branding, people and class structure |
+| `SERVICE_OF_ENTITY` (sync-svc) | which service each offline-outbox entity belongs to — attendance, marks, submissions and progress are WRITTEN here, not through the endpoints named after them |
+
+**`services/sync-svc/src/db.ts` is now a re-export of server-core's.** It held
+its own copy with an "identical contract" that stopped being identical the
+moment the gate existed, and sync is how a phone files a week of attendance.
+
+### Known limits
+
+- **Support mode is deferred** with its blocker named: 18 RLS policies key off
+  `app.current_user_id()`/`app.my_section_ids()`, and a platform admin has no
+  `users` row inside a school (`B-38`).
+- **The audit trail cannot say WHO.** Platform operator ids are JWT subjects
+  with no directory behind them (`B-39`).
+- **`rms-svc` is ungated** — the routine has no `service_catalogue` entry, so
+  it can be neither sold nor disabled (`B-37`, needs a product decision).
+- **No online payment gateway**, by D16. Manual recording is the requirement.

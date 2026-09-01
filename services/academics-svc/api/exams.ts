@@ -16,6 +16,13 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireStaff } from '../../../packages/server-core/src/auth.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'results';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -39,7 +46,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     const db = await sharedDb();
     const exams = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
       async (client) => {
         const r = await client.query<{
           exam_id: string;

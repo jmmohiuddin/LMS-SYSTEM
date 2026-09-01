@@ -5,75 +5,6 @@ import { createHmac, createHash as createHash2 } from "node:crypto";
 
 // packages/server-core/src/db.ts
 import pg from "pg";
-function createDb(connectionString, opts = {}) {
-  const pool = new pg.Pool({
-    connectionString,
-    max: 10,
-    idleTimeoutMillis: 3e4,
-    statement_timeout: 15e3,
-    ...opts
-  });
-  async function inTx(setup, fn) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await setup(client);
-      const out = await fn(client);
-      await client.query("COMMIT");
-      return out;
-    } catch (err) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-      }
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-  return {
-    pool,
-    withTenant(ctx, fn) {
-      if (!ctx.tenantId) throw new Error("tenant context required");
-      return inTx(async (c) => {
-        await c.query(
-          `SELECT set_config('app.tenant_id', $1, true),
-                  set_config('app.user_id',   $2, true),
-                  set_config('app.role',      $3, true)`,
-          [ctx.tenantId, ctx.userId, ctx.role]
-        );
-      }, fn);
-    },
-    withSystemRole(role, fn) {
-      return inTx(async (c) => {
-        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
-      }, fn);
-    },
-    end: () => pool.end()
-  };
-}
-async function assertRlsEnforced(db) {
-  const { rows } = await db.pool.query(
-    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
-  );
-  const me = rows[0];
-  if (!me) throw new Error("cannot resolve current_user");
-  if (me.rolbypassrls || me.rolsuper) {
-    throw new Error(
-      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
-    );
-  }
-}
-var _db = null;
-async function sharedDb() {
-  if (_db) return _db;
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL env var is not set");
-  const db = createDb(url, { max: 5 });
-  await assertRlsEnforced(db);
-  _db = db;
-  return db;
-}
 
 // packages/server-core/src/http.ts
 function allowedOrigins(env = process.env) {
@@ -147,6 +78,169 @@ var HttpError = class extends Error {
     this.detail = detail;
   }
 };
+var TenantBlocked = class extends HttpError {
+  access;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  reasonBn;
+  constructor(access) {
+    super(
+      403,
+      access.reasonBn ?? "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F\u09C7 \u098F\u0996\u09A8 \u098F\u0987 \u0995\u09BE\u099C\u099F\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964",
+      "tenant_blocked",
+      {
+        access: access.access,
+        opsState: access.opsState,
+        billingState: access.billingState,
+        until: access.until
+      }
+    );
+    this.access = access;
+    this.reasonBn = this.message;
+  }
+};
+
+// packages/server-core/src/db.ts
+pg.types.setTypeParser(1082, (v) => v);
+function createDb(connectionString, opts = {}) {
+  const pool = new pg.Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 3e4,
+    statement_timeout: 15e3,
+    ...opts
+  });
+  async function inTx(setup, fn) {
+    const client = await pool.connect();
+    let readOnlyFor;
+    let released = false;
+    try {
+      await client.query("BEGIN");
+      readOnlyFor = (await setup(client))?.blocked;
+      const out = await fn(client);
+      await client.query("COMMIT");
+      return out;
+    } catch (err) {
+      if (readOnlyFor && err?.code === "25006") {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+        }
+        client.release();
+        released = true;
+        throw new TenantBlocked(readOnlyFor);
+      }
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    } finally {
+      if (!released) client.release();
+    }
+  }
+  return {
+    pool,
+    async tenantAccess(tenantId) {
+      return readAccess(pool, tenantId);
+    },
+    withTenant(ctx, fn, opts2) {
+      if (!ctx.tenantId) throw new Error("tenant context required");
+      return inTx(async (c) => {
+        let blocked;
+        await c.query(
+          `SELECT set_config('app.tenant_id', $1, true),
+                  set_config('app.user_id',   $2, true),
+                  set_config('app.role',      $3, true)`,
+          [ctx.tenantId, ctx.userId, ctx.role]
+        );
+        if (opts2?.skipGate) return;
+        const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
+        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "read_only") {
+          await c.query("SET LOCAL transaction_read_only = on");
+          blocked = access;
+          if (opts2?.write) throw new TenantBlocked(access);
+        }
+        return { blocked };
+      }, fn);
+    },
+    withSystemRole(role, fn) {
+      return inTx(async (c) => {
+        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
+      }, fn);
+    },
+    end: () => pool.end()
+  };
+}
+async function readAccess(q, tenantId, role, service) {
+  try {
+    const { rows } = role && service ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2, $3)`,
+      [tenantId, role, service]
+    ) : role ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2)`,
+      [tenantId, role]
+    ) : await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1)`,
+      [tenantId]
+    );
+    const r = rows[0];
+    if (!r?.access) {
+      return {
+        access: "none",
+        opsState: "unknown",
+        billingState: "unknown",
+        reasonBn: "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u099F\u09BF \u0996\u09C1\u0981\u099C\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+        until: null
+      };
+    }
+    return {
+      access: r.access,
+      opsState: r.ops_state ?? "unknown",
+      billingState: r.billing_state ?? "unknown",
+      reasonBn: r.reason_bn ?? null,
+      until: r.until ? String(r.until).slice(0, 10) : null
+    };
+  } catch {
+    return {
+      access: "none",
+      opsState: "unknown",
+      billingState: "unknown",
+      reasonBn: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u098F\u0995\u099F\u09C1 \u09AA\u09B0\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      until: null
+    };
+  }
+}
+async function assertRlsEnforced(db) {
+  const { rows } = await db.pool.query(
+    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
+  );
+  const me = rows[0];
+  if (!me) throw new Error("cannot resolve current_user");
+  if (me.rolbypassrls || me.rolsuper) {
+    throw new Error(
+      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
+    );
+  }
+}
+var _db = null;
+async function sharedDb() {
+  if (_db) return _db;
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL env var is not set");
+  const db = createDb(url, { max: 5 });
+  await assertRlsEnforced(db);
+  _db = db;
+  return db;
+}
 
 // packages/server-core/src/rate-limit.ts
 var perHour = (n) => n / 3600;

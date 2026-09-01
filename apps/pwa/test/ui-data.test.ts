@@ -114,6 +114,20 @@ describe('P2 — one declaration, two renderings', () => {
     assert.equal(t.querySelector('.ui-list-hit')?.tagName, 'BUTTON');
   });
 
+  test('each open button names its own row, not the column', () => {
+    // It used to be labelled from the column HEADER, so a reader tabbing a
+    // class list heard "নাম: খুলুন" forty times and could not tell which
+    // child they were about to open.
+    const t = dataTable(doc(), {
+      columns: COLS, rows: STUDENTS, rowKey: (r) => r.id, caption: 'x',
+      onRowClick: () => {},
+    });
+    const labels = [...t.querySelectorAll('.ui-row-open')]
+      .map((b) => b.getAttribute('aria-label'));
+    assert.deepEqual(labels, ['সাদিয়া ইসলাম: খুলুন', 'আরিফ রহমান: খুলুন']);
+    assert.equal(new Set(labels).size, labels.length, 'no two rows share a label');
+  });
+
   test('a non-activatable list row is not a button', () => {
     // A control that does nothing is worse than no control: it takes a tab
     // stop and promises something.

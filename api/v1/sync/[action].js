@@ -33,9 +33,58 @@ function json(res, code, body, cors3) {
   res.writeHead(code, { ...cors3, "Content-Type": "application/json" });
   res.end(payload);
 }
+var HttpError = class extends Error {
+  // Longhand rather than constructor parameter properties: node --test
+  // strips types instead of compiling them, and parameter properties are the
+  // one TS-only construct it cannot strip. Since every server module reaches
+  // this file, that single construct made all of server-core un-testable
+  // under the project's `node --test file.ts` convention.
+  status;
+  code;
+  /**
+   * Structured context spread into the error body alongside `error` and
+   * `message`. For refusals a screen has to act on rather than merely print —
+   * the routine editor naming the class that already owns an hour, say — a
+   * sentence is what the user reads and this is what the UI renders. Optional
+   * everywhere; an endpoint that has nothing to add omits it.
+   */
+  detail;
+  constructor(status, message2, code, detail) {
+    super(message2);
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+  }
+};
+var TenantBlocked = class extends HttpError {
+  access;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  reasonBn;
+  constructor(access) {
+    super(
+      403,
+      access.reasonBn ?? "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F\u09C7 \u098F\u0996\u09A8 \u098F\u0987 \u0995\u09BE\u099C\u099F\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964",
+      "tenant_blocked",
+      {
+        access: access.access,
+        opsState: access.opsState,
+        billingState: access.billingState,
+        until: access.until
+      }
+    );
+    this.access = access;
+    this.reasonBn = this.message;
+  }
+};
 
 // packages/server-core/src/db.ts
 import pg from "pg";
+pg.types.setTypeParser(1082, (v) => v);
 function createDb(connectionString, opts = {}) {
   const pool = new pg.Pool({
     connectionString,
@@ -46,33 +95,57 @@ function createDb(connectionString, opts = {}) {
   });
   async function inTx(setup, fn) {
     const client = await pool.connect();
+    let readOnlyFor;
+    let released = false;
     try {
       await client.query("BEGIN");
-      await setup(client);
+      readOnlyFor = (await setup(client))?.blocked;
       const out = await fn(client);
       await client.query("COMMIT");
       return out;
     } catch (err) {
+      if (readOnlyFor && err?.code === "25006") {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+        }
+        client.release();
+        released = true;
+        throw new TenantBlocked(readOnlyFor);
+      }
       try {
         await client.query("ROLLBACK");
       } catch {
       }
       throw err;
     } finally {
-      client.release();
+      if (!released) client.release();
     }
   }
   return {
     pool,
-    withTenant(ctx, fn) {
+    async tenantAccess(tenantId) {
+      return readAccess(pool, tenantId);
+    },
+    withTenant(ctx, fn, opts2) {
       if (!ctx.tenantId) throw new Error("tenant context required");
       return inTx(async (c) => {
+        let blocked;
         await c.query(
           `SELECT set_config('app.tenant_id', $1, true),
                   set_config('app.user_id',   $2, true),
                   set_config('app.role',      $3, true)`,
           [ctx.tenantId, ctx.userId, ctx.role]
         );
+        if (opts2?.skipGate) return;
+        const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
+        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "read_only") {
+          await c.query("SET LOCAL transaction_read_only = on");
+          blocked = access;
+          if (opts2?.write) throw new TenantBlocked(access);
+        }
+        return { blocked };
       }, fn);
     },
     withSystemRole(role, fn) {
@@ -82,6 +155,48 @@ function createDb(connectionString, opts = {}) {
     },
     end: () => pool.end()
   };
+}
+async function readAccess(q, tenantId, role, service) {
+  try {
+    const { rows } = role && service ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2, $3)`,
+      [tenantId, role, service]
+    ) : role ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2)`,
+      [tenantId, role]
+    ) : await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1)`,
+      [tenantId]
+    );
+    const r = rows[0];
+    if (!r?.access) {
+      return {
+        access: "none",
+        opsState: "unknown",
+        billingState: "unknown",
+        reasonBn: "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u099F\u09BF \u0996\u09C1\u0981\u099C\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+        until: null
+      };
+    }
+    return {
+      access: r.access,
+      opsState: r.ops_state ?? "unknown",
+      billingState: r.billing_state ?? "unknown",
+      reasonBn: r.reason_bn ?? null,
+      until: r.until ? String(r.until).slice(0, 10) : null
+    };
+  } catch {
+    return {
+      access: "none",
+      opsState: "unknown",
+      billingState: "unknown",
+      reasonBn: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u098F\u0995\u099F\u09C1 \u09AA\u09B0\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      until: null
+    };
+  }
 }
 async function assertRlsEnforced(db) {
   const { rows } = await db.pool.query(
@@ -184,69 +299,6 @@ function sendIfRefused(res, cors3, verdict) {
     { ...cors3, "Retry-After": String(verdict.retryAfterSec) }
   );
   return false;
-}
-
-// services/sync-svc/src/db.ts
-import pg2 from "pg";
-function createDb2(connectionString, opts = {}) {
-  const pool = new pg2.Pool({
-    connectionString,
-    max: 10,
-    idleTimeoutMillis: 3e4,
-    // A 2G client can hang a request; do not let it hold a pooled connection.
-    statement_timeout: 15e3,
-    ...opts
-  });
-  async function inTx(setup, fn) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await setup(client);
-      const out = await fn(client);
-      await client.query("COMMIT");
-      return out;
-    } catch (err) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-      }
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-  return {
-    pool,
-    withTenant(ctx, fn) {
-      if (!ctx.tenantId) throw new Error("tenant context required");
-      return inTx(async (c) => {
-        await c.query(
-          `SELECT set_config('app.tenant_id', $1, true),
-                  set_config('app.user_id',   $2, true),
-                  set_config('app.role',      $3, true)`,
-          [ctx.tenantId, ctx.userId, ctx.role]
-        );
-      }, fn);
-    },
-    withSystemRole(role, fn) {
-      return inTx(async (c) => {
-        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
-      }, fn);
-    },
-    end: () => pool.end()
-  };
-}
-async function assertRlsEnforced2(db) {
-  const { rows } = await db.pool.query(
-    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
-  );
-  const me = rows[0];
-  if (!me) throw new Error("cannot resolve current_user");
-  if (me.rolbypassrls || me.rolsuper) {
-    throw new Error(
-      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
-    );
-  }
 }
 
 // services/sync-svc/src/appliers.ts
@@ -644,6 +696,15 @@ var APPLIERS = {
 };
 
 // services/sync-svc/src/push.ts
+var SERVICE_OF_ENTITY = {
+  attendance_session: "attendance",
+  exam_mark: "results",
+  assignment_submission: "assignments",
+  topic_progress: "learning",
+  lesson_progress: "learning",
+  practice_attempt: "learning",
+  class_delivery_log: "learning"
+};
 var SyncPushHandler = class {
   db;
   maxOps;
@@ -694,7 +755,8 @@ var SyncPushHandler = class {
       };
     }
     try {
-      return await this.db.withTenant(ctx, async (c) => {
+      const opCtx = { ...ctx, service: SERVICE_OF_ENTITY[op.entity] };
+      return await this.db.withTenant(opCtx, async (c) => {
         const claim = await c.query(
           `INSERT INTO sync_operations
              (op_id, tenant_id, device_id, actor_id, device_seq, entity, operation,
@@ -738,6 +800,13 @@ var SyncPushHandler = class {
       });
     } catch (err) {
       const e = err;
+      if (err instanceof TenantBlocked) {
+        return {
+          opId: op.opId,
+          status: "rejected",
+          error: { code: "SERVICE_UNAVAILABLE", retryable: false, message: err.reasonBn }
+        };
+      }
       if (e.code === "23P01" || e.code === "23505") {
         return {
           opId: op.opId,
@@ -1927,8 +1996,8 @@ async function handler() {
   if (_handler) return _handler;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL env var is not set");
-  const db = createDb2(url, { max: 5 });
-  await assertRlsEnforced2(db);
+  const db = createDb(url, { max: 5 });
+  await assertRlsEnforced(db);
   _handler = new SyncPushHandler(db);
   return _handler;
 }
@@ -2087,8 +2156,8 @@ async function handler2() {
   if (_handler2) return _handler2;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL env var is not set");
-  const db = createDb2(url, { max: 5 });
-  await assertRlsEnforced2(db);
+  const db = createDb(url, { max: 5 });
+  await assertRlsEnforced(db);
   _handler2 = new SyncPullHandler(db);
   return _handler2;
 }

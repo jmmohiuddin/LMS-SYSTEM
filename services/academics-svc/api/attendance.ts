@@ -29,6 +29,13 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'attendance';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_MONTHS = 6;
 const MAX_MONTHS = 24;
@@ -67,7 +74,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     const db = await sharedDb();
     const payload = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
       async (client) => {
         // attendance_records is partitioned by month (migration 011), so
         // bounding on taken_on lets the planner prune rather than scan

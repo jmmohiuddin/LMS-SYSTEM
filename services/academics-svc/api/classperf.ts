@@ -71,6 +71,13 @@ import { corsHeaders, json, HttpError } from '../../../packages/server-core/src/
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { dhakaToday } from '../../../packages/server-core/src/time.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'reports';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -110,7 +117,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     const payload = await db.withTenant(ctx, async (client: Client) => {
       const choices = await loadChoices(client);

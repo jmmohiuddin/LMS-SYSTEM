@@ -34,6 +34,13 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'learning';
+
 type Kind = 'assignment' | 'redo_practice' | 'continue_topic' | 'new_chapter';
 
 interface Suggestion {
@@ -57,7 +64,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const db = await sharedDb();
 
     const suggestions = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
       async (client) => {
         const out: Suggestion[] = [];
 

@@ -58,6 +58,13 @@ import {
 } from '../../../packages/ui-core/src/documents.ts';
 
 /**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'documents';
+
+/**
  * Who may print what.
  *
  * Money documents follow finance-svc's BILLING_ROLES. Result documents follow
@@ -115,7 +122,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     const html = await db.withTenant(ctx, async (c) => {
       // The whole reason this is safe: branding is read from the row the

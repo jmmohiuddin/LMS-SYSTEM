@@ -8,7 +8,7 @@ been copy-pasted forward through five phases. Nothing here is new work
 invented for the file; every row cites where it came from.
 
 Created **2026-09-01** at commit `95c34bf`, under D17 §10.
-Last updated **2026-09-01** after **P5-0** — see
+Last updated **2026-09-02** after **P7** — see
 [PHASE_LOG.md](PHASE_LOG.md). Resolved rows keep their ID, their history and
 their reason; nothing is deleted.
 
@@ -60,7 +60,7 @@ by migration 050.
 
 ## 3. NICE TO HAVE
 
-**Still open: `B-11`, `B-12`, `B-13`, `B-14`, `B-16`.** `B-15` is resolved.
+**Still open: `B-11`, `B-12`, `B-13`, `B-14`, `B-16`, `B-36`, `B-37`, `B-39`, `B-40`.** `B-15` is resolved.
 `B-30` and `B-31` (below, opened by the closure pass) are resolved by P5-0.
 
 | ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
@@ -71,6 +71,10 @@ by migration 050.
 | **B-14** | Attendance date-range filter, and search type-ahead | Both are conveniences over working screens. | R-6 / P6 | LOW | No | — | **OPEN** | PHASE_LOG R-6 |
 | **B-15** | A student-facing routine card | §4 lists "today's classes" first and the product could not answer it: `GET /rms/routine` wraps `app.teacher_day(claims.sub)`, so a student got their own empty teaching day. P4 left the card out rather than fabricate a timetable. | Closure pass | MEDIUM | No | — | **RESOLVED** 2026-09-01 · migration 049 `app.student_day` + `GET /academics/myroutine`. Section-scoped, parallel-block filtered through `student_subjects`, substitutions resolved to the covering teacher, gated by `app.can_see_student` so a guardian reads their own child and nobody reads a classmate. 18 DB/API tests + 10 UI tests. | PHASE_LOG P4, closure pass |
 | **B-16** | Money formatting | Carried in the R-5 deferral line since R-5 and never closed. | R-5 | LOW | No | — | **OPEN** | PHASE_LOG R-5 → R-8 |
+| **B-36** | **The fixture advisory lock has no timeout** | B-35's fix turns a fixture race into a wait — correctly. But `pg_advisory_lock` blocks forever, so ONE wedged suite stops every other DB suite in the repository with no diagnosis: the holder sits `idle` on `ClientRead` and the rest report nothing at all. It cost two ~40-minute stalls in P7 before the cause was found by running workspaces one at a time. A bounded wait (`lock_timeout`) that fails with "another suite has held the fixture lock for N seconds" would turn an invisible hang into a named failure. Does not change what the lock protects. | P7 | MEDIUM | No | B-35 | **OPEN** | PHASE_LOG P7 |
+| **B-37** | **The routine/timetable has no entry in `service_catalogue`** | The catalogue (migration 051) has thirteen services and RMS is not one of them, so routine generation cannot be sold as part of a plan, disabled for one school, or put in maintenance — while notices, results and attendance all can. It may well be deliberate (a timetable is arguably core, not an add-on), but nothing records the decision, and P7's service gate silently leaves `rms-svc` ungated as a result. | P7 | LOW | No | — | **OPEN — needs a product decision** | PHASE_LOG P7 |
+| **B-39** | **Platform operators have no directory, so the audit trail cannot name who acted** | `audit.platform_access.admin_id` is a JWT subject, not a `users` row — 843 rows against one id in the development database, and none of the five most active ids resolve to a person. P7's audit tab therefore shows WHAT, WHY and WHEN and deliberately omits WHO, because printing the uuid would break "never expose raw UUIDs" and a truncated one would look like an identity while being a fragment. That is honest but it is not accountability: a console built so that every dangerous act carries a reason cannot currently say whose reason it was. Needs a platform-operator identity — even a small table with a name per issued credential. | P7 | MEDIUM | No | — | **OPEN** | PHASE_LOG P7 §33 |
+| **B-40** | **Bulk operations across institutions** | P7 §35 asked for them and they are **not built** — deliberately, rather than by omission. Every control in the console acts on one school, states its consequence, and is confirmed individually. The bulk version of that is a screen whose most natural use — suspend these eleven — is the most destructive action the product can take, and the phase that built the console is the wrong phase to add an untested many-school mutation to at the end of. Nothing becomes SQL-only as a result: every school can be operated from its own screen, so this is convenience, not capability. If it is built, the shape that survives review is an explicit selection (never "all matching this filter"), a preview naming every affected school, one written reason for the batch, and one audit row **per school** rather than one for the batch. | P7 | LOW | No | — | **OPEN — not built, on purpose** | PHASE_LOG P7 §35 |
 
 ## 4. POST-PILOT
 
@@ -80,6 +84,7 @@ by migration 050.
 | **B-18** | Board-registration index | Confirmed a sequential scan today. At 3–5 schools that is genuinely fine, and every index costs write throughput on the student import — the largest write in the product. The pilot produces the numbers that should decide it. | post-pilot | LOW | No | B-5 (real data volumes) | **DEFERRED** — deliberately, with a stated trigger | PHASE_LOG R-8 |
 | **B-19** | The seven legacy student/guardian views | `my-attendance`, `results`, `assignments`, `fees`, `documents`, `learn`, `subjects` render themselves rather than using the P2 components. All are accessible, responsive and green across 48 browser configurations. Migrating a working screen is risk with no user-visible benefit. | P5/P8 | LOW | No | — | **OPEN** — listed rather than done, on purpose | PHASE_LOG P4 |
 | **B-20** | Section chat | R-9's remaining item. Moderation and child-safety design is not started and is gated on pilot stability (D9). | R-9 | LOW | No | B-5 | **NOT STARTED** | Master Plan D9, R-9 |
+| **B-38** | **Support mode / safe impersonation** | P7 §32 asked for a time-limited, marked, audited, read-only, tenant-scoped support session, and to defer it if the auth architecture could not carry it safely. It cannot, yet, and the reason is specific rather than general: **14 RLS policies key off `app.current_user_id()`** and 4 more off `app.my_section_ids()`. A platform admin has no `users` row inside the school, so those 18 policies would evaluate against an id that does not exist and return nothing — a support session would show a DIFFERENT screen from the one the person is calling about, which is worse than no support mode, because support would then debug a screen nobody is looking at. Making it show the same screen means adopting a real user's identity, which is the silent impersonation P7 forbids. A safe version needs either a marked support principal provisioned into the tenant, or an `app.support_actor()` concept threaded through those 18 policies — plus a decision about whether a support session may read decrypted PII at all. Schema and policy work, not console work. The read-only half is already solved and reusable: `SET LOCAL transaction_read_only = on` in `withTenant` cannot be forgotten by an endpoint. | P7 | MEDIUM | No | Owner decision on PII visibility | **DEFERRED — with the blocker named** | PHASE_LOG P7 §32 |
 
 ## 5. EXTERNAL DEPENDENCY
 

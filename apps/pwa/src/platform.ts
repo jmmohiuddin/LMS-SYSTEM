@@ -37,6 +37,7 @@
  * landed rather than what this page thought it did.
  */
 import { skeleton, errorState, emptyState, bnNum, bnDate } from './view-states.ts';
+import { PlatformOpsView } from './platform-ops.ts';
 import {
   INSTITUTION_TYPE_BN, institutionTypeOf, institutionTypeLabel,
   defaultsForType, LEVELS_FOR_TYPE, STREAMS_FOR_TYPE,
@@ -181,7 +182,10 @@ export class Console_ {
   private token = sessionStorage.getItem('shikhon_platform_token') ?? '';
   private key = sessionStorage.getItem('shikhon_platform_key') ?? '';
 
-  private view: 'list' | 'wizard' | 'detail' | 'readiness' = 'list';
+  // P7. `ops` is the landing view: the R-7 list answers "which schools
+  // exist" and an operator's day starts with "which schools need me".
+  private view: 'ops' | 'list' | 'wizard' | 'detail' | 'readiness' = 'ops';
+  private opsView: PlatformOpsView | null = null;
   private tenants: TenantRow[] = [];
   private loading = false;
   private error = '';
@@ -358,6 +362,22 @@ export class Console_ {
       });
       bar.append(out);
     }
+
+    // §34. The console is a workplace tool used all day; an operator who
+    // cannot pin the theme is stuck with whatever their laptop decided.
+    const theme = d.createElement('button');
+    theme.type = 'button';
+    theme.className = 'ui-btn btn-ghost btn-small';
+    const isDark = d.documentElement.getAttribute('data-theme') === 'dark';
+    theme.textContent = isDark ? 'হালকা' : 'গাঢ়';
+    theme.setAttribute('aria-label', isDark ? 'হালকা রঙে বদলান' : 'গাঢ় রঙে বদলান');
+    theme.addEventListener('click', () => {
+      try { localStorage.setItem('shikhon_theme', isDark ? 'light' : 'dark'); }
+      catch { /* private mode */ }
+      applyTheme();
+      this.render();
+    });
+    bar.append(theme);
     this.root.append(bar);
 
     const main = d.createElement('main');
@@ -365,10 +385,56 @@ export class Console_ {
     this.root.append(main);
 
     if (!this.token || !this.key) { this.renderSignIn(main); return; }
+    if (this.view === 'ops') { this.renderOps(main); return; }
     if (this.view === 'readiness') { this.renderReadiness(main); return; }
     if (this.view === 'wizard') { this.renderWizard(main); return; }
     if (this.view === 'detail') { this.renderDetail(main); return; }
     this.renderList(main);
+  }
+
+  /**
+   * The operations centre. Owns its own rendering — it is a view with its own
+   * loads, drawers and confirmations, not a function that returns markup.
+   */
+  private renderOps(main: HTMLElement): void {
+    const host = this.doc.createElement('div');
+    main.append(host);
+    this.opsView = new PlatformOpsView({
+      root: host,
+      doc: this.doc,
+      call: <T,>(path: string, init?: RequestInit) =>
+        this.call<T>(path.replace(/^\//, ''), init ?? {}),
+      onOpenTenant: (id) => {
+        this.view = 'detail';
+        void this.loadDetail(id);
+      },
+      onNewTenant: () => {
+        this.step = 0; this.tenantId = null; this.activationCode = '';
+        this.draft = {
+          nameBn: '', nameEn: '', stream: 'bangla_medium', level: 'secondary',
+          eiin: '', district: '', addressBn: '',
+          slug: '', weekendDays: [5, 6], shifts: ['single'],
+          planCode: 'pilot', studentCap: 500, trialEndsOn: '',
+        };
+        this.view = 'wizard'; this.error = ''; this.render();
+      },
+    });
+
+    // The two R-7 surfaces stay reachable. Provisioning and go-live posture
+    // are real jobs; they are just not the day's first question.
+    const row = this.doc.createElement('div');
+    row.className = 'ui-button-row plat-secondary';
+    for (const [label, go] of [
+      ['প্রভিশনিং তালিকা', () => { this.view = 'list'; void this.loadList(); }],
+      ['গো-লাইভ অবস্থা', () => { this.view = 'readiness'; void this.loadReadiness(); }],
+    ] as Array<[string, () => void]>) {
+      const b = this.doc.createElement('button');
+      b.type = 'button'; b.className = 'ui-btn btn-ghost btn-small';
+      b.textContent = label;
+      b.addEventListener('click', go);
+      row.append(b);
+    }
+    main.append(row);
   }
 
   private renderSignIn(main: HTMLElement): void {
@@ -437,7 +503,11 @@ export class Console_ {
     posture.addEventListener('click', () => {
       this.view = 'readiness'; this.error = ''; void this.loadReadiness();
     });
-    head.append(h, posture, add);
+    const back = d.createElement('button');
+    back.type = 'button'; back.className = 'btn-ghost btn-inline';
+    back.textContent = '← অপারেশনস';
+    back.addEventListener('click', () => { this.view = 'ops'; this.render(); });
+    head.append(h, back, posture, add);
     main.append(head);
 
     const searchForm = d.createElement('form');
@@ -928,8 +998,12 @@ export class Console_ {
     const plan = this.field('প্ল্যান কোড', 'text', t.planCode ?? '');
     const cap = this.field('শিক্ষার্থীর সীমা *', 'number', String(t.studentCap ?? 0));
     const trial = this.field('ট্রায়াল শেষের তারিখ', 'date', t.trialEndsOn ?? '');
+    // P7. A plan change moves the price, the cap, the services and the grace
+    // window together. Every commercial change in this product records why.
+    const why = this.field('কারণ *', 'text', '',
+      'ছয় মাস পরে এই লাইনটিই বলবে পরিবর্তনটা ইচ্ছাকৃত ছিল কি না।');
     cap.input.dataset.field = 'student-cap';
-    form.append(plan.wrap, cap.wrap, trial.wrap);
+    form.append(plan.wrap, cap.wrap, trial.wrap, why.wrap);
 
     const note = d.createElement('p');
     note.className = 'page-sub';
@@ -945,6 +1019,12 @@ export class Console_ {
     save.textContent = this.busy ? 'অপেক্ষা করুন…' : 'সংরক্ষণ করুন';
     save.disabled = this.busy;
     save.addEventListener('click', async () => {
+      if (why.input.value.trim().length < 3) {
+        this.error = 'কারণ লিখুন — কারণ ছাড়া প্ল্যান বদলানো যায় না।';
+        this.render();
+        why.input.focus();
+        return;
+      }
       this.busy = true; this.error = ''; this.notice = ''; this.render();
       try {
         const r = await this.call<{ studentCap: number; planCode: string }>('plan', {
@@ -954,6 +1034,7 @@ export class Console_ {
             planCode: plan.input.value.trim(),
             studentCap: Number(cap.input.value),
             trialEndsOn: trial.input.value || '',
+            reason: why.input.value.trim(),
           }),
         });
         this.notice = `সংরক্ষিত — ${r.planCode} · সীমা ${bnNum(r.studentCap)}`;
@@ -1007,13 +1088,27 @@ export class Console_ {
       row.append(resume);
     }
 
+    // P7. Suspending here is a REAL suspension now — 052 made the gate honour
+    // `tenants.status`, which nothing read before. A change that locks a whole
+    // school out has to say why, so the field sits with the buttons that do it.
+    const why = this.field('কারণ *', 'text', '',
+      'প্রতিষ্ঠান এই কারণটিই দেখতে পাবে। কোনো তথ্য মুছে যাবে না।');
+    row.append(why.wrap);
+
     const set = (status: string, label: string, enabled: boolean): void => {
       const b = d.createElement('button');
       b.type = 'button';
       b.className = status === 'active' ? 'btn-primary btn-inline' : 'btn-secondary';
       b.textContent = label;
       b.disabled = !enabled || this.busy;
-      b.addEventListener('click', () => void this.setStatus(t.id, status));
+      b.addEventListener('click', () => {
+        if (why.input.value.trim().length < 3) {
+          this.error = 'কারণ লিখুন — কারণ ছাড়া প্রতিষ্ঠানের অবস্থা বদলানো যায় না।';
+          this.render();
+          return;
+        }
+        void this.setStatus(t.id, status, why.input.value.trim());
+      });
       row.append(b);
     };
 
@@ -1023,11 +1118,11 @@ export class Console_ {
     return row;
   }
 
-  private async setStatus(id: string, status: string): Promise<void> {
+  private async setStatus(id: string, status: string, reason: string): Promise<void> {
     this.busy = true; this.error = ''; this.notice = ''; this.render();
     try {
       await this.call('status', {
-        method: 'POST', body: JSON.stringify({ tenantId: id, status }),
+        method: 'POST', body: JSON.stringify({ tenantId: id, status, reason }),
       });
       this.notice = status === 'active' ? 'প্রতিষ্ঠান সক্রিয় হয়েছে।'
         : status === 'suspended' ? 'প্রতিষ্ঠান স্থগিত হয়েছে — তথ্য অক্ষত আছে।'
@@ -1897,7 +1992,15 @@ export class Console_ {
  * machine.
  */
 function applyTheme(): void {
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  // P7. The operator's own CHOICE first, the machine second — the same rule
+  // and the same storage key the tenant app uses, so pinning light in one
+  // place pins it in both. Following the machine unconditionally meant an
+  // operator on a dark laptop could not get the light console §34 calls the
+  // default, and had no control anywhere to ask for it.
+  let pref: string | null = null;
+  try { pref = localStorage.getItem('shikhon_theme'); } catch { /* private mode */ }
+  const dark = pref === 'dark'
+    || (pref !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 }
 
@@ -1912,7 +2015,13 @@ function applyTheme(): void {
  */
 if (typeof document !== 'undefined' && typeof matchMedia !== 'undefined') {
   applyTheme();
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  // Only while the operator is on 'system'; an explicit choice is not
+  // overridden by the machine changing its mind at sunset.
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    let pref: string | null = null;
+    try { pref = localStorage.getItem('shikhon_theme'); } catch { /* private mode */ }
+    if (!pref) applyTheme();
+  });
   const root = document.getElementById('root');
   if (root) new Console_(root);
 }

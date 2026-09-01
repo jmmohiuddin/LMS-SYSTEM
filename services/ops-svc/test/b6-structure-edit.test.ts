@@ -30,7 +30,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -57,7 +57,7 @@ const headB: TenantContext = { tenantId: T_B, userId: HEAD_B, role: 'principal' 
 
 async function drop(): Promise<void> {
   for (const ctx of [headA, headB]) {
-    await db.withTenant(ctx, async (c) => {
+    await asBootstrap(db, ctx, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [ctx.tenantId]);
     });
   }
@@ -71,7 +71,7 @@ async function seedTenant(
   ctx: TenantContext, t: string, slug: string, head: string,
   year: string, klass: string, section: string, extras: Array<[string, string]> = [],
 ): Promise<void> {
-  await db.withTenant(ctx, async (c) => {
+  await asBootstrap(db, ctx, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,$2,'বি৬','B6','bangla_medium','secondary')`, [t, slug]);

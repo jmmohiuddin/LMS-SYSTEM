@@ -14,7 +14,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, assertRlsEnforced, type Db, type TenantContext } from '../src/db.ts';
-import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
+import { lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import { SyncPushHandler } from '../src/push.ts';
 import type { OutboxOp, PushRequest } from '../../../packages/offline/src/types.ts';
 
@@ -70,7 +70,7 @@ before(async () => {
   await cleanup();
 
   // Tenant A: a fully provisioned institution with a section and 3 students.
-  await db.withTenant(ctxA, async (c) => {
+  await asBootstrap(db, ctxA, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, shifts)
        VALUES ($1,'sync-test-a','সিঙ্ক ক','Sync A','bangla_medium','secondary','{day}')`,
@@ -111,7 +111,7 @@ before(async () => {
   });
 
   // Tenant B exists only to prove it stays invisible.
-  await db.withTenant(ctxB, async (c) => {
+  await asBootstrap(db, ctxB, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'sync-test-b','সিঙ্ক খ','Sync B','madrasah','secondary')`,
@@ -129,7 +129,7 @@ after(async () => {
 async function cleanup() {
   for (const [t, ctx] of [[TENANT_A, ctxA], [TENANT_B, ctxB]] as const) {
     try {
-      await db.withTenant(ctx ?? { tenantId: t, userId: TEACHER, role: 'principal' }, async (c) => {
+      await asBootstrap(db, ctx ?? { tenantId: t, userId: TEACHER, role: 'principal' }, async (c) => {
         await c.query(`DELETE FROM sync_operations WHERE tenant_id = $1`, [t]);
         await c.query(`DELETE FROM tenants WHERE id = $1`, [t]);
       });
@@ -183,7 +183,7 @@ describe('idempotency — the 2G resend', { skip }, () => {
     const second = await push([op]);
     assert.equal(second.results[0].status, 'duplicate', 'replay must not re-apply');
 
-    await db.withTenant(ctxA, async (c) => {
+    await asBootstrap(db, ctxA, async (c) => {
       const { rows } = await c.query(
         `SELECT count(*)::int AS n FROM attendance_records WHERE session_id = $1`,
         [(op.payload as { sessionId: string }).sessionId],
@@ -213,7 +213,7 @@ describe('idempotency — the 2G resend', { skip }, () => {
     assert.equal((await push([first])).results[0].status, 'applied');
     assert.equal((await push([second])).results[0].status, 'applied');
 
-    await db.withTenant(ctxA, async (c) => {
+    await asBootstrap(db, ctxA, async (c) => {
       const { rows } = await c.query(
         `SELECT count(*)::int AS n FROM attendance_sessions
           WHERE section_id = $1 AND taken_on = $2`,
@@ -309,7 +309,7 @@ describe('exam marks', { skip }, () => {
 
   before(async () => {
     if (skip) return;
-    await db.withTenant(ctxA, async (c) => {
+    await asBootstrap(db, ctxA, async (c) => {
       const { rows: ex } = await c.query(
         `INSERT INTO exams (tenant_id, academic_year_id, name_bn, name_en, exam_type, status)
          VALUES (app.current_tenant(), $1, 'বার্ষিক', 'Annual', 'annual', 'marking') RETURNING id`,

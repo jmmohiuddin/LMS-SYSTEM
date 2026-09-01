@@ -18,7 +18,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -56,14 +56,14 @@ let generation: typeof import('../api/generation.ts').default;
 const asCoord: TenantContext = { tenantId: T, userId: COORD, role: 'academic_coordinator' };
 
 async function dropFixtures(): Promise<void> {
-  await db.withTenant({ ...asCoord, role: 'principal' }, async (c) => {
+  await asBootstrap(db, { ...asCoord, role: 'principal' }, async (c) => {
     await c.query('DELETE FROM tenants WHERE id = $1', [T]);
   });
 }
 
 async function seed(): Promise<void> {
   await dropFixtures();
-  await db.withTenant({ ...asCoord, role: 'principal' }, async (c) => {
+  await asBootstrap(db, { ...asCoord, role: 'principal' }, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'f505','জেনারেশন','Generation','bangla_medium','secondary')`, [T]);

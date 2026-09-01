@@ -108,6 +108,9 @@ function desktopTable<T>(doc: Document, o: TableOptions<T>): HTMLElement {
   const tbody = el(doc, 'tbody');
   for (const row of o.rows) {
     const tr = el(doc, 'tr', { data: { key: o.rowKey(row) } });
+    // What the first column ended up SAYING for this row — the row's own
+    // name, which is what the open button has to be called.
+    let rowName = '';
     o.columns.forEach((c, i) => {
       // The FIRST column is a row header, not a cell: it is what identifies
       // the record, and `scope="row"` is what lets a reader say "সাদিয়া
@@ -117,13 +120,21 @@ function desktopTable<T>(doc: Document, o: TableOptions<T>): HTMLElement {
         data: { col: c.key, numeric: c.numeric ? 'true' : undefined },
       });
       append(cell, c.cell(row));
+      if (i === 0) rowName = (cell.textContent ?? '').trim();
       append(tr, cell);
     });
     if (o.onRowClick) {
       const td = el(doc, 'td', { className: 'ui-table-action' });
       const btn = el(doc, 'button', {
         className: 'ui-row-open',
-        attrs: { type: 'button', 'aria-label': `${o.columns[0].header}: খুলুন` },
+        attrs: {
+          type: 'button',
+          // "সাদিয়া ইসলাম: খুলুন", not "নাম: খুলুন" — the header is the
+          // same on every row and so told a reader nothing. Falls back to
+          // the header only when the first column renders empty, which is
+          // still better than nothing to click.
+          'aria-label': `${rowName || o.columns[0].header}: খুলুন`,
+        },
       }, icon(doc, 'chevron-right'));
       btn.addEventListener('click', () => o.onRowClick!(row));
       append(td, btn);

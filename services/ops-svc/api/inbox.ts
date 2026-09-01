@@ -26,6 +26,13 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, query, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'notices';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface InboxRow {
@@ -47,7 +54,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     // ── Read the inbox ────────────────────────────────────────────────
     if (req.method === 'GET') {

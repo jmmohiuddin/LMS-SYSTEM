@@ -19,7 +19,11 @@
 .platform-sub   { font-size: var(--text-2xs); color: var(--c-ink-2); }
 .platform-bar .btn-ghost { margin-left: auto; }
 
-.platform-main { flex: 1; padding-bottom: var(--s-6); max-width: 60rem; width: 100%; }
+/* P7. 60rem was right for a provisioning form and is wrong for an operations
+   table: an operator comparing forty schools on six columns needs the width,
+   and the tenant app's own 1200px content column is the precedent. */
+.platform-main { flex: 1; padding-bottom: var(--s-6); max-width: 78rem; width: 100%;
+                 padding-inline: var(--s-4); }
 
 .platform-title { margin: var(--s-5) var(--s-4) var(--s-1); font-size: var(--text-2xl);
                   letter-spacing: -0.01em; }
@@ -82,3 +86,22 @@
 .status-trial     { color: var(--c-warn); }
 .status-active    { color: var(--c-ok, var(--c-ink)); }
 .status-suspended { color: var(--c-danger, var(--c-warn)); }
+
+/* ── P7: the operations centre ──────────────────────────────────────────
+   Almost nothing, on purpose. The dashboard, the master list and the command
+   centre are built from the same `pageHeader`, `card`, `dataTable`,
+   `statCard`, `field` and `openDrawer` every tenant screen uses, so a console
+   that looked like a different product would have had to be made to. */
+
+/* The table repaints on its own so the search box does not lose focus on
+   every keystroke; this is just its seat. */
+.plat-table-host { display: block; }
+
+/* Provisioning and go-live posture stay reachable, and stay quiet: they are
+   real jobs but not the day's first question. */
+.plat-secondary { margin-top: var(--s-5); justify-content: flex-start; }
+
+/* The command centre is a drawer, and a drawer that scrolls its own body is
+   what lets an operator keep the list behind it. */
+.plat-detail { gap: var(--s-4); }
+.plat-detail .ui-facts-val { font-variant-numeric: tabular-nums; }

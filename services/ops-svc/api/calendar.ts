@@ -41,6 +41,13 @@ import { corsHeaders, readJson, json, query, HttpError } from '../../../packages
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { writeAudit } from '../../../packages/server-core/src/audit.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'calendar';
+
 /** Mirrors calendar_{insert,update,delete}_scope in migration 043. */
 const CALENDAR_WRITERS = ['principal', 'school_owner', 'academic_coordinator', 'it_admin'];
 
@@ -84,7 +91,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     // No requireStaff on the read: the calendar is the one management-adjacent
     // screen every role legitimately needs. A guardian planning around ঈদের

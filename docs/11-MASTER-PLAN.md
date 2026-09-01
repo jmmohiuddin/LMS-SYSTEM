@@ -1327,7 +1327,7 @@ DEFERRED · NOT STARTED · SUPERSEDED · PLANNED**. Historical detail for every
 row is in [PHASE_LOG.md](PHASE_LOG.md); the current snapshot of the repository
 is [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md).
 
-Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
+Last reconciled **2026-09-02**, after **P7**.
 
 ### Functional roadmap (R-series)
 
@@ -1340,7 +1340,7 @@ Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
 | R-4 | Calendar & schedule surfacing (+ R-4.1) | **COMPLETE** | — |
 | R-5 | Branded print & document engine | **PARTIAL** | object storage stubbed → no stored PDF, print-first HTML only; CSV export **DEFERRED** |
 | R-6 | Student history & global search | **PARTIAL** | one index, no history table, no search engine — adequate at pilot scale, unproven above it |
-| R-7 | Onboarding & platform console | **COMPLETE** (backend + UI) | its **UI restyle and D16** are P7, not done. "Under one hour" is **UNMEASURED** |
+| R-7 | Onboarding & platform console | **COMPLETE** (backend + UI) | its UI and **D16** were completed in **P7** (2026-09-02). "Under one hour" is still **UNMEASURED** (`B-29`) |
 | R-7.10 | "Billing the schools is out of scope" | **SUPERSEDED** by **D16** from R-7 onward | stands as written for R-7 itself |
 | R-8 | Go-live unlocks & production posture | **IN PROGRESS — external-dependency mode** | real SMS aggregator, real push on a device, alert webhook, cross-tenant probe on production, an actual pilot. See [BACKLOG.md](BACKLOG.md) |
 | R-9 | Post-roadmap add-ons | **PARTIAL** | web push shipped early as an independent capability; **section chat NOT STARTED** and gated on pilot stability |
@@ -1360,7 +1360,7 @@ Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
 | P6 | Missing functional screen design | **COMPLETE** 2026-09-01 | 19 screens across four families on the design system · **14 defects**, two of them security (the teacher's AI generator and the answer-script upload offered to a student) · `emptyState`'s glyph never drew, and five screens had worked around it with a stray U+20DD · `.ui-card`'s `width: 100%` overflowed any card with a horizontal margin · **P5's flake reproduced, diagnosed and fenced** — fixed-uuid fixtures, one advisory lock in 26 suites · 29,942 element checks, 0 failures |
 | P5 | Principal + IT admin final UI **+ B-7** | **COMPLETE** 2026-09-01 | P5-0 · **B-7 RESOLVED** (migration 050) · Principal dashboard · **B-34 RESOLVED**: every IT Admin and Principal screen on the design system, `results` and `inbox` recorded exceptions. Eleven defects fixed, five of them security or privacy — a ledger that fabricated accounts under a 403, three ungated finance endpoints in the public demo, a composer offered to students, `requireRole`'s English role codes reaching a Bangla screen. 19,812 element checks, 0 failures |
 | P6 | Screens that still need designing | **NOT STARTED** | — |
-| P7 | Platform Console restyle **+ D16 commercial controls** | **NOT STARTED** | D16 is recorded and explicitly reserved for P7 |
+| P7 | Platform Operations Center **+ D16 commercial controls** | **COMPLETE** (2026-09-02) | Plans, manual payments, a derived billing lifecycle, per-institution service control, role portals, student caps and the audit trail all have operator screens; **nothing commercial is SQL-only**. The phase's central finding was that suspension, portals and service switches were all **inert** — written, audited, and read by no application code — so most of P7 is enforcement (migrations 051–056), not restyling. §32 support mode is **deferred with its blocker named** (`B-38`) |
 | P8 | Retire the legacy `--c-*` alias layer | **NOT STARTED** | — |
 
 **P5 opened with three items and two of them are now closed.** The Pre-P5

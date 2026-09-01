@@ -28,7 +28,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import { generateVapidKeys } from '../../../packages/server-core/src/web-push.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -67,7 +67,7 @@ describe('ops/settings', { skip }, () => {
     await lockFixtures(DATABASE_URL as string);
 
     db = createDb(DATABASE_URL as string);
-    await db.withTenant(asHead, async (c) => {
+    await asBootstrap(db, asHead, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [T]);
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
@@ -89,7 +89,7 @@ describe('ops/settings', { skip }, () => {
 
   after(async () => {
     if (db) {
-      await db.withTenant(asHead, (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
+      await asBootstrap(db, asHead, (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
       await db.end(); await unlockFixtures();
     }
     delete process.env.VAPID_PUBLIC_KEY;
@@ -98,7 +98,7 @@ describe('ops/settings', { skip }, () => {
 
   beforeEach(async () => {
     // The state the bug needed: nothing in settings at all.
-    await db.withTenant(asHead, (c) =>
+    await asBootstrap(db, asHead, (c) =>
       c.query(`UPDATE tenants SET settings = '{}'::jsonb WHERE id = $1`, [T]));
   });
 
@@ -142,7 +142,7 @@ describe('ops/settings', { skip }, () => {
     // `tenants.settings` is one blob holding R-1's branding as well. A PUT
     // that wrote the whole object would let the SMS screen erase a school's
     // logo, which is the reason this is a merge and not a replace.
-    await db.withTenant(asHead, (c) => c.query(
+    await asBootstrap(db, asHead, (c) => c.query(
       `UPDATE tenants SET settings = '{"branding":{"nameBn":"আসল নাম","logoUrl":"/l.png"},
         "provisioning":{"seeded":true}}'::jsonb WHERE id = $1`, [T]));
 
@@ -157,7 +157,7 @@ describe('ops/settings', { skip }, () => {
   });
 
   test('an unrelated key inside the same sub-object survives', async () => {
-    await db.withTenant(asHead, (c) => c.query(
+    await asBootstrap(db, asHead, (c) => c.query(
       `UPDATE tenants SET settings = '{"sms":{"noticeMaxChars":100,"somethingElse":"keep"}}'::jsonb
         WHERE id = $1`, [T]));
     await put({ sms: { noticeMaxChars: 240 } });
@@ -209,7 +209,7 @@ describe('ops/settings', { skip }, () => {
 
         // Turning it OFF must still work — otherwise a school that enabled it
         // before the keys were removed could never disable it again.
-        await db.withTenant(asHead, (c) => c.query(
+        await asBootstrap(db, asHead, (c) => c.query(
           `UPDATE tenants SET settings = '{"push":{"replacesSms":true}}'::jsonb WHERE id=$1`, [T]));
         const off = await put({ push: { replacesSms: false } });
         assert.equal(off.status, 200);

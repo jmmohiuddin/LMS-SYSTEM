@@ -23,7 +23,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import { generateVapidKeys } from '../../../packages/server-core/src/web-push.ts';
 import { assertSafePushEndpoint } from '../api/push.ts';
 import { HttpError } from '../../../packages/server-core/src/http.ts';
@@ -70,7 +70,7 @@ async function clearSubscriptions(): Promise<void> {
 async function dropFixtures(): Promise<void> {
   await clearSubscriptions().catch(() => undefined);
   for (const tenantId of [A, B]) {
-    await db.withTenant({ tenantId, userId: HEAD, role: 'principal' }, async (c) => {
+    await asBootstrap(db, { tenantId, userId: HEAD, role: 'principal' }, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
     });
   }
@@ -91,7 +91,7 @@ describe('R-9 — the push endpoint', { skip }, () => {
 
     db = createDb(DATABASE_URL as string);
     await dropFixtures();
-    await db.withTenant(asA, async (c) => {
+    await asBootstrap(db, asA, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
          VALUES ($1,'r9-api-a','আলফা','Alpha','bangla_medium','secondary')`, [A]);
@@ -103,7 +103,7 @@ describe('R-9 — the push endpoint', { skip }, () => {
         `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES
            ($1,$2,'principal'), ($1,$3,'guardian')`, [A, HEAD, MUM]);
     });
-    await db.withTenant({ tenantId: B, userId: BMUM, role: 'guardian' }, async (c) => {
+    await asBootstrap(db, { tenantId: B, userId: BMUM, role: 'guardian' }, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
          VALUES ($1,'r9-api-b','বিটা','Beta','bangla_medium','secondary')`, [B]);

@@ -157,6 +157,18 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       case 'POST plan':     return json(res, 200, await setPlan(db, op, req), cors);
       case 'POST status':   return json(res, 200, await setStatus(db, op, req), cors);
       case 'GET audit':     return json(res, 200, await readAudit(db, req), cors);
+
+      // ── P7. Operations ──────────────────────────────────────────────
+      case 'GET overview':  return json(res, 200, await overview(db), cors);
+      case 'GET catalogue': return json(res, 200, await catalogue(db), cors);
+      case 'GET operations':return json(res, 200, await getOperations(db, req), cors);
+      case 'POST opsstate': return json(res, 200, await setOpsState(db, op, req), cors);
+      case 'POST service':  return json(res, 200, await setService(db, op, req), cors);
+      case 'POST portal':   return json(res, 200, await setPortal(db, op, req), cors);
+      case 'POST payment':  return json(res, 200, await recordPayment(db, op, req), cors);
+      case 'POST grace':    return json(res, 200, await extendGrace(db, op, req), cors);
+      case 'POST cap':      return json(res, 200, await setCap(db, op, req), cors);
+      case 'POST plans':    return json(res, 200, await savePlan(db, op, req), cors);
       // R-8. Deliberately does NOT touch the database: it reports what this
       // deployment is configured to do, which is a property of the process,
       // not of any school.
@@ -241,8 +253,13 @@ async function getTenant(db: Db, req: IncomingMessage) {
     (c) => c.query<{ branding: unknown; weekend: number[]; shifts: string[] }>(
       `SELECT COALESCE(settings->'branding','{}'::jsonb) AS branding,
               weekend_days AS weekend, shifts::text[] AS shifts
-         FROM tenants WHERE id = app.current_tenant()`),
-  );
+         FROM tenants WHERE id = app.current_tenant()`), {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
+  });
 
   const r = rows[0] as Record<string, unknown>;
   return {
@@ -423,6 +440,12 @@ async function provision(db: Db, op: Operator, req: IncomingMessage) {
 
     const state = await c.query(`SELECT * FROM app.tenant_onboarding_state($1)`, [tenantId]);
     return { seeded, sectionsMade, state: state.rows[0] };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
   });
 }
 
@@ -465,6 +488,12 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
       `SELECT app.log_platform_action($1, $2, 'R-7 branding', 'set branding')`,
       [op.id, tenantId]);
     return { branding: clean };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
   });
 }
 
@@ -597,6 +626,12 @@ async function createAdmin(db: Db, op: Operator, req: IncomingMessage) {
       [op.id, tenantId, `${reused ? 'granted' : 'created'} ${roleCode}`]);
 
     return { userId, roleCode, reused, activationCode: code };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
   });
 }
 
@@ -683,6 +718,12 @@ async function runImport(db: Db, op: Operator, req: IncomingMessage) {
       }
       throw err;
     }
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
   });
 }
 
@@ -849,15 +890,26 @@ async function tenantHealth(db: Db, req: IncomingMessage) {
         return { ...m, synthetic: looksSynthetic(m) };
       })(),
     };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
   });
 }
 
 async function setPlan(db: Db, op: Operator, req: IncomingMessage) {
   const b = await readJson<{
     tenantId?: string; planCode?: string; studentCap?: number; trialEndsOn?: string;
+    reason?: string;
   }>(req);
   const tenantId = (b.tenantId ?? '').trim();
   if (!UUID_RE.test(tenantId)) throw new HttpError(400, 'tenantId must be a uuid', 'invalid_id');
+  // P7. Every other commercial change in this console states why; a plan
+  // change moves price, cap, services and grace at once and was the one
+  // mutation that did not.
+  const reason = requireReason(b.reason);
 
   const ctx = { tenantId, userId: op.id, role: 'principal' };
   return db.withTenant(ctx, async (c) => {
@@ -882,7 +934,7 @@ async function setPlan(db: Db, op: Operator, req: IncomingMessage) {
     const enrolled = Number(used[0].n);
     if (cap < enrolled) {
       throw new HttpError(409,
-        `সীমা ${cap} করা যাবে না — এই প্রতিষ্ঠানে এখনই ${enrolled} জন শিক্ষার্থী আছে`,
+        `সীমা ${bn(cap)} করা যাবে না — এই প্রতিষ্ঠানে এখনই ${bn(enrolled)} জন শিক্ষার্থী আছে`,
         'cap_below_enrolled', { cap, enrolled });
     }
 
@@ -901,10 +953,13 @@ async function setPlan(db: Db, op: Operator, req: IncomingMessage) {
 
     // The platform audit trail, same as every other cross-tenant act: who
     // raised whose cap, and from what to what.
+    // reason, then statement — the same order every other platform action
+    // uses, so `audit.platform_access.reason` holds a sentence a person wrote
+    // rather than the string 'plan.update'.
     await c.query(
       `SELECT app.log_platform_action($1, $2, $3, $4)`,
-      [op.id, tenantId, 'plan.update',
-       `${before[0].plan_code}/${before[0].student_cap} → ${plan}/${cap}`]);
+      [op.id, tenantId, reason,
+       `plan ${before[0].plan_code}/${before[0].student_cap} → ${plan}/${cap}`]);
 
     return {
       planCode: rows[0].plan_code,
@@ -912,6 +967,12 @@ async function setPlan(db: Db, op: Operator, req: IncomingMessage) {
       trialEndsOn: rows[0].trial_ends_on,
       enrolled,
     };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true,
   });
 }
 
@@ -922,6 +983,11 @@ async function setStatus(db: Db, op: Operator, req: IncomingMessage) {
   if (!STATUSES.includes(b.status ?? '')) {
     throw new HttpError(400, 'অবস্থা সঠিক নয়', 'invalid_status', { field: 'status' });
   }
+  // P7. Suspending through this endpoint is now a REAL suspension — 052 made
+  // the gate honour `tenants.status`, which nothing read before. A change
+  // that locks a whole school out has to say why, the same as every other
+  // one in this console.
+  const reason = requireReason(b.reason);
 
   if (b.status === 'active') {
     const { rows } = await db.pool.query<Record<string, string>>(
@@ -943,7 +1009,7 @@ async function setStatus(db: Db, op: Operator, req: IncomingMessage) {
 
   const { rows } = await db.pool.query<{ set_tenant_status: string }>(
     `SELECT app.set_tenant_status($1, $2, $3::tenant_status, $4)`,
-    [op.id, tenantId, b.status, b.reason ?? null]);
+    [op.id, tenantId, b.status, reason]);
   return { previous: rows[0].set_tenant_status, status: b.status };
 }
 
@@ -958,7 +1024,13 @@ async function readAudit(db: Db, req: IncomingMessage) {
     [UUID_RE.test(tenantId) ? tenantId : null]);
   return {
     entries: rows.map((r: Record<string, unknown>) => ({
-      id: String(r.id), actorId: r.admin_id, tenantId: r.tenant_id,
+      id: String(r.id),
+      // NOT the actor id. It is a JWT subject with no `users` row and no
+      // directory behind it (B-39), so it resolves to nobody, cannot be
+      // displayed under "never expose raw UUIDs", and shipping it to the
+      // client only invites the next person to render it. The column stays
+      // in `audit.platform_access`, where it is evidence.
+      tenantId: r.tenant_id,
       reason: r.reason, statement: r.statement, at: r.created_at,
     })),
   };
@@ -994,5 +1066,570 @@ function readiness() {
     // is one nobody reads.
     ready: blocking.every((c) => c.ready),
     blockingRemaining: blocking.filter((c) => !c.ready).length,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// P7 — operations
+//
+// Everything below changes what a school may DO, so everything below is
+// audited and everything below demands a reason. `app.log_platform_action` is
+// the one door: the platform session has SELECT on `audit.platform_access`
+// and deliberately not INSERT, so an entry cannot be forged or backdated by
+// the subject of the audit. 045 built it that way; P7 uses it unchanged.
+// ═══════════════════════════════════════════════════════════════════════
+
+const OPS_STATES = ['active', 'maintenance', 'limited', 'suspended'];
+const SERVICE_STATES = ['enabled', 'disabled', 'limited', 'maintenance'];
+const PORTALS = ['principal', 'it_admin', 'teacher', 'student', 'guardian'];
+const PAY_METHODS = ['bank', 'bkash', 'nagad', 'rocket', 'cash', 'cheque', 'other'];
+
+/**
+ * A reason, or a refusal.
+ *
+ * Not politeness. The gate suite found that a state change without one leaves
+ * the PREVIOUS reason on screen — so a school in maintenance reads "suspended
+ * for non-payment", which is a sentence we told them that is not true.
+ */
+function requireReason(raw: unknown): string {
+  const reason = typeof raw === 'string' ? raw.trim() : '';
+  if (reason.length < 3) {
+    throw new HttpError(400,
+      'কারণ লিখুন — কারণ ছাড়া পরিবর্তন ছয় মাস পরে বাগ থেকে আলাদা করা যায় না',
+      'reason_required', { field: 'reason' });
+  }
+  if (reason.length > 500) {
+    throw new HttpError(400, 'কারণ ৫০০ অক্ষরের মধ্যে লিখুন', 'reason_too_long',
+      { field: 'reason' });
+  }
+  return reason;
+}
+
+function requireTenantId(raw: unknown): string {
+  const id = typeof raw === 'string' ? raw : '';
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, 'tenantId must be a valid uuid', 'invalid_tenant');
+  }
+  return id;
+}
+
+/**
+ * One row per tenant with everything the console's master list needs.
+ *
+ * Through `app.platform_overview()` — a SECURITY DEFINER function — because
+ * `tenants` carries `tenant_self` and the platform role has no tenant. A
+ * direct SELECT here returned zero rows with a 200, which is the worst shape
+ * a permissions bug can take.
+ */
+async function overview(db: Db) {
+  const { rows } = await db.pool.query(`SELECT * FROM app.platform_overview()`);
+  return { tenants: rows.map(shapeOverview) };
+}
+
+function shapeOverview(r: Record<string, unknown>) {
+  return {
+    id: r.id,
+    slug: String(r.slug),
+    nameBn: r.name_bn,
+    nameEn: r.name_en,
+    stream: r.stream,
+    level: r.level,
+    district: r.district,
+    status: r.status,
+    // What the school may do RIGHT NOW — the two states an operator
+    // actually decides on, kept separate so neither can be mistaken for
+    // the other.
+    access: r.access,
+    opsState: r.ops_state ?? 'active',
+    billingState: r.billing_state,
+    stateReason: r.state_reason,
+    planCode: r.plan_code,
+    planName: r.plan_name,
+    planPrice: r.plan_price === null ? null : String(r.plan_price),
+    billingCycle: r.billing_cycle,
+    studentCap: r.student_cap,
+    studentCount: Number(r.student_count ?? 0),
+    userCount: Number(r.user_count ?? 0),
+    paidTotal: String(r.paid_total ?? '0'),
+    nextDueOn: r.next_due_on,
+    graceUntil: r.grace_until,
+    trialEndsOn: r.trial_ends_on,
+    createdAt: r.created_at,
+    // Measured, never invented: the later of a real sign-in and a real
+    // product event. Null means nobody has ever signed in, which the console
+    // must say in words rather than as a date.
+    lastActiveAt: r.last_active_at ?? null,
+    portals: r.portals ?? {},
+    services: r.services ?? {},
+  };
+}
+
+/** The plans and the service catalogue. Static per deployment; read once. */
+async function catalogue(db: Db) {
+  const [plans, services] = await Promise.all([
+    db.pool.query(`SELECT code, name_bn, price_bdt, billing_cycle, student_cap,
+                          services, trial_days, grace_days, is_active
+                     FROM plans ORDER BY price_bdt, code`),
+    db.pool.query(`SELECT code, name_bn, effect_bn, depends_on, in_limited
+                     FROM service_catalogue ORDER BY sort_order`),
+  ]);
+  return {
+    plans: plans.rows.map((r: Record<string, unknown>) => ({
+      code: r.code, nameBn: r.name_bn, priceBdt: String(r.price_bdt),
+      billingCycle: r.billing_cycle, studentCap: r.student_cap,
+      services: r.services, trialDays: r.trial_days, graceDays: r.grace_days,
+      isActive: r.is_active,
+    })),
+    services: services.rows.map((r: Record<string, unknown>) => ({
+      code: r.code, nameBn: r.name_bn, effectBn: r.effect_bn,
+      dependsOn: r.depends_on, inLimited: r.in_limited,
+    })),
+  };
+}
+
+/** One school's operational state, entitlements, payments and effective services. */
+async function getOperations(db: Db, req: IncomingMessage) {
+  const id = requireTenantId(query(req).get('id'));
+  const [ops, pay, eff] = await Promise.all([
+    // Definer, for the reason in `overview` above.
+    db.pool.query(`SELECT * FROM app.platform_operations($1)`, [id]),
+    db.pool.query(
+      `SELECT amount_bdt, paid_on, method, reference, note, covers_until, recorded_at
+         FROM tenant_payments WHERE tenant_id = $1
+        ORDER BY paid_on DESC, recorded_at DESC LIMIT 50`, [id]),
+    // The EFFECTIVE state of every service, from the function that decides
+    // it — never recomputed here. Two copies of this rule would eventually
+    // disagree, and the console would then be lying about what is on.
+    db.pool.query(
+      `SELECT c.code, app.tenant_service_state($1, c.code) AS state
+         FROM service_catalogue c ORDER BY c.sort_order`, [id]),
+  ]);
+  if (ops.rows.length === 0) throw new HttpError(404, 'no such tenant', 'not_found');
+  const r = ops.rows[0] as Record<string, unknown>;
+  return {
+    operations: {
+      access: r.access,
+      opsState: r.ops_state ?? 'active',
+      billingState: r.billing_state,
+      reasonBn: r.reason_bn,
+      until: r.until,
+      stateReason: r.state_reason,
+      stateChangedAt: r.state_changed_at,
+      stateUntil: r.state_until,
+      portals: r.portals ?? {},
+      serviceOverrides: r.services ?? {},
+      planCode: r.plan_code,
+      planName: r.plan_name,
+      planPrice: r.price_bdt === null || r.price_bdt === undefined
+        ? null : String(r.price_bdt),
+      billingCycle: r.billing_cycle,
+      graceDays: r.grace_days,
+      planCap: r.plan_cap,
+      planServices: r.plan_services ?? {},
+      studentCap: r.student_cap,
+      studentCount: Number(r.student_count ?? 0),
+      nextDueOn: r.next_due_on,
+      graceUntil: r.grace_until,
+      graceReason: r.grace_reason,
+      trialEndsOn: r.trial_ends_on,
+    },
+    services: eff.rows.map((x: Record<string, unknown>) => ({
+      code: x.code, state: x.state,
+    })),
+    payments: pay.rows.map((x: Record<string, unknown>) => ({
+      amountBdt: String(x.amount_bdt), paidOn: x.paid_on, method: x.method,
+      reference: x.reference, note: x.note, coversUntil: x.covers_until,
+      recordedAt: x.recorded_at,
+    })),
+  };
+}
+
+/**
+ * The tenant-wide control: active · maintenance · limited · suspended.
+ *
+ * Never deletes anything. §16: "Suspended institution — data remains
+ * untouched, history preserved." This writes one column and a reason.
+ */
+async function setOpsState(db: Db, op: { id: string }, req: IncomingMessage) {
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const state = String(body.state ?? '');
+  if (!OPS_STATES.includes(state)) {
+    throw new HttpError(400, `state must be one of: ${OPS_STATES.join(', ')}`,
+      'invalid_state', { field: 'state' });
+  }
+  const until = body.until === null || body.until === undefined || body.until === ''
+    ? null : String(body.until);
+
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET ops_state = $2::tenant_ops_state, state_reason = $3,
+            state_changed_at = now(), state_changed_by = $4,
+            state_until = $5, updated_at = now()
+      WHERE tenant_id = $1`,
+    [id, state, reason, op.id, until]);
+  await db.pool.query(`SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `ops_state=${state}${until ? ` until=${until}` : ''}`]);
+
+  return afterChange(db, id);
+}
+
+/** One service, for one school. */
+async function setService(db: Db, op: { id: string }, req: IncomingMessage) {
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const code = String(body.service ?? '');
+  const state = String(body.state ?? '');
+  if (!SERVICE_STATES.includes(state)) {
+    throw new HttpError(400, `state must be one of: ${SERVICE_STATES.join(', ')}`,
+      'invalid_state', { field: 'state' });
+  }
+  const known = await db.pool.query(
+    `SELECT code, name_bn FROM service_catalogue WHERE code = $1`, [code]);
+  if (known.rows.length === 0) {
+    throw new HttpError(400, 'unknown service', 'unknown_service', { field: 'service' });
+  }
+
+  // §10 — no impossible states. Turning a service OFF while something that
+  // needs it is still on would leave the UI claiming a thing happened that
+  // cannot have. The catalogue declares the dependencies; this refuses.
+  if (state === 'disabled') {
+    const dependents = await db.pool.query<{ code: string; name_bn: string }>(
+      `SELECT c.code, c.name_bn FROM service_catalogue c
+        WHERE $2 = ANY(c.depends_on)
+          AND app.tenant_service_state($1, c.code) IN ('enabled','limited')`,
+      [id, code]);
+    if (dependents.rows.length > 0) {
+      const names = dependents.rows.map((d) => d.name_bn).join(', ');
+      throw new HttpError(409,
+        `আগে ${names} বন্ধ করতে হবে — সেগুলো ${known.rows[0].name_bn}-এর উপর নির্ভর করে`,
+        'dependency_active', { dependents: dependents.rows.map((d) => d.code) });
+    }
+  }
+
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET services = CASE WHEN $3 = 'enabled'
+                            -- 'enabled' REMOVES the override rather than
+                            -- storing one, so the plan goes back to being
+                            -- the authority. Storing "enabled" would
+                            -- silently grant a service the plan excludes.
+                            THEN services - $2::text
+                            ELSE jsonb_set(services, ARRAY[$2::text], to_jsonb($3::text), true)
+                       END,
+            updated_at = now()
+      WHERE tenant_id = $1`, [id, code, state]);
+  await db.pool.query(`SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `service ${code}=${state}`]);
+
+  return afterChange(db, id);
+}
+
+/**
+ * One portal, for one school. §8: "Teachers cannot log in for this
+ * institution right now, but Principal and IT Admin can."
+ *
+ * Never by deleting users or roles — this is one key in one jsonb column, and
+ * turning it back on restores exactly what was there.
+ */
+async function setPortal(db: Db, op: { id: string }, req: IncomingMessage) {
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const portal = String(body.portal ?? '');
+  const open = body.open === true;
+  if (!PORTALS.includes(portal)) {
+    throw new HttpError(400, `portal must be one of: ${PORTALS.join(', ')}`,
+      'invalid_portal', { field: 'portal' });
+  }
+  // Closing the principal AND the IT admin portal locks the school's own
+  // administrators out of a building only they can reopen from the inside.
+  // Refused: an operator who genuinely wants that wants `suspended`, which
+  // says so honestly.
+  if (!open && (portal === 'principal' || portal === 'it_admin')) {
+    const other = portal === 'principal' ? 'it_admin' : 'principal';
+    const { rows } = await db.pool.query<{ open: boolean }>(
+      `SELECT COALESCE((portals ->> $2)::boolean, true) AS open
+         FROM tenant_operations WHERE tenant_id = $1`, [id, other]);
+    if (rows[0] && rows[0].open === false) {
+      throw new HttpError(409,
+        'প্রধান শিক্ষক ও আইটি অ্যাডমিন — দুটোই বন্ধ করলে প্রতিষ্ঠানের কেউ আর প্রবেশ করতে পারবে না। '
+        + 'পুরো প্রতিষ্ঠান বন্ধ করতে চাইলে "স্থগিত" ব্যবহার করুন।',
+        'would_lock_out');
+    }
+  }
+
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET portals = CASE WHEN $3
+                           -- Open REMOVES the key: absent means allowed, so
+                           -- the row goes back to its default shape rather
+                           -- than accumulating true-valued keys.
+                           THEN portals - $2::text
+                           ELSE jsonb_set(portals, ARRAY[$2::text], 'false'::jsonb, true)
+                      END,
+            updated_at = now()
+      WHERE tenant_id = $1`, [id, portal, open]);
+  await db.pool.query(`SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `portal ${portal}=${open ? 'open' : 'closed'}`]);
+
+  return afterChange(db, id);
+}
+
+/**
+ * Record a manual payment. §12. There is no gateway and there will not be
+ * one in P7 — shikhonBD invoices a school outside the product.
+ */
+async function recordPayment(db: Db, op: { id: string }, req: IncomingMessage) {
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = requireTenantId(body.tenantId);
+  const amount = Number(body.amountBdt);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new HttpError(400, 'টাকার পরিমাণ শূন্যের বেশি হতে হবে', 'invalid_amount',
+      { field: 'amountBdt' });
+  }
+  const paidOn = String(body.paidOn ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) {
+    throw new HttpError(400, 'পরিশোধের তারিখ দিন', 'invalid_date', { field: 'paidOn' });
+  }
+  const method = String(body.method ?? '');
+  if (!PAY_METHODS.includes(method)) {
+    throw new HttpError(400, `method must be one of: ${PAY_METHODS.join(', ')}`,
+      'invalid_method', { field: 'method' });
+  }
+  const reference = typeof body.reference === 'string' ? body.reference.trim() : '';
+  const note = typeof body.note === 'string' ? body.note.trim() : null;
+  const coversUntil = typeof body.coversUntil === 'string' && body.coversUntil
+    ? body.coversUntil : null;
+
+  try {
+    await db.pool.query(
+      `INSERT INTO tenant_payments
+         (tenant_id, amount_bdt, paid_on, method, reference, note, covers_until, recorded_by)
+       VALUES ($1, $2, $3, $4, NULLIF($5,''), $6, $7, $8)`,
+      [id, amount.toFixed(2), paidOn, method, reference, note, coversUntil, op.id]);
+  } catch (err) {
+    // 23505 — the UNIQUE that 051 put on (tenant, date, amount, method,
+    // reference). A duplicate payment is the commonest operator error with a
+    // real cost, so the DATABASE refuses it rather than the UI warning.
+    if ((err as { code?: string }).code === '23505') {
+      throw new HttpError(409,
+        'একই তারিখে একই পরিমাণের একই পেমেন্ট আগেই রেকর্ড করা আছে। '
+        + 'সত্যিই দুটি আলাদা পেমেন্ট হলে রেফারেন্স নম্বর দিন।',
+        'duplicate_payment');
+    }
+    throw err;
+  }
+
+  // The payment MOVES the due date, which is what re-evaluates the lifecycle.
+  // §13: PAYMENT_RECORDED → RE-EVALUATE → REACTIVATE, and the re-evaluation is
+  // the derived state recomputing itself the moment the date changes.
+  if (coversUntil) {
+    await db.pool.query(
+      `UPDATE tenant_operations
+          SET next_due_on = $2::date, grace_until = NULL, grace_reason = NULL,
+              updated_at = now()
+        WHERE tenant_id = $1`, [id, coversUntil]);
+  }
+  await db.pool.query(`SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, note ?? 'payment recorded',
+     `payment ${amount.toFixed(2)} ${method} on ${paidOn}`
+     + `${coversUntil ? ` covers_until=${coversUntil}` : ''}`]);
+
+  return afterChange(db, id);
+}
+
+/** §14 — extend grace, with a reason, an actor and a history. */
+async function extendGrace(db: Db, op: { id: string }, req: IncomingMessage) {
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const until = String(body.until ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new HttpError(400, 'কত তারিখ পর্যন্ত, সেটি দিন', 'invalid_date',
+      { field: 'until' });
+  }
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET grace_until = $2::date, grace_reason = $3, grace_granted_by = $4,
+            updated_at = now()
+      WHERE tenant_id = $1`, [id, until, reason, op.id]);
+  await db.pool.query(`SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `grace_until=${until}`]);
+  return afterChange(db, id);
+}
+
+/** §19 — the student cap, with who changed it and when. */
+const CYCLES = ['monthly', 'quarterly', 'half_yearly', 'yearly'];
+
+/**
+ * Create a plan, or change one.
+ *
+ * The whole plan is written, not a patch: a partial update of a price list is
+ * how a plan ends up with a new price and last year's services.
+ */
+async function savePlan(db: Db, op: { id: string }, req: IncomingMessage) {
+  const b = await readJson<Record<string, unknown>>(req);
+  const reason = requireReason(b.reason);
+
+  const code = String(b.code ?? '').trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_]{1,30}$/.test(code)) {
+    throw new HttpError(400,
+      'কোড ছোট হাতের ইংরেজি অক্ষর দিয়ে শুরু হবে, ২–৩১ অক্ষর, শুধু অক্ষর সংখ্যা ও আন্ডারস্কোর',
+      'invalid_code', { field: 'code' });
+  }
+  const nameBn = String(b.nameBn ?? '').trim();
+  if (nameBn.length < 2 || nameBn.length > 80) {
+    throw new HttpError(400, 'প্ল্যানের নাম ২–৮০ অক্ষরের মধ্যে লিখুন',
+      'invalid_name', { field: 'nameBn' });
+  }
+  const cycle = String(b.billingCycle ?? 'yearly');
+  if (!CYCLES.includes(cycle)) {
+    throw new HttpError(400, `billing cycle must be one of: ${CYCLES.join(', ')}`,
+      'invalid_cycle', { field: 'billingCycle' });
+  }
+  const price = Number(b.priceBdt);
+  if (!Number.isFinite(price) || price < 0 || price > 99_999_999) {
+    throw new HttpError(400, 'মূল্য শূন্য বা তার বেশি একটি সংখ্যা হতে হবে',
+      'invalid_price', { field: 'priceBdt' });
+  }
+  const cap = Number(b.studentCap);
+  if (!Number.isInteger(cap) || cap < 1) {
+    throw new HttpError(400, 'শিক্ষার্থীর সীমা শূন্যের বেশি একটি পূর্ণ সংখ্যা হতে হবে',
+      'invalid_cap', { field: 'studentCap' });
+  }
+  const trial = Number(b.trialDays ?? 30);
+  const grace = Number(b.graceDays ?? 14);
+  for (const [n, v, field] of [['ট্রায়াল', trial, 'trialDays'], ['ছাড়', grace, 'graceDays']] as const) {
+    if (!Number.isInteger(v) || v < 0 || v > 365) {
+      throw new HttpError(400, `${n} ০ থেকে ৩৬৫ দিনের মধ্যে হতে হবে`,
+        'invalid_days', { field });
+    }
+  }
+
+  // Only codes the catalogue knows. An unknown key here would sit in the
+  // plan for ever meaning nothing, and `tenant_service_state` would read it
+  // as "not in plan" for a service nobody can name.
+  const wanted = b.services && typeof b.services === 'object' && !Array.isArray(b.services)
+    ? Object.entries(b.services as Record<string, unknown>)
+      .filter(([, v]) => v === true).map(([k]) => k)
+    : [];
+  const { rows: known } = await db.pool.query<{ code: string }>(
+    `SELECT code FROM service_catalogue`);
+  const catalogue = new Set(known.map((r) => r.code));
+  const unknown = wanted.filter((c) => !catalogue.has(c));
+  if (unknown.length > 0) {
+    throw new HttpError(400, `অজানা সেবা: ${unknown.join(', ')}`,
+      'unknown_service', { field: 'services', unknown });
+  }
+  const services = Object.fromEntries(wanted.map((c) => [c, true]));
+
+  // How many schools this moves. Read BEFORE the write so the number is the
+  // one the operator was shown, and returned so the screen can say it again.
+  // Through the definer view, NOT `FROM tenants`: the platform role cannot
+  // see that table (`tenant_self`), so a direct count here returned 0 while
+  // the screen correctly showed 2 — and wrote "0 schools affected" into the
+  // audit trail. Fourth time this phase that a silent zero impersonated an
+  // answer; see migration 053.
+  const { rows: usedBy } = await db.pool.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM app.platform_overview() WHERE plan_code = $1`,
+    [code]);
+  const affected = Number(usedBy[0]?.n ?? 0);
+
+  const { rows: before } = await db.pool.query<Record<string, unknown>>(
+    `SELECT price_bdt, student_cap, grace_days FROM plans WHERE code = $1`, [code]);
+
+  const { rows } = await db.pool.query<Record<string, unknown>>(
+    `INSERT INTO plans (code, name_bn, price_bdt, billing_cycle, student_cap,
+                        services, trial_days, grace_days, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
+     ON CONFLICT (code) DO UPDATE SET
+       name_bn = EXCLUDED.name_bn, price_bdt = EXCLUDED.price_bdt,
+       billing_cycle = EXCLUDED.billing_cycle, student_cap = EXCLUDED.student_cap,
+       services = EXCLUDED.services, trial_days = EXCLUDED.trial_days,
+       grace_days = EXCLUDED.grace_days, is_active = EXCLUDED.is_active
+     RETURNING code, name_bn, price_bdt, billing_cycle, student_cap, services,
+               trial_days, grace_days, is_active`,
+    [code, nameBn, price, cycle, cap, JSON.stringify(services), trial, grace,
+     b.isActive === false ? false : true]);
+
+  const was = before[0];
+  await db.pool.query(`SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, null, reason,
+      was
+        ? `plan ${code}: ${was.price_bdt}/${was.student_cap}/${was.grace_days}d → `
+          + `${price}/${cap}/${grace}d, ${wanted.length} services, ${affected} schools affected`
+        : `plan ${code} created: ${price}/${cap}/${grace}d, ${wanted.length} services`]);
+
+  const r = rows[0];
+  return {
+    ok: true,
+    created: !was,
+    affected,
+    plan: {
+      code: r.code, nameBn: r.name_bn, priceBdt: String(r.price_bdt),
+      billingCycle: r.billing_cycle, studentCap: r.student_cap,
+      services: r.services, trialDays: r.trial_days, graceDays: r.grace_days,
+      isActive: r.is_active,
+    },
+  };
+}
+
+async function setCap(db: Db, op: { id: string }, req: IncomingMessage) {
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const cap = Number(body.studentCap);
+  if (!Number.isInteger(cap) || cap < 1) {
+    throw new HttpError(400, 'সীমা একটি ধনাত্মক সংখ্যা হতে হবে', 'invalid_cap',
+      { field: 'studentCap' });
+  }
+  // `tenants` is not writable by the platform role — `tenant_self` denies it,
+  // and a direct UPDATE here reported success while changing nothing. The
+  // definer function does the write, refuses a cap below the roll (§19 — "do
+  // not corrupt existing records"), and writes its own audit row.
+  try {
+    await db.pool.query(`SELECT app.set_student_cap($1, $2, $3, $4)`,
+      [op.id, id, cap, reason]);
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === '23514') {
+      const { rows } = await db.pool.query<{ n: string }>(
+        `SELECT student_count n FROM app.platform_operations($1)`, [id]);
+      const enrolled = Number(rows[0]?.n ?? 0);
+      throw new HttpError(409,
+        `এই প্রতিষ্ঠানে এখন ${bn(enrolled)} জন শিক্ষার্থী আছে — সীমা তার কম করা যাবে না।`,
+        'cap_below_enrolled', { enrolled });
+    }
+    if (code === '02000') throw new HttpError(404, 'no such tenant', 'not_found');
+    throw err;
+  }
+  return afterChange(db, id);
+}
+
+/**
+ * What the school looks like AFTER the change.
+ *
+ * Every operations endpoint returns this rather than `{ ok: true }`: the
+ * console must render the consequence, and a console that re-fetches to find
+ * out what it just did can show a state that is one request out of date.
+ */
+async function afterChange(db: Db, id: string) {
+  const { rows } = await db.pool.query(
+    `SELECT access, ops_state, billing_state, reason_bn, until,
+            portals, services, next_due_on, grace_until, student_cap
+       FROM app.platform_operations($1)`, [id]);
+  const r = (rows[0] ?? {}) as Record<string, unknown>;
+  return {
+    ok: true,
+    state: {
+      access: r.access, opsState: r.ops_state, billingState: r.billing_state,
+      reasonBn: r.reason_bn, until: r.until,
+      portals: r.portals ?? {}, services: r.services ?? {},
+      nextDueOn: r.next_due_on, graceUntil: r.grace_until,
+      studentCap: r.student_cap,
+    },
   };
 }

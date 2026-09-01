@@ -16,6 +16,7 @@ import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { generateKeyPair, exportPKCS8, exportSPKI } from 'jose';
 import pg from 'pg';
+import type { TenantContext } from '../src/db.ts';
 
 /**
  * Install a throwaway signing keypair. Must be called before the first
@@ -67,6 +68,22 @@ export async function lockFixtures(connectionString: string): Promise<void> {
   // Blocks until whoever holds it lets go. A wait, not a race.
   await client.query('SELECT pg_advisory_lock($1)', [FIXTURE_LOCK]);
   lockClient = client;
+
+  // Do not let THIS connection keep the process alive.
+  //
+  // A session lock is released when the connection closes, which is why it
+  // beats a lock table: a killed test process cannot strand the next one. But
+  // that only holds if the process can actually exit. A suite whose `before`
+  // throws leaves `after` to clean up, `after` throws on the same broken
+  // state, `unlockFixtures` never runs — and this socket then keeps Node
+  // alive indefinitely, holding the lock, with no failing test named. Every
+  // other DB suite in the repo waits on it.
+  //
+  // P7 hit that twice. Unref'ing costs nothing while a suite is running and
+  // means a suite that dies badly still lets go.
+  const stream = (client as unknown as { connection?: { stream?: { unref?: () => void } } })
+    .connection?.stream;
+  stream?.unref?.();
 }
 
 export async function unlockFixtures(): Promise<void> {
@@ -159,4 +176,34 @@ export async function call(handler: Handler, opts: CallOptions = {}): Promise<Ca
 function randomTestIp(): string {
   const n = Math.floor(Math.random() * 65536);
   return `198.18.${(n >> 8) & 0xff}.${n & 0xff}`;
+}
+
+/**
+ * Run a fixture block with P7's tenant gate stood down.
+ *
+ * `withTenant` reads the school's operational state before it hands over a
+ * connection, and fails CLOSED on a school it cannot find (migration 052,
+ * `packages/server-core/test/tenant-gate.test.ts`). That is exactly right for
+ * a request — a ghost tenant id must never be served — and exactly wrong for
+ * the INSERT that brings the school into being, which cannot pass a check on
+ * a row it is about to create.
+ *
+ * Production has the same shape and answers it the same way: schools are
+ * created by `app.create_tenant` through platform-svc, and every one of that
+ * service's `withTenant` calls declares `skipGate` for this reason.
+ *
+ * Use it ONLY for fixture setup and teardown. A test that exercises a real
+ * endpoint must go through the gate like a real request does, or it is
+ * testing something the product does not do.
+ */
+export function asBootstrap<T>(
+  db: { withTenant<R>(
+    ctx: TenantContext,
+    fn: (c: pg.PoolClient) => Promise<R>,
+    opts?: { write?: boolean; skipGate?: boolean },
+  ): Promise<R> },
+  ctx: TenantContext,
+  fn: (c: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  return db.withTenant(ctx, fn, { skipGate: true });
 }

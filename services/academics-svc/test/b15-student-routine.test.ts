@@ -31,7 +31,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import type { StudentSlot } from '../api/myroutine.ts';
 
 /** `call` reports the body as Record<string, unknown>; this names the shape. */
@@ -99,7 +99,7 @@ const headB: TenantContext = { tenantId: T_B, userId: HEAD_B, role: 'principal' 
 /** Each tenant dropped in its own context — RLS scopes DELETE too. */
 async function drop(): Promise<void> {
   for (const ctx of [headA, headB]) {
-    await db.withTenant(ctx, async (c) => {
+    await asBootstrap(db, ctx, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [ctx.tenantId]);
     });
   }
@@ -121,7 +121,7 @@ async function user(c: any, id: string, t: string, name: string, role: string): 
 async function seed(): Promise<void> {
   await drop();
 
-  await db.withTenant(headA, async (c) => {
+  await asBootstrap(db, headA, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'b15-a','বি১৫ক','B15A','bangla_medium','secondary')`, [T_A]);
@@ -240,7 +240,7 @@ async function seed(): Promise<void> {
       [T_A, SLOT_P1, DAY, TEACHER, SUB_TEACH]);
   });
 
-  await db.withTenant(headB, async (c) => {
+  await asBootstrap(db, headB, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'b15-b','বি১৫খ','B15B','bangla_medium','secondary')`, [T_B]);

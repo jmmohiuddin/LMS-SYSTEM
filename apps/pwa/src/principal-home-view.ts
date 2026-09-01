@@ -47,8 +47,7 @@ import type { Auth } from './auth.ts';
 import {
   el, append, card, statCard, statRow, button, pageHeader, sectionHeading,
   statusBadge, list, listItem, listSkeleton, emptyState, errorState,
-  permissionState, permissionMessage, humanError,
-} from './ui/index.ts';
+  permissionState, permissionMessage, humanError, dataTable,} from './ui/index.ts';
 import { refuseUnlessOk, isDenied, statusOf } from './http-status.ts';
 import { formatCount, formatBdt, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 
@@ -258,19 +257,41 @@ export class PrincipalHomeView {
         note: absent && absent.total > absent.shown.length
           ? `প্রথম ${bn(absent.shown.length)} জন নিচে`
           : undefined,
-        glyph: 'user-x',
+        glyph: 'users',
         tone: (absent?.total ?? 0) === 0 ? 'success' : 'warn',
       })));
 
+    // P7-0. A TABLE, carried over from `institution` when the two dashboards
+    // were merged. It is the one thing that screen did better: an office
+    // reading down a column of roll numbers to phone six families is
+    // comparing, and a stack of list items makes them read one name per line
+    // across the whole width.
     if (absent && absent.shown.length > 0) {
-      append(wrap, list(d, 'আজ অনুপস্থিত', ...absent.shown.map((s) => listItem(d, {
-        title: s.nameBn,
-        // Roll stays Latin — it is an identifier, read down a phone to the
-        // class teacher, not a count.
-        subtitle: [s.classBn, s.section].filter(Boolean).join(' — ')
-          + ` · রোল ${formatIdentifier(s.rollNo)}`,
-        glyph: 'user',
-      }))));
+      append(wrap, dataTable(d, {
+        caption: 'আজ অনুপস্থিত শিক্ষার্থী',
+        rows: absent.shown,
+        rowKey: (st) => st.studentId,
+        columns: [
+          // Roll stays Latin — it is an identifier, read down a phone to the
+          // class teacher, not a count.
+          { key: 'roll', header: 'রোল', mobile: 'meta', numeric: true,
+            cell: (st) => formatIdentifier(st.rollNo), width: '90px' },
+          { key: 'name', header: 'নাম', mobile: 'title', cell: (st) => st.nameBn,
+            width: 'minmax(0, 2fr)' },
+          { key: 'class', header: 'শ্রেণি', mobile: 'subtitle',
+            cell: (st) => st.classBn, width: 'minmax(0, 1.2fr)' },
+          { key: 'section', header: 'সেকশন', mobile: 'meta',
+            cell: (st) => st.section, width: '110px' },
+        ],
+      }));
+      if (absent.total > absent.shown.length) {
+        // Never imply the list is the whole list.
+        append(wrap, el(d, 'p', {
+          className: 'ui-card-note',
+          text: `আরও ${bn(absent.total - absent.shown.length)} জন অনুপস্থিত — `
+            + 'সম্পূর্ণ তালিকা শ্রেণিভিত্তিক হাজিরায়।',
+        }));
+      }
     }
     return wrap;
   }
@@ -361,7 +382,7 @@ export class PrincipalHomeView {
       statCard(d, { label: 'শ্রেণি', value: bn(c?.classes ?? 0),
         glyph: 'layers', tone: 'accent2', onClick: () => this.o.go('academic') }),
       statCard(d, { label: 'সেকশন', value: bn(c?.sections ?? 0),
-        glyph: 'grid', tone: 'primary', onClick: () => this.o.go('academic') })));
+        glyph: 'panel-left', tone: 'primary', onClick: () => this.o.go('academic') })));
     return wrap;
   }
 }

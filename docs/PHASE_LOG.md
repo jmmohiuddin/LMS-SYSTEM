@@ -9090,3 +9090,617 @@ still not want two. That is a product decision for the owner, not a design one,
 and it is written here rather than taken.
 
 **Commit:** `5b8540d`.
+
+---
+
+# P7 — the Platform Operations Center   (2026-09-02) · **COMPLETE**
+
+The phase brief asked for a console "from which our team can safely operate
+many schools without losing control". The inventory found the opposite of a
+control problem: a console full of controls, **three of which did nothing at
+all**. Everything else in P7 follows from fixing that.
+
+---
+
+## P7-0 — the owner decision, taken
+
+P6 left `home` and `institution` as two dashboards over one endpoint and
+recorded, correctly, that choosing between them was the owner's call. P7 was
+told to resolve it and to recommend rather than pick silently.
+
+**Recommendation, and what was done: `home` is the Principal's one daily
+surface.** `institution` is now a redirect to it, its sidebar entry is gone,
+and the bottom tab it occupied went to `attendance` — after the day's
+dashboard, the roll is what a principal opens every morning. `principal-view.ts`
+was deleted rather than left unreachable.
+
+The reasoning is not aesthetic. Two screens over one endpoint means two places
+to change when the endpoint changes, and P5 had already rebuilt `home` on the
+design system while `institution` stayed in R-3 markup. Keeping both meant
+carrying a second, older answer to the same question.
+
+The deletion was caught by `nav.test.ts` a day later: the tab bar still listed
+`institution` after the sidebar stopped doing so. That test exists precisely to
+catch a half-done removal, and it did.
+
+---
+
+## P7-1 — the inventory, and the finding the phase turned on
+
+The brief said to build a capability matrix before adding anything. The matrix
+is what found this:
+
+> **`app.set_tenant_status` wrote `tenants.status`. The console had a button
+> for it. The audit log recorded it. And not one line of application code read
+> that column.**
+
+An operator could suspend a school, be told it worked, and the school kept
+working. Every screen, every login, every write.
+
+The same shape then turned up twice more in the machinery built to replace it:
+
+| Control | Built in | Read by | Effect on the product |
+|---|---|---|---|
+| `tenants.status` suspension | R-7 | nothing | **none** |
+| `tenant_operations.portals` | 052 | nothing | **none** |
+| `tenant_operations.services` | 052 | the console itself, twice | **none** |
+
+Three controls, three audit trails, three success messages, zero enforcement.
+A control whose only effect is on the screen that operates it is worse than no
+control: it is a sentence an operator repeats to a headmaster.
+
+---
+
+## Where the gate went, and why there
+
+`withTenant` is the one function every tenant request already passes through,
+and it already spends a round trip setting three GUCs. The gate rides on that
+round trip.
+
+Not `authenticate`: it verifies a JWT and touches no database, which is why it
+is fast and why the platform service can share it. A tenant lookup there would
+give every request — including the ones that fail auth — a round trip it does
+not need.
+
+Not the 109 endpoint call sites: an enforcement anybody can forget is an
+enforcement that will be forgotten, and the endpoint written six months from
+now is the one that forgets.
+
+**Zero of 109 call sites were edited to make reads and writes obey.**
+
+Three properties fell out of that placement:
+
+- **Read-only is enforced by the database, not by discipline.** A limited or
+  in-maintenance school gets `SET LOCAL transaction_read_only = on`, so an
+  endpoint cannot write by forgetting to check. SQLSTATE 25006 is translated
+  back into a sentence about the school's account.
+- **`TenantBlocked extends HttpError`**, so all 54 existing `instanceof
+  HttpError` catch sites already refuse it correctly, with a Bangla message.
+- **It fails closed.** No row, a missing function, a dead connection: the
+  answer is `none`. A gate that opens when it is confused is not a gate, and
+  the failure it would create is exactly the one this phase exists to fix.
+
+---
+
+## Migrations
+
+| # | What |
+|---|---|
+| **051** | The commercial model: `plans`, `tenant_operations`, `tenant_payments`, `service_catalogue` (13 services with their Bangla consequences and dependencies), 4 seed plans |
+| **052** | The gate: `tenant_billing_state`, `tenant_access`, `tenant_service_state`, `portal_of`, `tenant_portal_open`, `ensure_tenant_operations` |
+| **053** | The console's own read path — and the write to `tenants` it could not make |
+| **054** | The portal switch, made real |
+| **055** | The service switches, made real |
+| **056** | `portal_of` must not sweep the machinery in with the teachers |
+| **057** | When did anybody last actually USE this school |
+| **058** | A catalogue cannot name a service that does not exist |
+
+### The billing lifecycle is derived, never stored
+
+`ACTIVE → PAYMENT_DUE → GRACE_PERIOD → LIMITED → SUSPENDED` is computed by
+`app.tenant_billing_state` from the due date, the plan's grace days, any
+explicit grace, and the trial. There is no status field for an operator to set
+and therefore no status field to drift. The console says so on the screen, so
+nobody hunts for the field.
+
+---
+
+## Nine defects, and what each one was
+
+**1. A GRANT is not a POLICY.** `shikhon_platform` had `GRANT ALL` on
+`tenant_operations` and no RLS policy. With RLS on, that is zero rows and
+`UPDATE … rowCount: 0` — no error. Every toggle in the console would have
+reported success and changed nothing. *This is the third time in one phase that
+a silent zero-row result impersonated success.*
+
+**2. A POLICY is not a BYPASS.** `/overview` selected `FROM tenants` as the
+platform role and returned **0 of 37 schools with a 200**. `tenant_self` was
+doing its job; the console needed a SECURITY DEFINER door, which is exactly why
+R-7 built `app.platform_tenants()`. Migration 053.
+
+**3. Every school created after 051 would have been born suspended.**
+`app.create_tenant` did not write `tenant_operations` and `tenant_access`
+INNER JOINed it. Fixed twice over: an AFTER INSERT trigger, and a LEFT JOIN
+with `COALESCE(o.ops_state, 'active')`.
+
+**4. `UPDATE tenants SET student_cap` was another silent no-op** for the same
+reason as (2). Now `app.set_student_cap`, which also refuses a cap below the
+roll — a cap under the enrolment makes `enforce_student_cap` reject every
+future admission with nothing on screen to explain why.
+
+**5. Closing the teacher portal would have stopped every login in the
+school.** `portal_of` named five roles and folded everything else into
+`teacher`. `system_ingest` is not a teacher: it is what `otp-request`,
+`otp-verify`, `refresh`, `activate`, `logout` and the SMS run execute as. The
+moment 054 made portals real, the teacher switch would have locked out
+students, guardians and the principal who had to undo it, and killed the SMS
+pipeline on the way past — and the console would have called it "teachers
+cannot sign in". Migration 056.
+
+**6. `sync-svc` kept its own copy of `db.ts` and enforced none of the gate.**
+Its header claimed an "identical contract" to server-core's, and it was
+identical right up until it wasn't. This was the widest hole in the scheme:
+sync is how attendance, exam marks, submissions and lesson progress are
+actually written — from phones, in bulk, hours late. A suspended school would
+have gone on filing a week of rolls through it. The file is now a re-export;
+there is one implementation.
+
+**7. A calendar date is not an instant.** `pg` parses DATE into a `Date` at the
+host's local midnight, so `2025-07-28` became `2025-07-27T18:00Z` and the
+console showed a billing due date **one day early**. `TenantBlocked.until` was
+worse: `String(Date).slice(0, 10)` yields `"Mon Jul 28"`. Fixed at the source —
+OID 1082 hands back the string the wire already carries. Timestamps are
+untouched; those really are instants.
+
+**8. Every dangerous action showed a confirmation nobody could answer.** The
+confirm dialogue was appended to the page; every one of them is raised from
+inside the command-centre drawer, which is a real modal — scrim at z-index 50,
+everything outside marked `aria-hidden`. `elementFromPoint` over the confirm
+button returned drawer content. Suspend, limit, maintenance, close a portal,
+disable a service, change a plan: **all six unanswerable**, and invisible to a
+screen reader. A confirmation now belongs to the thing that raised it.
+
+**9. Twenty row buttons, one name.** The desktop table labelled its open button
+from the COLUMN HEADER, so a reader tabbing a class list heard "নাম: খুলুন"
+forty times with nothing to tell the children apart. Fixed in the P2 primitive,
+so every table in the product gained it at once.
+
+---
+
+## Two defects the new tests found on their own
+
+**`user-x` and `grid` never existed.** The Principal's absentee card and
+section count have been drawing a fallback dot since P5. `ui/dom.ts` already
+carried a comment recording that this exact class of bug shipped once before —
+a `search` glyph missing from R-6 until P1 — and there was still nothing
+stopping it. P7 reproduced it immediately with `plus-circle` and
+`alert-circle`, which is enough evidence that "remember to check the list" is
+not a working control. `icon-names.test.ts` reads the names out of the source
+and found both P5 survivors on its first run.
+
+**A count in Latin digits inside a Bangla sentence.** "এই প্রতিষ্ঠানে এখন 10
+জন" — two of them, in the cap refusals. `capMessageBn` directly above them had
+been doing it correctly all along.
+
+---
+
+## The test hang that was not a flaky test
+
+Two DB runs in this phase stalled for about forty minutes each, reporting
+nothing: no failing test, no output, just suites that never finished. B-35's
+advisory lock was blamed. B-35 was not the problem.
+
+The mechanism, once run one workspace at a time:
+
+1. A suite's `before` hook creates its tenant **inside `withTenant`** — and
+   the gate refuses a school that does not exist yet. That refusal is correct;
+   `tenant-gate.test.ts` asserts it as a security property, and production does
+   the same thing through `app.create_tenant` with `skipGate`.
+2. `before` throws, so `after` runs — and throws on the same broken state,
+   before reaching `unlockFixtures`.
+3. The lock is session-scoped, so it *would* be released when the process
+   exited. But the pg Client's socket keeps the event loop alive, so the
+   process never exits. It sits there holding the lock while every other DB
+   suite in the repository waits on it.
+
+Three fixes, in order of how much they buy:
+
+- **`unref()` on the lock connection.** A suite that dies badly now lets go.
+  This turns "the tests hang" into a named failure in 200 ms. The one change
+  that matters.
+- **`asBootstrap`** in the harness, and 67 fixture call sites moved onto it.
+  Creating the school a suite is made of is the one act that cannot pass a
+  check on the school. Tests still go through the gate, because a test that
+  skips it is testing something the product does not do.
+- **Two suites had the bug in a subtler form** — `allowlist` and `push-send`
+  cleaned child tables for a tenant they had not created yet.
+
+`sms-svc` went from a forty-minute hang to **67 passing in 0.8 seconds**.
+
+B-36 records the remaining harness weakness: the lock still has no timeout, so
+a *live* wedge would still queue behind it silently.
+
+---
+
+## What the console can now do that only SQL could before
+
+Every one of these has a screen, a stated consequence, a confirmation and an
+audit row carrying the operator's own sentence:
+
+institution state (active · maintenance · limited · suspended) · per-service
+enable/disable/maintenance with dependency refusal · portal open/close per role
+with lock-out refusal · plan change · student cap · manual payment with
+duplicate refusal · grace period.
+
+**Nothing in the commercial or service model is SQL-only.**
+
+The plan change was the last hold-out: it existed only on R-7's provisioning
+screen, and recorded *what* changed with no *why*. It is now in the billing tab
+where an operator looks at money, it states all four consequences (price, cap,
+services, grace) before it happens, and `/plan` demands a reason like every
+other mutation.
+
+---
+
+## Proven end to end, not asserted
+
+Driven through the real API against a real database, on a real school:
+
+| Act | Result |
+|---|---|
+| operator disables `notices` | `ops/notices` and `ops/inbox` → 403 with "নোটিশ এই প্রতিষ্ঠানের জন্য আপাতত বন্ধ রাখা হয়েছে।" |
+| …and `ops/calendar`, `ops/settings` | still 200 — no collateral damage, and no school locked out of itself |
+| school in maintenance | GET 200, POST 403 saying **"ডাটাবেস আপগ্রেড চলছে"** — the operator's own words, not a service-shaped guess |
+| school suspended | every endpoint 403 |
+| teacher portal closed | teachers `none`, principal `full`, **login unaffected** |
+| five changes on A | B byte-identical before and after |
+| cap below the roll | refused, naming both numbers in Bangla digits |
+| cap on a *suspended* school | allowed — otherwise a suspended school could never be fixed |
+
+### The security matrix
+
+| Credential | `/platform/overview` | `/platform/opsstate` |
+|---|---|---|
+| principal · it_admin · class_teacher · accountant · student · guardian | **403** | **403** |
+| super_admin, no platform key | **403** | — |
+| super_admin, wrong platform key | **403** | — |
+| platform key, no token | **401** | — |
+
+Both credentials are required, independently.
+
+---
+
+## §32 support mode — deferred, with the blocker named
+
+The brief permitted deferral if the auth architecture could not carry it
+safely. It cannot, and the reason is specific: **14 RLS policies key off
+`app.current_user_id()` and 4 more off `app.my_section_ids()`**. A platform
+admin has no `users` row inside the school, so those 18 policies evaluate
+against an id that does not exist and return nothing — a support session would
+show a *different screen* from the one the person is calling about. That is
+worse than no support mode, because support would then debug a screen nobody is
+looking at. Making it show the same screen means adopting a real user's
+identity, which is the silent impersonation the brief forbids.
+
+Recorded as **B-38** with what a safe version needs. The read-only half is
+already built and reusable.
+
+---
+
+## Frozen, as required
+
+`apps/pwa/public/index.html` — git hash `496199bd`, unmodified. The marketing
+site is untouched; the console is a separate bundle on a separate page and a
+school's device never downloads it.
+
+**And it is no longer cached.** The tenant app's service worker controls the
+whole origin, and `/platform.js` matched IMMUTABLE on its `.js` extension —
+cache-first, pinning an operator to the first console build their browser ever
+downloaded. That is the trap `/app.js` was pulled out of once already. A
+console that suspends schools and records payments must not be one deploy
+behind, and it has no offline story worth protecting, so it is network-only.
+
+---
+
+## §16 — the plan catalogue was the last SQL-only control
+
+A school's plan could be changed from a screen. The plans it could be changed
+*to* were seed rows editable only in `psql` — and a plan's price, student cap,
+services and grace window are commercial state by any reading. Under this
+phase's own gate that is disqualifying, so it is built: a third top-level tab,
+create and edit, thirteen services each shown with what their absence does.
+
+Three decisions worth recording:
+
+- **The whole plan is submitted, never a patch.** A partial update of a price
+  list is how a plan ends up carrying a new price and last year's services.
+- **No DELETE, deliberately.** A plan with schools on it cannot be removed
+  without orphaning them or cascading, and D17 says history is not destroyed.
+  `is_active` takes a plan out of the picker and changes nothing for the
+  schools already on it — the screen says so.
+- **The blast radius is on the button.** Editing a plan moves every school on
+  it at once, so the count is read before the change, and the confirmation
+  repeats it.
+
+And it found the **fourth** silent-zero-rows bug of the phase: the count of
+affected schools read `FROM tenants` as the platform role, so it returned 0
+while the screen correctly showed 2 — and wrote *"0 schools affected"* into
+the audit trail. Through `app.platform_overview()` it is 2.
+
+That is four occurrences of one root cause in one phase: **RLS returns an
+empty result, not an error, and every layer above treats empty as an answer.**
+`tenant_operations` (no policy), `tenants` in `/overview` (no bypass),
+`UPDATE tenants SET student_cap` (no bypass), and this count. Worth stating as
+a rule rather than four anecdotes: *any query the platform role runs outside a
+tenant context must go through a SECURITY DEFINER function, and a zero it
+returns must be assumed to be a lie until proven otherwise.*
+
+---
+
+## Two more defects the screens gave up under acceptance
+
+**The institution headline said "সক্রিয়" over "কেউ প্রবেশ করতে পারছেন না".**
+It was rendering `ops_state`, which is one of four inputs to the answer rather
+than the answer. A school can be blocked by the legacy `tenants.status`, by
+its bill, or by a closed portal while `ops_state` is still `active`. The card
+now leads with what the school can actually do, and when the two disagree it
+says so — because that is the fact that decides which control to reach for.
+
+**The platform audit trail had an endpoint and no reader.** `GET
+platform/audit` has served `audit.platform_access` since R-7 and nothing
+opened it. An audit trail nobody can read is a record kept for a court case,
+not a control. It is now a tab on every institution: what, why, when.
+
+It does **not** say who, and that is not an oversight — see `B-39`. Platform
+operator ids are JWT subjects with no `users` row behind them (843 audit rows
+against one id here, and none of the five most active ids resolve to a
+person). Printing the uuid would break "never expose raw UUIDs"; a truncated
+one would look like an identity while being a fragment. So the column is
+absent and the gap is written down.
+
+---
+
+## What P7 did NOT do, on purpose
+
+- **No online payment gateway.** D16 says manual recording is the whole
+  requirement at this business stage, and a gateway is separately approved.
+- **No arbitrary execution surface.** No SQL editor, no HTML injection, no
+  free-text anything that reaches a database or a page.
+- **No deletion, anywhere in the console.** Suspension blocks access and
+  preserves every row; `payment_receipts`, `ledger_entries` and
+  `mfs_transactions` remain `ON DELETE RESTRICT`, so a school's financial
+  history cannot be erased by erasing the school.
+- **No commercial controls in `/demo`.** The demo is a separate surface and
+  gained nothing from this phase.
+- **No landing-page change.** `index.html` is byte-identical.
+
+---
+
+## §25/§26 — usage that is measured, not invented
+
+The brief forbids faked telemetry, so the console counts only what the product
+already records for its own reasons. Migration 057 adds one column to the
+overview: **the later of a real sign-in (`user_sessions.issued_at`) and a real
+product event (`product_events.occurred_at`)**. Sessions are revoked rather
+than deleted on logout, so the maximum is a genuine last-sign-in and not a
+last-still-logged-in.
+
+That separates two failures the dashboard had been conflating:
+
+| | What it means | Why it matters |
+|---|---|---|
+| **অসম্পূর্ণ সেটআপ** | created, and never filled in | somebody stopped halfway through onboarding |
+| **অনেকদিন কেউ ঢোকেনি** | set up properly, and not opened for 30 days | onboarded, invoiced, and not being used |
+
+The second is the quieter and more expensive one, because nobody complains
+about it. `NULL` is shown as **"কখনো নয়"** and never as a date.
+
+The same pass fixed the master list's status column, which had the identity
+card's bug: it rendered `ops_state`, so a school blocked by its legacy status,
+its bill or a closed portal appeared as **সক্রিয়** in a list an operator scans
+precisely to find trouble. It now shows the effective answer.
+
+---
+
+## What the attention queue learned
+
+It was 45 rows over 37 schools on first run, and thirty of them said the same
+thing. Three changes:
+
+- **Ranked by how many people are stopped**, not by how alarming it sounds: a
+  suspension is a total outage, an overdue bill still reads, a full roll stops
+  only the next admission.
+- **"Incomplete setup" expires.** After 30 days an empty school is not being
+  onboarded; it is dormant, which is a dashboard COUNT and not a task for
+  today. Unbounded, it buried the outages above it.
+- **Bounded at 20 rows**, with the remainder stated rather than dropped —
+  past that an operator is scrolling, not working, and the rows below the fold
+  are by construction the least urgent.
+
+---
+
+## The one measurement that justifies where the gate went
+
+`withTenant` takes an optional `write: true`, which refuses a read-only school
+early — before the handler does work it will throw away. It is an
+optimisation.
+
+**No endpoint in the repository passes it.** Zero of them:
+
+```
+$ grep -rn "write: true" services/*/api/*.ts | wc -l
+0
+```
+
+And a POST to `/api/v1/ops/notices` against a school in maintenance is still
+refused, 403, with the operator's own sentence — because
+`SET LOCAL transaction_read_only = on` is applied by the gate and PostgreSQL
+raises SQLSTATE 25006 on the write, which `inTx` translates back into the same
+refusal.
+
+That is the whole argument for putting this in `withTenant` rather than in
+109 handlers, stated as a fact rather than a preference: **the guarantee holds
+with no endpoint cooperating at all**, including the endpoints written after
+this phase by someone who never reads this file.
+
+---
+
+## §27 — the cross-institution feed, and §35 — the thing not built
+
+**§27 is closed with the trail that already existed.** `GET platform/audit`
+without a tenant filter has served the cross-institution view since R-7 and
+nothing read it. The dashboard now shows the last twelve platform actions —
+when, which school (or "সব প্রতিষ্ঠান" for a plan change, which belongs to no
+one school), the operator's own reason, and what changed. Same rows, no second
+pipeline.
+
+While wiring it, `readAudit` stopped shipping `actorId` to the client at all.
+It is a JWT subject with no `users` row behind it, so it resolves to nobody,
+cannot be displayed under "never expose raw UUIDs", and sending it only
+invites the next person to render it. The column stays in
+`audit.platform_access`, where it is evidence rather than a field.
+
+**§35 bulk operations are NOT built, and that is a decision rather than an
+oversight** (`B-40`). Every control here acts on one school, names its
+consequence and is confirmed individually. The bulk version's most natural use
+— suspend these eleven — is the most destructive action the product can take,
+and the phase that built the console is the wrong phase to add an untested
+many-school mutation to at the end of. Nothing becomes SQL-only as a result:
+every school can be operated from its own screen. The backlog row records the
+shape a safe version would have to take.
+
+---
+
+## The second flake: a test that made itself the attacker
+
+P6's rule — *do not call a test green because it passed once* — earned its keep
+twice in this phase. The second time, `platform-svc` passed, passed, and
+failed on the third consecutive run:
+
+```
+run 1: 35 pass    run 2: 35 pass    run 3: 34 pass, 1 fail
+  {"error":"rate_limited", "retryAfterSec":165}   ← then 134, then 102, then 70
+```
+
+The countdown across runs is the whole diagnosis. Activation redemption is
+rate-limited as `otp_verify` — **10 per hour, keyed on the device** — and the
+suite redeemed with a constant `deviceId: 'r7-test-device'`. Every run of the
+suite spent from the *same* bucket, so the fifth run in an hour was refused by
+a security control that was working exactly as designed. The test had
+accidentally made itself the attacker.
+
+The fix is a device id per run. It does not weaken the limit — that is
+asserted in `packages/server-core`'s rate-limit suite and again by
+`scripts/security-probe.mjs`; here it was deciding the outcome of a test about
+onboarding. **Five consecutive runs now pass** where the third used to fail.
+
+Same family as B-35 (fixed uuids shared across runs), one layer up: a constant
+in a test is a shared resource whenever the thing it keys is shared.
+
+The first flake was worse and is described above — a `before` hook that threw,
+an `after` that threw on the same broken state, and a lock connection that
+kept the process alive so nothing was ever released.
+
+**Neither was a flaky test.** One was a wedged process holding a lock; the
+other was a real limiter refusing a real burst. Both looked like flakiness,
+and both had a cause that could be found and removed.
+
+---
+
+## §8 — a refusal that had never once run
+
+`setService` refuses to switch a service off while something depending on it
+is still on. Good code. It had **never executed**: the seeded catalogue
+declares no dependencies at all — 051 shipped `documents` depending on
+`documents_source`, a code that does not exist, and cleared it two statements
+later with the comment *"the sort of thing a catalogue should not be able to
+say"*. It fixed the one instance and left the next one possible.
+
+That matters because of the shape of the failure. The refusal is
+
+```sql
+SELECT c.code FROM service_catalogue c WHERE $2 = ANY(c.depends_on) …
+```
+
+A dangling code never matches, so it raises nothing — it silently makes the
+refusal stop firing. Same shape as everything else in this phase: no error, no
+rows, no protection.
+
+**Migration 058** makes the catalogue unable to say it: a dangling dependency,
+a self-dependency and a two-service cycle are all refused at write time, and
+the migration re-validates the rows already there rather than installing a
+guard that only applies to future ones. Longer cycles are deliberately not
+checked — a graph walk on every write of a thirteen-row table nobody edits at
+runtime would cost more than the mistake.
+
+**And the refusal now has tests that actually reach it.** They declare a
+dependency for the length of the test and take it away again, which tests the
+mechanism without inventing a product rule: there is no honest hard dependency
+among the current thirteen services, and asserting a fabricated one so the
+code has something to bite would be asserting a fiction. `reports` analysing
+already-published results keeps working with `results` switched off, which is
+why it is *not* declared as depending on it.
+
+The catalogue's dependency column is therefore **empty on purpose**, the guard
+is real, and the refusal is proven.
+
+---
+
+## The last inconsistency: one suspension button that did not ask why
+
+Fourteen POST routes on the console; eight demanded a written reason. Of the
+six that did not, five are R-7 onboarding steps — creating a school,
+provisioning it, branding it, adding its first admin, importing a roster —
+which are creation acts, not changes to a running school, and all of them
+audit a descriptive line anyway.
+
+The sixth was `/status`, and it mattered: **052 made the gate honour
+`tenants.status`**, so what used to be a column nobody read is now a real
+suspension that locks a whole school out. The one endpoint that could do that
+was the one that did not have to explain itself.
+
+It does now, on the server and on R-7's screen, with a field that sits beside
+the buttons rather than in a dialogue after them. Every dangerous act in this
+console now carries a sentence a person wrote.
+
+---
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,565 passing**, 0 failing, 12 workspaces — run **twice** |
+| `platform-svc` specifically | **40 tests**, run **five consecutive times** after the rate-limit flake was diagnosed |
+| `tenant-gate.test.ts` | **33 tests** — suspension, maintenance, limited, billing derivation, portals, services, isolation, fail-closed, skipGate |
+| TypeScript — all three CI configs | 0 errors |
+| Typecheck drift guard | passed; baseline 65 → **66** (the new icon-name test) |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Migrations | **58/58**, fully migrated, 58 rollback files |
+| `scripts/security-probe.mjs` | **28 of 29 pass**, 0 fail, 1 skipped for a stated reason (OTP disabled on this deployment) |
+| `index.html` | git hash `496199bd` — **unchanged** |
+| Console bundle separation (D11) | `app.js` contains no console code — checked for five markers |
+| Raw UUIDs in the console | **0**, across three top-level views and all six drawer tabs |
+| Desktop 1024 / 1280 / 1440 / 1600 | no horizontal overflow, no target under 24×24 |
+| Mobile 360 / 375 / 390 | no overflow; the table becomes the mobile list |
+| Light + dark | worst measured contrast **8.00:1** in dark at 1280 (AA needs 4.5) |
+| Theme toggle | pins the choice, persists, and its label flips |
+
+### The commercial gate, item by item
+
+> *"No commercial state may be achievable only by SQL."*
+
+Institution state · service state · portal state · plan assignment · **the
+plan catalogue itself** · student cap · payments · grace. All have screens.
+
+> *"No important service control may exist only as a backend switch without an
+> operator UI."*
+
+All thirteen services are on one screen with what turning each off does.
+
+> *"No dangerous platform action may exist without explanation, confirmation
+> and audit."*
+
+Every mutation states its consequence, demands a reason of at least three
+characters, confirms inside the surface that raised it, and writes
+`audit.platform_access` carrying the operator's own sentence. The last
+exception — `/status`, the legacy suspension — was closed in this pass.

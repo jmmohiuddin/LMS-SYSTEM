@@ -24,6 +24,7 @@
  * replacements at all, and then the register and the truth diverge quietly.
  */
 import type { Auth } from './auth.ts';
+import { todayLocalIso } from '../../../packages/ui-core/src/format.ts';
 import { iconSvg } from './icon.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum, bnDate,
@@ -883,7 +884,7 @@ export class AcademicView {
       name: 'startedOn',
       kind: 'date',
       required: true,
-      value: new Date().toISOString().slice(0, 10),
+      value: todayLocalIso(),
       helper: 'এই তারিখ থেকে নতুন শিক্ষক দায়িত্বে থাকবেন।',
     });
     append(form, when.root);

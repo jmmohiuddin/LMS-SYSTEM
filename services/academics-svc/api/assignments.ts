@@ -18,6 +18,13 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, query, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireStaff } from '../../../packages/server-core/src/auth.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'assignments';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** What the loser of a grading race is told. See the grade branch below. */
@@ -79,7 +86,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     /* ------------------------------------------------------------- create/grade */
     if (req.method === 'POST') {

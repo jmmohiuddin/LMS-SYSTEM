@@ -22,7 +22,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -72,7 +72,7 @@ const asStudent: TenantContext = { tenantId: T, userId: STUDENT, role: 'student'
  */
 async function dropFixtures(): Promise<void> {
   for (const id of [T, OTHER]) {
-    await db.withTenant({ tenantId: id, userId: TEACHER, role: 'principal' }, async (c) => {
+    await asBootstrap(db, { tenantId: id, userId: TEACHER, role: 'principal' }, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [id]);
     });
   }
@@ -80,7 +80,7 @@ async function dropFixtures(): Promise<void> {
 
 async function seed(): Promise<void> {
   await dropFixtures();
-  await db.withTenant({ tenantId: T, userId: TEACHER, role: 'principal' }, async (c) => {
+  await asBootstrap(db, { tenantId: T, userId: TEACHER, role: 'principal' }, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'f106-a','পরীক্ষা ক','Test A','bangla_medium','secondary')`, [T]);
@@ -140,7 +140,7 @@ async function seed(): Promise<void> {
   });
 
   // A second school, to prove isolation rather than assume it.
-  await db.withTenant({ tenantId: OTHER, userId: TEACHER, role: 'principal' }, async (c) => {
+  await asBootstrap(db, { tenantId: OTHER, userId: TEACHER, role: 'principal' }, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'f106-b','পরীক্ষা খ','Test B','bangla_medium','secondary')`, [OTHER]);

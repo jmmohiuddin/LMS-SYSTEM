@@ -117,6 +117,16 @@ const SENTINELS = [
   // SMS. The column would be the more direct probe; the function is the one
   // whose absence a school would FEEL.
   ['050_guardianship_revocation',      'function',   'app.revoke_guardianship'],
+  ['051_platform_operations',          'table',      'public.tenant_operations'],
+  ['052_platform_enforcement',         'function',   'app.tenant_service_state'],
+  ['053_platform_overview',            'function',   'app.set_student_cap'],
+  // Overloads: a name probe cannot tell 052's one-argument `tenant_access`
+  // from these, so each is probed by the thing only IT consults.
+  ['054_portal_gate',                  'function_body', 'app.tenant_access', 'portal_of'],
+  ['055_service_gate',                 'function_body', 'app.tenant_access', 'tenant_service_state'],
+  ['056_portal_of_system',             'function_body', 'app.portal_of',     'system_ingest'],
+  ['057_platform_activity',            'function_body', 'app.platform_overview', 'user_sessions'],
+  ['058_service_dependency_integrity', 'function',   'app.check_service_dependencies'],
 ];
 
 /**
@@ -174,6 +184,14 @@ const MEANING = {
   '048_higher_secondary_subjects':   'R-7 — a College and the upper half of a School & College get subjects at all',
   '049_student_day':                 'B-15 — a student can be told what class is next, section-scoped and parallel-block filtered',
   '050_guardianship_revocation':     'B-7 — a guardianship can end without being deleted, and a former guardian stops reading the child',
+  '051_platform_operations':         'P7 — plans, payments, per-institution operational state and a catalogue of thirteen services',
+  '052_platform_enforcement':        'P7 — suspension stops being a column nobody read: the billing lifecycle is derived and the gate can answer',
+  '053_platform_overview':           'P7 — the console can SEE its schools (a policy is not a bypass) and can set a cap without silently changing nothing',
+  '054_portal_gate':                 'P7 — closing a portal closes it, per role, and says which door',
+  '055_service_gate':                'P7 — disabling a service disables it, and can only ever restrict what the school could already do',
+  '056_portal_of_system':            'P7 — login and the SMS run are not teachers, so the teacher switch cannot stop a school signing in',
+  '057_platform_activity':           'P7 — the console can see when a school was last actually used, from sessions and events it already records',
+  '058_service_dependency_integrity': 'P7 — a catalogue cannot name a service that does not exist, which silently disabled the dependency refusal',
 };
 
 const QUERIES = {

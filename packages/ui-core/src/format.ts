@@ -165,3 +165,24 @@ const LEVEL_BN = [
 export function levelNameBn(level: number): string {
   return LEVEL_BN[level] ?? String(level);
 }
+
+/**
+ * Today, on the calendar the person in front of the screen is reading.
+ *
+ * `new Date().toISOString().slice(0, 10)` is UTC, and Dhaka is six hours
+ * ahead of it — so from midnight to 6am local, that expression names
+ * YESTERDAY. server-core has `dhakaToday` for the same trap on the server
+ * side, where the fix is to add a fixed offset because the host is UTC.
+ *
+ * In a browser the fix is the opposite one: read the LOCAL fields the user's
+ * own clock already has, and never go through UTC at all. That also keeps an
+ * operator abroad honest — they get their own today, not Dhaka's.
+ *
+ * P7 found it defaulting the date on a payment form: a payment recorded at
+ * 1am in Dhaka would have been dated to the previous day, in a table whose
+ * unique constraint includes the date.
+ */
+export function todayLocalIso(now: Date = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}

@@ -76,9 +76,35 @@ var HttpError = class extends Error {
     this.detail = detail;
   }
 };
+var TenantBlocked = class extends HttpError {
+  access;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  reasonBn;
+  constructor(access) {
+    super(
+      403,
+      access.reasonBn ?? "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F\u09C7 \u098F\u0996\u09A8 \u098F\u0987 \u0995\u09BE\u099C\u099F\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964",
+      "tenant_blocked",
+      {
+        access: access.access,
+        opsState: access.opsState,
+        billingState: access.billingState,
+        until: access.until
+      }
+    );
+    this.access = access;
+    this.reasonBn = this.message;
+  }
+};
 
 // packages/server-core/src/db.ts
 import pg from "pg";
+pg.types.setTypeParser(1082, (v) => v);
 function createDb(connectionString, opts = {}) {
   const pool = new pg.Pool({
     connectionString,
@@ -89,33 +115,57 @@ function createDb(connectionString, opts = {}) {
   });
   async function inTx(setup, fn) {
     const client = await pool.connect();
+    let readOnlyFor;
+    let released = false;
     try {
       await client.query("BEGIN");
-      await setup(client);
+      readOnlyFor = (await setup(client))?.blocked;
       const out = await fn(client);
       await client.query("COMMIT");
       return out;
     } catch (err) {
+      if (readOnlyFor && err?.code === "25006") {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+        }
+        client.release();
+        released = true;
+        throw new TenantBlocked(readOnlyFor);
+      }
       try {
         await client.query("ROLLBACK");
       } catch {
       }
       throw err;
     } finally {
-      client.release();
+      if (!released) client.release();
     }
   }
   return {
     pool,
-    withTenant(ctx, fn) {
+    async tenantAccess(tenantId) {
+      return readAccess(pool, tenantId);
+    },
+    withTenant(ctx, fn, opts2) {
       if (!ctx.tenantId) throw new Error("tenant context required");
       return inTx(async (c) => {
+        let blocked;
         await c.query(
           `SELECT set_config('app.tenant_id', $1, true),
                   set_config('app.user_id',   $2, true),
                   set_config('app.role',      $3, true)`,
           [ctx.tenantId, ctx.userId, ctx.role]
         );
+        if (opts2?.skipGate) return;
+        const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
+        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "read_only") {
+          await c.query("SET LOCAL transaction_read_only = on");
+          blocked = access;
+          if (opts2?.write) throw new TenantBlocked(access);
+        }
+        return { blocked };
       }, fn);
     },
     withSystemRole(role, fn) {
@@ -125,6 +175,48 @@ function createDb(connectionString, opts = {}) {
     },
     end: () => pool.end()
   };
+}
+async function readAccess(q, tenantId, role, service) {
+  try {
+    const { rows } = role && service ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2, $3)`,
+      [tenantId, role, service]
+    ) : role ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2)`,
+      [tenantId, role]
+    ) : await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1)`,
+      [tenantId]
+    );
+    const r = rows[0];
+    if (!r?.access) {
+      return {
+        access: "none",
+        opsState: "unknown",
+        billingState: "unknown",
+        reasonBn: "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u099F\u09BF \u0996\u09C1\u0981\u099C\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+        until: null
+      };
+    }
+    return {
+      access: r.access,
+      opsState: r.ops_state ?? "unknown",
+      billingState: r.billing_state ?? "unknown",
+      reasonBn: r.reason_bn ?? null,
+      until: r.until ? String(r.until).slice(0, 10) : null
+    };
+  } catch {
+    return {
+      access: "none",
+      opsState: "unknown",
+      billingState: "unknown",
+      reasonBn: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u098F\u0995\u099F\u09C1 \u09AA\u09B0\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      until: null
+    };
+  }
 }
 async function assertRlsEnforced(db) {
   const { rows } = await db.pool.query(
@@ -1434,6 +1526,7 @@ async function handler2(req, res) {
 }
 
 // services/academics-svc/api/exams.ts
+var SERVICE = "results";
 var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler3(req, res) {
   const cors = corsHeaders();
@@ -1453,7 +1546,7 @@ async function handler3(req, res) {
     if (!UUID_RE2.test(sectionId)) throw new HttpError(400, "sectionId must be a valid uuid", "invalid_section_id");
     const db = await sharedDb();
     const exams = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
       async (client) => {
         const r = await client.query(
           `SELECT e.id AS exam_id, e.name_bn, e.name_en, e.exam_type, e.status,
@@ -1515,6 +1608,7 @@ async function handler3(req, res) {
 }
 
 // services/academics-svc/api/marks.ts
+var SERVICE2 = "results";
 var UUID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler4(req, res) {
   const cors = corsHeaders();
@@ -1536,7 +1630,7 @@ async function handler4(req, res) {
     }
     const db = await sharedDb();
     const result = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
       async (client) => {
         const esRes = await client.query(
           `SELECT es.section_id, es.exam_id, e.academic_year_id, e.status AS exam_status,
@@ -1600,6 +1694,7 @@ async function handler4(req, res) {
 }
 
 // services/academics-svc/api/publish.ts
+var SERVICE3 = "results";
 var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PUBLISH_ROLES = ["principal", "school_owner", "academic_coordinator"];
 async function handler5(req, res) {
@@ -1615,7 +1710,7 @@ async function handler5(req, res) {
       requireRole(claims, PUBLISH_ROLES);
       const db = await sharedDb();
       const exams = await db.withTenant(
-        { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+        { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 },
         async (client) => {
           const r = await client.query(
             `SELECT e.id AS exam_id, e.name_bn, e.status::text AS status,
@@ -1685,7 +1780,7 @@ async function handler5(req, res) {
     if (!UUID_RE4.test(examId)) throw new HttpError(400, "examId must be a valid uuid", "invalid_exam_id");
     const db = await sharedDb();
     const result = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 },
       async (client) => {
         const examRes = await client.query(
           `SELECT status, academic_year_id FROM exams WHERE id = $1`,
@@ -1931,6 +2026,7 @@ async function handler6(req, res) {
 }
 
 // services/academics-svc/api/chapters.ts
+var SERVICE4 = "learning";
 var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler7(req, res) {
   const cors = corsHeaders();
@@ -1956,7 +2052,7 @@ async function handler7(req, res) {
     }
     const db = await sharedDb();
     const chapters = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE4 },
       async (client) => {
         const r = await client.query(
           `SELECT ch.id, ch.chapter_no, ch.name_bn, ch.name_en, ch.summary_bn,
@@ -2018,6 +2114,7 @@ async function handler7(req, res) {
 }
 
 // services/academics-svc/api/topics.ts
+var SERVICE5 = "learning";
 var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler8(req, res) {
   const cors = corsHeaders();
@@ -2045,7 +2142,7 @@ async function handler8(req, res) {
       throw new HttpError(400, "topicId must be a valid uuid", "invalid_topic_id");
     }
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE5 };
     if (topicId) {
       const result = await db.withTenant(ctx, async (client) => {
         const topicRes = await client.query(
@@ -2130,6 +2227,7 @@ async function handler8(req, res) {
 }
 
 // services/academics-svc/api/results.ts
+var SERVICE6 = "results";
 var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler9(req, res) {
   const cors = corsHeaders();
@@ -2151,7 +2249,7 @@ async function handler9(req, res) {
     const studentId = requested || claims.sub;
     const db = await sharedDb();
     const rows = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE6 },
       async (client) => {
         const r = await client.query(
           `SELECT r.exam_id, e.name_bn AS exam_name_bn, e.exam_type::text,
@@ -2230,6 +2328,7 @@ async function handler9(req, res) {
 }
 
 // services/academics-svc/api/assignments.ts
+var SERVICE7 = "assignments";
 var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var GradeConflict = class extends Error {
   detail;
@@ -2248,7 +2347,7 @@ async function handler10(req, res) {
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE7 };
     if (req.method === "POST") {
       requireStaff(claims);
       const body = await readJson(req);
@@ -2494,6 +2593,7 @@ async function handler10(req, res) {
 }
 
 // services/academics-svc/api/practice.ts
+var SERVICE8 = "learning";
 var UUID_RE10 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler11(req, res) {
   const cors = corsHeaders();
@@ -2514,7 +2614,7 @@ async function handler11(req, res) {
     }
     const db = await sharedDb();
     const result = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE8 },
       async (client) => {
         const qs = await client.query(
           `SELECT q.id, q.question_no, q.kind::text, q.stem_bn, q.explanation_bn,
@@ -2571,6 +2671,7 @@ async function handler11(req, res) {
 }
 
 // services/academics-svc/api/next.ts
+var SERVICE9 = "learning";
 var MAX_SUGGESTIONS = 3;
 async function handler12(req, res) {
   const cors = corsHeaders();
@@ -2587,7 +2688,7 @@ async function handler12(req, res) {
     const claims = await authenticate(req);
     const db = await sharedDb();
     const suggestions = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE9 },
       async (client) => {
         const out = [];
         const due = await client.query(
@@ -2874,6 +2975,7 @@ async function handler13(req, res) {
 }
 
 // services/academics-svc/api/attendance.ts
+var SERVICE10 = "attendance";
 var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var DEFAULT_MONTHS = 6;
 var MAX_MONTHS = 24;
@@ -2902,7 +3004,7 @@ async function handler14(req, res) {
     );
     const db = await sharedDb();
     const payload = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE10 },
       async (client) => {
         const since = `${months} months`;
         const byMonth = await client.query(
@@ -3933,6 +4035,7 @@ async function writeTeachers(client, rows) {
 }
 
 // services/academics-svc/api/import.ts
+var SERVICE11 = "imports";
 var UUID_RE13 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var IMPORT_ROLES = ["principal", "school_owner", "academic_coordinator"];
 var STAFF_IMPORT_ROLES = ["principal", "school_owner", "it_admin"];
@@ -3955,7 +4058,7 @@ async function handler15(req, res) {
     }
     requireRole(claims, body.kind === "teacher" ? STAFF_IMPORT_ROLES : IMPORT_ROLES);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE11 };
     const result = await db.withTenant(ctx, async (client) => {
       if (body.kind === "teacher") {
         return runTeacherImport(client, {
@@ -4327,6 +4430,7 @@ function dhakaToday(now = Date.now()) {
 }
 
 // services/academics-svc/api/classperf.ts
+var SERVICE12 = "reports";
 var UUID_RE16 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PERF_ROLES = ["class_teacher", "subject_teacher", "academic_coordinator", "principal", "school_owner"];
 var ATTENDANCE_FLOOR_PERCENT = 80;
@@ -4354,7 +4458,7 @@ async function handler18(req, res) {
       throw new HttpError(400, "examSubjectId must be a valid uuid", "invalid_exam_subject_id");
     }
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE12 };
     const payload = await db.withTenant(ctx, async (client) => {
       const choices = await loadChoices(client);
       if (!examSubjectId) return { choices, analysis: null };

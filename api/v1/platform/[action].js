@@ -5,75 +5,6 @@ import { timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 
 // packages/server-core/src/db.ts
 import pg from "pg";
-function createDb(connectionString, opts = {}) {
-  const pool = new pg.Pool({
-    connectionString,
-    max: 10,
-    idleTimeoutMillis: 3e4,
-    statement_timeout: 15e3,
-    ...opts
-  });
-  async function inTx(setup, fn) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await setup(client);
-      const out = await fn(client);
-      await client.query("COMMIT");
-      return out;
-    } catch (err) {
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-      }
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-  return {
-    pool,
-    withTenant(ctx, fn) {
-      if (!ctx.tenantId) throw new Error("tenant context required");
-      return inTx(async (c) => {
-        await c.query(
-          `SELECT set_config('app.tenant_id', $1, true),
-                  set_config('app.user_id',   $2, true),
-                  set_config('app.role',      $3, true)`,
-          [ctx.tenantId, ctx.userId, ctx.role]
-        );
-      }, fn);
-    },
-    withSystemRole(role, fn) {
-      return inTx(async (c) => {
-        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
-      }, fn);
-    },
-    end: () => pool.end()
-  };
-}
-async function assertRlsEnforced(db) {
-  const { rows } = await db.pool.query(
-    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
-  );
-  const me = rows[0];
-  if (!me) throw new Error("cannot resolve current_user");
-  if (me.rolbypassrls || me.rolsuper) {
-    throw new Error(
-      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
-    );
-  }
-}
-var _db = null;
-async function sharedDb() {
-  if (_db) return _db;
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL env var is not set");
-  const db = createDb(url, { max: 5 });
-  await assertRlsEnforced(db);
-  _db = db;
-  return db;
-}
 
 // packages/server-core/src/http.ts
 function allowedOrigins(env = process.env) {
@@ -151,6 +82,169 @@ var HttpError = class extends Error {
     this.detail = detail;
   }
 };
+var TenantBlocked = class extends HttpError {
+  access;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  reasonBn;
+  constructor(access) {
+    super(
+      403,
+      access.reasonBn ?? "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F\u09C7 \u098F\u0996\u09A8 \u098F\u0987 \u0995\u09BE\u099C\u099F\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964",
+      "tenant_blocked",
+      {
+        access: access.access,
+        opsState: access.opsState,
+        billingState: access.billingState,
+        until: access.until
+      }
+    );
+    this.access = access;
+    this.reasonBn = this.message;
+  }
+};
+
+// packages/server-core/src/db.ts
+pg.types.setTypeParser(1082, (v) => v);
+function createDb(connectionString, opts = {}) {
+  const pool = new pg.Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 3e4,
+    statement_timeout: 15e3,
+    ...opts
+  });
+  async function inTx(setup, fn) {
+    const client = await pool.connect();
+    let readOnlyFor;
+    let released = false;
+    try {
+      await client.query("BEGIN");
+      readOnlyFor = (await setup(client))?.blocked;
+      const out = await fn(client);
+      await client.query("COMMIT");
+      return out;
+    } catch (err) {
+      if (readOnlyFor && err?.code === "25006") {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+        }
+        client.release();
+        released = true;
+        throw new TenantBlocked(readOnlyFor);
+      }
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    } finally {
+      if (!released) client.release();
+    }
+  }
+  return {
+    pool,
+    async tenantAccess(tenantId) {
+      return readAccess(pool, tenantId);
+    },
+    withTenant(ctx, fn, opts2) {
+      if (!ctx.tenantId) throw new Error("tenant context required");
+      return inTx(async (c) => {
+        let blocked;
+        await c.query(
+          `SELECT set_config('app.tenant_id', $1, true),
+                  set_config('app.user_id',   $2, true),
+                  set_config('app.role',      $3, true)`,
+          [ctx.tenantId, ctx.userId, ctx.role]
+        );
+        if (opts2?.skipGate) return;
+        const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
+        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "read_only") {
+          await c.query("SET LOCAL transaction_read_only = on");
+          blocked = access;
+          if (opts2?.write) throw new TenantBlocked(access);
+        }
+        return { blocked };
+      }, fn);
+    },
+    withSystemRole(role, fn) {
+      return inTx(async (c) => {
+        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
+      }, fn);
+    },
+    end: () => pool.end()
+  };
+}
+async function readAccess(q, tenantId, role, service) {
+  try {
+    const { rows } = role && service ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2, $3)`,
+      [tenantId, role, service]
+    ) : role ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2)`,
+      [tenantId, role]
+    ) : await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1)`,
+      [tenantId]
+    );
+    const r = rows[0];
+    if (!r?.access) {
+      return {
+        access: "none",
+        opsState: "unknown",
+        billingState: "unknown",
+        reasonBn: "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u099F\u09BF \u0996\u09C1\u0981\u099C\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+        until: null
+      };
+    }
+    return {
+      access: r.access,
+      opsState: r.ops_state ?? "unknown",
+      billingState: r.billing_state ?? "unknown",
+      reasonBn: r.reason_bn ?? null,
+      until: r.until ? String(r.until).slice(0, 10) : null
+    };
+  } catch {
+    return {
+      access: "none",
+      opsState: "unknown",
+      billingState: "unknown",
+      reasonBn: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u098F\u0995\u099F\u09C1 \u09AA\u09B0\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      until: null
+    };
+  }
+}
+async function assertRlsEnforced(db) {
+  const { rows } = await db.pool.query(
+    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
+  );
+  const me = rows[0];
+  if (!me) throw new Error("cannot resolve current_user");
+  if (me.rolbypassrls || me.rolsuper) {
+    throw new Error(
+      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
+    );
+  }
+}
+var _db = null;
+async function sharedDb() {
+  if (_db) return _db;
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL env var is not set");
+  const db = createDb(url, { max: 5 });
+  await assertRlsEnforced(db);
+  _db = db;
+  return db;
+}
 
 // node_modules/jose/dist/node/esm/runtime/base64url.js
 import { Buffer as Buffer2 } from "node:buffer";
@@ -2638,6 +2732,26 @@ async function handler(req, res) {
         return json(res, 200, await setStatus(db, op, req), cors);
       case "GET audit":
         return json(res, 200, await readAudit(db, req), cors);
+      case "GET overview":
+        return json(res, 200, await overview(db), cors);
+      case "GET catalogue":
+        return json(res, 200, await catalogue(db), cors);
+      case "GET operations":
+        return json(res, 200, await getOperations(db, req), cors);
+      case "POST opsstate":
+        return json(res, 200, await setOpsState(db, op, req), cors);
+      case "POST service":
+        return json(res, 200, await setService(db, op, req), cors);
+      case "POST portal":
+        return json(res, 200, await setPortal(db, op, req), cors);
+      case "POST payment":
+        return json(res, 200, await recordPayment(db, op, req), cors);
+      case "POST grace":
+        return json(res, 200, await extendGrace(db, op, req), cors);
+      case "POST cap":
+        return json(res, 200, await setCap(db, op, req), cors);
+      case "POST plans":
+        return json(res, 200, await savePlan(db, op, req), cors);
       case "GET readiness":
         return json(res, 200, readiness(), cors);
       default:
@@ -2705,7 +2819,14 @@ async function getTenant(db, req) {
       `SELECT COALESCE(settings->'branding','{}'::jsonb) AS branding,
               weekend_days AS weekend, shifts::text[] AS shifts
          FROM tenants WHERE id = app.current_tenant()`
-    )
+    ),
+    {
+      // P7. The console must reach INTO a school the gate would stop — that is
+      // how a suspended school gets inspected, and how it gets reopened. This
+      // is the one service allowed past, and it is past because it is NOT a
+      // school acting on itself.
+      skipGate: true
+    }
   );
   const r = rows[0];
   return {
@@ -2860,6 +2981,12 @@ async function provision(db, op, req) {
     );
     const state = await c.query(`SELECT * FROM app.tenant_onboarding_state($1)`, [tenantId]);
     return { seeded, sectionsMade, state: state.rows[0] };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true
   });
 }
 async function setBranding(db, op, req) {
@@ -2887,6 +3014,12 @@ async function setBranding(db, op, req) {
       [op.id, tenantId]
     );
     return { branding: clean };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true
   });
 }
 async function createAdmin(db, op, req) {
@@ -2970,6 +3103,12 @@ async function createAdmin(db, op, req) {
       [op.id, tenantId, `${reused ? "granted" : "created"} ${roleCode}`]
     );
     return { userId, roleCode, reused, activationCode: code };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true
   });
 }
 async function runImport(db, op, req) {
@@ -3041,6 +3180,12 @@ async function runImport(db, op, req) {
       }
       throw err;
     }
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true
   });
 }
 function bn(n) {
@@ -3134,12 +3279,19 @@ async function tenantHealth(db, req) {
         return { ...m, synthetic: looksSynthetic(m) };
       })()
     };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true
   });
 }
 async function setPlan(db, op, req) {
   const b = await readJson(req);
   const tenantId = (b.tenantId ?? "").trim();
   if (!UUID_RE.test(tenantId)) throw new HttpError(400, "tenantId must be a uuid", "invalid_id");
+  const reason = requireReason(b.reason);
   const ctx = { tenantId, userId: op.id, role: "principal" };
   return db.withTenant(ctx, async (c) => {
     const { rows: before } = await c.query(`SELECT plan_code, student_cap, trial_ends_on FROM tenants WHERE id = $1`, [tenantId]);
@@ -3162,7 +3314,7 @@ async function setPlan(db, op, req) {
     if (cap < enrolled) {
       throw new HttpError(
         409,
-        `\u09B8\u09C0\u09AE\u09BE ${cap} \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u098F\u0996\u09A8\u0987 ${enrolled} \u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0986\u099B\u09C7`,
+        `\u09B8\u09C0\u09AE\u09BE ${bn(cap)} \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u098F\u0996\u09A8\u0987 ${bn(enrolled)} \u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0986\u099B\u09C7`,
         "cap_below_enrolled",
         { cap, enrolled }
       );
@@ -3181,8 +3333,8 @@ async function setPlan(db, op, req) {
       [
         op.id,
         tenantId,
-        "plan.update",
-        `${before[0].plan_code}/${before[0].student_cap} \u2192 ${plan}/${cap}`
+        reason,
+        `plan ${before[0].plan_code}/${before[0].student_cap} \u2192 ${plan}/${cap}`
       ]
     );
     return {
@@ -3191,6 +3343,12 @@ async function setPlan(db, op, req) {
       trialEndsOn: rows[0].trial_ends_on,
       enrolled
     };
+  }, {
+    // P7. The console must reach INTO a school the gate would stop — that is
+    // how a suspended school gets inspected, and how it gets reopened. This
+    // is the one service allowed past, and it is past because it is NOT a
+    // school acting on itself.
+    skipGate: true
   });
 }
 async function setStatus(db, op, req) {
@@ -3200,6 +3358,7 @@ async function setStatus(db, op, req) {
   if (!STATUSES.includes(b.status ?? "")) {
     throw new HttpError(400, "\u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_status", { field: "status" });
   }
+  const reason = requireReason(b.reason);
   if (b.status === "active") {
     const { rows: rows2 } = await db.pool.query(
       `SELECT * FROM app.tenant_onboarding_state($1)`,
@@ -3221,7 +3380,7 @@ async function setStatus(db, op, req) {
   }
   const { rows } = await db.pool.query(
     `SELECT app.set_tenant_status($1, $2, $3::tenant_status, $4)`,
-    [op.id, tenantId, b.status, b.reason ?? null]
+    [op.id, tenantId, b.status, reason]
   );
   return { previous: rows[0].set_tenant_status, status: b.status };
 }
@@ -3238,7 +3397,11 @@ async function readAudit(db, req) {
   return {
     entries: rows.map((r) => ({
       id: String(r.id),
-      actorId: r.admin_id,
+      // NOT the actor id. It is a JWT subject with no `users` row and no
+      // directory behind it (B-39), so it resolves to nobody, cannot be
+      // displayed under "never expose raw UUIDs", and shipping it to the
+      // client only invites the next person to render it. The column stays
+      // in `audit.platform_access`, where it is evidence.
       tenantId: r.tenant_id,
       reason: r.reason,
       statement: r.statement,
@@ -3257,6 +3420,593 @@ function readiness() {
     // is one nobody reads.
     ready: blocking.every((c) => c.ready),
     blockingRemaining: blocking.filter((c) => !c.ready).length
+  };
+}
+var OPS_STATES = ["active", "maintenance", "limited", "suspended"];
+var SERVICE_STATES = ["enabled", "disabled", "limited", "maintenance"];
+var PORTALS = ["principal", "it_admin", "teacher", "student", "guardian"];
+var PAY_METHODS = ["bank", "bkash", "nagad", "rocket", "cash", "cheque", "other"];
+function requireReason(raw) {
+  const reason = typeof raw === "string" ? raw.trim() : "";
+  if (reason.length < 3) {
+    throw new HttpError(
+      400,
+      "\u0995\u09BE\u09B0\u09A3 \u09B2\u09BF\u0996\u09C1\u09A8 \u2014 \u0995\u09BE\u09B0\u09A3 \u099B\u09BE\u09A1\u09BC\u09BE \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u099B\u09AF\u09BC \u09AE\u09BE\u09B8 \u09AA\u09B0\u09C7 \u09AC\u09BE\u0997 \u09A5\u09C7\u0995\u09C7 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE",
+      "reason_required",
+      { field: "reason" }
+    );
+  }
+  if (reason.length > 500) {
+    throw new HttpError(
+      400,
+      "\u0995\u09BE\u09B0\u09A3 \u09EB\u09E6\u09E6 \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B2\u09BF\u0996\u09C1\u09A8",
+      "reason_too_long",
+      { field: "reason" }
+    );
+  }
+  return reason;
+}
+function requireTenantId(raw) {
+  const id = typeof raw === "string" ? raw : "";
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, "tenantId must be a valid uuid", "invalid_tenant");
+  }
+  return id;
+}
+async function overview(db) {
+  const { rows } = await db.pool.query(`SELECT * FROM app.platform_overview()`);
+  return { tenants: rows.map(shapeOverview) };
+}
+function shapeOverview(r) {
+  return {
+    id: r.id,
+    slug: String(r.slug),
+    nameBn: r.name_bn,
+    nameEn: r.name_en,
+    stream: r.stream,
+    level: r.level,
+    district: r.district,
+    status: r.status,
+    // What the school may do RIGHT NOW — the two states an operator
+    // actually decides on, kept separate so neither can be mistaken for
+    // the other.
+    access: r.access,
+    opsState: r.ops_state ?? "active",
+    billingState: r.billing_state,
+    stateReason: r.state_reason,
+    planCode: r.plan_code,
+    planName: r.plan_name,
+    planPrice: r.plan_price === null ? null : String(r.plan_price),
+    billingCycle: r.billing_cycle,
+    studentCap: r.student_cap,
+    studentCount: Number(r.student_count ?? 0),
+    userCount: Number(r.user_count ?? 0),
+    paidTotal: String(r.paid_total ?? "0"),
+    nextDueOn: r.next_due_on,
+    graceUntil: r.grace_until,
+    trialEndsOn: r.trial_ends_on,
+    createdAt: r.created_at,
+    // Measured, never invented: the later of a real sign-in and a real
+    // product event. Null means nobody has ever signed in, which the console
+    // must say in words rather than as a date.
+    lastActiveAt: r.last_active_at ?? null,
+    portals: r.portals ?? {},
+    services: r.services ?? {}
+  };
+}
+async function catalogue(db) {
+  const [plans, services] = await Promise.all([
+    db.pool.query(`SELECT code, name_bn, price_bdt, billing_cycle, student_cap,
+                          services, trial_days, grace_days, is_active
+                     FROM plans ORDER BY price_bdt, code`),
+    db.pool.query(`SELECT code, name_bn, effect_bn, depends_on, in_limited
+                     FROM service_catalogue ORDER BY sort_order`)
+  ]);
+  return {
+    plans: plans.rows.map((r) => ({
+      code: r.code,
+      nameBn: r.name_bn,
+      priceBdt: String(r.price_bdt),
+      billingCycle: r.billing_cycle,
+      studentCap: r.student_cap,
+      services: r.services,
+      trialDays: r.trial_days,
+      graceDays: r.grace_days,
+      isActive: r.is_active
+    })),
+    services: services.rows.map((r) => ({
+      code: r.code,
+      nameBn: r.name_bn,
+      effectBn: r.effect_bn,
+      dependsOn: r.depends_on,
+      inLimited: r.in_limited
+    }))
+  };
+}
+async function getOperations(db, req) {
+  const id = requireTenantId(query(req).get("id"));
+  const [ops, pay, eff] = await Promise.all([
+    // Definer, for the reason in `overview` above.
+    db.pool.query(`SELECT * FROM app.platform_operations($1)`, [id]),
+    db.pool.query(
+      `SELECT amount_bdt, paid_on, method, reference, note, covers_until, recorded_at
+         FROM tenant_payments WHERE tenant_id = $1
+        ORDER BY paid_on DESC, recorded_at DESC LIMIT 50`,
+      [id]
+    ),
+    // The EFFECTIVE state of every service, from the function that decides
+    // it — never recomputed here. Two copies of this rule would eventually
+    // disagree, and the console would then be lying about what is on.
+    db.pool.query(
+      `SELECT c.code, app.tenant_service_state($1, c.code) AS state
+         FROM service_catalogue c ORDER BY c.sort_order`,
+      [id]
+    )
+  ]);
+  if (ops.rows.length === 0) throw new HttpError(404, "no such tenant", "not_found");
+  const r = ops.rows[0];
+  return {
+    operations: {
+      access: r.access,
+      opsState: r.ops_state ?? "active",
+      billingState: r.billing_state,
+      reasonBn: r.reason_bn,
+      until: r.until,
+      stateReason: r.state_reason,
+      stateChangedAt: r.state_changed_at,
+      stateUntil: r.state_until,
+      portals: r.portals ?? {},
+      serviceOverrides: r.services ?? {},
+      planCode: r.plan_code,
+      planName: r.plan_name,
+      planPrice: r.price_bdt === null || r.price_bdt === void 0 ? null : String(r.price_bdt),
+      billingCycle: r.billing_cycle,
+      graceDays: r.grace_days,
+      planCap: r.plan_cap,
+      planServices: r.plan_services ?? {},
+      studentCap: r.student_cap,
+      studentCount: Number(r.student_count ?? 0),
+      nextDueOn: r.next_due_on,
+      graceUntil: r.grace_until,
+      graceReason: r.grace_reason,
+      trialEndsOn: r.trial_ends_on
+    },
+    services: eff.rows.map((x) => ({
+      code: x.code,
+      state: x.state
+    })),
+    payments: pay.rows.map((x) => ({
+      amountBdt: String(x.amount_bdt),
+      paidOn: x.paid_on,
+      method: x.method,
+      reference: x.reference,
+      note: x.note,
+      coversUntil: x.covers_until,
+      recordedAt: x.recorded_at
+    }))
+  };
+}
+async function setOpsState(db, op, req) {
+  const body = await readJson(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const state = String(body.state ?? "");
+  if (!OPS_STATES.includes(state)) {
+    throw new HttpError(
+      400,
+      `state must be one of: ${OPS_STATES.join(", ")}`,
+      "invalid_state",
+      { field: "state" }
+    );
+  }
+  const until = body.until === null || body.until === void 0 || body.until === "" ? null : String(body.until);
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET ops_state = $2::tenant_ops_state, state_reason = $3,
+            state_changed_at = now(), state_changed_by = $4,
+            state_until = $5, updated_at = now()
+      WHERE tenant_id = $1`,
+    [id, state, reason, op.id, until]
+  );
+  await db.pool.query(
+    `SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `ops_state=${state}${until ? ` until=${until}` : ""}`]
+  );
+  return afterChange(db, id);
+}
+async function setService(db, op, req) {
+  const body = await readJson(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const code = String(body.service ?? "");
+  const state = String(body.state ?? "");
+  if (!SERVICE_STATES.includes(state)) {
+    throw new HttpError(
+      400,
+      `state must be one of: ${SERVICE_STATES.join(", ")}`,
+      "invalid_state",
+      { field: "state" }
+    );
+  }
+  const known = await db.pool.query(
+    `SELECT code, name_bn FROM service_catalogue WHERE code = $1`,
+    [code]
+  );
+  if (known.rows.length === 0) {
+    throw new HttpError(400, "unknown service", "unknown_service", { field: "service" });
+  }
+  if (state === "disabled") {
+    const dependents = await db.pool.query(
+      `SELECT c.code, c.name_bn FROM service_catalogue c
+        WHERE $2 = ANY(c.depends_on)
+          AND app.tenant_service_state($1, c.code) IN ('enabled','limited')`,
+      [id, code]
+    );
+    if (dependents.rows.length > 0) {
+      const names = dependents.rows.map((d) => d.name_bn).join(", ");
+      throw new HttpError(
+        409,
+        `\u0986\u0997\u09C7 ${names} \u09AC\u09A8\u09CD\u09A7 \u0995\u09B0\u09A4\u09C7 \u09B9\u09AC\u09C7 \u2014 \u09B8\u09C7\u0997\u09C1\u09B2\u09CB ${known.rows[0].name_bn}-\u098F\u09B0 \u0989\u09AA\u09B0 \u09A8\u09BF\u09B0\u09CD\u09AD\u09B0 \u0995\u09B0\u09C7`,
+        "dependency_active",
+        { dependents: dependents.rows.map((d) => d.code) }
+      );
+    }
+  }
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET services = CASE WHEN $3 = 'enabled'
+                            -- 'enabled' REMOVES the override rather than
+                            -- storing one, so the plan goes back to being
+                            -- the authority. Storing "enabled" would
+                            -- silently grant a service the plan excludes.
+                            THEN services - $2::text
+                            ELSE jsonb_set(services, ARRAY[$2::text], to_jsonb($3::text), true)
+                       END,
+            updated_at = now()
+      WHERE tenant_id = $1`,
+    [id, code, state]
+  );
+  await db.pool.query(
+    `SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `service ${code}=${state}`]
+  );
+  return afterChange(db, id);
+}
+async function setPortal(db, op, req) {
+  const body = await readJson(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const portal = String(body.portal ?? "");
+  const open = body.open === true;
+  if (!PORTALS.includes(portal)) {
+    throw new HttpError(
+      400,
+      `portal must be one of: ${PORTALS.join(", ")}`,
+      "invalid_portal",
+      { field: "portal" }
+    );
+  }
+  if (!open && (portal === "principal" || portal === "it_admin")) {
+    const other = portal === "principal" ? "it_admin" : "principal";
+    const { rows } = await db.pool.query(
+      `SELECT COALESCE((portals ->> $2)::boolean, true) AS open
+         FROM tenant_operations WHERE tenant_id = $1`,
+      [id, other]
+    );
+    if (rows[0] && rows[0].open === false) {
+      throw new HttpError(
+        409,
+        '\u09AA\u09CD\u09B0\u09A7\u09BE\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0993 \u0986\u0987\u099F\u09BF \u0985\u09CD\u09AF\u09BE\u09A1\u09AE\u09BF\u09A8 \u2014 \u09A6\u09C1\u099F\u09CB\u0987 \u09AC\u09A8\u09CD\u09A7 \u0995\u09B0\u09B2\u09C7 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0995\u09C7\u0989 \u0986\u09B0 \u09AA\u09CD\u09B0\u09AC\u09C7\u09B6 \u0995\u09B0\u09A4\u09C7 \u09AA\u09BE\u09B0\u09AC\u09C7 \u09A8\u09BE\u0964 \u09AA\u09C1\u09B0\u09CB \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8 \u09AC\u09A8\u09CD\u09A7 \u0995\u09B0\u09A4\u09C7 \u099A\u09BE\u0987\u09B2\u09C7 "\u09B8\u09CD\u09A5\u0997\u09BF\u09A4" \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8\u0964',
+        "would_lock_out"
+      );
+    }
+  }
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET portals = CASE WHEN $3
+                           -- Open REMOVES the key: absent means allowed, so
+                           -- the row goes back to its default shape rather
+                           -- than accumulating true-valued keys.
+                           THEN portals - $2::text
+                           ELSE jsonb_set(portals, ARRAY[$2::text], 'false'::jsonb, true)
+                      END,
+            updated_at = now()
+      WHERE tenant_id = $1`,
+    [id, portal, open]
+  );
+  await db.pool.query(
+    `SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `portal ${portal}=${open ? "open" : "closed"}`]
+  );
+  return afterChange(db, id);
+}
+async function recordPayment(db, op, req) {
+  const body = await readJson(req);
+  const id = requireTenantId(body.tenantId);
+  const amount = Number(body.amountBdt);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new HttpError(
+      400,
+      "\u099F\u09BE\u0995\u09BE\u09B0 \u09AA\u09B0\u09BF\u09AE\u09BE\u09A3 \u09B6\u09C2\u09A8\u09CD\u09AF\u09C7\u09B0 \u09AC\u09C7\u09B6\u09BF \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7",
+      "invalid_amount",
+      { field: "amountBdt" }
+    );
+  }
+  const paidOn = String(body.paidOn ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) {
+    throw new HttpError(400, "\u09AA\u09B0\u09BF\u09B6\u09CB\u09A7\u09C7\u09B0 \u09A4\u09BE\u09B0\u09BF\u0996 \u09A6\u09BF\u09A8", "invalid_date", { field: "paidOn" });
+  }
+  const method = String(body.method ?? "");
+  if (!PAY_METHODS.includes(method)) {
+    throw new HttpError(
+      400,
+      `method must be one of: ${PAY_METHODS.join(", ")}`,
+      "invalid_method",
+      { field: "method" }
+    );
+  }
+  const reference = typeof body.reference === "string" ? body.reference.trim() : "";
+  const note = typeof body.note === "string" ? body.note.trim() : null;
+  const coversUntil = typeof body.coversUntil === "string" && body.coversUntil ? body.coversUntil : null;
+  try {
+    await db.pool.query(
+      `INSERT INTO tenant_payments
+         (tenant_id, amount_bdt, paid_on, method, reference, note, covers_until, recorded_by)
+       VALUES ($1, $2, $3, $4, NULLIF($5,''), $6, $7, $8)`,
+      [id, amount.toFixed(2), paidOn, method, reference, note, coversUntil, op.id]
+    );
+  } catch (err) {
+    if (err.code === "23505") {
+      throw new HttpError(
+        409,
+        "\u098F\u0995\u0987 \u09A4\u09BE\u09B0\u09BF\u0996\u09C7 \u098F\u0995\u0987 \u09AA\u09B0\u09BF\u09AE\u09BE\u09A3\u09C7\u09B0 \u098F\u0995\u0987 \u09AA\u09C7\u09AE\u09C7\u09A8\u09CD\u099F \u0986\u0997\u09C7\u0987 \u09B0\u09C7\u0995\u09B0\u09CD\u09A1 \u0995\u09B0\u09BE \u0986\u099B\u09C7\u0964 \u09B8\u09A4\u09CD\u09AF\u09BF\u0987 \u09A6\u09C1\u099F\u09BF \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09C7\u09AE\u09C7\u09A8\u09CD\u099F \u09B9\u09B2\u09C7 \u09B0\u09C7\u09AB\u09BE\u09B0\u09C7\u09A8\u09CD\u09B8 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09A6\u09BF\u09A8\u0964",
+        "duplicate_payment"
+      );
+    }
+    throw err;
+  }
+  if (coversUntil) {
+    await db.pool.query(
+      `UPDATE tenant_operations
+          SET next_due_on = $2::date, grace_until = NULL, grace_reason = NULL,
+              updated_at = now()
+        WHERE tenant_id = $1`,
+      [id, coversUntil]
+    );
+  }
+  await db.pool.query(
+    `SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [
+      op.id,
+      id,
+      note ?? "payment recorded",
+      `payment ${amount.toFixed(2)} ${method} on ${paidOn}${coversUntil ? ` covers_until=${coversUntil}` : ""}`
+    ]
+  );
+  return afterChange(db, id);
+}
+async function extendGrace(db, op, req) {
+  const body = await readJson(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const until = String(body.until ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    throw new HttpError(
+      400,
+      "\u0995\u09A4 \u09A4\u09BE\u09B0\u09BF\u0996 \u09AA\u09B0\u09CD\u09AF\u09A8\u09CD\u09A4, \u09B8\u09C7\u099F\u09BF \u09A6\u09BF\u09A8",
+      "invalid_date",
+      { field: "until" }
+    );
+  }
+  await db.pool.query(
+    `UPDATE tenant_operations
+        SET grace_until = $2::date, grace_reason = $3, grace_granted_by = $4,
+            updated_at = now()
+      WHERE tenant_id = $1`,
+    [id, until, reason, op.id]
+  );
+  await db.pool.query(
+    `SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [op.id, id, reason, `grace_until=${until}`]
+  );
+  return afterChange(db, id);
+}
+var CYCLES = ["monthly", "quarterly", "half_yearly", "yearly"];
+async function savePlan(db, op, req) {
+  const b = await readJson(req);
+  const reason = requireReason(b.reason);
+  const code = String(b.code ?? "").trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_]{1,30}$/.test(code)) {
+    throw new HttpError(
+      400,
+      "\u0995\u09CB\u09A1 \u099B\u09CB\u099F \u09B9\u09BE\u09A4\u09C7\u09B0 \u0987\u0982\u09B0\u09C7\u099C\u09BF \u0985\u0995\u09CD\u09B7\u09B0 \u09A6\u09BF\u09AF\u09BC\u09C7 \u09B6\u09C1\u09B0\u09C1 \u09B9\u09AC\u09C7, \u09E8\u2013\u09E9\u09E7 \u0985\u0995\u09CD\u09B7\u09B0, \u09B6\u09C1\u09A7\u09C1 \u0985\u0995\u09CD\u09B7\u09B0 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u0993 \u0986\u09A8\u09CD\u09A1\u09BE\u09B0\u09B8\u09CD\u0995\u09CB\u09B0",
+      "invalid_code",
+      { field: "code" }
+    );
+  }
+  const nameBn = String(b.nameBn ?? "").trim();
+  if (nameBn.length < 2 || nameBn.length > 80) {
+    throw new HttpError(
+      400,
+      "\u09AA\u09CD\u09B2\u09CD\u09AF\u09BE\u09A8\u09C7\u09B0 \u09A8\u09BE\u09AE \u09E8\u2013\u09EE\u09E6 \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B2\u09BF\u0996\u09C1\u09A8",
+      "invalid_name",
+      { field: "nameBn" }
+    );
+  }
+  const cycle = String(b.billingCycle ?? "yearly");
+  if (!CYCLES.includes(cycle)) {
+    throw new HttpError(
+      400,
+      `billing cycle must be one of: ${CYCLES.join(", ")}`,
+      "invalid_cycle",
+      { field: "billingCycle" }
+    );
+  }
+  const price = Number(b.priceBdt);
+  if (!Number.isFinite(price) || price < 0 || price > 99999999) {
+    throw new HttpError(
+      400,
+      "\u09AE\u09C2\u09B2\u09CD\u09AF \u09B6\u09C2\u09A8\u09CD\u09AF \u09AC\u09BE \u09A4\u09BE\u09B0 \u09AC\u09C7\u09B6\u09BF \u098F\u0995\u099F\u09BF \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7",
+      "invalid_price",
+      { field: "priceBdt" }
+    );
+  }
+  const cap = Number(b.studentCap);
+  if (!Number.isInteger(cap) || cap < 1) {
+    throw new HttpError(
+      400,
+      "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B8\u09C0\u09AE\u09BE \u09B6\u09C2\u09A8\u09CD\u09AF\u09C7\u09B0 \u09AC\u09C7\u09B6\u09BF \u098F\u0995\u099F\u09BF \u09AA\u09C2\u09B0\u09CD\u09A3 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7",
+      "invalid_cap",
+      { field: "studentCap" }
+    );
+  }
+  const trial = Number(b.trialDays ?? 30);
+  const grace = Number(b.graceDays ?? 14);
+  for (const [n, v, field] of [["\u099F\u09CD\u09B0\u09BE\u09AF\u09BC\u09BE\u09B2", trial, "trialDays"], ["\u099B\u09BE\u09A1\u09BC", grace, "graceDays"]]) {
+    if (!Number.isInteger(v) || v < 0 || v > 365) {
+      throw new HttpError(
+        400,
+        `${n} \u09E6 \u09A5\u09C7\u0995\u09C7 \u09E9\u09EC\u09EB \u09A6\u09BF\u09A8\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7`,
+        "invalid_days",
+        { field }
+      );
+    }
+  }
+  const wanted = b.services && typeof b.services === "object" && !Array.isArray(b.services) ? Object.entries(b.services).filter(([, v]) => v === true).map(([k]) => k) : [];
+  const { rows: known } = await db.pool.query(
+    `SELECT code FROM service_catalogue`
+  );
+  const catalogue2 = new Set(known.map((r2) => r2.code));
+  const unknown = wanted.filter((c) => !catalogue2.has(c));
+  if (unknown.length > 0) {
+    throw new HttpError(
+      400,
+      `\u0985\u099C\u09BE\u09A8\u09BE \u09B8\u09C7\u09AC\u09BE: ${unknown.join(", ")}`,
+      "unknown_service",
+      { field: "services", unknown }
+    );
+  }
+  const services = Object.fromEntries(wanted.map((c) => [c, true]));
+  const { rows: usedBy } = await db.pool.query(
+    `SELECT count(*)::text AS n FROM app.platform_overview() WHERE plan_code = $1`,
+    [code]
+  );
+  const affected = Number(usedBy[0]?.n ?? 0);
+  const { rows: before } = await db.pool.query(
+    `SELECT price_bdt, student_cap, grace_days FROM plans WHERE code = $1`,
+    [code]
+  );
+  const { rows } = await db.pool.query(
+    `INSERT INTO plans (code, name_bn, price_bdt, billing_cycle, student_cap,
+                        services, trial_days, grace_days, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
+     ON CONFLICT (code) DO UPDATE SET
+       name_bn = EXCLUDED.name_bn, price_bdt = EXCLUDED.price_bdt,
+       billing_cycle = EXCLUDED.billing_cycle, student_cap = EXCLUDED.student_cap,
+       services = EXCLUDED.services, trial_days = EXCLUDED.trial_days,
+       grace_days = EXCLUDED.grace_days, is_active = EXCLUDED.is_active
+     RETURNING code, name_bn, price_bdt, billing_cycle, student_cap, services,
+               trial_days, grace_days, is_active`,
+    [
+      code,
+      nameBn,
+      price,
+      cycle,
+      cap,
+      JSON.stringify(services),
+      trial,
+      grace,
+      b.isActive === false ? false : true
+    ]
+  );
+  const was = before[0];
+  await db.pool.query(
+    `SELECT app.log_platform_action($1, $2, $3, $4)`,
+    [
+      op.id,
+      null,
+      reason,
+      was ? `plan ${code}: ${was.price_bdt}/${was.student_cap}/${was.grace_days}d \u2192 ${price}/${cap}/${grace}d, ${wanted.length} services, ${affected} schools affected` : `plan ${code} created: ${price}/${cap}/${grace}d, ${wanted.length} services`
+    ]
+  );
+  const r = rows[0];
+  return {
+    ok: true,
+    created: !was,
+    affected,
+    plan: {
+      code: r.code,
+      nameBn: r.name_bn,
+      priceBdt: String(r.price_bdt),
+      billingCycle: r.billing_cycle,
+      studentCap: r.student_cap,
+      services: r.services,
+      trialDays: r.trial_days,
+      graceDays: r.grace_days,
+      isActive: r.is_active
+    }
+  };
+}
+async function setCap(db, op, req) {
+  const body = await readJson(req);
+  const id = requireTenantId(body.tenantId);
+  const reason = requireReason(body.reason);
+  const cap = Number(body.studentCap);
+  if (!Number.isInteger(cap) || cap < 1) {
+    throw new HttpError(
+      400,
+      "\u09B8\u09C0\u09AE\u09BE \u098F\u0995\u099F\u09BF \u09A7\u09A8\u09BE\u09A4\u09CD\u09AE\u0995 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7",
+      "invalid_cap",
+      { field: "studentCap" }
+    );
+  }
+  try {
+    await db.pool.query(
+      `SELECT app.set_student_cap($1, $2, $3, $4)`,
+      [op.id, id, cap, reason]
+    );
+  } catch (err) {
+    const code = err.code;
+    if (code === "23514") {
+      const { rows } = await db.pool.query(
+        `SELECT student_count n FROM app.platform_operations($1)`,
+        [id]
+      );
+      const enrolled = Number(rows[0]?.n ?? 0);
+      throw new HttpError(
+        409,
+        `\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u098F\u0996\u09A8 ${bn(enrolled)} \u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0986\u099B\u09C7 \u2014 \u09B8\u09C0\u09AE\u09BE \u09A4\u09BE\u09B0 \u0995\u09AE \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964`,
+        "cap_below_enrolled",
+        { enrolled }
+      );
+    }
+    if (code === "02000") throw new HttpError(404, "no such tenant", "not_found");
+    throw err;
+  }
+  return afterChange(db, id);
+}
+async function afterChange(db, id) {
+  const { rows } = await db.pool.query(
+    `SELECT access, ops_state, billing_state, reason_bn, until,
+            portals, services, next_due_on, grace_until, student_cap
+       FROM app.platform_operations($1)`,
+    [id]
+  );
+  const r = rows[0] ?? {};
+  return {
+    ok: true,
+    state: {
+      access: r.access,
+      opsState: r.ops_state,
+      billingState: r.billing_state,
+      reasonBn: r.reason_bn,
+      until: r.until,
+      portals: r.portals ?? {},
+      services: r.services ?? {},
+      nextDueOn: r.next_due_on,
+      graceUntil: r.grace_until,
+      studentCap: r.student_cap
+    }
   };
 }
 export {

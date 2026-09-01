@@ -35,6 +35,13 @@ import { corsHeaders, readJson, json, HttpError } from '../../../packages/server
 import { authenticate, requireStaff } from '../../../packages/server-core/src/auth.ts';
 import { enforceRateLimit, enforceIdentityRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'ai';
+
 // Blueprint model split (docs/01 §6.1): Opus for teacher-side generation,
 // Haiku for high-volume tutoring. Env-overridable without a redeploy of code.
 const MODEL_SIKHOK = process.env.AI_MODEL_SIKHOK ?? 'claude-opus-5';
@@ -214,7 +221,7 @@ async function sikhok(req: IncomingMessage, res: ServerResponse, cors: Record<st
   if (!subjectBn) throw new HttpError(400, 'subjectBn is required', 'subject_required');
 
   const db = await sharedDb();
-  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
   const queryText = `${subjectBn} ${body.instructions ?? ''}`.trim();
   const chunks = await retrieve(db, ctx, { classLevel, subjectBn, queryText, locale });
 
@@ -292,7 +299,7 @@ async function shikho(req: IncomingMessage, res: ServerResponse, cors: Record<st
   const classLevel = Number.isInteger(Number(body.classLevel)) ? Number(body.classLevel) : null;
 
   const db = await sharedDb();
-  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
   const chunks = classLevel
     ? await retrieve(db, ctx, { classLevel, subjectBn: body.subjectBn, queryText: message, locale })
     : [];

@@ -19,7 +19,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import { buildManifest } from '../api/manifest.ts';
 import { parseBranding, DEFAULT_BRANDING } from '../../../packages/ui-core/src/branding.ts';
 
@@ -137,7 +137,7 @@ const BRANDING_B = {
 
 async function dropFixtures(): Promise<void> {
   for (const [ctx, id] of [[asA, T_A], [asB, T_B]] as const) {
-    await db.withTenant(ctx, async (c) => {
+    await asBootstrap(db, ctx, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [id]);
     });
   }
@@ -152,7 +152,7 @@ describe('tenant branding endpoint (R-1)', { skip }, () => {
     db = createDb(DATABASE_URL as string);
     await dropFixtures();
 
-    await db.withTenant(asA, async (c) => {
+    await asBootstrap(db, asA, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
          VALUES ($1,'r1-school-a','শাহজালাল','Shahjalal','bangla_medium','secondary')`, [T_A]);
@@ -162,7 +162,7 @@ describe('tenant branding endpoint (R-1)', { skip }, () => {
            ($2,$3,'শিক্ষক ক','Teacher A','+8801799600003','active')`,
         [HEAD_A, TEACHER_A, T_A]);
     });
-    await db.withTenant(asB, async (c) => {
+    await asBootstrap(db, asB, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
          VALUES ($1,'r1-college-b','নর্থ সিটি','North City','bangla_medium','higher_secondary')`, [T_B]);
@@ -252,7 +252,7 @@ describe('tenant branding endpoint (R-1)', { skip }, () => {
     // Prove the claim directly: with tenant A's session context, an UPDATE
     // that explicitly targets tenant B matches zero rows because the
     // tenant_self policy has already narrowed the table.
-    const affected = await db.withTenant(asA, async (c) => {
+    const affected = await asBootstrap(db, asA, async (c) => {
       const r = await c.query(
         `UPDATE tenants SET settings = settings || '{"branding":{"nameBn":"ভুয়া"}}'::jsonb
           WHERE id = $1`, [T_B]);

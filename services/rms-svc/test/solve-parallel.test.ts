@@ -24,7 +24,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
+import { lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import { RmsSolver } from '../src/solve.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -48,14 +48,14 @@ let db: Db;
 const asCoord: TenantContext = { tenantId: T, userId: COORD, role: 'academic_coordinator' };
 
 async function dropFixtures(): Promise<void> {
-  await db.withTenant({ ...asCoord, role: 'principal' }, async (c) => {
+  await asBootstrap(db, { ...asCoord, role: 'principal' }, async (c) => {
     await c.query('DELETE FROM tenants WHERE id = $1', [T]);
   });
 }
 
 async function seed(): Promise<void> {
   await dropFixtures();
-  await db.withTenant({ ...asCoord, role: 'principal' }, async (c) => {
+  await asBootstrap(db, { ...asCoord, role: 'principal' }, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'f504p','সমান্তরাল','Parallel','bangla_medium','secondary')`, [T]);

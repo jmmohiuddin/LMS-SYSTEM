@@ -281,7 +281,13 @@ export class SmsDispatchWorker {
   }
 
   async run(tenantId: string): Promise<DispatchResult> {
-    const ctx: TenantContext = { tenantId, userId: '', role: 'system_ingest' };
+    // `service: 'sms'` — the gate refuses the whole run when this school has
+    // SMS off, in maintenance, or absent from its plan. Every message here
+    // costs the school money, so an off switch that still sent would be the
+    // most expensive kind of inert control.
+    const ctx: TenantContext = {
+      tenantId, userId: '', role: 'system_ingest', service: 'sms',
+    };
     return this.db.withTenant(ctx, async (client) => {
       // One shared budget for the whole run. Attendance and notices are two
       // senders drawing on ONE daily cap — reading it twice would let a busy

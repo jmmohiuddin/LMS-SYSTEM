@@ -62,6 +62,12 @@ const IMMUTABLE = /\/_next\/static\/|\/assets\/|\.(?:woff2|css|js|svg|png|webp|i
  */
 const UNHASHED_ENTRY_ASSETS = new Set(['/app.js', '/app.css', '/manifest.webmanifest']);
 
+/** Does this path belong to the shikhonBD operations console? */
+export function isPlatformPath(path: string): boolean {
+  return path === '/platform' || path.startsWith('/platform/')
+    || path === '/platform.html' || path === '/platform.js' || path === '/platform.css';
+}
+
 export function route(request: { url: string; method: string; mode?: string }): RouteDecision {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -69,6 +75,20 @@ export function route(request: { url: string; method: string; mode?: string }): 
   // Writes never touch a cache. The outbox owns durability, not the SW.
   if (request.method !== 'GET') {
     return { strategy: 'network-only', reason: 'mutation — the outbox owns durability' };
+  }
+
+  // P7. The operations console is never served from a cache.
+  //
+  // The SW's scope is the origin, so it controls `/platform` too — and
+  // `/platform.js` matched IMMUTABLE on its `.js` extension, which pinned an
+  // operator to the first console build their browser ever downloaded. This
+  // console suspends schools and records payments; a stale copy of it is a
+  // person clicking a button whose meaning has since changed.
+  //
+  // There is no offline requirement to trade against: it is a desk tool, and
+  // a failed load is a visible failure rather than a quiet lie.
+  if (isPlatformPath(path)) {
+    return { strategy: 'network-only', reason: 'operations console — never stale, never offline' };
   }
 
   // Navigations.

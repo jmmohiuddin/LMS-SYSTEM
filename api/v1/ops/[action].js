@@ -76,9 +76,35 @@ var HttpError = class extends Error {
     this.detail = detail;
   }
 };
+var TenantBlocked = class extends HttpError {
+  access;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  reasonBn;
+  constructor(access) {
+    super(
+      403,
+      access.reasonBn ?? "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F\u09C7 \u098F\u0996\u09A8 \u098F\u0987 \u0995\u09BE\u099C\u099F\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964",
+      "tenant_blocked",
+      {
+        access: access.access,
+        opsState: access.opsState,
+        billingState: access.billingState,
+        until: access.until
+      }
+    );
+    this.access = access;
+    this.reasonBn = this.message;
+  }
+};
 
 // packages/server-core/src/db.ts
 import pg from "pg";
+pg.types.setTypeParser(1082, (v) => v);
 function createDb(connectionString, opts = {}) {
   const pool = new pg.Pool({
     connectionString,
@@ -89,33 +115,57 @@ function createDb(connectionString, opts = {}) {
   });
   async function inTx(setup, fn) {
     const client = await pool.connect();
+    let readOnlyFor;
+    let released = false;
     try {
       await client.query("BEGIN");
-      await setup(client);
+      readOnlyFor = (await setup(client))?.blocked;
       const out = await fn(client);
       await client.query("COMMIT");
       return out;
     } catch (err) {
+      if (readOnlyFor && err?.code === "25006") {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+        }
+        client.release();
+        released = true;
+        throw new TenantBlocked(readOnlyFor);
+      }
       try {
         await client.query("ROLLBACK");
       } catch {
       }
       throw err;
     } finally {
-      client.release();
+      if (!released) client.release();
     }
   }
   return {
     pool,
-    withTenant(ctx, fn) {
+    async tenantAccess(tenantId) {
+      return readAccess(pool, tenantId);
+    },
+    withTenant(ctx, fn, opts2) {
       if (!ctx.tenantId) throw new Error("tenant context required");
       return inTx(async (c) => {
+        let blocked;
         await c.query(
           `SELECT set_config('app.tenant_id', $1, true),
                   set_config('app.user_id',   $2, true),
                   set_config('app.role',      $3, true)`,
           [ctx.tenantId, ctx.userId, ctx.role]
         );
+        if (opts2?.skipGate) return;
+        const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
+        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "read_only") {
+          await c.query("SET LOCAL transaction_read_only = on");
+          blocked = access;
+          if (opts2?.write) throw new TenantBlocked(access);
+        }
+        return { blocked };
       }, fn);
     },
     withSystemRole(role, fn) {
@@ -125,6 +175,48 @@ function createDb(connectionString, opts = {}) {
     },
     end: () => pool.end()
   };
+}
+async function readAccess(q, tenantId, role, service) {
+  try {
+    const { rows } = role && service ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2, $3)`,
+      [tenantId, role, service]
+    ) : role ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2)`,
+      [tenantId, role]
+    ) : await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1)`,
+      [tenantId]
+    );
+    const r = rows[0];
+    if (!r?.access) {
+      return {
+        access: "none",
+        opsState: "unknown",
+        billingState: "unknown",
+        reasonBn: "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u099F\u09BF \u0996\u09C1\u0981\u099C\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+        until: null
+      };
+    }
+    return {
+      access: r.access,
+      opsState: r.ops_state ?? "unknown",
+      billingState: r.billing_state ?? "unknown",
+      reasonBn: r.reason_bn ?? null,
+      until: r.until ? String(r.until).slice(0, 10) : null
+    };
+  } catch {
+    return {
+      access: "none",
+      opsState: "unknown",
+      billingState: "unknown",
+      reasonBn: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u098F\u0995\u099F\u09C1 \u09AA\u09B0\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      until: null
+    };
+  }
 }
 async function assertRlsEnforced(db) {
   const { rows } = await db.pool.query(
@@ -2091,6 +2183,7 @@ function noticeSmsBody(title, body, org, maxChars = NOTICE_SMS_DEFAULT_MAX) {
 }
 
 // services/ops-svc/api/notices.ts
+var SERVICE = "notices";
 var AUTHOR_ROLES = ["principal", "school_owner", "academic_coordinator", "class_teacher"];
 var SCHOOL_WIDE_ROLES = /* @__PURE__ */ new Set(["principal", "school_owner", "academic_coordinator"]);
 async function assertAudienceAllowed(client, role, draft) {
@@ -2127,7 +2220,7 @@ async function handler6(req, res) {
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
     if (req.method === "GET") {
       const limit = Math.min(100, Math.max(1, Number(query(req).get("limit") ?? 50)));
       const notices = await db.withTenant(ctx, async (c) => {
@@ -2284,6 +2377,7 @@ async function previewAudience(db, ctx, body) {
 }
 
 // services/ops-svc/api/inbox.ts
+var SERVICE2 = "notices";
 var UUID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function handler7(req, res) {
   const cors = corsHeaders([], "GET, POST, OPTIONS");
@@ -2295,7 +2389,7 @@ async function handler7(req, res) {
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 };
     if (req.method === "GET") {
       const limit = Math.min(100, Math.max(1, Number(query(req).get("limit") ?? 30)));
       const unreadOnly = query(req).get("unread") === "1";
@@ -4325,6 +4419,7 @@ async function handler16(req, res) {
 }
 
 // services/ops-svc/api/calendar.ts
+var SERVICE3 = "calendar";
 var CALENDAR_WRITERS = ["principal", "school_owner", "academic_coordinator", "it_admin"];
 var KINDS = /* @__PURE__ */ new Set(["holiday", "exam", "event", "ramadan_schedule", "working_weekend"]);
 var SHIFTS2 = /* @__PURE__ */ new Set(["morning", "day", "evening", "single"]);
@@ -4351,7 +4446,7 @@ async function handler17(req, res) {
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 };
     if (req.method === "GET") {
       json(res, 200, await read(db, ctx, req), cors);
       return;
@@ -5079,6 +5174,7 @@ function documentBodyCss() {
 }
 
 // services/ops-svc/api/document.ts
+var SERVICE4 = "documents";
 var ACCESS = {
   fee_receipt: ["principal", "school_owner", "accountant", "student", "guardian"],
   report_card: [
@@ -5150,7 +5246,7 @@ async function handler18(req, res) {
       throw new HttpError(403, "\u098F\u0987 \u09A8\u09A5\u09BF \u09A4\u09C8\u09B0\u09BF\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987", "forbidden");
     }
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE4 };
     const html = await db.withTenant(ctx, async (c) => {
       const { rows: brandRows } = await c.query(
         `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding FROM tenants`
@@ -5542,6 +5638,7 @@ async function attendanceSheet(c, q) {
 }
 
 // services/ops-svc/api/push.ts
+var SERVICE5 = "push";
 var PRIVATE_SUFFIXES = [".local", ".internal", ".localdomain", ".home.arpa"];
 var PRIVATE_NAMES = /* @__PURE__ */ new Set(["localhost", "metadata.google.internal"]);
 function assertSafePushEndpoint(raw) {
@@ -5596,7 +5693,7 @@ async function handler19(req, res) {
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE5 };
     const vapid = vapidFromEnv();
     if (req.method === "GET") {
       const devices = await db.withTenant(ctx, async (c) => {

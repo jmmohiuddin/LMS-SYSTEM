@@ -19,7 +19,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 
 const PLATFORM_URL = process.env.PLATFORM_DATABASE_URL;
 const skip = !PLATFORM_URL ? 'PLATFORM_DATABASE_URL not set' : false;
@@ -29,6 +29,21 @@ const OPERATOR = '7a700000-0000-4000-8000-0000000000aa';
 const PLATFORM_TENANT = '7a700000-0000-4000-8000-00000000000f';
 const SLUG_A = 'r7-test-alpha';
 const SLUG_B = 'r7-test-beta';
+
+/**
+ * A device id per RUN, not a constant.
+ *
+ * Activation redemption is rate-limited as `otp_verify` — 10 per hour, keyed
+ * on the device. With a fixed id every run of this suite spent from the SAME
+ * bucket, so the fifth run in an hour failed with a 429 and looked exactly
+ * like a flaky test. It was the limiter working correctly on a test that had
+ * accidentally made itself the attacker.
+ *
+ * This does not weaken the limit: it is asserted where it belongs, in
+ * `packages/server-core`'s rate-limit suite and in `security-probe.mjs`.
+ * Here it was deciding the outcome of a test about onboarding.
+ */
+const DEVICE = `r7-test-device-${process.pid}-${Math.floor(Math.random() * 1e6)}`;
 
 let db: Db;
 let platform: typeof import('../api/index.ts').default;
@@ -61,7 +76,10 @@ async function cleanup(): Promise<void> {
     `SELECT id FROM app.platform_tenants(NULL) WHERE slug = ANY($1::citext[])`,
     [[SLUG_A, SLUG_B]]);
   for (const r of rows) {
-    await db.withTenant({ tenantId: r.id, userId: OPERATOR, role: 'principal' }, async (c) => {
+    // Bootstrap: these suites leave schools suspended on purpose, and the
+    // gate refuses a suspended school — so the ordinary path could not clean
+    // up after the very tests that matter most here.
+    await asBootstrap(db, { tenantId: r.id, userId: OPERATOR, role: 'principal' }, async (c) => {
       // Money rows are ON DELETE RESTRICT, deliberately — a school's
       // financial history cannot be erased by erasing the school.
       await c.query(`DELETE FROM payment_receipts WHERE tenant_id = app.current_tenant()`);
@@ -82,7 +100,11 @@ async function cleanup(): Promise<void> {
  * every count as 0, which looked like the endpoints had done nothing.
  */
 async function countIn(tenantId: string, sql: string): Promise<number> {
-  return db.withTenant({ tenantId, userId: OPERATOR, role: 'principal' }, async (c) => {
+  // Bootstrap, like the console itself: this counts rows in schools that are
+  // deliberately suspended, to prove suspension loses nothing. Reading a
+  // suspended school is exactly what the platform service is for — every one
+  // of its own `withTenant` calls declares `skipGate` for the same reason.
+  return asBootstrap(db, { tenantId, userId: OPERATOR, role: 'principal' }, async (c) => {
     const { rows } = await c.query<{ n: number }>(sql);
     return Number(rows[0].n);
   });
@@ -198,7 +220,7 @@ describe('R-7 — platform console', { skip }, () => {
     });
 
     test('§16 — activation is blocked until the two silent failures are covered', async () => {
-      const r = await asOperator('/api/v1/platform/status', { tenantId, status: 'active' });
+      const r = await asOperator('/api/v1/platform/status', { tenantId, status: 'active', reason: 'R-7 acceptance' });
       assert.equal(r.status, 409);
       const b = r.body as { error: string; blockers: string[] };
       assert.equal(b.error, 'activation_blocked');
@@ -407,7 +429,7 @@ describe('R-7 — platform console', { skip }, () => {
 
     test('activate, then suspend, then restore — data untouched throughout', async () => {
       assert.equal((await asOperator('/api/v1/platform/status',
-        { tenantId, status: 'active' })).status, 200);
+        { tenantId, status: 'active', reason: 'R-7 acceptance' })).status, 200);
 
       const before = await countIn(tenantId, 'SELECT count(*)::int AS n FROM student_profiles');
 
@@ -417,7 +439,7 @@ describe('R-7 — platform console', { skip }, () => {
       const after = await countIn(tenantId, 'SELECT count(*)::int AS n FROM student_profiles');
       assert.equal(after, before, 'suspension lost data');
 
-      const back = await asOperator('/api/v1/platform/status', { tenantId, status: 'active' });
+      const back = await asOperator('/api/v1/platform/status', { tenantId, status: 'active', reason: 'R-7 acceptance' });
       assert.equal(back.status, 200);
       const t = await asOperator(`/api/v1/platform/tenant?id=${tenantId}`);
       assert.equal((t.body as { tenant: { status: string } }).tenant.status, 'active');
@@ -445,7 +467,7 @@ describe('R-7 — platform console', { skip }, () => {
       const activate = (await import('../../identity-svc/api/activate.ts')).default;
       const r = await call(activate, {
         method: 'POST', url: '/api/v1/auth/activate',
-        body: { action: 'redeem', tenantId, code, deviceId: 'r7-test-device' },
+        body: { action: 'redeem', tenantId, code, deviceId: DEVICE },
       });
       assert.equal(r.status, 200, JSON.stringify(r.body));
       const b = r.body as { accessToken: string; user: { role: string } };
@@ -455,7 +477,7 @@ describe('R-7 — platform console', { skip }, () => {
       // Single use: the same slip cannot sign in twice.
       const again = await call(activate, {
         method: 'POST', url: '/api/v1/auth/activate',
-        body: { action: 'redeem', tenantId, code, deviceId: 'r7-test-device-2' },
+        body: { action: 'redeem', tenantId, code, deviceId: `${DEVICE}-2` },
       });
       assert.equal(again.status, 400);
       assert.equal((again.body as { error: string }).error, 'invalid_code');
@@ -463,17 +485,223 @@ describe('R-7 — platform console', { skip }, () => {
 
     test('§25 — every platform action is in the audit trail', async () => {
       const r = await asOperator(`/api/v1/platform/audit?tenantId=${tenantId}`);
-      const entries = (r.body as { entries: Array<{ reason: string; actorId: string }> }).entries;
+      const entries = (r.body as { entries: Array<{ reason: string }> }).entries;
       const reasons = entries.map((e) => e.reason).join(' ');
       for (const expected of ['onboarding wizard', 'provisioning', 'branding', 'first admin']) {
         assert.match(reasons, new RegExp(expected), `no audit row for ${expected}`);
       }
-      // The operator, not the school.
-      assert.ok(entries.every((e) => e.actorId === OPERATOR));
+
+      // The operator, not the school — asserted against the STORED row.
+      //
+      // P7 stopped shipping `admin_id` to the client: it is a JWT subject
+      // with no `users` row behind it, so it resolves to nobody, cannot be
+      // displayed under "never expose raw UUIDs", and sending it only invites
+      // the next person to render it (B-39). The property it was proving is
+      // about what is RECORDED, so it is checked where it is recorded — which
+      // is the stronger place for it, since a projection could be right while
+      // the row was wrong.
+      const { rows } = await db.pool.query<{ admin_id: string }>(
+        `SELECT DISTINCT admin_id FROM audit.platform_access WHERE tenant_id = $1`,
+        [tenantId]);
+      assert.deepEqual(rows.map((x) => x.admin_id), [OPERATOR],
+        'a platform action was attributed to somebody other than the operator');
+
+      // And the id never reaches the client, which is the point of removing it.
+      assert.ok(!JSON.stringify(r.body).includes(OPERATOR),
+        'the audit response is leaking an operator uuid again');
     });
   });
 
   // ── §24 isolation ─────────────────────────────────────────────────────
+
+  // ── §16 D16: the plan CATALOGUE, not just a school's plan ──
+  //
+  // A school's plan had a screen; the plans it could be changed TO were seed
+  // rows editable only in psql. A plan's price, cap, services and grace
+  // window are commercial state, and P7's own gate says none of that may be
+  // SQL-only.
+  describe('the plan catalogue', () => {
+    const PLAN = 'p7_test_plan';
+    const base = {
+      code: PLAN, nameBn: 'পরীক্ষামূলক প্ল্যান', priceBdt: 12345.5,
+      billingCycle: 'yearly', studentCap: 250, trialDays: 15, graceDays: 20,
+      services: { attendance: true, results: true }, isActive: true,
+      reason: 'P7 test — the catalogue must be operable without SQL',
+    };
+
+    after(async () => {
+      // No DELETE endpoint by design (a plan with schools on it cannot be
+      // removed without orphaning or cascading), so the fixture is removed
+      // directly. Safe: nothing is on it.
+      await db.pool.query('DELETE FROM plans WHERE code = $1', [PLAN]);
+    });
+
+    test('THE ONE THAT MATTERS — a plan can be created without touching SQL', async () => {
+      const r = await asOperator('/api/v1/platform/plans', base);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const b = r.body as { created: boolean; affected: number; plan: Record<string, unknown> };
+      assert.equal(b.created, true);
+      assert.equal(b.affected, 0, 'a brand new plan cannot already have schools');
+      assert.equal(b.plan.studentCap, 250);
+      assert.equal(b.plan.graceDays, 20);
+      assert.deepEqual(b.plan.services, { attendance: true, results: true });
+    });
+
+    test('it appears in the catalogue the console reads', async () => {
+      const r = await asOperator('/api/v1/platform/catalogue');
+      const plans = (r.body as { plans: Array<{ code: string }> }).plans;
+      assert.ok(plans.some((p) => p.code === PLAN), 'the new plan is not in the picker');
+    });
+
+    test('the whole plan is written, so a dropped service is really dropped', async () => {
+      // A PATCH would leave last year's services beside this year's price.
+      await asOperator('/api/v1/platform/plans',
+        { ...base, services: { attendance: true }, reason: 'drop results' });
+      const r = await asOperator('/api/v1/platform/catalogue');
+      const p = (r.body as { plans: Array<{ code: string; services: Record<string, boolean> }> })
+        .plans.find((x) => x.code === PLAN);
+      assert.deepEqual(p?.services, { attendance: true });
+    });
+
+    test('a service the catalogue does not know is refused by name', async () => {
+      const r = await asOperator('/api/v1/platform/plans',
+        { ...base, services: { attendance: true, teleportation: true } });
+      assert.equal(r.status, 400);
+      assert.equal((r.body as { error: string }).error, 'unknown_service');
+    });
+
+    test('no reason, no change — the same rule as every other commercial act', async () => {
+      const r = await asOperator('/api/v1/platform/plans', { ...base, reason: '' });
+      assert.equal(r.status, 400);
+      assert.equal((r.body as { error: string }).error, 'reason_required');
+    });
+
+    test('a nonsense code is refused before it reaches the database', async () => {
+      for (const code of ['A', 'has space', 'Has-Caps', '9leading', '']) {
+        const r = await asOperator('/api/v1/platform/plans', { ...base, code });
+        assert.equal(r.status, 400, code);
+        assert.equal((r.body as { error: string }).error, 'invalid_code', code);
+      }
+    });
+
+    test('a cap or price below zero is refused', async () => {
+      assert.equal((await asOperator('/api/v1/platform/plans',
+        { ...base, studentCap: 0 })).status, 400);
+      assert.equal((await asOperator('/api/v1/platform/plans',
+        { ...base, priceBdt: -1 })).status, 400);
+    });
+
+    test('the change is in the audit trail, carrying the operator sentence', async () => {
+      await asOperator('/api/v1/platform/plans',
+        { ...base, priceBdt: 999, reason: 'দাম কমানো হয়েছে' });
+      // Scoped to THIS plan, not "the newest row". These suites share one
+      // database (B-35) and the console itself writes here, so "the latest
+      // audit row is mine" is only true when nothing else is running — which
+      // is exactly the assumption that makes a suite pass once and fail the
+      // second time.
+      const { rows } = await db.pool.query<{ reason: string; statement: string }>(
+        `SELECT reason, statement FROM audit.platform_access
+          WHERE tenant_id IS NULL AND statement LIKE $1
+          ORDER BY created_at DESC, id DESC LIMIT 1`, [`plan ${PLAN}:%`]);
+      assert.equal(rows[0].reason, 'দাম কমানো হয়েছে');
+      assert.match(rows[0].statement, new RegExp(PLAN));
+      // The count of affected schools must be REAL. It was 0 for every plan
+      // once, because the query read `FROM tenants` as the platform role and
+      // RLS hid every row — a silent zero that reached the audit trail.
+      assert.match(rows[0].statement, /\d+ schools affected/);
+    });
+
+    test('a school cannot reach it', async () => {
+      const r = await call(platform, {
+        url: '/api/v1/platform/plans', method: 'POST', body: base,
+        token: principalToken, headers: { 'x-platform-key': KEY },
+      } as Parameters<typeof call>[1]);
+      assert.equal(r.status, 403);
+    });
+  });
+
+
+  // ── §8 service dependency safety ──
+  //
+  // `setService` refuses to switch a service off while something that depends
+  // on it is still on. That code had never executed: the seeded catalogue
+  // declares NO dependencies (051 removed the one bogus entry it shipped
+  // with), so the refusal was a path with no data behind it — present,
+  // plausible, and never once run.
+  //
+  // These declare a dependency for the length of the test and take it away
+  // again. That tests the MECHANISM, which is the honest thing to test:
+  // inventing a product rule so the assertion has something to bite would be
+  // asserting a fiction.
+  describe('service dependency safety', () => {
+    let tenantId = '';
+
+    before(async () => {
+      const r = await asOperator('/api/v1/platform/tenants', {
+        slug: 'r7-test-dep', nameBn: 'নির্ভরতা পরীক্ষা', nameEn: 'Dep Test',
+        stream: 'bangla_medium', level: 'secondary', studentCap: 10,
+      });
+      tenantId = (r.body as { tenant: { id: string } }).tenant.id;
+      await db.pool.query(
+        `UPDATE service_catalogue SET depends_on = '{results}' WHERE code = 'reports'`);
+    });
+
+    after(async () => {
+      // Reference data shared by every suite — always put it back.
+      await db.pool.query(
+        `UPDATE service_catalogue SET depends_on = '{}' WHERE code = 'reports'`);
+      if (tenantId) {
+        await asBootstrap(db, { tenantId, userId: OPERATOR, role: 'principal' },
+          (c) => c.query('DELETE FROM tenants WHERE id = app.current_tenant()'));
+      }
+    });
+
+    test('THE ONE THAT MATTERS — a service in use by another is refused', async () => {
+      const r = await asOperator('/api/v1/platform/service', {
+        tenantId, service: 'results', state: 'disabled',
+        reason: 'should be refused while reports depends on it',
+      });
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal((r.body as { error: string }).error, 'dependency_active');
+    });
+
+    test('and it NAMES what has to go first', async () => {
+      const r = await asOperator('/api/v1/platform/service', {
+        tenantId, service: 'results', state: 'disabled', reason: 'naming check',
+      });
+      const b = r.body as { message: string; dependents: string[] };
+      assert.deepEqual(b.dependents, ['reports']);
+      // The operator is told the Bangla NAME, not the code — "রিপোর্ট", not
+      // "reports". A refusal that names an internal code is a refusal the
+      // person cannot act on.
+      assert.match(b.message, /রিপোর্ট/);
+    });
+
+    test('turn the dependent off first, and it goes through', async () => {
+      assert.equal((await asOperator('/api/v1/platform/service', {
+        tenantId, service: 'reports', state: 'disabled', reason: 'dependent first',
+      })).status, 200);
+      assert.equal((await asOperator('/api/v1/platform/service', {
+        tenantId, service: 'results', state: 'disabled', reason: 'now allowed',
+      })).status, 200);
+    });
+
+    test('the catalogue cannot name a service that does not exist', async () => {
+      // Migration 058. Before it, a dangling code silently made the refusal
+      // above stop firing — no error, no match, no protection.
+      await assert.rejects(
+        () => db.pool.query(
+          `UPDATE service_catalogue SET depends_on = '{ghost}' WHERE code = 'reports'`),
+        (err: unknown) => (err as { code?: string }).code === '23503');
+    });
+
+    test('nor depend on itself', async () => {
+      await assert.rejects(
+        () => db.pool.query(
+          `UPDATE service_catalogue SET depends_on = '{reports}' WHERE code = 'reports'`),
+        (err: unknown) => (err as { code?: string }).code === '23514');
+    });
+  });
 
   describe('tenant isolation', () => {
     test('a second institution is entirely separate', async () => {

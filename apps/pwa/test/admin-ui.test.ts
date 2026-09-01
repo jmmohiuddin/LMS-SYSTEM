@@ -20,7 +20,6 @@ import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
-import { PrincipalView, type PrincipalDashboard } from '../src/principal-view.ts';
 import { AcademicView } from '../src/academic-view.ts';
 import { PublishView } from '../src/publish-view.ts';
 import { InvoiceView } from '../src/invoice-view.ts';
@@ -111,23 +110,6 @@ function fakeAuth(
   };
 }
 
-const dashboard = (over: Partial<PrincipalDashboard> = {}): PrincipalDashboard => ({
-  year: { id: 'y1', label: '২০২৬' },
-  needsSetup: false,
-  counts: { students: 1240, teachers: 48, sections: 26, classes: 6 },
-  attendanceToday: { present: 1102, marked: 1180, percent: 93, sessionsTaken: 22, sectionsExpected: 26 },
-  absentToday: { total: 78, shown: [
-    { studentId: 's1', nameBn: 'করিম', rollNo: 4, section: 'F', classBn: 'নবম' },
-  ] },
-  upcomingExams: [],
-  recentNotices: [],
-  pending: {
-    sectionsWithoutClassTeacher: 2, subjectsWithoutTeacher: 3,
-    examsAwaitingPublication: 1, studentsWithoutSection: 0,
-  },
-  finance: null,
-  ...over,
-});
 
 // ── The four states D13 requires ───────────────────────────────────────
 
@@ -158,113 +140,19 @@ describe('the four states', () => {
     assert.ok(retried);
   });
 
-  test('a 403 offers no retry, because retrying cannot help', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({}, { status: 403 }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    assert.match(text(), /অনুমতি/);
-    assert.equal(root().querySelectorAll('button').length, 0,
-      'a permission error with a retry button teaches the user to keep pressing it');
-  });
-
-  test('losing the network says so, and offers a retry', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({}, { throws: true }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    assert.match(text(), /সংযোগ/);
-    assert.ok(root().querySelector('button'), 'a network error is exactly the retryable kind');
-  });
+  // P7-0. The two cases that stood here — a 403 offering no retry, and a
+  // network failure offering one — drove `principal-view.ts`, which the
+  // home/institution merge retired. Both now run against the screen that
+  // ships, in `principal-home-view.test.ts`, where they belong.
 });
 
 // ── Part A: the principal dashboard ────────────────────────────────────
 
-describe('principal dashboard', () => {
-  test('THE ONE THAT MATTERS — no attendance yet is not 0%', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({ '/api/v1/ops/dashboard': dashboard({
-        attendanceToday: { present: 0, marked: 0, percent: null, sessionsTaken: 0, sectionsExpected: 26 },
-      }) }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    // 0% at 8:05am sends a head teacher after a class teacher who has done
-    // nothing wrong.
-    assert.doesNotMatch(text(), /০%/);
-    assert.match(text(), /হাজিরা নেওয়া হয়নি/);
-  });
-
-  test('a truncated absent list says how many more there are', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({ '/api/v1/ops/dashboard': dashboard() }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    // 78 absent, 1 shown — the screen must not imply the list is the list.
-    assert.match(text(), new RegExp(`আরও ${bnNum(77)}`));
-  });
-
-  test('the fee block is absent when the server withheld it', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({ '/api/v1/ops/dashboard': dashboard({ finance: null }) }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    assert.doesNotMatch(text(), /বকেয়া/);
-  });
-
-  test('and present when it was sent', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({ '/api/v1/ops/dashboard': dashboard({
-        finance: { invoiced: '1000.00', collected: '600.00', outstanding: '400.00', unpaidCount: 3 },
-      }) }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    assert.match(text(), /বকেয়া/);
-  });
-
-  test('day one — no academic year is guidance, not a wall of zeroes', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({ '/api/v1/ops/dashboard': { year: null, needsSetup: true } }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    assert.match(text(), /শিক্ষাবর্ষ তৈরি হয়নি/);
-    assert.doesNotMatch(text(), /শিক্ষার্থী\s*০/);
-  });
-
-  test('pending items are only listed when there are any', async () => {
-    new PrincipalView({
-      root: root(), doc: doc(),
-      auth: fakeAuth({ '/api/v1/ops/dashboard': dashboard({
-        pending: { sectionsWithoutClassTeacher: 0, subjectsWithoutTeacher: 0,
-                   examsAwaitingPublication: 0, studentsWithoutSection: 0 },
-      }) }) as never,
-      onNavigate: () => {},
-    });
-    await settle();
-    // P6 replaced the bare "কিছু বাকি নেই" with a card that SAYS what is
-    // complete. A row of zeroes is a wall a person reads to learn nothing,
-    // and so is a two-word line that names nothing.
-    assert.match(text(), /কাঠামো সম্পূর্ণ/);
-    assert.match(text(), /প্রতিটি সেকশনে শ্রেণি শিক্ষক আছে/);
-    // And the pending table is absent, not empty: an empty table under a
-    // heading reads as "the query returned nothing", which is a different
-    // claim from "there is nothing outstanding".
-    assert.doesNotMatch(text(), /কী বাকি/);
-  });
-});
+// P7-0. The `principal dashboard` block that stood here tested
+// `principal-view.ts`, which the home/institution merge retired. Every rule
+// it held now lives in `principal-home-view.test.ts` against the screen that
+// actually ships — including the absentee truncation guarantee, which was
+// ported before this was removed.
 
 // ── Parts C, D, L: the hierarchy and assignment ────────────────────────
 

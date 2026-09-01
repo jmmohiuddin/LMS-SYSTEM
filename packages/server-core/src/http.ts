@@ -118,3 +118,60 @@ export class HttpError extends Error {
     this.detail = detail;
   }
 }
+
+/**
+ * What this school may do right now. Produced by `app.tenant_access` (052).
+ */
+export interface TenantAccess {
+  access: 'full' | 'read_only' | 'none';
+  opsState: string;
+  billingState: string;
+  /** Bangla, for the person. Null when there is nothing to explain. */
+  reasonBn: string | null;
+  until: string | null;
+}
+
+/**
+ * The school is suspended, limited or in maintenance, and this request cannot
+ * proceed.  (P7)
+ *
+ * An `HttpError` on purpose. Every service in this repository already ends its
+ * handler with `if (err instanceof HttpError) { json(res, err.status, …) }`,
+ * fifty-four times over. Making this a subclass means all fifty-four already
+ * refuse correctly, with the right status and a sentence a school can read —
+ * rather than fifty-four edits, of which the forgotten one is an endpoint that
+ * keeps serving a suspended school.
+ *
+ * **403, not 402.** A school in arrears is refused for a commercial reason,
+ * but every client in this product already knows what a 403 means — `isDenied`
+ * tests for exactly it — and none of them knows what a 402 means.
+ */
+export class TenantBlocked extends HttpError {
+  readonly access: TenantAccess;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  readonly reasonBn: string;
+
+  constructor(access: TenantAccess) {
+    // `tenant_blocked`, not `forbidden`: the remedy is completely different —
+    // a refused ROLE needs a different person, a blocked TENANT needs a
+    // payment or a call to us — and the screen has to say which.
+    super(
+      403,
+      access.reasonBn ?? 'এই প্রতিষ্ঠানের অ্যাকাউন্টে এখন এই কাজটি করা যাচ্ছে না।',
+      'tenant_blocked',
+      {
+        access: access.access,
+        opsState: access.opsState,
+        billingState: access.billingState,
+        until: access.until,
+      },
+    );
+    this.access = access;
+    this.reasonBn = this.message;
+  }
+}

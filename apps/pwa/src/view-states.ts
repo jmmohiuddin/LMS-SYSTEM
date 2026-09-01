@@ -264,3 +264,28 @@ export function bnDate(iso: string | null | undefined): string {
     return iso;
   }
 }
+
+/**
+ * A date AND a time, for a log where the order of two changes on one day is
+ * the whole point.
+ *
+ * `bnDate` deliberately drops the time — a due date has no time — and the
+ * platform audit list is the one place that needs it back.
+ */
+export function bnDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  try {
+    return new Date(t).toLocaleString('bn-BD', {
+      day: 'numeric', month: 'short', year: 'numeric',
+      // 24-hour, because `bn-BD` renders the 12-hour marker as a Latin
+      // "AM"/"PM" in the middle of a Bangla line — and because an audit
+      // trail read at a glance should not need the reader to work out which
+      // half of the day a row belongs to.
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+}

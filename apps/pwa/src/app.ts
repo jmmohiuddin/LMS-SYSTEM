@@ -36,7 +36,6 @@ import { BrandingView } from './branding-view.ts';
 import { InboxView } from './inbox-view.ts';
 import { NoticeComposeView } from './notice-compose-view.ts';
 // R-3 — the principal and IT admin control centre.
-import { PrincipalView } from './principal-view.ts';
 import { AcademicView } from './academic-view.ts';
 import { PublishView } from './publish-view.ts';
 import { InvoiceView } from './invoice-view.ts';
@@ -55,6 +54,7 @@ import {
   tenantKeyFromHost,
 } from './branding.ts';
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
+import { todayLocalIso } from '../../../packages/ui-core/src/format.ts';
 import { purgeLocalData, sweepNow } from './local-data.ts';
 import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
@@ -109,9 +109,10 @@ function isDemoSurface(): boolean {
   return location.pathname.replace(/\/+$/, '').toLowerCase() === '/demo';
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+// Local fields, not UTC: between midnight and 6am in Dhaka the UTC date is
+// still yesterday, and this defaults the day an attendance sheet is filed
+// under. See `todayLocalIso` for the whole story.
+const todayIso = todayLocalIso;
 
 function deviceId(key: string): string {
   const k = `shikhon_${key}`;
@@ -234,7 +235,7 @@ const CARD = {
   // R-3. The management surface. `institution` leads the principal's
   // dashboard because it is the screen they open in the morning; the rest are
   // reached from it and from More, so nothing here is the ONLY way in.
-  institution: { path: 'institution', glyph: 'trending-up', titleBn: 'প্রতিষ্ঠান',        subtitleBn: 'আজকের হাজিরা ও অপেক্ষমাণ কাজ' },
+
   academic:   { path: 'academic',   glyph: 'layers',       titleBn: 'একাডেমিক কাঠামো',   subtitleBn: 'শ্রেণি → বিভাগ → সেকশন → শিক্ষার্থী' },
   publish:    { path: 'publish',    glyph: 'award',        titleBn: 'ফলাফল প্রকাশ',       subtitleBn: 'যাচাই করে প্রকাশ করুন' },
   invoices:   { path: 'invoices',   glyph: 'wallet',       titleBn: 'ইনভয়েস তৈরি',        subtitleBn: 'মাসিক বিল তৈরি করুন' },
@@ -283,22 +284,22 @@ function dashboardFor(role: string): DashCards {
       // contents are different from yesterday's, and the one that surfaces
       // what is waiting for this person.
       return {
-        primary: [CARD.institution, CARD.academic],
-        secondary: [CARD.students, CARD.publish, CARD.calendar, CARD.documents],
+        primary: [CARD.academic, CARD.students],
+        secondary: [CARD.publish, CARD.calendar, CARD.documents, CARD.users],
       };
     case 'it_admin':
       // R-3. Structure and accounts, not teaching. An IT admin has no class,
       // so a "take attendance" card would be an invitation to a 403.
       return {
         primary: [CARD.academic, CARD.users],
-        secondary: [CARD.students, CARD.institution, CARD.adminSettings, CARD.audit],
+        secondary: [CARD.students, CARD.branding, CARD.adminSettings, CARD.audit],
       };
     case 'academic_coordinator':
       // Between the two: owns the academic programme and the timetable, does
       // not own money or accounts.
       return {
         primary: [CARD.academic, CARD.routine],
-        secondary: [CARD.students, CARD.institution, CARD.calendar, CARD.documents],
+        secondary: [CARD.students, CARD.publish, CARD.calendar, CARD.documents],
       };
     default:
       // Teachers and coordinators — teaching-first. roster and attendance are
@@ -582,7 +583,6 @@ async function main() {
               { path: 'inbox', glyph: 'bell', titleBn: 'নোটিশ', subtitleBn: 'বিদ্যালয়ের ঘোষণা ও বার্তা' },
               { path: 'notifications', glyph: 'bell', titleBn: 'নোটিফিকেশন', subtitleBn: 'এই যন্ত্রে বার্তা পান — এসএমএস খরচ কমে' },
               { path: 'compose', glyph: 'edit', titleBn: 'নোটিশ পাঠান', subtitleBn: 'শিক্ষক, শিক্ষার্থী বা অভিভাবক — কারা পাবে বেছে নিন' },
-              { path: 'institution', glyph: 'trending-up', titleBn: 'প্রতিষ্ঠান', subtitleBn: 'আজকের হাজিরা, অনুপস্থিত ও অপেক্ষমাণ কাজ' },
               { path: 'academic', glyph: 'layers', titleBn: 'একাডেমিক কাঠামো', subtitleBn: 'শ্রেণি → বিভাগ → সেকশন → শিক্ষার্থী ও শিক্ষক' },
               { path: 'publish', glyph: 'award', titleBn: 'ফলাফল প্রকাশ', subtitleBn: 'যাচাই করে প্রকাশ — প্রকাশের পর নম্বর অপরিবর্তনীয়' },
               { path: 'invoices', glyph: 'wallet', titleBn: 'ইনভয়েস তৈরি', subtitleBn: 'মাসিক বিল — একই মাসে দুইবার হয় না' },
@@ -747,16 +747,20 @@ async function main() {
       // `canManage` below only decides whether a control is offered, never
       // whether it is permitted.
       {
+        // P7-0. `institution` and `home` were two dashboards over one
+        // endpoint showing the same seven blocks. The owner decision was to
+        // MERGE: the absentee table moved into `home`, the quick-action grid
+        // was dropped as a second navigation competing with the sidebar, and
+        // this route redirects so every existing deep link, More-menu entry
+        // and bookmark still lands somewhere correct.
+        //
+        // Kept as a redirect rather than deleted: a route that 404s is worse
+        // than one that takes you where the screen went.
         path: 'institution',
         labelBn: 'প্রতিষ্ঠান',
         glyph: 'trending-up',
         hidden: true,
-        mount: (container) => {
-          new PrincipalView({
-            root: container, doc: document, auth,
-            onNavigate: (path) => { location.hash = `#/${path}`; },
-          });
-        },
+        mount: () => { location.replace(`${location.pathname}#/home`); },
       },
       {
         path: 'academic',

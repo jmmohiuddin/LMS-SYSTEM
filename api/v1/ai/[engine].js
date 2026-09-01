@@ -12586,75 +12586,6 @@ init_sdk();
 
 // packages/server-core/src/db.ts
 import pg from "pg";
-function createDb(connectionString, opts = {}) {
-  const pool = new pg.Pool({
-    connectionString,
-    max: 10,
-    idleTimeoutMillis: 3e4,
-    statement_timeout: 15e3,
-    ...opts
-  });
-  async function inTx(setup, fn) {
-    const client2 = await pool.connect();
-    try {
-      await client2.query("BEGIN");
-      await setup(client2);
-      const out = await fn(client2);
-      await client2.query("COMMIT");
-      return out;
-    } catch (err) {
-      try {
-        await client2.query("ROLLBACK");
-      } catch {
-      }
-      throw err;
-    } finally {
-      client2.release();
-    }
-  }
-  return {
-    pool,
-    withTenant(ctx, fn) {
-      if (!ctx.tenantId) throw new Error("tenant context required");
-      return inTx(async (c) => {
-        await c.query(
-          `SELECT set_config('app.tenant_id', $1, true),
-                  set_config('app.user_id',   $2, true),
-                  set_config('app.role',      $3, true)`,
-          [ctx.tenantId, ctx.userId, ctx.role]
-        );
-      }, fn);
-    },
-    withSystemRole(role, fn) {
-      return inTx(async (c) => {
-        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
-      }, fn);
-    },
-    end: () => pool.end()
-  };
-}
-async function assertRlsEnforced(db) {
-  const { rows } = await db.pool.query(
-    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
-  );
-  const me = rows[0];
-  if (!me) throw new Error("cannot resolve current_user");
-  if (me.rolbypassrls || me.rolsuper) {
-    throw new Error(
-      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
-    );
-  }
-}
-var _db = null;
-async function sharedDb() {
-  if (_db) return _db;
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL env var is not set");
-  const db = createDb(url, { max: 5 });
-  await assertRlsEnforced(db);
-  _db = db;
-  return db;
-}
 
 // packages/server-core/src/http.ts
 function allowedOrigins(env = process.env) {
@@ -12728,6 +12659,169 @@ var HttpError = class extends Error {
     this.detail = detail;
   }
 };
+var TenantBlocked = class extends HttpError {
+  access;
+  /**
+   * The same sentence as `message`, under the name the rest of the product
+   * uses for a Bangla string meant for a person. `message` is what a log
+   * shows; this is what a screen shows, and keeping both makes it obvious at
+   * a call site which one is being read.
+   */
+  reasonBn;
+  constructor(access2) {
+    super(
+      403,
+      access2.reasonBn ?? "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09CD\u09AF\u09BE\u0995\u09BE\u0989\u09A8\u09CD\u099F\u09C7 \u098F\u0996\u09A8 \u098F\u0987 \u0995\u09BE\u099C\u099F\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964",
+      "tenant_blocked",
+      {
+        access: access2.access,
+        opsState: access2.opsState,
+        billingState: access2.billingState,
+        until: access2.until
+      }
+    );
+    this.access = access2;
+    this.reasonBn = this.message;
+  }
+};
+
+// packages/server-core/src/db.ts
+pg.types.setTypeParser(1082, (v) => v);
+function createDb(connectionString, opts = {}) {
+  const pool = new pg.Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 3e4,
+    statement_timeout: 15e3,
+    ...opts
+  });
+  async function inTx(setup, fn) {
+    const client2 = await pool.connect();
+    let readOnlyFor;
+    let released = false;
+    try {
+      await client2.query("BEGIN");
+      readOnlyFor = (await setup(client2))?.blocked;
+      const out = await fn(client2);
+      await client2.query("COMMIT");
+      return out;
+    } catch (err) {
+      if (readOnlyFor && err?.code === "25006") {
+        try {
+          await client2.query("ROLLBACK");
+        } catch {
+        }
+        client2.release();
+        released = true;
+        throw new TenantBlocked(readOnlyFor);
+      }
+      try {
+        await client2.query("ROLLBACK");
+      } catch {
+      }
+      throw err;
+    } finally {
+      if (!released) client2.release();
+    }
+  }
+  return {
+    pool,
+    async tenantAccess(tenantId) {
+      return readAccess(pool, tenantId);
+    },
+    withTenant(ctx, fn, opts2) {
+      if (!ctx.tenantId) throw new Error("tenant context required");
+      return inTx(async (c) => {
+        let blocked;
+        await c.query(
+          `SELECT set_config('app.tenant_id', $1, true),
+                  set_config('app.user_id',   $2, true),
+                  set_config('app.role',      $3, true)`,
+          [ctx.tenantId, ctx.userId, ctx.role]
+        );
+        if (opts2?.skipGate) return;
+        const access2 = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
+        if (access2.access === "none") throw new TenantBlocked(access2);
+        if (access2.access === "read_only") {
+          await c.query("SET LOCAL transaction_read_only = on");
+          blocked = access2;
+          if (opts2?.write) throw new TenantBlocked(access2);
+        }
+        return { blocked };
+      }, fn);
+    },
+    withSystemRole(role, fn) {
+      return inTx(async (c) => {
+        await c.query(`SELECT set_config('app.role', $1, true)`, [role]);
+      }, fn);
+    },
+    end: () => pool.end()
+  };
+}
+async function readAccess(q, tenantId, role, service) {
+  try {
+    const { rows } = role && service ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2, $3)`,
+      [tenantId, role, service]
+    ) : role ? await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1, $2)`,
+      [tenantId, role]
+    ) : await q.query(
+      `SELECT access, ops_state, billing_state, reason_bn, until
+           FROM app.tenant_access($1)`,
+      [tenantId]
+    );
+    const r = rows[0];
+    if (!r?.access) {
+      return {
+        access: "none",
+        opsState: "unknown",
+        billingState: "unknown",
+        reasonBn: "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u099F\u09BF \u0996\u09C1\u0981\u099C\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+        until: null
+      };
+    }
+    return {
+      access: r.access,
+      opsState: r.ops_state ?? "unknown",
+      billingState: r.billing_state ?? "unknown",
+      reasonBn: r.reason_bn ?? null,
+      until: r.until ? String(r.until).slice(0, 10) : null
+    };
+  } catch {
+    return {
+      access: "none",
+      opsState: "unknown",
+      billingState: "unknown",
+      reasonBn: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u098F\u0995\u099F\u09C1 \u09AA\u09B0\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      until: null
+    };
+  }
+}
+async function assertRlsEnforced(db) {
+  const { rows } = await db.pool.query(
+    `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user`
+  );
+  const me = rows[0];
+  if (!me) throw new Error("cannot resolve current_user");
+  if (me.rolbypassrls || me.rolsuper) {
+    throw new Error(
+      `refusing to start: connected as "${me.rolname}" which has ${me.rolsuper ? "SUPERUSER" : "BYPASSRLS"} \u2014 RLS would not be enforced. Connect as the non-privileged runtime role instead.`
+    );
+  }
+}
+var _db = null;
+async function sharedDb() {
+  if (_db) return _db;
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL env var is not set");
+  const db = createDb(url, { max: 5 });
+  await assertRlsEnforced(db);
+  _db = db;
+  return db;
+}
 
 // node_modules/jose/dist/node/esm/runtime/base64url.js
 import { Buffer as Buffer2 } from "node:buffer";
@@ -13890,6 +13984,7 @@ function sendIfRefused(res, cors, verdict) {
 }
 
 // services/ai-svc/api/index.ts
+var SERVICE = "ai";
 var MODEL_SIKHOK = process.env.AI_MODEL_SIKHOK ?? "claude-opus-5";
 var MODEL_SHIKHO = process.env.AI_MODEL_SHIKHO ?? "claude-haiku-4-5";
 var TASK_TYPES = /* @__PURE__ */ new Set(["generate_cq", "generate_mcq", "rubric", "lesson_plan"]);
@@ -13995,7 +14090,7 @@ async function sikhok(req, res, cors) {
   }
   if (!subjectBn) throw new HttpError(400, "subjectBn is required", "subject_required");
   const db = await sharedDb();
-  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
   const queryText = `${subjectBn} ${body.instructions ?? ""}`.trim();
   const chunks = await retrieve(db, ctx, { classLevel, subjectBn, queryText, locale });
   const taskBn = {
@@ -14061,7 +14156,7 @@ async function shikho(req, res, cors) {
   const locale = LOCALES.has(body.locale ?? "") ? body.locale : "bn";
   const classLevel = Number.isInteger(Number(body.classLevel)) ? Number(body.classLevel) : null;
   const db = await sharedDb();
-  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
   const chunks = classLevel ? await retrieve(db, ctx, { classLevel, subjectBn: body.subjectBn, queryText: message2, locale }) : [];
   const system = "You are ShikhoAI (\u09B6\u09BF\u0996\u09CB), a patient Socratic tutor for Bangladeshi school students. RULES: Never give the final answer to a homework or exam question \u2014 guide with questions, hints and worked analogies so the student reaches it themselves. Match the student's language (Bangla, English, or Banglish). Keep responses short and encouraging. Stay within the student's class level" + (classLevel ? ` (Class ${classLevel})` : "") + (body.subjectBn ? ` and the subject ${body.subjectBn}` : "") + ". If the student expresses self-harm, abuse, or distress, respond with care and suggest speaking to a trusted teacher or guardian." + (chunks.length ? `
 

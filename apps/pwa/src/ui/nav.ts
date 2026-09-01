@@ -77,6 +77,10 @@ const P = {
   calendar:    { path: 'calendar',    labelBn: 'শিক্ষাপঞ্জি',       glyph: 'calendar' },
   documents:   { path: 'documents',   labelBn: 'নথি ও ছাপা',       glyph: 'book' },
   students:    { path: 'students',    labelBn: 'শিক্ষার্থী',        glyph: 'search' },
+  // P7-0. Kept as a DEFINITION and in no role's nav: the route still exists
+  // and redirects to `home`, so an old bookmark or a printed URL lands
+  // somewhere, but nothing offers it as a destination any more. Deleting the
+  // entry would leave the redirect with no label to describe it.
   institution: { path: 'institution', labelBn: 'প্রতিষ্ঠান',        glyph: 'trending-up' },
   academic:    { path: 'academic',    labelBn: 'একাডেমিক কাঠামো',  glyph: 'layers' },
   publish:     { path: 'publish',     labelBn: 'ফলাফল প্রকাশ',      glyph: 'award' },
@@ -171,7 +175,10 @@ const ACCOUNTANT: RoleNav = {
 
 const PRINCIPAL: RoleNav = {
   groups: [
-    { labelBn: G.org, items: [P.home, P.institution, P.academic, P.calendar] },
+    // P7-0. `institution` was a second dashboard over the same endpoint and
+    // is now a redirect to `home`; a nav item pointing at a redirect is a
+    // second entry to one screen.
+    { labelBn: G.org, items: [P.home, P.academic, P.calendar] },
     // P5. `imports` was reachable only from the More menu, and a principal is
     // the role bulk import was built for — 784 rows on day one is their job,
     // not a thing they do so rarely it belongs in an overflow list.
@@ -182,7 +189,11 @@ const PRINCIPAL: RoleNav = {
     { labelBn: G.admin, items: [P.branding, P.settings, P.rollover, P.audit] },
     TAIL,
   ],
-  tabs: ['home', 'institution', 'academic', 'students', 'more'],
+  // P7-0 again: the bottom bar had `institution` too, and a tab pointing at a
+  // redirect is worse than a sidebar link doing it — it occupies one of five
+  // slots on a phone. `attendance` takes it: after the day's dashboard, the
+  // roll is the thing a principal opens every single morning.
+  tabs: ['home', 'attendance', 'academic', 'students', 'more'],
 };
 
 const IT_ADMIN: RoleNav = {

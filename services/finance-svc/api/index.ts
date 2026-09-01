@@ -27,6 +27,13 @@ import { mfsPaymentsEnabled } from '../../../packages/server-core/src/go-live.ts
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'finance';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // R-8: this was a hardcoded `const … = false`. It is now MFS_PAYMENTS_ENABLED
@@ -50,7 +57,7 @@ async function invoices(req: IncomingMessage, res: ServerResponse, cors: Record<
 
   const db = await sharedDb();
   const rows = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
     async (client) => {
       const r = await client.query<{
         id: string; invoice_no: string; student_id: string; billing_period: string | null;
@@ -148,7 +155,7 @@ async function receipts(req: IncomingMessage, res: ServerResponse, cors: Record<
 
   const db = await sharedDb();
   const rows = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
     async (client) => {
       const r = await client.query<{
         id: string; receipt_no: string; amount: string; method: string;
@@ -211,7 +218,7 @@ async function generate(req: IncomingMessage, res: ServerResponse, cors: Record<
 
   const db = await sharedDb();
   const result = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
     async (client) => {
       const yearRes = await client.query<{ id: string }>(
         `SELECT id FROM academic_years
@@ -365,7 +372,7 @@ async function ledger(req: IncomingMessage, res: ServerResponse, cors: Record<st
 
   const db = await sharedDb();
   const payload = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
     async (client) => {
       const accountsRes = await client.query<{
         code: string; name_bn: string; type: string; balance: string;

@@ -4,7 +4,7 @@
 > part delivery record. **P0–P4 are delivered** (§21–§24 below); **P5–P8 are
 > not started**. The authoritative status board for every phase is
 > [11-MASTER-PLAN.md §5a](11-MASTER-PLAN.md); what is *not* built is
-> [BACKLOG.md](BACKLOG.md). Last reconciled 2026-09-01 at `95c34bf`. The
+> [BACKLOG.md](BACKLOG.md). Last reconciled 2026-09-02, after P7. The
 > "PLAN ONLY" line immediately below was true on the day it was written and is
 > kept for that reason — it is not true of the document today.
 
@@ -513,12 +513,27 @@ Chosen to minimise regression:
 | **P4** | **Student + Guardian**: dashboards, results, fees, ward panel, my-attendance | tag `ui-p4` |
 | **P5** | **Principal + IT Admin**: institution, academic, users, publish, rollover, audit, settings, branding | tag `ui-p5`; rollover/publish gates re-tested |
 | **P6** | **New designs** (§6): notices, notifications, calendar, documents, student history | tag `ui-p6` |
-| **P7** | **Platform console** (`/platform`), platform-branded | tag `ui-p7` |
+| **P7** | **Platform Operations Center** (`/platform`), platform-branded | **COMPLETE 2026-09-02.** Not a restyle — see the note below the rollback line |
 | **P8** | Cleanup: delete `--c-*` at zero usage, retire dead CSS, re-measure budget | tag `ui-p8` |
 
 **Rollback:** every phase is its own commit range behind a tag; `git revert` of
 a phase restores the previous UI without touching data, API or schema —
 guaranteed because none of those change.
+
+> **P7 is the exception, and it is worth saying why rather than quietly
+> amending the guarantee.** P7 was planned as a restyle of the platform
+> console. Its inventory found that the console's three headline controls —
+> suspension, role portals, per-service switches — wrote their rows, recorded
+> their audit entries, returned their success messages, and were read by no
+> application code at all. Restyling them would have made a better-looking
+> screen tell the same untruth.
+>
+> So P7 carries **schema and API changes** (migrations 051–056, a gate inside
+> `withTenant`, `service` on the tenant context) and its rollback is **not**
+> `git revert` alone: the rollback files in `db/rollback/` must go with it,
+> and 056 must not be rolled back while 054 stands — the header on
+> `db/rollback/056_portal_of_system.sql` says why. Every other phase's
+> guarantee is unaffected.
 
 ---
 

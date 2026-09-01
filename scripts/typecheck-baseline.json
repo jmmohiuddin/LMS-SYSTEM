@@ -30,6 +30,7 @@
     "apps/pwa/test/generation-view.test.ts",
     "apps/pwa/test/guardian-view.test.ts",
     "apps/pwa/test/homework-filter.test.ts",
+    "apps/pwa/test/icon-names.test.ts",
     "apps/pwa/test/import-view.test.ts",
     "apps/pwa/test/learn-view.test.ts",
     "apps/pwa/test/local-data.test.ts",

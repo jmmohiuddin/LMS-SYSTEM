@@ -13,8 +13,25 @@
  *    fail identically forever.
  */
 import type pg from 'pg';
-import type { Db, TenantContext } from './db.ts';
+import { TenantBlocked, type Db, type TenantContext } from './db.ts';
 import { APPLIERS } from './appliers.ts';
+
+/**
+ * Which purchasable service each syncable entity belongs to (migration 051).
+ *
+ * Every key here must exist in APPLIERS; an entity with no entry is ungated,
+ * which is the safe default for anything that is part of a school's core
+ * record rather than an add-on.
+ */
+const SERVICE_OF_ENTITY: Record<string, string | undefined> = {
+  attendance_session: 'attendance',
+  exam_mark: 'results',
+  assignment_submission: 'assignments',
+  topic_progress: 'learning',
+  lesson_progress: 'learning',
+  practice_attempt: 'learning',
+  class_delivery_log: 'learning',
+};
 import type {
   OutboxOp,
   PushRequest,
@@ -91,7 +108,11 @@ export class SyncPushHandler {
     }
 
     try {
-      return await this.db.withTenant(ctx, async (c) => {
+      // The service this op belongs to travels with it, so P7's gate refuses
+      // an op for a service the school has turned off, never bought, or has
+      // in maintenance — and refuses only that op.
+      const opCtx: TenantContext = { ...ctx, service: SERVICE_OF_ENTITY[op.entity] };
+      return await this.db.withTenant(opCtx, async (c) => {
         // ── Idempotency gate ──────────────────────────────────────────────
         // Claim the op id first. If the insert affects no rows we have seen it
         // before, and we return the recorded outcome without re-applying.
@@ -150,6 +171,18 @@ export class SyncPushHandler {
       });
     } catch (err) {
       const e = err as { code?: string; message?: string };
+
+      // The school may not write this kind of thing right now: the service is
+      // off, unbought, or in maintenance; or the school itself is suspended.
+      // NOT retryable — the phone must stop asking, and the message says what
+      // to tell the office. `TenantBlocked` carries a Bangla sentence.
+      if (err instanceof TenantBlocked) {
+        return {
+          opId: op.opId,
+          status: 'rejected',
+          error: { code: 'SERVICE_UNAVAILABLE', retryable: false, message: err.reasonBn },
+        };
+      }
 
       // 23P01 exclusion_violation — a routine clash reached us somehow.
       // 23505 unique_violation, 23503 FK violation: the client sent something

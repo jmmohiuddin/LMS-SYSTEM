@@ -25,7 +25,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -66,7 +66,7 @@ const asHead: TenantContext = { tenantId: T, userId: HEAD, role: 'principal' };
  */
 async function dropFixtures(): Promise<void> {
   for (const tenantId of [T, OTHER]) {
-    await db.withTenant({ tenantId, userId: HEAD, role: 'principal' }, async (c) => {
+    await asBootstrap(db, { tenantId, userId: HEAD, role: 'principal' }, async (c) => {
       await c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [tenantId]);
       await c.query('DELETE FROM otp_challenges WHERE tenant_id = $1', [tenantId]);
       await c.query('DELETE FROM tenants WHERE id = $1', [tenantId]);
@@ -97,13 +97,13 @@ describe('R-8 — an OTP that actually goes somewhere', { skip }, () => {
     await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await dropFixtures();
-    await db.withTenant(asHead, async (c) => {
+    await asBootstrap(db, asHead, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level) VALUES
            ($1,'r8-otp','মিরপুর বালিকা বিদ্যালয়','Mirpur Girls','bangla_medium','secondary')`,
         [T]);
     });
-    await db.withTenant({ tenantId: OTHER, userId: HEAD, role: 'principal' }, async (c) => {
+    await asBootstrap(db, { tenantId: OTHER, userId: HEAD, role: 'principal' }, async (c) => {
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level) VALUES
            ($1,'r8-otp-b','অন্য বিদ্যালয়','Other','bangla_medium','secondary')`,
@@ -122,7 +122,7 @@ describe('R-8 — an OTP that actually goes somewhere', { skip }, () => {
     // Each test starts with an empty queue and no live challenge, so the
     // 45-second resend floor never decides a test's outcome.
     for (const tenantId of [T, OTHER]) {
-      await db.withTenant({ tenantId, userId: HEAD, role: 'principal' }, async (c) => {
+      await asBootstrap(db, { tenantId, userId: HEAD, role: 'principal' }, async (c) => {
         await c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [tenantId]);
         await c.query('DELETE FROM otp_challenges WHERE tenant_id = $1', [tenantId]);
       });

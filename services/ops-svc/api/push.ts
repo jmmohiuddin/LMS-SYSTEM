@@ -40,6 +40,13 @@ import { corsHeaders, readJson, json, HttpError } from '../../../packages/server
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
 import { vapidFromEnv, unb64url, endpointFingerprint } from '../../../packages/server-core/src/web-push.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'push';
+
 interface SubscribeBody {
   endpoint?: unknown;
   keys?: { p256dh?: unknown; auth?: unknown };
@@ -110,7 +117,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const claims = await authenticate(req);
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
     const vapid = vapidFromEnv();
 
     // ── GET: what this person's browser needs to decide what to show ──

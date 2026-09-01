@@ -24,6 +24,13 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'results';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PUBLISH_ROLES = ['principal', 'school_owner', 'academic_coordinator'];
 
@@ -48,7 +55,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       requireRole(claims, PUBLISH_ROLES);
       const db = await sharedDb();
       const exams = await db.withTenant(
-        { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+        { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
         async (client) => {
           const r = await client.query<{
             exam_id: string; name_bn: string; status: string;
@@ -131,7 +138,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     const db = await sharedDb();
     const result = await db.withTenant(
-      { tenantId: claims.tid, userId: claims.sub, role: claims.role },
+      { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
       async (client) => {
         const examRes = await client.query<{ status: string; academic_year_id: string }>(
           `SELECT status, academic_year_id FROM exams WHERE id = $1`,

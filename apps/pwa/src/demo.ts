@@ -13,7 +13,7 @@ import type { PushRequest, PushResponse } from '../../../packages/offline/src/ty
 import type { SectionSummary, RosterStudent } from './roster-view.ts';
 import type { RoutineSlot } from './routine-view.ts';
 import { parseBranding } from '../../../packages/ui-core/src/branding.ts';
-import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { formatCount, todayLocalIso } from '../../../packages/ui-core/src/format.ts';
 import { brandedDocumentSet, type BrandedSection } from '../../../packages/ui-core/src/branded-doc.ts';
 import {
   documentBodyCss, buildFeeReceipt, buildReportCard, buildAdmitCard, buildIdCard,
@@ -56,9 +56,8 @@ function rosterFor(sectionId: string): RosterStudent[] {
   }));
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+// Local fields, not UTC — see `todayLocalIso`.
+const todayIso = todayLocalIso;
 
 const DEMO_EXAMS = [
   {

@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { createDb, type Db, type TenantContext } from '../src/db.ts';
-import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
+import { lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import { SyncPushHandler } from '../src/push.ts';
 import { SyncEngine } from '../../../packages/offline/src/sync-engine.ts';
 import { MemoryOutboxStore } from '../../../packages/offline/src/store.ts';
@@ -74,7 +74,7 @@ before(async () => {
   ctx = { tenantId: TENANT, userId: TEACHER, role: 'principal' };
   await cleanup();
 
-  await db.withTenant(ctx, async (c) => {
+  await asBootstrap(db, ctx, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, shifts)
        VALUES ($1,'vertical-slice','উল্লম্ব','Vertical','bangla_medium','secondary','{day}')`,
@@ -127,7 +127,7 @@ after(async () => {
 
 async function cleanup() {
   try {
-    await db.withTenant({ tenantId: TENANT, userId: TEACHER, role: 'principal' }, async (c) => {
+    await asBootstrap(db, { tenantId: TENANT, userId: TEACHER, role: 'principal' }, async (c) => {
       await c.query(`DELETE FROM sync_operations WHERE tenant_id = $1`, [TENANT]);
       await c.query(`DELETE FROM tenants WHERE id = $1`, [TENANT]);
     });

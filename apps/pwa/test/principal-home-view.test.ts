@@ -170,8 +170,29 @@ describe('P5 — the principal dashboard', () => {
     assert.doesNotMatch(text(), /এ মাসে আদায়/);
   });
 
+  test('the absentee list is a TABLE, and says how many it is NOT showing', () => {
+    // P7-0 merged `institution` into this screen and brought its absentee
+    // table with it: an office phoning six families reads down a column of
+    // roll numbers, and a stack of list items makes them read one name per
+    // full screen width.
+    const r = root();
+    const heads = [...r.querySelectorAll('thead th')].map((h) => h.textContent);
+    for (const h of ['রোল', 'নাম', 'শ্রেণি', 'সেকশন']) {
+      assert.ok(heads.includes(h), `${h} — got ${heads.join('|')}`);
+    }
+    // 78 absent, 1 shown. The screen must never imply the list is the list.
+    assert.match(r.textContent ?? '', /আরও ৭৭ জন/);
+  });
+
   test('a roll number stays Latin; counts are Bangla', () => {
-    assert.match(text(), /রোল 7/, 'a roll is read down a phone to a class teacher');
+    // P7-0 moved the roll from a `· রোল 7` subtitle into its own column, so
+    // the header carries the word and the cell carries the number. The rule
+    // is unchanged: a roll is an IDENTIFIER, read down a phone to a class
+    // teacher, and a count is a quantity.
+    const cells = [...root().querySelectorAll('tbody tr')]
+      .flatMap((tr) => [...tr.children].map((c) => c.textContent ?? ''));
+    assert.ok(cells.includes('7'), `a roll is Latin: ${cells.join('|')}`);
+    assert.match(text(), /রোল/, 'and the column says what it is');
     assert.match(text(), /৭৮ জন/, 'a count is Bangla');
   });
 

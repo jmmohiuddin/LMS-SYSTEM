@@ -27,7 +27,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -65,7 +65,7 @@ const asDispatcher: TenantContext = { tenantId: T_A, userId: '', role: 'system_i
 
 async function drop(): Promise<void> {
   for (const ctx of [headA, headB]) {
-    await db.withTenant(ctx, async (c) => {
+    await asBootstrap(db, ctx, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [ctx.tenantId]);
     });
   }
@@ -76,7 +76,7 @@ const phoneFor = (id: string) =>
 
 async function seed(): Promise<void> {
   await drop();
-  await db.withTenant(headA, async (c) => {
+  await asBootstrap(db, headA, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'b7-a','বি৭','B7','bangla_medium','secondary')`, [T_A]);
@@ -124,7 +124,7 @@ async function seed(): Promise<void> {
     }
   });
 
-  await db.withTenant(headB, async (c) => {
+  await asBootstrap(db, headB, async (c) => {
     await c.query(
       `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
        VALUES ($1,'b7-b','বি৭খ','B7B','bangla_medium','secondary')`, [T_B]);

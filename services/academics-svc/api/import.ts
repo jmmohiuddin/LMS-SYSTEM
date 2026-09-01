@@ -46,6 +46,13 @@ import {
   runStudentImport, runTeacherImport, ImportError,
 } from '../src/import-run.ts';
 
+/**
+ * The purchasable service this endpoint IS (migration 051 catalogue).
+ * The gate in withTenant refuses the request when a school has this one
+ * turned off, in maintenance, or absent from its plan.
+ */
+const SERVICE = 'imports';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const IMPORT_ROLES = ['principal', 'school_owner', 'academic_coordinator'];
 /** Staff accounts are school-wide; an IT admin owns them, a coordinator does not. */
@@ -75,7 +82,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     requireRole(claims, body.kind === 'teacher' ? STAFF_IMPORT_ROLES : IMPORT_ROLES);
 
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     const result = await db.withTenant(ctx, async (client) => {
       if (body.kind === 'teacher') {

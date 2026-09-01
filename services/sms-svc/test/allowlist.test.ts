@@ -22,7 +22,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db } from '../../../packages/server-core/src/db.ts';
-import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
+import { lockFixtures, unlockFixtures, asBootstrap } from '../../../packages/server-core/test/harness.ts';
 import {
   smsTestRecipients, smsRestrictedToAllowlist,
 } from '../../../packages/server-core/src/go-live.ts';
@@ -75,10 +75,11 @@ describe('R-8 §4 — the dispatcher honours it', { skip }, () => {
     // live at fixed uuids and two processes would delete each other's.
     await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
-    await asIngest(async (c) => {
+    // Bootstrap, not `asIngest`: this runs BEFORE the tenant exists, and the
+    // P7 gate refuses a school it cannot find. Creating the fixtures a school
+    // is made of is the one act that cannot pass a check on the school.
+    await asBootstrap(db, { tenantId: T, userId: MUM, role: 'principal' }, async (c) => {
       await c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [T]);
-    });
-    await db.withTenant({ tenantId: T, userId: MUM, role: 'principal' }, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [T]);
       await c.query(
         `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
@@ -94,7 +95,7 @@ describe('R-8 §4 — the dispatcher honours it', { skip }, () => {
   after(async () => {
     if (!db) return;
     await asIngest((c) => c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [T]));
-    await db.withTenant({ tenantId: T, userId: MUM, role: 'principal' },
+    await asBootstrap(db, { tenantId: T, userId: MUM, role: 'principal' },
       (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
     await db.end(); await unlockFixtures();
   });

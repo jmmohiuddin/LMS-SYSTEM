@@ -284,6 +284,23 @@ describe('service-worker routing policy', () => {
     assert.equal(route({ url: 'https://a.bd/api/v1/rms/teachers/1/day', method: 'GET' }).strategy, 'stale-while-revalidate');
   });
 
+  test('the operations console is never served from a cache', () => {
+    // P7. The SW's scope is the origin, so it controls /platform as well —
+    // and /platform.js used to match IMMUTABLE on its extension alone, which
+    // pinned an operator to the first console build they ever downloaded.
+    // A console that suspends schools must not be one deploy behind.
+    for (const u of ['/platform', '/platform.js', '/platform.css', '/platform.html']) {
+      assert.equal(route({ url: `https://a.bd${u}`, method: 'GET' }).strategy, 'network-only', u);
+    }
+    // Including as a navigation: the app-shell fallback must not answer it.
+    assert.equal(
+      route({ url: 'https://a.bd/platform', method: 'GET', mode: 'navigate' }).strategy,
+      'network-only');
+    // The tenant app is unaffected — it still gets its offline story.
+    assert.equal(route({ url: 'https://a.bd/app.js', method: 'GET' }).strategy,
+      'stale-while-revalidate');
+  });
+
   test('media is cache-first with a 7-day TTL', () => {
     const r = route({ url: 'https://a.bd/media/script.jpg', method: 'GET' });
     assert.equal(r.strategy, 'cache-first-ttl');

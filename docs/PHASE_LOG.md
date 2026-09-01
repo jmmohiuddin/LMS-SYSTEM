@@ -7602,3 +7602,15 @@ Nothing was invented for it.
 **Next phase: P5 — Principal + IT Admin.** It opens with `B-8` (what
 `doLogout` does about the read-through caches, given the outbox may hold
 unsent attendance) and `B-15` (a section-scoped routine endpoint).
+
+## Commit, and the convention for recording it
+
+**This entry is commit `59b06ca`** (`95c34bf..59b06ca`, pushed to
+`origin/main`).
+
+D17 requires a commit hash on every entry, and an entry is always written
+*before* the commit that carries it — P4's entry hit this first and went in
+without one. The convention, so nobody has to solve it again: **write the
+entry without the hash, commit, then append the hash in a one-line follow-up
+like this one.** The alternative — amending the commit — would rewrite
+history to make the record look tidy, which is the one thing D10 forbids.

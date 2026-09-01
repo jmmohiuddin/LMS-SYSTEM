@@ -33,6 +33,11 @@
 import type { Auth } from './auth.ts';
 import { formatCount, formatIdentifier, formatBdt, formatDayMonth }
   from '../../../packages/ui-core/src/format.ts';
+import {
+  el, append, card, statCard, statRow, button, pageHeader, sectionHeading,
+  statusBadge, listSkeleton, emptyState, errorState, humanError,
+} from './ui/index.ts';
+import { childSelector, childIdentity, type ChildOption } from './ui/child-selector.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -167,132 +172,92 @@ export class GuardianView {
     root.textContent = '';
     root.setAttribute('lang', 'bn');
 
-    // The switcher first and always, even mid-load — it is what the
-    // guardian came to use.
-    if (this.wards.length > 1) root.append(this.switcher());
+    append(root, pageHeader(d, {
+      title: 'আমার সন্তান',
+      subtitle: 'আজকের হাজিরা, ফলাফল ও বকেয়া ফি — এক নজরে।',
+    }));
 
-    if (this.error) { root.append(this.errorState()); return; }
-    if (this.offline) root.append(this.banner('অফলাইন — সর্বশেষ সংরক্ষিত তথ্য'));
+    // The selector first and always, even mid-load: §9.1 calls it "the single
+    // most-used control here", and it is what the guardian opened the app to
+    // use. It renders nothing at all for a single child — a control with one
+    // option teaches people their tap did nothing.
+    append(root, childSelector(d, {
+      children: this.wards.map(toChildOption),
+      selectedId: this.selected,
+      onSelect: (id) => this.select(id),
+    }));
 
-    if (this.loading && !this.home) { root.append(this.skeleton()); return; }
-    if (!this.home) { root.append(this.emptyState()); return; }
-
-    root.append(this.identity(this.home));
-    root.append(this.cards(this.home));
-    if (this.home.result) root.append(this.resultCard(this.home));
-    root.append(this.payCta(this.home));
-  }
-
-  private switcher(): HTMLElement {
-    const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'seg-bar ward-switcher';
-    bar.setAttribute('role', 'tablist');
-    bar.setAttribute('aria-label', 'সন্তান নির্বাচন');
-    for (const w of this.wards) {
-      const b = d.createElement('button');
-      b.type = 'button';
-      b.className = 'seg-opt';
-      b.setAttribute('role', 'tab');
-      b.setAttribute('aria-selected', String(w.studentId === this.selected));
-      b.dataset.active = String(w.studentId === this.selected);
-      b.textContent = w.nameBn;
-      b.addEventListener('click', () => { this.select(w.studentId); });
-      bar.append(b);
+    if (this.error) {
+      append(root, errorState(d, humanError(navigator.onLine ? null : 'offline'), () => {
+        this.error = false; this.loading = true; this.render(); void this.load();
+      }));
+      return;
     }
-    return bar;
-  }
+    if (this.offline) {
+      // Cached data plus a sentence beats an error page: last week's
+      // attendance is still worth reading and the fee balance changes slowly.
+      append(root, el(d, 'p', { className: 'att-offline-note' },
+        el(d, 'span', {
+          text: 'অফলাইন — সর্বশেষ সংরক্ষিত তথ্য দেখানো হচ্ছে। সংযোগ পেলে নিজেই হালনাগাদ হবে।',
+        })));
+    }
 
-  private identity(h: WardHome): HTMLElement {
-    const d = this.o.doc;
-    const box = d.createElement('header');
-    box.className = 'page-header ward-identity';
-    const h1 = d.createElement('h1');
-    h1.textContent = h.nameBn;
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    // The roll number stays in Latin digits: it is an identifier, and it
-    // is what a guardian reads out on the phone to the school office.
-    sub.textContent = `${h.sectionLabel} · রোল ${formatIdentifier(h.rollNo)}`;
-    box.append(h1, sub);
-    return box;
+    if (this.loading && !this.home) { append(root, listSkeleton(d, 3)); return; }
+    if (!this.home) {
+      append(root, emptyState(d, {
+        // Says what to do. A guardian whose child is not linked cannot fix it
+        // from this screen, and pretending otherwise wastes their afternoon.
+        message: 'আপনার সাথে কোনো শিক্ষার্থী যুক্ত নেই। বিদ্যালয়ের অফিসে যোগাযোগ করুন।',
+      }));
+      return;
+    }
+
+    append(root,
+      childIdentity(d, toChildOption(this.home)),
+      this.cards(this.home),
+      this.home.result ? this.resultCard(this.home) : null,
+      this.payCta(this.home));
   }
 
   private cards(h: WardHome): HTMLElement {
     const d = this.o.doc;
-    const grid = d.createElement('div');
-    grid.className = 'ward-grid';
-
-    // ── attendance
-    const att = d.createElement('section');
-    att.className = 'card ward-card';
-    const attHead = d.createElement('h2');
-    attHead.className = 'ward-card-head';
-    attHead.textContent = 'আজকের হাজিরা';
-    att.append(attHead);
-
     const state = TODAY[h.attendance.todayStatus ?? ''] ?? null;
-    const attMain = d.createElement('p');
-    attMain.className = 'ward-card-main';
-    attMain.dataset.tone = state?.tone ?? 'muted';
-    // Never a bare glyph. Somebody opening this four times a year does not
-    // remember what a green tick meant.
-    attMain.textContent = state
-      ? `${state.glyph} ${state.labelBn}`
-      : 'আজ হাজিরা নেওয়া হয়নি';
-    att.append(attMain);
-
-    const attSub = d.createElement('p');
-    attSub.className = 'ward-card-sub';
-    attSub.textContent = h.attendance.monthPercent === null
-      ? 'এ মাসের হিসাব নেই'
-      : `এ মাসে ${bn(h.attendance.monthPercent)}%`;
-    att.append(attSub);
-    grid.append(att);
-
-    // ── fees
-    const fee = d.createElement('section');
-    fee.className = 'card ward-card';
-    const feeHead = d.createElement('h2');
-    feeHead.className = 'ward-card-head';
-    feeHead.textContent = 'বকেয়া ফি';
-    fee.append(feeHead);
-
     const owed = h.fees.outstanding;
-    const feeMain = d.createElement('p');
-    feeMain.className = 'ward-card-main';
-    feeMain.dataset.tone = owed === 0 ? 'ok' : h.fees.overdueCount > 0 ? 'danger' : 'warn';
-    feeMain.textContent = owed === 0 ? '✓ বকেয়া নেই' : `${formatBdt(owed)} `;
-    fee.append(feeMain);
 
-    const feeSub = d.createElement('p');
-    feeSub.className = 'ward-card-sub';
-    feeSub.textContent = owed === 0
-      ? 'সব পরিশোধিত'
-      : h.fees.overdueCount > 0
-        ? `${bn(h.fees.overdueCount)}টি বিল সময় পেরিয়েছে`
-        : h.fees.earliestDue
-          ? `${formatDayMonth(h.fees.earliestDue, 'bn')} শেষ তারিখ`
-          : '';
-    fee.append(feeSub);
-    grid.append(fee);
-
-    return grid;
+    // Two numbers, in the order §9.1 draws them. Never a bare glyph:
+    // somebody opening this four times a year does not remember what a green
+    // tick meant, so the word is the message and the glyph is the echo.
+    return statRow(d,
+      statCard(d, {
+        label: 'আজকের হাজিরা',
+        value: state ? `${state.glyph} ${state.labelBn}` : 'আজ হাজিরা নেওয়া হয়নি',
+        note: h.attendance.monthPercent === null
+          ? 'এ মাসের হিসাব নেই'
+          : `এ মাসে ${bn(h.attendance.monthPercent)}%`,
+        glyph: 'check-square',
+        tone: state?.tone === 'ok' ? 'success'
+          : state?.tone === 'danger' ? 'warn'
+          : state?.tone === 'warn' ? 'warn' : 'info',
+      }),
+      statCard(d, {
+        label: 'বকেয়া ফি',
+        value: owed === 0 ? '✓ বকেয়া নেই' : formatBdt(owed),
+        note: owed === 0
+          ? 'সব পরিশোধিত'
+          : h.fees.overdueCount > 0
+            ? `${bn(h.fees.overdueCount)}টি বিল সময় পেরিয়েছে`
+            : h.fees.earliestDue
+              ? `${formatDayMonth(h.fees.earliestDue, 'bn')} শেষ তারিখ`
+              : '',
+        glyph: 'wallet',
+        tone: owed === 0 ? 'success' : h.fees.overdueCount > 0 ? 'warn' : 'accent2',
+        onClick: this.o.onOpenFees ? () => this.o.onOpenFees?.(h.studentId) : undefined,
+      }));
   }
 
   private resultCard(h: WardHome): HTMLElement {
     const d = this.o.doc;
     const r = h.result as NonNullable<WardHome['result']>;
-    const card = d.createElement('section');
-    card.className = 'card ward-result';
-
-    const head = d.createElement('h2');
-    head.className = 'ward-card-head';
-    head.textContent = `ফলাফল প্রকাশিত — ${r.examNameBn}`;
-    card.append(head);
-
-    const line = d.createElement('p');
-    line.className = 'ward-result-line';
     const parts: string[] = [];
     if (r.gpa !== null) parts.push(`GPA ${r.gpa.toFixed(2)}`);
     // A rank without its cohort is a number a guardian cannot read. §9.1
@@ -300,98 +265,56 @@ export class GuardianView {
     if (r.rankInSection !== null && r.sectionSize !== null) {
       parts.push(`মেধাক্রম ${bn(r.rankInSection)}/${bn(r.sectionSize)}`);
     }
-    line.textContent = parts.join(' · ');
-    card.append(line);
-
-    if (this.o.onOpenResults) {
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-secondary';
-      btn.textContent = 'মার্কশিট দেখুন';
-      btn.addEventListener('click', () => { this.o.onOpenResults?.(h.studentId); });
-      card.append(btn);
-    }
-    return card;
+    return card(d, {
+      title: r.examNameBn,
+      subtitle: parts.join(' · '),
+      glyph: 'award',
+      tone: 'accent2',
+      // Published is the only result a guardian ever sees — the endpoint
+      // returns nothing else — and saying so removes the question. It sits in
+      // the card's action slot beside the button rather than needing a new
+      // `badge` option: one slot, two things, no component change.
+      action: el(d, 'div', { className: 'ward-result-actions' },
+        statusBadge(d, { state: 'published', label: 'প্রকাশিত' }),
+        this.o.onOpenResults
+          ? button(d, {
+              label: 'মার্কশিট দেখুন', variant: 'secondary', size: 'sm',
+              onClick: () => this.o.onOpenResults?.(h.studentId),
+            })
+          : null),
+    });
   }
 
   private payCta(h: WardHome): HTMLElement {
     const d = this.o.doc;
-    const wrap = d.createElement('div');
-    wrap.className = 'ward-cta';
-    const btn = d.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn-primary';
-    // §9.1 labels this "বিকাশে ফি পরিশোধ করুন". MFS checkout (F-1005) is
-    // not built, so naming bKash here would promise a flow that does not
-    // exist. This opens the fee screen, which does — one tap from home,
-    // as §9.1 requires, without the lie.
-    btn.textContent = h.fees.outstanding > 0 ? 'ফি পরিশোধ করুন' : 'ফি ও রসিদ দেখুন';
-    btn.disabled = !this.o.onOpenFees;
-    btn.addEventListener('click', () => { this.o.onOpenFees?.(h.studentId); });
-    wrap.append(btn);
-    return wrap;
+    // §9.1 labels this "বিকাশে ফি পরিশোধ করুন". MFS checkout (F-1005) is not
+    // built, so naming bKash here would promise a flow that does not exist.
+    // This opens the fee screen, which does — one tap from home, as §9.1
+    // requires, without the lie.
+    return el(d, 'div', { className: 'ward-cta' },
+      button(d, {
+        label: h.fees.outstanding > 0 ? 'ফি পরিশোধ করুন' : 'ফি ও রসিদ দেখুন',
+        variant: 'primary', block: true, glyph: 'wallet',
+        disabled: !this.o.onOpenFees,
+        onClick: () => this.o.onOpenFees?.(h.studentId),
+      }));
   }
 
-  private banner(text: string): HTMLElement {
-    const p = this.o.doc.createElement('p');
-    p.className = 'inline-notice';
-    p.setAttribute('role', 'status');
-    p.textContent = text;
-    return p;
-  }
+}
 
-  private skeleton(): HTMLElement {
-    const d = this.o.doc;
-    const box = d.createElement('div');
-    box.setAttribute('aria-busy', 'true');
-    box.setAttribute('aria-label', 'তথ্য লোড হচ্ছে');
-    for (let i = 0; i < 3; i++) {
-      const card = d.createElement('div');
-      card.className = 'card is-skeleton';
-      const a = d.createElement('div'); a.className = 'skel skel-title';
-      const b = d.createElement('div'); b.className = 'skel skel-line';
-      card.append(a, b);
-      box.append(card);
-    }
-    return box;
-  }
-
-  private emptyState(): HTMLElement {
-    const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'empty-state';
-    const glyph = d.createElement('div');
-    glyph.className = 'empty-glyph';
-    glyph.textContent = '⃝';
-    glyph.setAttribute('aria-hidden', 'true');
-    const msg = d.createElement('p');
-    // Says what to do. A guardian whose child is not linked cannot fix it
-    // from this screen, and pretending otherwise wastes their afternoon.
-    msg.textContent = 'আপনার সাথে কোনো শিক্ষার্থী যুক্ত নেই। বিদ্যালয়ের অফিসে যোগাযোগ করুন।';
-    box.append(glyph, msg);
-    return box;
-  }
-
-  private errorState(): HTMLElement {
-    const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'empty-state';
-    const glyph = d.createElement('div');
-    glyph.className = 'empty-glyph';
-    // U+2715 — no emoji form, so it takes the ink and cannot be stripped by
-    // an emoji sweep the way the warning sign that used to sit here was.
-    glyph.textContent = '✕';
-    glyph.setAttribute('aria-hidden', 'true');
-    const msg = d.createElement('p');
-    msg.textContent = 'তথ্য লোড হয়নি।';
-    const retry = d.createElement('button');
-    retry.type = 'button';
-    retry.className = 'btn-secondary';
-    retry.textContent = 'আবার চেষ্টা করুন';
-    retry.addEventListener('click', () => {
-      this.error = false; this.loading = true; this.render(); void this.load();
-    });
-    box.append(glyph, msg, retry);
-    return box;
-  }
+/**
+ * A ward summary as the selector's option.
+ *
+ * One mapping, used by the selector, the identity block and the sheet, so the
+ * three cannot name the same child differently — which is the specific way a
+ * "which child am I looking at" bug appears.
+ */
+function toChildOption(w: WardSummary): ChildOption {
+  return {
+    studentId: w.studentId,
+    nameBn: w.nameBn,
+    sectionLabel: w.sectionLabel,
+    rollNo: w.rollNo,
+    relationBn: w.relationBn,
+  };
 }

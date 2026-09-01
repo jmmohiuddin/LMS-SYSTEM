@@ -297,6 +297,13 @@ export interface BrandingCssVars {
   dark: Record<string, string>;
 }
 
+/**
+ * app.css's `--c-surface` in each theme (`--color-surface-muted`). Brand text
+ * sits on this as often as it sits on the brand-soft tint.
+ */
+export const LIGHT_SURFACE = '#E9E3D4';
+export const DARK_SURFACE = '#302821';
+
 export function brandingCssVars(
   b: Pick<Branding, 'primaryColor' | 'accentColor'>,
 ): BrandingCssVars {
@@ -308,6 +315,13 @@ export function brandingCssVars(
   const onFill = onBrandFill(p);
   const softLight = mixWithWhite(p, 0.88);
   const softDark = shade(p, -0.62);
+  // Brand text lands on two different grounds, so it is derived against both.
+  // These are app.css's --c-surface in each theme (--color-surface-muted):
+  // the card/chip/bar ground that carries links, the active bottom-bar tab and
+  // stat values. Kept as literals because this module is framework-free and
+  // cannot read the stylesheet; design-tokens.test.ts asserts they still match.
+  const LIGHT_GROUNDS = [softLight, LIGHT_SURFACE] as const;
+  const DARK_GROUNDS = [softDark, DARK_SURFACE] as const;
   return {
     light: {
       // The label for anything filled with --c-primary. Seventeen rules in
@@ -318,10 +332,10 @@ export function brandingCssVars(
       '--c-primary-flat': p,
       // Text has a stricter contrast obligation than a fill carrying white
       // label text, so it steps down the same hue rather than reusing it.
-      '--c-primary-text': readableBrandText(p, softLight, -0.28, -0.05),
+      '--c-primary-text': readableBrandText(p, LIGHT_GROUNDS, -0.28, -0.05),
       '--c-primary-ink': shade(p, -0.45),
       '--c-primary-soft': softLight,
-      '--c-link': readableBrandText(p, softLight, -0.28, -0.05),
+      '--c-link': readableBrandText(p, LIGHT_GROUNDS, -0.28, -0.05),
       '--c-info': a,
       '--c-info-soft': mixWithWhite(a, 0.88),
       // Raw palette names, for public/design/styles.css.
@@ -337,10 +351,10 @@ export function brandingCssVars(
       '--c-primary-flat': p,
       // Lightened, mirroring how app.css moves from accent-700 to
       // accent-400 on a near-black ground.
-      '--c-primary-text': readableBrandText(p, softDark, 0.42, 0.05),
+      '--c-primary-text': readableBrandText(p, DARK_GROUNDS, 0.42, 0.05),
       '--c-primary-ink': shade(p, 0.58),
       '--c-primary-soft': softDark,
-      '--c-link': readableBrandText(p, softDark, 0.42, 0.05),
+      '--c-link': readableBrandText(p, DARK_GROUNDS, 0.42, 0.05),
       '--c-info': shade(a, 0.38),
       '--c-info-soft': shade(a, -0.6),
       '--color-primary': p,
@@ -430,7 +444,7 @@ export function onBrandFill(fill: string): string {
 }
 
 /**
- * A brand-hued text colour guaranteed to clear AA on the ground it sits on.
+ * A brand-hued text colour guaranteed to clear AA on EVERY ground it sits on.
  *
  * `shade(p, -0.28)` is the right step for most hues and not enough for a
  * pale one: on `#E5B300` it lands at `#A58100`, which is 3.38:1 on that
@@ -438,12 +452,28 @@ export function onBrandFill(fill: string): string {
  * row, so a school with a yellow crest could not read which page it was on.
  * Keeps stepping the same hue until the ratio is met rather than jumping to
  * a neutral, so the result is still recognisably the school's colour.
+ *
+ * ── Why a LIST of grounds ──────────────────────────────────────────────────
+ * `--c-primary-text` is not a chip colour. app.css puts it on the brand-soft
+ * tint (badges, `[data-tone='primary']`) AND directly on a plain card
+ * surface (links, the active bottom-bar tab, breadcrumb hover, stat values).
+ * Deriving it against the soft tint alone satisfies the ground that happens
+ * to be listed and leaves the other to chance — which is exactly how P4's
+ * sweep found tenant B's active tab label at 4.42:1 in dark mode, on every
+ * mobile screen in the product. Both grounds are passed now, and the loop
+ * only stops when the darkest-required and lightest-required are BOTH clear.
  */
-export function readableBrandText(hue: string, ground: string, start: number, step: number): string {
+export function readableBrandText(
+  hue: string,
+  ground: string | readonly string[],
+  start: number,
+  step: number,
+): string {
+  const grounds = typeof ground === 'string' ? [ground] : ground;
   let a = start;
   for (let i = 0; i < 16; i++) {
     const c = shade(hue, a);
-    if (contrastRatio(c, ground) >= 4.5) return c;
+    if (grounds.every((g) => contrastRatio(c, g) >= 4.5)) return c;
     a += step;
   }
   return shade(hue, a);

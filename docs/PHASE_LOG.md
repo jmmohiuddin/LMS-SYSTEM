@@ -7144,3 +7144,281 @@ cannot be produced there. Unchanged from P3, and recorded as such.
 `present`; the register is a list of exceptions, not a set of blanks. The
 screen reports "হাতে চিহ্নিত N / M" — how many the teacher has actually
 decided about — which is the honest form of the same question.
+
+---
+
+# P4 — Student + Guardian final production UI/UX   (2026-09-01)
+
+Two personas, nineteen screens, and five defects that only appeared because
+somebody drove the product instead of reading it. The child selector is the
+piece the brief called CRITICAL and it is the piece the most care went into;
+the three privacy findings are the ones that would have mattered most had they
+shipped.
+
+## What was built
+
+### The child selector (§3) — `apps/pwa/src/ui/child-selector.ts`
+
+One component, three behaviours, and the threshold between them is about
+screen width rather than taste:
+
+| Children | What renders | Why |
+|---|---|---|
+| 0 or 1 | nothing (identity block only) | a control with one option teaches people their tap did nothing |
+| 2–3 | an inline strip, both names permanently visible | a collapsed dropdown answers "which child" only *after* you tap it, which is the moment the answer stops mattering |
+| 4+ | a button naming the current child, opening a sheet | side-by-side stops fitting 360 px; the current child stays named on the button |
+
+The accessible name carries the class as well as the name — `আনিকা রহমান —
+নবম–ক` — because "আনিকা" and "আনিকা" are two different children in more
+Bangladeshi families than not, and this is the one control that must never be
+ambiguous. Roving tabindex, so Tab leaves the strip for the content instead of
+walking every child. Arrow/Home/End move within it. Every change announces
+into a live region, because the whole page is about to change underneath
+somebody who may not see it change.
+
+`childIdentity()` renders whose screen this is, above the content, on every
+guardian screen that shows one child's data — so the answer survives a
+back-navigation, a reload, or a week away from the app. The roll number stays
+in Latin digits (`formatIdentifier`): it is what a guardian reads down the
+phone to the school office, and "রোল ০১" cannot be checked against a paper
+register.
+
+### The student home (§4) — `apps/pwa/src/student-home-view.ts`
+
+Four independent requests — `/academics/next`, `/academics/attendance`,
+`/academics/results`, `/ops/inbox` — each repainting as it lands. Four
+sequential requests on a 2G connection would be four seconds of blank screen;
+independent ones mean a slow inbox never holds up the homework due today.
+
+**What it deliberately does not show, and why.** §4 lists today's class routine
+first. The product cannot answer it: `GET /rms/routine` wraps
+`app.teacher_day(claims.sub, …)`, so a student calling it gets their own —
+empty — teaching day, not their section's timetable. There is no
+student-facing routine endpoint. Inventing a plausible one on the client would
+be fabricated curriculum data, which §10 forbids in the same breath as asking
+for the card. The gap is named here rather than papered over with a card that
+would be right for a teacher and wrong here. **This is P5 work: one endpoint,
+section-scoped.**
+
+### The guardian home — migrated, not rewritten
+
+`guardian-view.ts` kept everything that already worked — cache-first paint,
+the selector present even mid-load, `select()` clearing `home` *before* the
+fetch — and moved its rendering onto the P2 components. The 17 existing tests
+were re-pointed at the new DOM with every assertion's meaning preserved. One
+could not survive verbatim: the fee card's overdue tone was `danger`, and the
+shared stat card's tones are the palette's semantic set, which has no `danger`
+step. Overdue takes `warn`. That is a rename, not a loosening — the property
+the test exists to guard is that an overdue bill *reads* differently, and
+F-812 requires that difference to be in words rather than in a tint, so the
+words are what is now asserted.
+
+## §21 — privacy, proven against PostgreSQL
+
+`services/academics-svc/test/p4-privacy.test.ts`, 11 tests, two tenants, real
+RLS. Positive and negative both, because a test that only checks what a role
+CAN see passes just as happily when the answer is "everything":
+
+- a student reads their own attendance, results, fees — and **cannot** name
+  another student's id to read theirs
+- a guardian reads each of their own children — and **cannot** reach a child
+  who is not theirs, including one in the same section
+- tenant A's guardian, given tenant B's student id, gets nothing: not an
+  error that confirms the id exists, nothing
+- the ward endpoint returns only the children actually linked, not the class
+
+Six iterations to get the fixture right, and each failure was the database
+refusing to hold something untrue:
+
+1. `7a4p0000` is not a uuid — `p` is not hex.
+2. `users_pkey` — Rahim fathers two children and so appeared twice in the
+   guardian array. People and links are now separate.
+3. "has no phone, no email and no contactable guardian" — the adults needed
+   phone numbers.
+4. `users_phone_e164_check` — `+8801` takes **nine** more digits; I had eight.
+5. Tenant B's only student had no guardian at all.
+6. Eleven tests cancelled: a top-level `before` does not gate `describe`s in
+   `node:test`. Memoised `ensureSetup()` per suite instead.
+7. And the one worth keeping: **`drop()` deleted both tenants under tenant A's
+   context, and RLS correctly hid tenant B**, so B survived and the next run
+   hit `tenants_pkey`. RLS scopes DELETE too. Each tenant is now dropped in
+   its own context.
+
+## §22 — switching children, measured
+
+Clicking the other child and reading the DOM synchronously, before any await:
+
+| Moment | Identity | Stats | Skeleton | Announced |
+|---|---|---|---|---|
+| before | তাহিয়া হাসান · পঞ্চম–খ · রোল 3 | ✗ অনুপস্থিত · ৳2,750.00 | no | — |
+| **t=0** | **gone** | **empty** | **yes** | রাফির হাসান — নবম–ক দেখানো হচ্ছে |
+| t=40 ms | রাফির হাসান · নবম–ক · রোল 7 | ✓ উপস্থিত · ৳1,500.00 | no | — |
+
+The old child's numbers never coexist with the new child's name. That is the
+property, and it is now measured rather than asserted.
+
+## Defects found and fixed
+
+### 1. The demo's staff gate was one path wide; the product's is seven
+
+Found by driving the preview **as a guardian** and typing a teacher's URL.
+`#/roster` painted a class register — twelve children's names and roll
+numbers. `#/marks`, `#/attendance` and the routine did the same.
+
+In production none of those requests are answered: `requireStaff` refuses a
+guardian at `academics/{roster,sections,exams,marks}`, `rms/routine` and
+`ops/structure`. Registering every route for every role is deliberate (R-3:
+"the endpoints and RLS are the enforcement, and a route that 403s honestly is
+better than one that 404s confusingly") — and that is exactly why the demo has
+to reproduce the 403, because in the demo there is no RLS and no endpoint,
+only `DEMO_STAFF_ONLY`, and it held one path.
+
+`apps/pwa/test/demo-gate.test.ts` now **derives** the expectation from the
+services: every module under `services/*/api` that calls `requireStaff(claims)`
+on a GET must be refused in the demo. A staff-only endpoint added next year
+fails the test until the demo refuses it too. The two POST-only gates
+(`assignments`, `scripts`) are excluded on purpose — their reads are what a
+student's own homework list is built from, and over-blocking makes the preview
+look broken to the audience it exists for. Verified by removing one path and
+watching the test go red.
+
+### 2. …and the gate alone was not enough
+
+With the gate in place the roster **still** painted names, under an "অফলাইন —
+সর্বশেষ সংরক্ষিত" banner. Every read-through cache in this app is a
+`shikhon_*` **localStorage** key, written synchronously so a cold start has
+something to draw. Every demo role shares one origin. The guardian was reading
+the teacher's cache.
+
+A real guardian cannot reach that state — they never held a teacher session —
+but a prospective school reaches it in two clicks of the role picker, on the
+public preview, and what they see is a parent reading a class register. The
+picker now purges before reloading. It is a **keep-list**, not a delete-list:
+identity (`auth`, `tid`, the demo selectors, the device id), branding, and
+three device preferences survive; every other `shikhon_` key goes, so a cache
+added next month is dropped by default.
+
+Deliberately scoped to the demo picker. `doLogout` is a different question —
+a real session ending on a shared device — and it touches the sync outbox,
+which may hold a teacher's unsent attendance. **Losing that is worse than a
+stale screen, and P4 is not where that gets decided. It is the first item on
+P5's list.**
+
+### 3. Tenant B's active tab label was 4.42:1 in dark mode
+
+On every mobile screen in the product, for any school whose brand needed the
+correction. `--c-primary-text` is derived to clear AA **on the brand-soft
+tint** — correct for the chips it was written for, and blind to the other
+ground app.css puts it on: the plain card surface, which carries links,
+breadcrumb hover, stat values, and the active bottom-bar tab.
+
+`readableBrandText` now takes a *list* of grounds and only stops stepping when
+all of them clear 4.5:1. Six brands checked, including the hostile ones:
+
+| Brand | dark, before | dark, after |
+|---|---|---|
+| tenant B `#1b3e7a` | **4.42** | 5.01 |
+| tenant A `#156a3f` | 5.42 | 5.42 |
+| pale yellow `#E5B300` | 9.81 | 9.81 |
+
+Two tests now hold it: `branding.test.ts` checks the derived colour on the
+card surface for eight brands in both themes, and `design-tokens.test.ts`
+checks that `branding.ts`'s two surface literals still match what app.css
+actually defines — the module is framework-free and cannot read the
+stylesheet, so the copies are compared rather than trusted.
+
+The default palette was already fine on that ground. Only tenant-derived
+colours were wrong, which is why no screenshot of the default build showed it.
+
+### 4. The avatar palette said "AA" and one tint was not
+
+`#A76A47` carries white at **4.38:1** at 11 px — the `.is-sm` avatar, which is
+what the child selector strip uses. The comment above the six tints claimed
+each was "chosen to carry white at AA". Five were. Moved to `#96603E`
+(5.20:1), same hue, and every tint now carries its measured ratio in the
+stylesheet beside it.
+
+### 5. The demo served the teacher's subject list to students
+
+`/api/v1/academics/subjects` returned `R3_SUBJECTS` — the teacher's bare
+`{id, nameBn, nameEn}` — where the student screen expects chapter counts. The
+accessible name came out as **"পদার্থবিজ্ঞান: undefinedটির মধ্যে undefinedটি
+অধ্যায় শেষ"**, read aloud, on five subjects. The route now returns
+`DEMO_SUBJECTS`, and `subjects-view.ts` coerces defensively so the view cannot
+emit the word "undefined" even with a field missing — `String(undefined)` is
+something a screen reader says out loud.
+
+## Two measurement artifacts, recorded as non-defects
+
+Both were reported as contrast failures by the sweep and neither is real:
+
+- `.shell-tab-label` at 4.42:1 and `.dnav-label` at 2.31:1 appeared only in
+  the first frames after a theme flip. `.shell-tab` and `.dnav-label` both
+  carry `transition: color`, so a probe that measures immediately reads a
+  blend of the two palettes. Injecting
+  `*{transition:none!important;animation:none!important}` before measuring
+  removed the whole class of them, and the settled values are 5.01 and 7.03.
+
+The same trap produced P2's phantom dark-mode failures. It is now written down
+so the next sweep starts with the freeze rather than discovering it again.
+
+## Browser acceptance
+
+48 configurations: **2 personas × 2 tenants × 6 widths × 2 themes**, every
+student and guardian route, transitions frozen.
+
+| | 1440 | 1280 | 1024 | 390 | 375 | 360 |
+|---|---|---|---|---|---|---|
+| student, tenant A | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ |
+| student, tenant B | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ |
+| guardian, tenant A | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ |
+| guardian, tenant B | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ | ✅ ✅ |
+
+(light ✅ dark ✅ per cell)
+
+**~15,900 element-checks. 0 contrast failures. 0 horizontal overflow.
+0 nameless controls. 0 `undefined`/`null`/UUID in any accessible name.**
+
+`d-rail-toggle` is 32×32 — below the 44 px the probe asks for and above WCAG
+2.2 AA's 24 px. It is a desktop-only, `pointer: fine` control and is left as
+it is; the mobile surfaces have no sub-44 targets at all.
+
+### Long content, at 360
+
+Fifty-nine strings replaced with pathological ones — a 43-character Bangla
+name, a 62-character institution name, a full sentence as an assignment title
+— and measured live:
+
+- no horizontal page scroll
+- the only clipped element is `.shell-org-name`, which is
+  `white-space: nowrap; text-overflow: ellipsis` by design
+- the child strip's options hold 176 × 60 px and ellipsise
+- the identity block wraps to two lines and stays inside the viewport
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite, run 1 | **1,352 passing**, 12 workspaces |
+| Full suite, run 2 | **1,352 passing** — re-runnable |
+| §21 privacy suite | 11/11, twice |
+| Guardian view tests | 17/17 |
+| TypeScript ×3 | 0 / 0 / 0 |
+| Build | app.js + sw.js + 11 API bundles |
+| Browser sweep | **~15,900 checks** across 48 configurations, 0 failures |
+| `index.html` | SHA `496199bd` — identical at `2e0a54b`, `9e3f604`, `52d1609`, `f62b8db`, HEAD **and the working tree** |
+| Landing isolation | `index.html` loads only `/design/tokens/*.css`; it has never loaded `app.css`, so P4's stylesheet work cannot reach it |
+
+## What P4 did not do
+
+- **No API, schema or permission changes.** The only server-side file P4
+  touched is a new test.
+- **No D16 commercial controls.** Nothing about ShikhonBD's own subscription
+  appears on a student or guardian screen; school tuition is a different thing
+  and is the only money either persona sees.
+- **The remaining student screens still render themselves.** `my-attendance`,
+  `results`, `assignments`, `fees`, `documents`, `learn` and `subjects` — seven
+  views — predate P2 and are accessible, responsive and green in every sweep
+  above, but they are not built from the shared components. Migrating a working
+  screen is a change with risk and no user-visible benefit, so it is listed
+  rather than done. **Seven legacy views.**

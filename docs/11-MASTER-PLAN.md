@@ -1387,3 +1387,35 @@ risk the pre-P3 audit found.
 Next: **P4** student + guardian · P5 principal + IT admin · P6 the screens that
 need designing · P7 platform console **and D16's commercial controls** · P8
 retire `--c-*`.
+
+
+### UI integration — P4 complete (2026-09-01)
+
+Student and guardian. The child selector — §3's CRITICAL piece — is a shared
+component with three behaviours chosen by how many children there are, and it
+never lets a parent wonder which one they are looking at: name and class in
+the accessible name, the identity block on every screen, and the previous
+child's numbers cleared *before* the next child's arrive (measured
+synchronously, not asserted).
+
+§21 is proven against real PostgreSQL rather than described: 11 tests, two
+tenants, positive and negative — a guardian cannot reach a child who is not
+theirs, and tenant A cannot reach tenant B's student even when given the id.
+
+Three findings mattered more than the screens. The demo's staff gate held one
+path where the product's `requireStaff` guards seven, so the public preview
+showed a guardian a class register; a test now derives that list from the
+services so it cannot drift again. Even with the gate closed the roster still
+painted from the previous role's localStorage cache, so the demo's role picker
+now purges. And `--c-primary-text` was derived against the brand-soft tint
+only, leaving tenant B's active bottom-bar tab at 4.42:1 in dark mode on every
+mobile screen — it is derived against both grounds now, with the invariant
+tested.
+
+Next: **P5** principal + IT admin · P6 the screens that need designing · P7
+platform console **and D16's commercial controls** · P8 retire `--c-*`.
+
+P5 opens with two items P4 identified and deliberately did not take: a
+section-scoped routine endpoint (so a student can be told what class is next),
+and what `doLogout` should do about the read-through caches on a shared device
+when the sync outbox may hold unsent attendance.

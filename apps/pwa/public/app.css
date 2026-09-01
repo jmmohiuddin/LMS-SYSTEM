@@ -2980,13 +2980,17 @@ main > .page-sub { padding-inline: var(--s-4); }
 .ui-avatar.is-lg { width: 52px; height: 52px; font-size: var(--text-base); }
 /* Six fixed tints, each chosen to carry white at AA. Not tenant-branded: a
    roster is scannable because the colours DIFFER, and a class of sixty in one
-   brand hue would defeat the point. */
-.ui-avatar[data-tint='0'] { background: #6E5D52; }
-.ui-avatar[data-tint='1'] { background: #4E7A94; }
-.ui-avatar[data-tint='2'] { background: #557C52; }
-.ui-avatar[data-tint='3'] { background: #A76A47; }
-.ui-avatar[data-tint='4'] { background: #7C5C1B; }
-.ui-avatar[data-tint='5'] { background: #8A5A7A; }
+   brand hue would defeat the point.
+   The ratios against white are measured, not assumed: the terracotta was
+   #A76A47 until P4 put an avatar in the child selector and the sweep measured
+   it at 4.38:1 — under AA for 11px text, which every .is-sm avatar is. The
+   hue is unchanged; only the lightness moved, to 5.20:1. */
+.ui-avatar[data-tint='0'] { background: #6E5D52; } /* 6.27:1 */
+.ui-avatar[data-tint='1'] { background: #4E7A94; } /* 4.63:1 */
+.ui-avatar[data-tint='2'] { background: #557C52; } /* 4.78:1 */
+.ui-avatar[data-tint='3'] { background: #96603E; } /* 5.20:1 */
+.ui-avatar[data-tint='4'] { background: #7C5C1B; } /* 6.17:1 */
+.ui-avatar[data-tint='5'] { background: #8A5A7A; } /* 5.49:1 */
 
 /* -- page header ---------------------------------------------------------- */
 .page-header-main { display: flex; flex-direction: column; gap: var(--s-3); }
@@ -3463,6 +3467,98 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
 
 
 /* ==========================================================================
+   STUDENT & GUARDIAN  (UI integration plan, P4)
+
+   §3: "never make a parent wonder which child they are viewing." The child
+   selector and the identity block below are the whole of that promise, and
+   they are the only new visual language this phase introduces — everything
+   else is P2 components placed.
+   ========================================================================== */
+
+/* -- the child selector: two or three children, side by side -------------- */
+/* Permanently on screen, because a control that answers "which child" only
+   after you tap it answers it at the moment the answer stops mattering. */
+.ui-child-strip {
+  display: flex; gap: var(--s-2); overflow-x: auto;
+  padding-bottom: 2px; margin-bottom: var(--s-3);
+  scrollbar-width: none;
+}
+.ui-child-strip::-webkit-scrollbar { display: none; }
+.ui-child-opt {
+  display: flex; align-items: center; gap: var(--s-2); flex: 1 1 0; min-width: 0;
+  min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--radius-md);
+  background: var(--color-bg); color: var(--c-ink-2);
+  font: inherit; text-align: start; cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.ui-child-opt:hover { border-color: var(--color-border-strong); }
+/* Three signals on the selected child — tint, weight and a border — because
+   this is the one control whose state a person must never have to guess. */
+.ui-child-opt[aria-selected='true'] {
+  background: var(--c-primary-soft); border-color: var(--c-primary);
+  color: var(--c-primary-text);
+}
+.ui-child-opt[aria-selected='true'] .ui-child-opt-name { font-weight: 700; }
+.ui-child-opt-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.ui-child-opt-name { font-size: var(--text-2xs); font-weight: 600;
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-child-opt-meta { font-size: var(--text-3xs); color: var(--c-ink-3);
+                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* -- four or more: a button that names the current child ------------------ */
+.ui-child-button {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%;
+  min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-3);
+  border: 1px solid var(--c-primary); border-radius: var(--radius-md);
+  background: var(--c-primary-soft); color: var(--c-primary-text);
+  font: inherit; text-align: start; cursor: pointer;
+}
+.ui-child-caret { display: flex; margin-inline-start: auto; flex: none; }
+.ui-child-caret svg { width: 18px; height: 18px; }
+.ui-child-list { display: flex; flex-direction: column; gap: var(--s-2);
+                 margin: 0; padding: 0; list-style: none; }
+.ui-child-row {
+  display: flex; align-items: center; gap: var(--s-3); width: 100%;
+  min-height: var(--tap-min); padding: var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--radius-md);
+  background: var(--color-bg); color: inherit; font: inherit;
+  text-align: start; cursor: pointer;
+}
+.ui-child-row[aria-current='true'] { border-color: var(--c-primary);
+                                     background: var(--c-primary-soft); }
+/* A word, not only a tint: this row IS the answer to "which child". */
+.ui-child-current { margin-inline-start: auto; flex: none;
+                    font-size: var(--text-3xs); font-weight: 700;
+                    color: var(--c-primary-text); }
+
+/* -- the identity block: whose screen this is ----------------------------- */
+.ui-child-identity {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) 0 var(--s-4);
+}
+.ui-child-identity-text { min-width: 0; }
+.ui-child-identity-name { margin: 0; font-size: var(--text-h2);
+                          font-weight: var(--text-h2-weight);
+                          line-height: var(--text-h2-line); color: var(--c-ink);
+                          overflow-wrap: anywhere; }
+.ui-child-identity-meta { margin: 2px 0 0; font-size: var(--text-2xs);
+                          color: var(--c-ink-2); }
+
+.ward-cta { margin-top: var(--s-4); }
+.ward-result-actions { display: flex; align-items: center; gap: var(--s-2); }
+
+/* -- student home --------------------------------------------------------- */
+.sh-note { margin: 0 0 var(--s-3); font-size: var(--text-2xs);
+           color: var(--c-ink-2); line-height: var(--text-body-line); }
+.sh-quick { display: grid; grid-template-columns: 1fr; gap: var(--s-2); }
+/* An urgent item gets a rule, not a wash: the badge already says "জরুরি" and
+   a tinted row would say it a second time, louder and less clearly. */
+.ui-list-item.is-urgent .ui-list-hit { border-inline-start: 3px solid var(--c-warn); }
+
+
+/* ==========================================================================
    RESPONSIVE — the desktop layouts, deliberately LAST in this file  (P1)
 
    Placement is load-bearing, not tidiness. Custom properties cascade by
@@ -3626,6 +3722,16 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
   .att-fact-value { font-size: var(--text-xs); }
 
   .att-header { padding-inline: 0; }
+
+
+  /* ── student & guardian (P4) ──────────────────────────────────────────── */
+  .sh-quick { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
+  /* The child strip stops stretching: three names across 1200px would put a
+     child's name at each end of the screen and the question back on the
+     reader. */
+  .ui-child-strip { max-width: 640px; }
+  .ui-child-button { max-width: 420px; }
+  .ui-child-opt-name { font-size: var(--text-xs); }
 
 }
 

@@ -694,8 +694,31 @@ const DEMO_GATES: Record<string, string[]> = {
   '/api/v1/finance/generate':  ['principal', 'school_owner', 'accountant'],
 };
 
-/** requireStaff: students and guardians are the blocklist, as in auth.ts. */
-const DEMO_STAFF_ONLY = new Set(['/api/v1/academics/hierarchy']);
+/**
+ * requireStaff: students and guardians are the blocklist, as in auth.ts.
+ *
+ * One entry for a long time, and wrong by six. Every path here is a module
+ * under `services/*\/api` that calls `requireStaff(claims)` before answering a
+ * GET, so a guardian who types a teacher's URL gets the same 403 here that the
+ * server would give them — which is the only reason the screen behind it is
+ * safe to leave registered for every role (R-3).
+ *
+ * The two POST-only gates (`academics/assignments`, `academics/scripts`) are
+ * deliberately absent: their GETs are what a student's own homework list is
+ * built from, and blocking those would break the student the gate exists to
+ * protect. `ops/guardians` is absent for the opposite reason — DEMO_GATES
+ * already names its allowed roles, and neither student nor guardian is among
+ * them.
+ */
+const DEMO_STAFF_ONLY = new Set([
+  '/api/v1/academics/hierarchy',
+  '/api/v1/academics/roster',
+  '/api/v1/academics/sections',
+  '/api/v1/academics/exams',
+  '/api/v1/academics/marks',
+  '/api/v1/rms/routine',
+  '/api/v1/ops/structure',
+]);
 
 function demoForbidden(pathname: string): Response | null {
   const allowed = DEMO_GATES[pathname];
@@ -1723,7 +1746,14 @@ export class DemoAuth extends Auth {
         return ok({ studentId: 'demo-s1', months: 6, ...DEMO_ATTENDANCE });
 
       case '/api/v1/academics/subjects':
-        return ok({ studentId: 'demo-s1', subjects: R3_SUBJECTS });
+        // DEMO_SUBJECTS, not R3_SUBJECTS. The latter is the teacher's bare
+        // {id, nameBn, nameEn} list for the subject-teacher panel and carries
+        // no chapter counts, so the student's subject cards rendered
+        // "undefinedটির মধ্যে undefinedটি অধ্যায় শেষ" — in the visible text and
+        // in the progress bar's accessible name. Found by P4's sweep for
+        // `undefined` in aria-labels; /demo is a public surface, so this was
+        // the first thing a prospective school would have read.
+        return ok({ studentId: 'demo-s1', subjects: DEMO_SUBJECTS });
 
       case '/api/v1/academics/next':
         return ok({ suggestions: DEMO_NEXT });

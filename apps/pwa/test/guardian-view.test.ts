@@ -75,9 +75,21 @@ describe('guardian home (§9.1)', () => {
   beforeEach(async () => { root = await mount(HOME); });
 
   test('F-203 — the switcher lists every child and marks the current one', () => {
-    const opts = [...root.querySelectorAll('.ward-switcher .seg-opt')];
+    const opts = [...root.querySelectorAll('.ui-child-strip .ui-child-opt')];
     assert.equal(opts.length, 2);
-    assert.deepEqual(opts.map((o) => o.textContent), ['আনিকা রহমান', 'বিজয় রহমান']);
+    // The option now names the class as well: "আনিকা" and "আনিকা" are two
+    // different children in more Bangladeshi families than not, and the
+    // selector is the one control that must never be ambiguous.
+    assert.deepEqual(opts.map((o) => o.querySelector('.ui-child-opt-name')?.textContent),
+      ['আনিকা রহমান', 'বিজয় রহমান']);
+    for (const o of opts) {
+      // The section, whatever it is, must be in the name a reader hears.
+      assert.match(o.getAttribute('aria-label') ?? '', /—\s*\S+/,
+        'the accessible name must disambiguate two children with one name');
+      assert.ok((o.getAttribute('aria-label') ?? '').includes(
+        o.querySelector('.ui-child-opt-meta')?.textContent ?? '__none__'),
+        'the spoken name carries the same section the eye sees');
+    }
     // Selection is announced, not only coloured.
     assert.equal(opts[0].getAttribute('aria-selected'), 'true');
     assert.equal(opts[1].getAttribute('aria-selected'), 'false');
@@ -85,14 +97,14 @@ describe('guardian home (§9.1)', () => {
 
   test('a guardian with one child is never asked to choose', async () => {
     const r = await mount({ ...HOME }, [ANIKA]);
-    assert.equal(r.querySelector('.ward-switcher'), null);
+    assert.equal(r.querySelector('.ui-child-strip'), null);
     assert.match(r.textContent ?? '', /আনিকা রহমান/);
   });
 
   test('the child is identified by class and roll, roll in Latin digits', () => {
     // The roll is an identifier — it is what a guardian reads down the
     // phone to the office — so it does not get Bangla numerals.
-    assert.match(root.querySelector('.ward-identity')?.textContent ?? '', /নবম–ক · রোল 1/);
+    assert.match(root.querySelector('.ui-child-identity')?.textContent ?? '', /নবম–ক · রোল 1/);
   });
 
   test('THE ONE THAT MATTERS — no status is carried by colour alone', () => {
@@ -104,53 +116,64 @@ describe('guardian home (§9.1)', () => {
     // words on every main line would contradict the wireframe. What must
     // hold is that removing the colour leaves the card still readable —
     // which it does via the heading, a glyph, and the sub-line.
-    const cards = [...root.querySelectorAll('.ward-card')];
+    const cards = [...root.querySelectorAll('.ui-stat')];
     assert.equal(cards.length, 2);
     for (const card of cards) {
-      const tone = card.querySelector('.ward-card-main')?.getAttribute('data-tone');
+      // The tone moved to the tinted glyph square when these became shared
+      // stat cards; what it means, and what this test guards, is unchanged.
+      const tone = card.querySelector('.ui-stat-glyph')?.getAttribute('data-tone');
       assert.ok(tone, 'the card has a tone at all');
       const words = (card.textContent ?? '').replace(/[✓✗◔◑⌾⚠৳\s,.\d০-৯%–·\/]/g, '');
       assert.ok(words.length > 3, `"${card.textContent}" survives losing its colour`);
     }
     // And the one that can be said in a word, is.
-    assert.match(cards[0].querySelector('.ward-card-main')?.textContent ?? '', /উপস্থিত/);
+    assert.match(cards[0].querySelector('.ui-stat-value')?.textContent ?? '', /উপস্থিত/);
   });
 
   test('attendance shows today and the month, in Bangla numerals', () => {
-    const card = root.querySelectorAll('.ward-card')[0];
+    const card = root.querySelectorAll('.ui-stat')[0];
     assert.match(card.textContent ?? '', /✓ উপস্থিত/);
     assert.match(card.textContent ?? '', /এ মাসে ৯৪%/);
   });
 
   test('fees show the amount and the NEXT due date', () => {
-    const card = root.querySelectorAll('.ward-card')[1];
+    const card = root.querySelectorAll('.ui-stat')[1];
     assert.match(card.textContent ?? '', /2,500/);
     assert.match(card.textContent ?? '', /শেষ তারিখ/);
   });
 
   test('an overdue bill reads differently from one merely due', async () => {
     const r = await mount({ ...HOME, fees: { outstanding: 2500, earliestDue: '2026-07-15', overdueCount: 2 } });
-    const card = r.querySelectorAll('.ward-card')[1];
-    assert.equal(card.querySelector('.ward-card-main')?.getAttribute('data-tone'), 'danger');
+    const card = r.querySelectorAll('.ui-stat')[1];
+    // The P2 stat card's tones are the palette's semantic set — there is no
+    // `danger` step, and overdue takes `warn`. That is a rename, not a
+    // loosening: the property this test exists to guard is that an overdue
+    // bill READS differently, and F-812 requires that difference to be in
+    // words rather than in a tint. So the words are what is asserted.
+    assert.equal(card.querySelector('.ui-stat-glyph')?.getAttribute('data-tone'), 'warn');
     assert.match(card.textContent ?? '', /২টি বিল সময় পেরিয়েছে/);
+    // …and demonstrably different from the merely-due wording.
+    assert.doesNotMatch(card.textContent ?? '', /শেষ তারিখ/);
   });
 
   test('nothing owed is stated as good news, not as an empty card', async () => {
     const r = await mount({ ...HOME, fees: { outstanding: 0, earliestDue: null, overdueCount: 0 } });
-    const card = r.querySelectorAll('.ward-card')[1];
+    const card = r.querySelectorAll('.ui-stat')[1];
     assert.match(card.textContent ?? '', /✓ বকেয়া নেই/);
     assert.match(card.textContent ?? '', /সব পরিশোধিত/);
   });
 
   test('the rank is never shown without its cohort', () => {
     // "৭" alone is meaningless; "৭/৫২" is a fact. §9.1 draws it that way.
-    assert.match(root.querySelector('.ward-result-line')?.textContent ?? '',
+    // The GPA and the rank are the result card's subtitle now; the rule they
+    // guard is unchanged — a rank is never shown without its cohort.
+    assert.match(root.querySelector('.ui-card-sub')?.textContent ?? '',
                  /GPA 4\.56 · মেধাক্রম ৭\/৫২/);
   });
 
   test('no published result means no result card at all', async () => {
     const r = await mount({ ...HOME, result: null });
-    assert.equal(r.querySelector('.ward-result'), null,
+    assert.equal(r.querySelector('.ui-card-sub'), null,
                  'an empty results card would read as "your child has no marks"');
   });
 
@@ -170,7 +193,7 @@ describe('guardian home (§9.1)', () => {
     // Silence is not absence. Reporting an unmarked register as "absent"
     // is how a guardian ends up phoning the school about nothing.
     const r = await mount({ ...HOME, attendance: { ...HOME.attendance, todayStatus: null } });
-    assert.match(r.querySelectorAll('.ward-card')[0].textContent ?? '', /আজ হাজিরা নেওয়া হয়নি/);
+    assert.match(r.querySelectorAll('.ui-stat')[0].textContent ?? '', /আজ হাজিরা নেওয়া হয়নি/);
   });
 });
 
@@ -180,7 +203,7 @@ describe('switching children', () => {
     const root = await mount(HOME, [ANIKA, BIJOY], seen);
     seen.length = 0;
 
-    ([...root.querySelectorAll('.ward-switcher .seg-opt')][1] as HTMLButtonElement).click();
+    ([...root.querySelectorAll('.ui-child-strip .ui-child-opt')][1] as HTMLButtonElement).click();
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
 
     assert.ok(seen.some((u) => u.includes('studentId=s-bijoy')),
@@ -189,9 +212,9 @@ describe('switching children', () => {
 
   test('the switcher stays on screen while the new child loads', async () => {
     const root = await mount(HOME);
-    ([...root.querySelectorAll('.ward-switcher .seg-opt')][1] as HTMLButtonElement).click();
+    ([...root.querySelectorAll('.ui-child-strip .ui-child-opt')][1] as HTMLButtonElement).click();
     // Synchronously after the click, before any fetch resolves.
-    assert.ok(root.querySelector('.ward-switcher'),
+    assert.ok(root.querySelector('.ui-child-strip'),
               '§9.1 calls this the single most-used control here');
     assert.ok(root.querySelector('[aria-busy=true]'), 'and a skeleton, not a blank screen');
   });
@@ -226,7 +249,13 @@ describe('when the network is gone', () => {
     });
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
 
-    assert.match(root.textContent ?? '', /তথ্য লোড হয়নি/);
+    // The message comes from the shared `humanError` now and names the
+    // cause — "no internet connection" rather than "could not load", which is
+    // the difference between a person waiting and a person giving up. What
+    // this test guards is that SOMETHING is said and a retry is offered.
+    assert.match(root.textContent ?? '', /সংযোগ|সমস্যা/);
+    assert.ok([...root.querySelectorAll('button')]
+      .some((b) => /আবার চেষ্টা/.test(b.textContent ?? '')), 'no retry offered');
     assert.ok([...root.querySelectorAll('button')].some((b) => b.textContent === 'আবার চেষ্টা করুন'));
   });
 });

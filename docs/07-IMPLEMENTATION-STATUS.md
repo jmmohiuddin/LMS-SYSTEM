@@ -1751,3 +1751,36 @@ Attendance tiles no longer announce "undefined": the roster returns
 
 DB suite **1,334 passing, twice**. Non-DB 1,039. tsc 3/3. 48/48 migrations.
 D11 52/52. `index.html` byte-identical to the deployed commit.
+
+## P4 — student + guardian experience (2026-09-01)
+
+Student home is new (`student-home-view.ts`, four independent fetches). The
+guardian home moved onto the P2 components with its cache-first behaviour
+intact. `ui/child-selector.ts` is the new shared component: nothing for one
+child, an inline strip for two or three, a button and a sheet beyond that.
+
+**Privacy is tested, not asserted.** `services/academics-svc/test/p4-privacy.test.ts`
+runs 11 cases against real RLS across two tenants — student self-scope,
+guardian child-scope, and cross-tenant refusal, each with its negative.
+
+Three defects worth recording:
+
+- `DEMO_STAFF_ONLY` listed one path; `requireStaff` guards seven. A guardian
+  in the public preview could open a class register. `apps/pwa/test/demo-gate.test.ts`
+  now derives the expected list by scanning `services/*/api` for
+  `requireStaff(claims)` on a GET, so a new endpoint cannot silently be open
+  in the demo.
+- The read-through caches are `shikhon_*` localStorage keys and every demo
+  role shares one origin, so the gate alone left the roster on screen from
+  cache. The demo role picker purges with a keep-list.
+- `--c-primary-text` was derived to clear AA on the brand-soft tint only.
+  On the plain card surface — links, stat values, the active bottom-bar tab —
+  tenant B measured 4.42:1 in dark. `readableBrandText` now takes a list of
+  grounds; `design-tokens.test.ts` checks the two surface literals still match
+  app.css.
+
+Not done, on purpose: no API, schema or permission changes (the only
+server-side file P4 touched is a new test); no D16 commercial controls on
+either persona; seven student/guardian screens keep their legacy markup —
+accessible, responsive, green in every sweep, and not worth the risk of a
+rewrite with no user-visible benefit.

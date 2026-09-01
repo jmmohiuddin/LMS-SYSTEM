@@ -873,3 +873,62 @@ The teacher role. Commits `5959975` and the documentation commit after it.
   the inbox is one tap away and P6 designs the notice surface.
 - Attendance is one section and one date at a time. Backdating and
   period-wise entry exist in the API and have no picker yet.
+
+## 24. P4 — delivered (2026-09-01)
+
+Student and guardian. Details, evidence and every defect in `PHASE_LOG.md`
+under "P4 — Student + Guardian final production UI/UX".
+
+### Screens
+
+| Screen | Role | State | Notes |
+|---|---|---|---|
+| Home | student | **new** | `student-home-view.ts`; four independent fetches, each repainting as it lands |
+| আমার সন্তান | guardian | **migrated** | render moved to P2 components; cache-first paint kept |
+| Child selector | guardian | **new component** | `ui/child-selector.ts` — the §3 CRITICAL piece |
+| Subjects · Learn · Assignments · Results · My attendance · Fees · Documents | student | **legacy markup, verified** | accessible, responsive, green in every sweep; not yet on the shared components |
+| Results · Fees · Inbox · Calendar · Documents | guardian | **legacy markup, verified** | same |
+
+### The child selector
+
+| Children | Renders | Rule |
+|---|---|---|
+| 0–1 | nothing | a control with one option teaches people their tap did nothing |
+| 2–3 | inline strip, both names always visible | the question is never asked because it is already answered |
+| 4+ | button naming the current child + sheet | side-by-side stops fitting 360 px |
+
+Accessible name carries name **and** class. Roving tabindex; arrow/Home/End.
+Every change announced. Roll numbers stay in Latin digits.
+
+### Acceptance
+
+48 configurations — 2 personas × 2 tenants × 6 widths × 2 themes — with CSS
+transitions frozen so the probe cannot read a mid-flip blend.
+
+| Area | 360 | 375 | 390 | 1024 | 1280 | 1440 | Light | Dark | Tenant A | Tenant B |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Contrast | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| Overflow | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Nameless controls | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| `undefined` / UUID in a11y text | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| Child selector | strip | strip | strip | strip | strip | strip | ✅ | ✅ | ✅ | ✅ |
+
+~15,900 element-checks, 0 failures. Long-content stress at 360 (43-char name,
+62-char institution, sentence-length title): no page overflow; only
+`.shell-org-name` clips, by design.
+
+### Known student / guardian limitations
+
+- **No student routine card.** `GET /rms/routine` wraps
+  `app.teacher_day(claims.sub)`; a student gets their own empty teaching day.
+  There is no section-scoped routine endpoint. **P5.**
+- **Seven student/guardian screens keep legacy markup** — listed above.
+  Migrating a working, accessible screen carries risk and no user-visible
+  benefit, so it is a P5 decision rather than a P4 action.
+- **`doLogout` does not purge the read-through caches.** P4 fixed the demo's
+  role picker, which is the surface a stranger can reach; a real session
+  ending on a shared device is a bigger question because the sync outbox may
+  hold unsent attendance. **First item on P5.**
+- The guardian's roster/marks refusal reads as "could not fetch", not "you do
+  not have permission". The attendance screen says the permission sentence
+  properly; the other two say the generic one.

@@ -223,13 +223,19 @@ export class SubjectsView {
     track.className = 'progress-track';
     track.setAttribute('role', 'progressbar');
     track.setAttribute('aria-valuemin', '0');
-    track.setAttribute('aria-valuemax', String(s.totalChapters));
-    track.setAttribute('aria-valuenow', String(s.completedChapters));
+    // Coerced, because `String(undefined)` is the word "undefined" and this
+    // string is read aloud. A missing count is zero chapters, which is true
+    // and sayable; the word "undefined" is neither. §27: no undefined, null
+    // or UUID may reach accessible text.
+    const total = Number.isFinite(s.totalChapters) ? s.totalChapters : 0;
+    const done = Number.isFinite(s.completedChapters) ? s.completedChapters : 0;
+    track.setAttribute('aria-valuemax', String(total));
+    track.setAttribute('aria-valuenow', String(done));
     // Bangla numerals in the spoken label too: the visible count already uses
     // them, and a screen reader that says the figures in English mid-Bangla
     // is reading a different sentence than the one on screen.
     track.setAttribute('aria-label',
-      `${s.nameBn}: ${bn(s.totalChapters)}টির মধ্যে ${bn(s.completedChapters)}টি অধ্যায় শেষ`);
+      `${s.nameBn}: ${bn(total)}টির মধ্যে ${bn(done)}টি অধ্যায় শেষ`);
     const fill = d.createElement('div');
     fill.className = 'progress-fill';
     fill.style.width = `${s.progressPercent}%`;
@@ -237,7 +243,7 @@ export class SubjectsView {
 
     const count = d.createElement('span');
     count.className = 'subj-count';
-    count.textContent = `${bn(s.completedChapters)}/${bn(s.totalChapters)} অধ্যায়`;
+    count.textContent = `${bn(done)}/${bn(total)} অধ্যায়`;
 
     const row = d.createElement('div');
     row.className = 'subj-progress-row';

@@ -31,6 +31,8 @@ import { dirname, join } from 'node:path';
 
 // fileURLToPath, not URL.pathname: this repo's path contains spaces.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { LIGHT_SURFACE, DARK_SURFACE }
+  from '../../../packages/ui-core/src/branding.ts';
 const CSS_RAW = readFileSync(join(ROOT, 'public', 'app.css'), 'utf8');
 /**
  * Comments stripped before any token scan. This file's comments deliberately
@@ -198,6 +200,47 @@ describe('P0 — contrast obligations of the text tokens', () => {
       assert.ok(v, `${t} must resolve`);
       const r = contrast(v, muslin);
       assert.ok(r >= 4.5, `${t} (${v}) on Muslin is ${r.toFixed(2)}:1, needs 4.5`);
+    }
+  });
+
+  test('brand text clears AA on the RECESSED ground as well (P4)', () => {
+    // --color-surface is the page. --color-surface-muted is what cards, chips
+    // and the mobile bottom bar are painted with, and --c-primary-text lands
+    // on it every time a bottom-bar tab is active — which is every mobile
+    // screen in the product. That ground was never asserted here, which is
+    // how tenant B's active tab reached 4.42:1 in dark mode and stayed there
+    // until P4's browser sweep measured it. Both themes: the failure was
+    // dark-only, and a light-only check would have said PASS.
+    // The dark block redefines the RAW palette only; the --c-* aliases are
+    // declared once, in :root. Concatenating dark first and light after gives
+    // `resolve` (first match wins) exactly the cascade the browser applies.
+    const DARK = [darkBlock(), lightBlock()].join(String.fromCharCode(10));
+    for (const [theme, block] of [['light', lightBlock()], ['dark', DARK]] as const) {
+      const muted = resolve('--c-surface', block);
+      assert.ok(muted, theme + ': --c-surface must resolve');
+      for (const t of ['--c-primary-text', '--c-link', '--c-ink-3']) {
+        const v = resolve(t, block);
+        assert.ok(v, theme + ': ' + t + ' must resolve');
+        const r = contrast(v, muted);
+        assert.ok(r >= 4.5,
+          theme + ': ' + t + ' (' + v + ') on ' + muted + ' is ' + r.toFixed(2) + ':1');
+      }
+    }
+  });
+
+  test("branding.ts's surface literals still match this stylesheet (P4)", () => {
+    // brandingCssVars derives a TENANT's brand text against these two hexes,
+    // so a school with a pale crest gets a readable active tab. That module is
+    // framework-free and cannot read app.css, so the two copies are compared
+    // here rather than trusted to stay in step.
+    for (const [theme, block, literal] of [
+      ['light', lightBlock(), LIGHT_SURFACE],
+      ['dark', [darkBlock(), lightBlock()].join(String.fromCharCode(10)), DARK_SURFACE],
+    ] as const) {
+      const muted = resolve('--c-surface', block);
+      assert.ok(muted, theme + ': --c-surface must resolve');
+      assert.equal(muted.toLowerCase(), literal.toLowerCase(),
+        theme + ': branding.ts says ' + literal + ', app.css says ' + muted);
     }
   });
 

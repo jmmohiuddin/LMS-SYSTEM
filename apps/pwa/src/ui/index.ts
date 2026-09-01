@@ -73,6 +73,9 @@ export {
 } from './feedback.ts';
 export type { ToastTone } from './feedback.ts';
 
+export { childSelector, childIdentity } from './child-selector.ts';
+export type { ChildOption, ChildSelectorOptions } from './child-selector.ts';
+
 export { navFor, navPaths, crumbFor, navLabel, NAV_ROLES } from './nav.ts';
 export type { NavItem, NavGroup, RoleNav } from './nav.ts';
 

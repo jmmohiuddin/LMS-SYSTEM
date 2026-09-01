@@ -7422,3 +7422,183 @@ name, a 62-character institution name, a full sentence as an assignment title
   above, but they are not built from the shared components. Migrating a working
   screen is a change with risk and no user-visible benefit, so it is listed
   rather than done. **Seven legacy views.**
+
+---
+
+# D17 — the permanent documentation rule, and the reconciliation it forced   (2026-09-01)
+
+**Owner decision. Documentation only — no application code, database, API,
+routing or UI changed by this entry.**
+
+## The decision
+
+The owner made documentation a permanent, binding rule rather than a habit:
+every phase, sub-phase, bug fix, architectural decision, security finding, UI
+migration, database migration, deployment change, environment change, test
+milestone, owner decision, important limitation and backlog reclassification is
+recorded, and the repository must be sufficient for an agent with **zero chat
+history** to understand the project A → Z.
+
+Recorded as **D17** in [11-MASTER-PLAN.md](11-MASTER-PLAN.md) §1. It **extends
+D10** — which bound only this file — to the whole documentation set. **D10 is
+not superseded and is unchanged.**
+
+Three sub-rules are absolute and are the ones that will bite:
+
+- **(a) Evidence is labelled, never inflated.** OBSERVED / TESTED / REHEARSED /
+  INFERRED / PLANNED / BLOCKED / UNTESTED are different words. A gate that was
+  not run is written `NOT RUN`, never converted to PASS. Test totals are read
+  off an actual run, never remembered.
+- **(b) Drift is disclosed, never hidden.** Where the deployed system differs
+  from the blueprint, both are stated, with the reason and the security
+  implication, until the blueprint is reconciled.
+- **(c) Accuracy outranks completeness.** NOT BUILT, PARTIAL, BLOCKED and
+  EXTERNAL DEPENDENCY are acceptable answers. Making a row look finished is
+  not.
+
+## Why the rule was needed, in this project's own evidence
+
+Two failures already on record, and they are the same failure:
+
+- A decision recorded as *"rebuild the app on the Ata Ekta design system"*
+  (`c93bddc`) had changed **1 view module of 59**. Nobody could tell for
+  months, because the document asserted the outcome and nothing checked it.
+  That is what D14 and the UI/UX audit of 2026-09-01 exist to correct.
+- The TypeScript gate stayed **red across six commits** because its result was
+  assumed rather than read.
+
+Both are a claim in a document that no longer matched the repository. The
+remedy is not more documentation; it is documentation that is *falsifiable and
+checked*, which is why (a) and (c) matter more than volume.
+
+## First act under D17: P4's missing commit hash
+
+P4's entry above was written before the commit existed, so it recorded every
+gate and no hash. **P4 is commit `95c34bf`**, pushed to `origin/main`
+(`f62b8db..95c34bf`). D17 requires the hash on every phase entry; this is that
+correction, made by appending rather than by editing the P4 entry.
+
+## Second act: a reconciliation, and what it found
+
+Documentation was audited against D17 §17's twenty-two handoff questions and
+§20's pre-commit checklist. **Six defects**, all of them the kind that reads as
+correct until somebody checks.
+
+### 1. `07-IMPLEMENTATION-STATUS.md` §1 was three weeks and four phases stale
+
+It was dated **2026-08-11** and described Vercel, Neon, **890 tests**, **45
+migrations** and **four** surfaces — while P2, P3, P3.1 and P4 sat appended to
+the bottom of the same file. A reader who trusted §1 would have believed the
+product had roughly two-thirds of the tests it has, on hosting it no longer
+uses.
+
+Reconciled to measured values: **1,352 tests** (run twice, DB-backed),
+**48 migrations**, **227 RLS policies / 110 RLS-enabled tables / 108 with
+`tenant_id`** (queried, not remembered), **five** surfaces, P0–P4 complete.
+The superseded figures are not deleted from the project — each is in this file
+under the phase that produced it, which is where D17 says they belong.
+
+### 2. The architecture drift was real and undisclosed
+
+`D1` says Neon Postgres. `06-DEPLOYMENT.md` is *titled* "Deployment: Neon
+Postgres". Production has run on a **Hostinger VPS with Caddy and a
+`pgvector/pgvector:pg16` Docker container** since 2026-08-31. The deployment
+itself was recorded here at the time — but no document reconciled the two, so
+both stories were live and a reader could pick either.
+
+Now disclosed in **[11-MASTER-PLAN.md §5b](11-MASTER-PLAN.md)** with the
+reasons and, as D17(b) requires, the **security implications in both
+directions**: isolation is *better* (a dedicated container on loopback, no new
+superuser on the box holding five sibling applications, the no-`BYPASSRLS`
+rule asserted at boot, and 0 tenants visible without tenant context verified on
+production); availability is *worse* (one box, one process, no regional
+failover, and a shared Caddy whose misconfiguration would take down five other
+products). That risk is carried knowingly at a pre-pilot stage.
+
+**The blueprint documents are deliberately NOT rewritten.** Making them say
+"VPS" would tell a future reader the blueprint was always the VPS, which is
+false, and would erase the reasoning. Which architecture is the *target* is an
+owner decision, tracked as **`B-27`**.
+
+### 3. `07` contradicted itself about two shipped features
+
+§1 listed the audit viewer and guardian links among R-3's delivered portals.
+§9e, further down the same file, still said **"No audit viewer — backend
+complete, UI pending"** and **"Guardian management is read-only"**. Checked
+against the code: `audit-view.ts` exists and `audit` is in the navigation for
+principal and IT admin; `guardian-panel.ts` posts a new link and patches
+`canPayFees`. Both bullets were closed by R-3's own completion pass and had
+survived for three days.
+
+Struck through in place with a dated resolution rather than deleted — a reader
+who meets the old claim in another document needs to see how it ended. Kept as
+`B-24` and `B-25`. Guardian **unlinking** genuinely is still missing and is now
+`B-7`.
+
+### 4. Three Vercel artefacts still read as current instructions
+
+The API base URL, the demo address (`?demo=1`, superseded by `/demo` in P1),
+and a smoke test pinned to a Vercel edge IP that no longer means anything.
+Corrected, each with the superseded form named so it stays recognisable.
+
+### 5. The README — the first thing anybody reads — was the worst of them
+
+"Live at `https://shikhon-lms.vercel.app`", and a status line claiming
+**15 migrations, 88 tables, 103 RLS policies**. The real numbers are 48 and
+227/110/108. A `START HERE` banner now routes to the handoff document and
+states the current architecture, with the drift named rather than smoothed
+over.
+
+### 6. There was no single backlog
+
+The same items were scattered across a "classified but NOT implemented" table
+here, limitation bullets in `07`, severity rules in the audit plan, and a
+`R-5: object storage · CSV export · …` line that had been copy-pasted forward
+through five phases. [BACKLOG.md](BACKLOG.md) is now the only one: **29 items**
+with permanent IDs, in D17's six categories, each citing where it came from.
+Nothing was invented for it.
+
+## Documents added
+
+| File | Purpose |
+|---|---|
+| [`docs/00-START-HERE.md`](00-START-HERE.md) | The zero-context handoff. Answers D17 §17's twenty-two questions, with the honest "not built" / "not observed" answers intact, and routes to everything else |
+| [`docs/BACKLOG.md`](BACKLOG.md) | The single backlog — 29 IDs, six categories, every row sourced |
+
+## Documents changed
+
+| File | Change |
+|---|---|
+| `11-MASTER-PLAN.md` | **D17** added to the decisions of record · **§5a** phase status board in D17's vocabulary (R-0…R-9 and P0…P8) · **§5b** architecture drift disclosed |
+| `07-IMPLEMENTATION-STATUS.md` | §1 reconciled to measured current values · three Vercel artefacts corrected · two superseded limitation bullets struck through with dated resolutions |
+| `README.md` | START HERE banner · deployment section corrected · database numbers corrected |
+| `UI-UX-INTEGRATION-PLAN.md` | Currency stamp (P0–P4 delivered, P5–P8 not started) · duplicate `## 21` heading fixed |
+| `FINAL-PRODUCT-SURFACE-ARCHITECTURE.md` | Currency stamp with the **delivery state of each of the five surfaces** — two of the preferred doors (`<slug>.` and `platform.`) are specified and **NOT ENABLED** · finding 2 marked resolved by P1 |
+| `PHASE_LOG.md` | This entry |
+
+## What this entry deliberately does not claim
+
+- **No verification ran against production.** Every production figure repeated
+  here is quoted from the R-8 deployment entry of 2026-08-31, not re-observed.
+  That the box has not been redeployed since is **INFERRED** from the absence
+  of a later entry.
+- **Whether login is enabled in production is NOT OBSERVED.** R-8 made it an
+  environment switch defaulting off; its live value is a property of
+  `/etc/shikhon/shikhon.env` and cannot be read from this repository.
+- **No stale document was made to look correct.** `06-DEPLOYMENT.md` and
+  `12-PRODUCTION-RUNBOOK.md` still describe Neon, and still say so.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,352 passing**, 12 workspaces — unchanged, documentation-only |
+| TypeScript | 0 errors |
+| Build | app.js + sw.js + 11 API bundles |
+| `PHASE_LOG.md` | append-only: +278 lines at P4, + this entry, **0 deletions** |
+| `index.html` | SHA `496199bd`, unchanged |
+| Handoff questions (D17 §17) | 22/22 answerable from the repository |
+
+**Next phase: P5 — Principal + IT Admin.** It opens with `B-8` (what
+`doLogout` does about the read-through caches, given the outbox may hold
+unsent attendance) and `B-15` (a section-scoped routine endpoint).

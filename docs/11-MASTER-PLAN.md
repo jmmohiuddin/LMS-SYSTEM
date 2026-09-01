@@ -61,6 +61,7 @@ are folded into the phases below.
 | D14 | **Ata Ekta is the canonical visual direction for the functional `/app`.** `/design` remains a visual reference and prototype — it is not the production application and is not promoted into one. The integration is token-first, then shell, then screens by role, preserving every existing capability: real APIs, the permission model, tenant context, the offline outbox, dark mode and all UX states. `/app` must end with a **genuinely desktop** desktop (persistent sidebar, real tables) and a **genuinely mobile** mobile (bottom navigation, lists, sheets, no stretched tables) — not one layout shrunk into the other. Full roadmap: [UI-UX-INTEGRATION-PLAN.md](UI-UX-INTEGRATION-PLAN.md). **P0 delivered 2026-09-01** — canonical palette, Muslin ground, semantic type names on the Bangla-tuned ladder, and a warm Ata Ekta dark palette, all by re-pointing a 29-token alias layer in one file. | The 2026-09-01 audit found three generations of interface and D7 unimplemented: `app.css` carries neither the Ata Ekta tokens nor their values, and the commit that claimed to rebuild the app on them changed 1 of 59 view modules. The prototype meanwhile holds 32 desktop/mobile pairs that were never wired to anything. Deciding this explicitly stops the two surfaces drifting further apart, and stops the prototype being mistaken for the product. |
 | D15 | **The product has five surfaces, each with one address, one brand and one audience.** `/` public marketing (**shikhonBD**) · `/demo` a safe isolated demo (**new route**) · `<slug>.sikhon.systems` the tenant application with `/app?tid=` kept as the backward-compatible door (**school-branded**) · `platform.sikhon.systems` the Platform Console with `/platform` kept as compatibility (**shikhonBD, never white-labelled, Super Admin only**) · `/design` a development reference that is never a customer destination. The tenant application stays **one** application with role-scoped navigation derived from the existing server permission model — never five sites and never a school-picker. Full specification: [FINAL-PRODUCT-SURFACE-ARCHITECTURE.md](FINAL-PRODUCT-SURFACE-ARCHITECTURE.md). | The surfaces existed but had never been written down together, and two gaps followed from that. The free-demo CTA points at `/app`, which falls into demo mode implicitly whenever nobody is logged in — so a real teacher who is merely logged out sees fabricated students under their own school's door. And the operator console shares an origin with the marketing site, which is the one surface that should be hardest to find. Naming the five surfaces fixes both by construction, and costs nothing to adopt: `tenantKeyFromHost()` is already domain-agnostic and already reserves `platform`, so the preferred doors need DNS and a proxy block, not code. |
 | D16 | **The Platform Console owns the commercial relationship with every institution — subscription, payment record, entitlement and lifecycle — and it is operated by hand, not by a gateway.** Each tenant carries a plan, a billing cycle, a price, a student cap, a set of enabled modules, a start date and a next-due date. A platform operator records payments manually (amount, date, method, reference, note) and the tenant's access state is **re-evaluated from that record**, never set by hand as a free-form field: `active → payment_due → grace_period → limited → suspended`, and back to `active` when a payment closes the balance. **Suspension is an access state, never a data operation** — no deletion, no anonymisation, no export block, reversible by one platform action (R-7.11, unchanged and now load-bearing). Every commercial act writes `audit.platform_access` in the same transaction as the act. No tenant role — principal, IT admin, teacher, student, guardian — can read or write any of it. **This supersedes R-7.10's “Billing the schools is out of scope”**, which stands as written for R-7 and is superseded from R-7 onward. It does **not** authorise an online payment gateway: manual recording is the whole of the requirement at this business stage, and a gateway is a separate, separately-approved phase. **Implementation belongs to P7 (Platform Console); P2–P6 must not build it.** | R-7 was right that we could not integrate a payment gateway before having customers, and wrong to read that as “no commercial model in the product”. The two are different: the gateway is an integration, the commercial state is a *fact about a school* that the product already half-stores. `tenants` has carried `plan_code`, `student_cap`, `trial_ends_on` and `status` since migration 001, and `features jsonb` has sat unread since then — so the operator can already suspend a school but cannot say why, cannot record that it paid, and cannot tell a school two days late from one three months gone. Without a payment record the lifecycle has no input, so suspension becomes a judgement somebody makes in a spreadsheet and applies by hand — which is exactly the state where a paying school gets locked out and an unpaying one does not. Recording the requirement now, and placing it in P7, stops it being invented ad hoc inside a UI phase. |
+| D17 | **The repository documentation must tell the project's whole story, and it is updated before a phase may be called complete.** Every phase, sub-phase, bug fix, architectural decision, security finding, UI migration, database migration, deployment change, environment change, test milestone, owner decision, important limitation and backlog reclassification is recorded. **Nine canonical documents** carry it, each with one job and no duplicates: [00-START-HERE.md](00-START-HERE.md) the handoff router · [11-MASTER-PLAN.md](11-MASTER-PLAN.md) the approved roadmap and the decisions of record · [PHASE_LOG.md](PHASE_LOG.md) the append-only chronological history · [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md) the current snapshot, carrying **no stale numbers** · [UI-UX-INTEGRATION-PLAN.md](UI-UX-INTEGRATION-PLAN.md) the D13/D14 UI state per phase · [FINAL-PRODUCT-SURFACE-ARCHITECTURE.md](FINAL-PRODUCT-SURFACE-ARCHITECTURE.md) the five surfaces · [BACKLOG.md](BACKLOG.md) the single backlog, one ID per item · [12-PRODUCTION-RUNBOOK.md](12-PRODUCTION-RUNBOOK.md) and [PILOT-ONBOARDING-RUNBOOK.md](PILOT-ONBOARDING-RUNBOOK.md) the operational procedures · [FINAL-FULL-PROJECT-AUDIT-PLAN.md](FINAL-FULL-PROJECT-AUDIT-PLAN.md) how the final audit is run. **Three sub-rules are absolute.** *(a) Evidence is labelled, never inflated* — OBSERVED / TESTED / REHEARSED / INFERRED / PLANNED / BLOCKED / UNTESTED are different words and a rehearsal never becomes a pass. A gate that was not run is written `NOT RUN`. Test totals are read off an actual run, never remembered. *(b) Drift is disclosed, never hidden* — where the deployed system differs from the blueprint, both are stated with the reason and the security implication, and they stay stated until the blueprint is reconciled. *(c) Accuracy outranks completeness* — NOT BUILT, PARTIAL, BLOCKED and EXTERNAL DEPENDENCY are acceptable answers; making a row look finished is not. This **extends D10** (which bound only `PHASE_LOG.md`) to the whole documentation set; D10 stands unchanged and is not superseded. Owner instruction, 2026-09-01. | A phase's real output is not the code — the code is recoverable from the code. It is the *reasoning*: which of two designs was chosen, what the third attempt proved, why a capability that looks missing was deliberately not built. That lives in chat context, and chat context is destroyed at the end of every session. This project has already paid for that twice: a decision recorded as “rebuild the app on the Ata Ekta design system” had changed 1 view module of 59 and nobody could tell for months, and a type-check stayed red across six commits because the gate's result was assumed rather than read. Both are the same failure — a claim in a document that no longer matched the repository. The rule that prevents it is not “write more documentation” but “the document must be falsifiable and must be checked”, which is why (a) and (c) matter more than volume. |
 
 ---
 
@@ -1317,6 +1318,102 @@ the console and aggregated by `scripts/pilot-report.mjs`. The target remains
 seeded fixtures and the author's own walks through the wizard, and the report
 counts nothing that has not been explicitly designated a pilot. Each phase ends with a commit-tested,
 deployable system and an update to `docs/07-IMPLEMENTATION-STATUS.md`.
+
+## 5a. Phase status board (D17)
+
+The single place that answers *"what state is every phase in, today"*. One
+vocabulary, used exactly: **COMPLETE · PARTIAL · IN PROGRESS · BLOCKED ·
+DEFERRED · NOT STARTED · SUPERSEDED · PLANNED**. Historical detail for every
+row is in [PHASE_LOG.md](PHASE_LOG.md); the current snapshot of the repository
+is [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md).
+
+Last reconciled **2026-09-01**, at commit `95c34bf`.
+
+### Functional roadmap (R-series)
+
+| Phase | Scope | Status | What is not done |
+|---|---|---|---|
+| R-0 | Hygiene | **COMPLETE** | — |
+| R-1 | White-label branding (+ R-1-A surfaces) | **COMPLETE** | — |
+| R-2 | Notices + notifications | **COMPLETE** | SMS fan-out reaches a stubbed aggregator — see R-8 |
+| R-3 | Principal + IT admin portals | **COMPLETE** (backend + UI) | its **UI restyle** is P5, not done |
+| R-4 | Calendar & schedule surfacing (+ R-4.1) | **COMPLETE** | — |
+| R-5 | Branded print & document engine | **PARTIAL** | object storage stubbed → no stored PDF, print-first HTML only; CSV export **DEFERRED** |
+| R-6 | Student history & global search | **PARTIAL** | one index, no history table, no search engine — adequate at pilot scale, unproven above it |
+| R-7 | Onboarding & platform console | **COMPLETE** (backend + UI) | its **UI restyle and D16** are P7, not done. "Under one hour" is **UNMEASURED** |
+| R-7.10 | "Billing the schools is out of scope" | **SUPERSEDED** by **D16** from R-7 onward | stands as written for R-7 itself |
+| R-8 | Go-live unlocks & production posture | **IN PROGRESS — external-dependency mode** | real SMS aggregator, real push on a device, alert webhook, cross-tenant probe on production, an actual pilot. See [BACKLOG.md](BACKLOG.md) |
+| R-9 | Post-roadmap add-ons | **PARTIAL** | web push shipped early as an independent capability; **section chat NOT STARTED** and gated on pilot stability |
+
+### UI/UX roadmap (P-series, D14)
+
+| Phase | Scope | Status | Evidence |
+|---|---|---|---|
+| P0 | Ata Ekta token foundation | **COMPLETE** 2026-09-01 | `9e3f604` |
+| P1 | Application shell, desktop + mobile, `/demo` split | **COMPLETE** 2026-09-01 | `0466861`, `2c4d68d`, `ab038e4` |
+| P2 | Shared production component system (~30 components) | **COMPLETE** 2026-09-01 | `6145592`, `2e0a54b` |
+| P3 | Teacher experience | **COMPLETE** 2026-09-01 | `5959975`, `d5100ee` |
+| P3.1 | Stability gate | **COMPLETE** 2026-09-01 | `f62b8db` |
+| P4 | Student + guardian experience | **COMPLETE** 2026-09-01 | `95c34bf` |
+| P5 | Principal + IT admin restyle | **NOT STARTED** | opens with two items P4 identified — see below |
+| P6 | Screens that still need designing | **NOT STARTED** | — |
+| P7 | Platform Console restyle **+ D16 commercial controls** | **NOT STARTED** | D16 is recorded and explicitly reserved for P7 |
+| P8 | Retire the legacy `--c-*` alias layer | **NOT STARTED** | — |
+
+**P5 opens with**, in order: (1) what `doLogout` does about the read-through
+caches on a shared device, given the sync outbox may hold unsent attendance;
+(2) a section-scoped routine endpoint, so a student can be told what class is
+next; (3) the principal and IT-admin screens themselves.
+
+### What is complete does not mean what is deployed
+
+Every P-series phase above is **COMPLETE in the repository at `95c34bf`** and
+**NOT DEPLOYED**. Production was cut from the 2026-08-31 tree (`0b6df00`, plus
+`52d1609` which added `deploy/server.mjs`) by `git archive` — see PHASE_LOG,
+"R-8 milestone". That **no deploy has run since is INFERRED**, from the absence
+of any deployment entry after that date; it has not been re-observed on the
+box. Nothing from P0–P4 is live. That distinction is what this table exists to
+keep: on this project "merged" and "live" have never once been the same thing,
+and a status board that blurs them is the specific way a reader concludes the
+public site already has the new shell.
+
+## 5b. Architecture drift — blueprint vs. as-built (D17b)
+
+Disclosed rather than reconciled, because the reconciliation is a decision the
+owner has not been asked for. Both descriptions are true of different things:
+the blueprint describes what was designed, the as-built describes what serves
+`https://sikhon.systems/` today.
+
+| | Blueprint (D1, `06-DEPLOYMENT.md`) | As-built since 2026-08-31 (`52d1609`) |
+|---|---|---|
+| Hosting | Vercel Hobby, 11 serverless functions | **Hostinger KVM2 VPS** `voltix-prod`, Ubuntu 24.04, one Node process (`deploy/server.mjs`) under systemd |
+| TLS / routing | Vercel edge | **Caddy**, already owning 80/443 for five sibling apps; one added site block |
+| Database | **Neon** PostgreSQL 18.4, `ap-southeast-1`, PgBouncer transaction pooling | **`pgvector/pgvector:pg16` Docker container** `shikhon-postgres`, bound to `127.0.0.1:5433`, no shared cluster |
+| Origin | `shikhon-lms.vercel.app` | `sikhon.systems` (Let's Encrypt, valid through 2026-11-29) |
+
+**Why it changed.** R-8's largest open gate was "no production deployment",
+and the owner already ran a VPS carrying five other applications. Adding a
+container and one Caddy block was reachable in a day; a Vercel + Neon
+production account was not.
+
+**Security implications, stated.** The isolation posture is *better*, not
+worse: the database is a dedicated container on loopback rather than a shared
+cluster, no new superuser was created on the box that holds the sibling
+applications, and the three-role rule (`shikhon_app` / `shikhon_platform` /
+owner, none with `BYPASSRLS`) is asserted at boot exactly as before. Verified
+on production: 48 migrations, 227 RLS policies, **0 tenants visible with no
+tenant context**. What is *worse* is availability: one box, one process, no
+regional failover, and a shared Caddy whose misconfiguration would take down
+five other products. That risk is carried knowingly at a pre-pilot stage.
+
+**Still stale, and known to be.** `D1` names "Neon Postgres";
+`06-DEPLOYMENT.md` is titled "Deployment: Neon Postgres" and documents the
+Neon pooler's `SET LOCAL` behaviour, which remains correct guidance for the
+pooled case and is not what production runs. `12-PRODUCTION-RUNBOOK.md` §
+staging still assumes a Neon branch. **These are not corrected here** — a
+reader must not be told the blueprint was always the VPS. They are corrected
+when the owner decides which of the two is the target architecture, and that
+decision is tracked as **`B-27`** in [BACKLOG.md](BACKLOG.md) §7.
 
 ## 6. What NOT to do (binding, inherited + new)
 

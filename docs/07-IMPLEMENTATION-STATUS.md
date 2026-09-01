@@ -1,9 +1,18 @@
 # 07 — Implementation Status: Blueprint vs. As-Built
 
 Documents 01–06 are the design blueprint. This document is the reconciliation: what is
-actually deployed today, where the implementation deliberately diverges from the blueprint,
-how to operate it, and what remains. Last updated **2026-08-11**, after the Phase 0
-security block (§9a).
+actually in the repository today, where the implementation deliberately diverges from the
+blueprint, how to operate it, and what remains.
+
+**Last reconciled 2026-09-01 at commit `95c34bf`** (P4), under D17.
+New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
+
+> **Note on this section's history.** Until 2026-09-01 §1 still described the
+> 2026-08-11 state — Vercel, Neon, 890 tests, 45 migrations, four surfaces —
+> while four completed phases sat appended at the bottom of this same file.
+> Those figures are not lost: each lives in [PHASE_LOG.md](PHASE_LOG.md) under
+> the phase that produced it, which is where D17 says superseded numbers
+> belong. §1 now carries only current figures, all read off an actual run.
 
 ---
 
@@ -11,29 +20,33 @@ security block (§9a).
 
 | | |
 |---|---|
-| Production URL | `https://shikhon-lms.vercel.app` |
-| Hosting | Vercel (Hobby plan) — static PWA + **11** Serverless Functions (12-function cap, 1 spare after R-7 added platform-svc) |
-| Database | Neon PostgreSQL 18.4, database **`shikhon_lms`**, Singapore (`ap-southeast-1`) — see [06-DEPLOYMENT.md](06-DEPLOYMENT.md) |
-| Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main` |
-| Tests | **890 passing, 0 failing** — verified 2026-08-29 against a real PostgreSQL 16 (pgvector). offline 46 · server-core 92 · **ui-core 153** · academics-svc 111 · identity-svc 10 · platform-svc 25 · ops-svc 26 · rms-svc 62 · sms-svc 22 · sync-svc 23 · **pwa 312** · netlify 8. Plus 24 SQL assertion suites, all green, all idempotent. R-5 found that on Windows the runner had been executing **zero** tests while printing a tick — see PHASE_LOG R-5 |
-| Schema | 45 migrations (44 rollback files), **verified locally**: up → down → up clean, zero objects left after rollback, schema lint 0 advisories, RLS coverage 0 gaps, migration-status 43/43 with no unprobed migration |
-| Login | **Temporarily disabled** by a two-sided kill switch (§5) |
-| Surfaces | `/` shikhonBD marketing · **`/app`** the tenant application · `/design` the Ata Ekta prototype (R-1-A, §9c) · **`/platform`** the shikhonBD operator console (R-7, §9j) — the only other surface that keeps the platform brand |
-| Portals | R-3 (§9e, §9f): principal dashboard, academic drill-down, class/section creation, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer |
-| Onboarding | R-7 (§9j): a platform operator creates an institution through a nine-step console — no SQL. Three separate credentials; the runtime role still cannot create or list a tenant |
-| Student record | R-6 (§9i): global search by permanent ID, name, phone or guardian phone, scoped by app.can_see_student; and one child multi-year enrolment timeline read from enrolments, with attendance, results, fees and printable documents |
-| Documents | R-5 (§9h): fee receipt, report card, admit card, ID card, transfer certificate and attendance sheet, all on the tenant own letterhead through ONE renderer. Print-first HTML — no stored PDF, because object storage is still stubbed |
-| Calendar | R-4 (§9g): per-tenant holidays, events and weekends; exams merged from their own tables, never copied. R-4.1: a `working_weekend` row now overrides the weekly weekend for SMS |
-| Notices | R-2 (§9d): in-app for every role; SMS reuses the attendance pipeline, still stubbed pending an aggregator |
-| Completeness | **D13** (11-MASTER-PLAN §1c): a phase is done only when every applicable layer through the UI is verified. R-3 and its completion pass closed every gap. **Nothing is "Backend complete — UI pending"**; `POST /rms/solve` stays API-only by an explicit documented decision, not by omission (PHASE_LOG R-3) |
-| Preview | **`https://shikhon-lms.vercel.app/app?demo=1`** — every screen, sample data, no login (§6) |
+| **Production URL** | `https://sikhon.systems/` — live since 2026-08-31, Let's Encrypt cert valid through 2026-11-29 |
+| **Hosting (as-built)** | Hostinger KVM2 VPS `voltix-prod`, Ubuntu 24.04 · one Node process (`deploy/server.mjs`) under systemd on `172.16.1.1:4100` · **Caddy** terminates TLS and already serves five sibling applications. **The blueprint says Vercel serverless — see [11-MASTER-PLAN §5b](11-MASTER-PLAN.md) for the drift, its reasons and its security implications** |
+| **Database (as-built)** | `pgvector/pgvector:pg16` Docker container `shikhon-postgres`, bound to `127.0.0.1:5433`, dedicated — not the shared cluster that holds the sibling apps. **The blueprint says Neon PostgreSQL 18.4 (`ap-southeast-1`); [06-DEPLOYMENT.md](06-DEPLOYMENT.md) documents the Neon pooler and is not what production runs** (`B-27`) |
+| **Deployed commit** | cut by `git archive` from the 2026-08-31 tree (`0b6df00` + `52d1609`). **Nothing from P0–P4 is deployed.** That no deploy has run since is INFERRED from the absence of a later PHASE_LOG entry, not re-observed on the box |
+| Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main`, current at `95c34bf` |
+| **Tests** | **1,352 passing, 0 failing** — 2026-09-01, run twice, against a real PostgreSQL 16 (pgvector). offline 46 · server-core 199 · ui-core 160 · academics-svc 123 · identity-svc 20 · ops-svc 70 · platform-svc 26 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 548 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
+| **TypeScript** | `tsc -p . --noEmit` → **0 errors**, run 3× |
+| **Build** | `app.js` + `sw.js` + 11 API bundles |
+| **Schema** | **48 migrations**, 47 rollback files, 26 SQL assertion suites. Verified on production: **227 RLS policies · 110 RLS-enabled tables · 108 carrying `tenant_id` · 0 tenants visible with no tenant context** |
+| **Login** | R-8 turned the kill switch from three hardcoded constants into environment switches that **default OFF** (`packages/server-core/src/go-live.ts`). Whether login is enabled on production is a property of `/etc/shikhon/shikhon.env` and is **NOT OBSERVED from this repository**. `OTP_SENDING_ENABLED` was off at the R-8 deployment; a pilot is designed to run on activation codes, needing no SMS |
+| **Surfaces (D15)** | five — `/` shikhonBD marketing (**frozen**) · `/demo` the isolated demo, its own address since P1 · `<slug>.sikhon.systems` the white-labelled tenant app, `/app?tid=` kept as the compatibility door · `platform.sikhon.systems` the Platform Console, `/platform` as compatibility · `/design` a development reference, never a customer destination |
+| **UI/UX (D14)** | **P0–P4 complete.** Token foundation · application shell (real desktop, real mobile) · ~30 shared components · teacher screens · student + guardian screens. **P5–P8 not started**; principal, IT-admin and console screens still carry pre-P2 markup. Per-phase detail: [UI-UX-INTEGRATION-PLAN.md](UI-UX-INTEGRATION-PLAN.md) |
+| Portals | R-3: principal dashboard, academic drill-down, class/section **creation**, teacher assignment + replacement with history, bulk moves, rollover, users, guardian links, SMS settings, audit viewer. Section **editing** and guardian **unlinking** have no screen (`B-6`, `B-7`) |
+| Onboarding | R-7: a platform operator creates an institution through a nine-step console — no SQL. Three separate credentials; the runtime role still cannot create or list a tenant. The "under one hour" target is **UNMEASURED** (`B-29`) |
+| Student record | R-6: global search by permanent ID, name, phone or guardian phone, scoped by `app.can_see_student`; one child's multi-year enrolment timeline with attendance, results, fees and printable documents |
+| Documents | R-5: fee receipt, report card, admit card, ID card, transfer certificate, attendance sheet — all on the tenant's own letterhead through ONE renderer. Print-first HTML; **no stored PDF, because object storage is still stubbed** (`B-17`) |
+| Calendar | R-4: per-tenant holidays, events and weekends; exams merged from their own tables, never copied. R-4.1: a `working_weekend` row overrides the weekly weekend for SMS |
+| Notices | R-2: in-app for every role. SMS reuses the attendance pipeline and **reaches a stubbed aggregator** — tested against a fake one, never delivered to a handset (`B-1`) |
+| Completeness | **D13**: a phase is done only when every applicable layer through the UI is verified. Nothing is currently "Backend complete — UI pending"; `POST /rms/solve` stays API-only by an explicit documented decision, not by omission (PHASE_LOG R-3) |
+| **Backlog** | one list, with IDs: [BACKLOG.md](BACKLOG.md) |
+| Preview | `/demo` — every screen, sample data, no login, two tenant brandings, a role picker |
 
-What a teacher can do today (once login is re-enabled): log in with phone + OTP, see their
-day/week routine (substitutions included), pick a section and see its roster, take
-attendance fully offline with queued sync, enter exam marks component-wise fully offline
-(the নম্বর tab), and keep working through network loss. Coordinators can additionally run
-the routine solver and the substitution finder over the API; guardians can read their
-wards' invoices and receipts.
+What a teacher can do today (once login is enabled): sign in, see their day/week routine
+with substitutions, pick a section and see its roster, take attendance fully offline with
+queued sync, enter exam marks component-wise fully offline, and keep working through
+network loss. Students and guardians have their own screens as of P4; coordinators can run
+the routine solver and the substitution finder over the API.
 
 ---
 
@@ -89,9 +102,11 @@ can never linger as extra functions.
 | `ops/[action].js` | `GET /api/v1/ops/brand?slug=\|tid=` | **public** | R-1. Pre-auth login-screen identity: seven signboard fields only, fixed by an explicit key allowlist in `app.public_branding()`. Exact-key lookup, so it cannot enumerate; an unknown key returns neutral defaults with 200 rather than a 404 existence oracle |
 | `ops/[action].js` | `GET /api/v1/ops/manifest?slug=\|tid=` | **public** | R-1. Per-tenant `application/manifest+json`, so installing tenant A's PWA yields A's name, icon and theme colour. `start_url` carries `?tid=` |
 
-Conventions that differ from 03: base URL is `https://shikhon-lms.vercel.app/api/v1` (not
-`api.shikhon.bd/v1`), and errors are plain `{ error, message }` JSON rather than RFC 9457
-problem+json. Everything else (idempotency, webhook processing order, money-as-string) is
+Conventions that differ from 03: the base URL is **`https://sikhon.systems/api/v1`**
+(not `api.shikhon.bd/v1`; and no longer `shikhon-lms.vercel.app/api/v1`, which was the
+address until the 2026-08-31 VPS deployment and is now a stale artefact — see
+[11-MASTER-PLAN §5b](11-MASTER-PLAN.md)), and errors are plain `{ error, message }` JSON
+rather than RFC 9457 problem+json. Everything else (idempotency, webhook processing order, money-as-string) is
 implemented as specified.
 
 ---
@@ -188,8 +203,12 @@ or advisory, and reports presence without ever echoing a value.
 
 ## 6. Demo mode
 
-`https://shikhon-lms.vercel.app/?demo=1` previews every screen with sample data while login
-is off. `apps/pwa/src/demo.ts` provides `DemoAuth`, a drop-in `Auth` substitute whose
+**`https://sikhon.systems/demo`** previews every screen with sample data while login
+is off. The address matters: until P1 the demo had *no* route of its own and `/app` fell
+into demo mode implicitly whenever nobody was logged in — so a real teacher who was merely
+logged out saw fabricated students under their own school's door. `/demo` is now its own
+surface (D15) and `/app` logged-out goes to login. The old `?demo=1` query form is
+superseded. `apps/pwa/src/demo.ts` provides `DemoAuth`, a drop-in `Auth` substitute whose
 `authedFetch()` answers sections/roster/routine/sync-push **locally** — no session exists,
 no request leaves the device, and it cannot touch real tenant data. The top bar shows
 "ডেমো (নমুনা তথ্য)" so it is never mistaken for a real session. A normal (non-demo) boot
@@ -249,10 +268,14 @@ and `/api/v1/ops/maintenance` at 01:00 BST. The maintenance job stays a 503 no-o
 `scripts/migrate.sh` uses); every run reports default-partition leakage so the docs/06
 canary is checked automatically.
 
-**Smoke test:** on some local networks `*.vercel.app` DNS resolution fails; pin the edge IP:
+**Smoke test:**
 ```bash
-curl --resolve shikhon-lms.vercel.app:443:216.198.79.3 https://shikhon-lms.vercel.app/
+curl -sS -o /dev/null -w '%{http_code} %{ssl_verify_result}\n' https://sikhon.systems/
 ```
+*(Superseded: this was `curl --resolve shikhon-lms.vercel.app:443:216.198.79.3 …`, a
+workaround for local networks that failed to resolve `*.vercel.app`. Production is no
+longer on Vercel and the pinned IP is meaningless — kept named here only so anyone who
+finds the old command elsewhere knows why it no longer applies.)*
 
 ---
 
@@ -709,10 +732,17 @@ the first teacher a Bangla-medium office added.
   sections that already exist; `app.provision_tenant()` makes the classes and
   the pilot runbook makes sections by hand. A school opening a seventh section
   mid-year still needs the runbook. The largest honest gap in this phase.
-- **Guardian management is read-only.** The student drawer shows guardians and
-  their fee authority; linking one, or changing `can_pay_fees`, has no screen.
-- **No audit viewer.** The log is now readable and R-3's mutations write to it,
-  but F-1603's screen is not built — **backend complete, UI pending**.
+- ~~**Guardian management is read-only.** The student drawer shows guardians and
+  their fee authority; linking one, or changing `can_pay_fees`, has no screen.~~
+  **RESOLVED in R-3's completion pass** (`guardian-panel.ts` posts a new link and
+  patches `canPayFees`). This bullet survived here until D17's reconciliation on
+  2026-09-01 found it contradicting §1 of this same file. **Unlinking is still
+  missing** and is tracked as `B-7`.
+- ~~**No audit viewer.** The log is now readable and R-3's mutations write to it,
+  but F-1603's screen is not built — **backend complete, UI pending**.~~
+  **RESOLVED in R-3's completion pass**: `audit-view.ts` exists and `audit` is in the
+  navigation for principal and IT admin. Found stale by D17's reconciliation on
+  2026-09-01. Export and actor-name resolution remain open as `B-11`.
 - **`POST /rms/solve` stays API-only**, by the decision above.
 - The bulk move is capped at 200 students per request; beyond that the honest
   tool is the import wizard.

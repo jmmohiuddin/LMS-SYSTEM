@@ -11,6 +11,14 @@ the visual migration; this document is the *what and where*.
 **Production domain is `sikhon.systems`** (live since 2026-08-31). See §14 for a
 naming inconsistency this audit found and how it is resolved.
 
+**Currency (D17).** Last reconciled **2026-09-01** at `95c34bf`. Delivery state
+of the five surfaces: `/` **LIVE and frozen** · `/demo` **BUILT** (P1), served
+at `sikhon.systems/demo` · `/app?tid=` **LIVE**, the tenant door in use ·
+`<slug>.sikhon.systems` **NOT ENABLED** — the resolver supports it and the
+wildcard subdomain stays off until a pilot exists (`B-5`) ·
+`platform.sikhon.systems` **NOT ENABLED**, `/platform` is the door today ·
+`/design` **LIVE**, development reference only.
+
 ---
 
 ## 0. Three findings that shaped this document
@@ -24,7 +32,12 @@ Established by reading the code, not by assumption:
    `localhost` — so **`platform.sikhon.systems` can never be mistaken for a
    tenant**. The preferred architecture in §3 is therefore already defended.
 
-2. **The demo is genuinely isolated, and has no address.** `demo.ts` states and
+2. **The demo is genuinely isolated, and has no address.**
+   **→ RESOLVED in P1 (2026-09-01, `0466861`).** `/demo` is now its own route,
+   `/app` logged-out goes to login, and the implicit demo fallback is gone. The
+   finding is kept because it explains *why* the route exists; the defect it
+   describes no longer does.
+ `demo.ts` states and
    the code confirms: *"no request ever leaves the device, and nothing here can
    touch real tenant data."* All seven roles exist as sample data. But there is
    **no `/demo` route** — the marketing CTA points at `/app`, and `/app` falls

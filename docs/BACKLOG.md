@@ -1,0 +1,102 @@
+# BACKLOG — the single list (D17)
+
+**This is the only backlog.** Before this file existed the same items were
+scattered across `PHASE_LOG.md` "classified but not implemented" tables,
+`07-IMPLEMENTATION-STATUS.md` limitation bullets, `FINAL-FULL-PROJECT-AUDIT-PLAN.md`
+severity rules and four "R-5: object storage · CSV export · …" lines that had
+been copy-pasted forward through five phases. Nothing here is new work
+invented for the file; every row cites where it came from.
+
+Created **2026-09-01** at commit `95c34bf`, under D17 §10.
+
+## How to use it
+
+- **One row, one ID.** IDs are permanent. A resolved item keeps its ID and its
+  row; it is never deleted (D10/D17). The historical narrative stays in
+  [PHASE_LOG.md](PHASE_LOG.md); this file carries only the current state.
+- **Category is about *when*, priority is about *how much*.** An item can be
+  EXTERNAL DEPENDENCY and still be a pilot blocker — that is the normal case
+  here, and the two columns say so independently.
+- **Blocker** means: a pilot school cannot run without it. Not "important".
+- When an item is fixed: set status **RESOLVED**, record the commit, and
+  append the finding to `PHASE_LOG.md`. Do not remove the row.
+
+## Status vocabulary
+
+`OPEN` · `IN PROGRESS` · `BLOCKED` · `RESOLVED` · `RECLASSIFIED` ·
+`SUPERSEDED` · `DEFERRED`
+
+---
+
+## 1. MUST FIX BEFORE PILOT
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
+|---|---|---|---|---|---|---|---|---|
+| **B-1** | An SMS aggregator contract, and `OTP_SENDING_ENABLED=true` | Every SMS path in the product is built, suppression-aware and tested against a **fake** aggregator. Nothing has been sent to a real handset. | R-8 | HIGH | **Yes** for SMS login; **No** for a pilot that uses activation codes | Commercial contract (**external**) | **BLOCKED** — see also B-15 | PHASE_LOG R-8 "gates still open" |
+| **B-2** | Web push observed on a real device | VAPID keys, subscription storage and the send path are implemented and unit-tested; no notification has ever arrived on a phone. Production now has a valid cert, so the last technical blocker is gone. | R-9 | HIGH | No | A pilot tenant with one real user | **OPEN** — est. 10 minutes once B-5 exists | PHASE_LOG R-8 |
+| **B-3** | `ALERT_WEBHOOK_URL` set to something a human reads | `/ops/monitor` runs every 15 minutes on production and evaluates correctly. With no webhook it logs to a file nobody is watching, so an outage is discovered by a school phoning up. | R-8 | HIGH | **Yes** | One env var + a destination | **OPEN** | PHASE_LOG R-8 |
+| **B-4** | Cross-tenant isolation probe **on production** | RLS posture was verified on the production database directly (227 policies, 0 tenants visible without context). The *probe* — tenant A's token reaching for tenant B's data through the live API — needs two tenants and production has none. | R-8 | HIGH | **Yes** | B-5 | **BLOCKED** on B-5 | PHASE_LOG R-8 |
+| **B-5** | A first pilot institution | 0 institutions exist in production. Four gates below cannot be closed without one. | R-8 | HIGH | **Yes** | Owner / commercial | **OPEN** | PHASE_LOG R-8 |
+| **B-6** | Class / section **edit** UI | `structure.ts` has GET and POST. A section created with a typo can only be corrected with SQL, and the pilot runbook calls that a blocker. Creation has a screen; correction does not. | P5 | HIGH | **Yes** | — | **OPEN** — needs backend + API + UI + tests, i.e. owner approval as a feature | PHASE_LOG R-8 cleanup audit; 07 §9e |
+
+## 2. SHOULD FIX BEFORE PILOT
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
+|---|---|---|---|---|---|---|---|---|
+| **B-7** | Guardian **unlink** | `guardians.ts` has no DELETE. Linking a guardian and changing `can_pay_fees` both have screens (added in R-3's completion pass); undoing a wrong link does not. A guardian linked to the wrong child is a privacy incident that needs SQL to end. | P5 | HIGH | No — but it is the highest-consequence gap in this table | — | **OPEN** | PHASE_LOG R-8 cleanup audit |
+| **B-8** | What `doLogout` does about the read-through caches | Every screen caches its last answer in a `shikhon_*` localStorage key. On a shared device the next person to sign in can be painted the previous user's data from cache before the network answers. P4 fixed this for the **demo role picker**, which is the surface a stranger can reach; a real logout still leaves the caches. Deliberately not fixed in P4: the sync outbox lives alongside them and may hold a teacher's unsent attendance, and losing that is worse than a stale screen. | P5 (first item) | HIGH | No | A decision about unsent outbox work | **OPEN** | PHASE_LOG P4 |
+| **B-9** | AI soft-limit notification | `soft_limit_notified_at` is stamped at 80%; nothing is wired to R-2's notification system, so a principal learns of the limit by being refused. | P5/P6 | MEDIUM | No | — | **OPEN** | 07 §9j |
+| **B-10** | Operator SSO for the Platform Console | Console sign-in is two pasted secrets. Expected at R-7, not built. | P7 | MEDIUM | No | — | **OPEN** | 07 §9j |
+
+## 3. NICE TO HAVE
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
+|---|---|---|---|---|---|---|---|---|
+| **B-11** | Audit export / actor-name resolution | The audit viewer exists and is reachable (`audit-view.ts`, in the nav for principal and IT admin). Export and human-readable actor names do not. | P5 | LOW | No | — | **OPEN** | PHASE_LOG R-8 cleanup audit |
+| **B-12** | CSV export endpoints | `toCsv()` exists in the codebase and nothing calls it. Listed under R-5 for five phases without being built. | R-5 / P6 | LOW | No | — | **OPEN** | PHASE_LOG R-5 → R-8 |
+| **B-13** | Multi-card ID layout | One ID card per sheet today. Cosmetic; a school prints more paper. | R-5 | LOW | No | — | **OPEN** | PHASE_LOG R-5 |
+| **B-14** | Attendance date-range filter, and search type-ahead | Both are conveniences over working screens. | R-6 / P6 | LOW | No | — | **OPEN** | PHASE_LOG R-6 |
+| **B-15** | A student-facing routine card | §4 of the UI brief lists "today's classes" first and the product cannot answer it: `GET /rms/routine` wraps `app.teacher_day(claims.sub)`, so a student gets their own empty teaching day. P4 left the card out rather than fabricate a timetable. Needs one section-scoped endpoint. | P5 | MEDIUM | No | — | **OPEN** | PHASE_LOG P4 |
+| **B-16** | Money formatting | Carried in the R-5 deferral line since R-5 and never closed. | R-5 | LOW | No | — | **OPEN** | PHASE_LOG R-5 → R-8 |
+
+## 4. POST-PILOT
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
+|---|---|---|---|---|---|---|---|---|
+| **B-17** | Object storage | Documents render and print correctly without it; what is missing is a stored PDF. Also blocks photo/voice homework submission (F-902). | R-5 / post-pilot | MEDIUM | No | Storage provider (**external**) | **DEFERRED** | PHASE_LOG R-5, R-8 |
+| **B-18** | Board-registration index | Confirmed a sequential scan today. At 3–5 schools that is genuinely fine, and every index costs write throughput on the student import — the largest write in the product. The pilot produces the numbers that should decide it. | post-pilot | LOW | No | B-5 (real data volumes) | **DEFERRED** — deliberately, with a stated trigger | PHASE_LOG R-8 |
+| **B-19** | The seven legacy student/guardian views | `my-attendance`, `results`, `assignments`, `fees`, `documents`, `learn`, `subjects` render themselves rather than using the P2 components. All are accessible, responsive and green across 48 browser configurations. Migrating a working screen is risk with no user-visible benefit. | P5/P8 | LOW | No | — | **OPEN** — listed rather than done, on purpose | PHASE_LOG P4 |
+| **B-20** | Section chat | R-9's remaining item. Moderation and child-safety design is not started and is gated on pilot stability (D9). | R-9 | LOW | No | B-5 | **NOT STARTED** | Master Plan D9, R-9 |
+
+## 5. EXTERNAL DEPENDENCY
+
+These cannot be closed by writing code. Listed separately so a reader never
+mistakes "not done" for "not attempted".
+
+| ID | Item | What is blocked | Owner action needed | Status |
+|---|---|---|---|---|
+| **B-1** | SMS aggregator contract | Real SMS delivery, SMS-based OTP login | Sign an aggregator | **BLOCKED** |
+| **B-5** | A pilot institution | B-2, B-4, B-18, and the "under one hour onboarding" measurement | Commercial | **OPEN** |
+| **B-17** | Object storage provider | Stored PDFs, photo/voice submissions | Choose a provider | **DEFERRED** |
+| **B-21** | Data residency decision, PII master-key custody, MFS credentials | Reported as not-done on the readiness screen; none can be closed from the repository | Owner | **OPEN** (source: 07 §9j) |
+
+## 6. OBSOLETE / SUPERSEDED
+
+Kept, never deleted, so a reader who finds the old claim elsewhere can see how
+it ended.
+
+| ID | Item | Outcome | Date | Reference |
+|---|---|---|---|---|
+| **B-22** | "`GET /sync/pull` is unused — bug" | **RECLASSIFIED, not a bug.** Built, mounted, tested, working; no client calls it. That is an unused capability. Deleting it discards working tested code; wiring it up is a feature. It stays and stops being listed as a defect. | 2026-08-31 | PHASE_LOG R-8 cleanup audit |
+| **B-23** | R-7.10 "Billing the schools is out of scope" | **SUPERSEDED by D16** from R-7 onward. Stands as written for R-7 itself. Implementation belongs to **P7**; P2–P6 must not build it. | 2026-09-01 | Master Plan D16 |
+| **B-24** | "No audit viewer — backend complete, UI pending" | **RESOLVED** in R-3's completion pass. `audit-view.ts` exists and `audit` is in the navigation for principal and IT admin. The stale bullet survived in `07-IMPLEMENTATION-STATUS.md` §9e until D17's reconciliation found it contradicting §1 of the same file. | 2026-08-29, found 2026-09-01 | 07 §9e, corrected |
+| **B-25** | "Guardian management is read-only" | **RESOLVED** in R-3's completion pass. `guardian-panel.ts` posts a new link and patches `canPayFees`. Same stale bullet as B-24. Unlinking is still missing and is tracked separately as **B-7**. | 2026-08-29, found 2026-09-01 | 07 §9e, corrected |
+| **B-26** | Neon + Vercel as the deployed architecture | **SUPERSEDED in practice** by the VPS + Caddy + Docker-PostgreSQL deployment of 2026-08-31. The blueprint documents have **not** been rewritten, on purpose — see B-27. | 2026-08-31 | Master Plan §5b |
+
+## 7. DOCUMENTATION DEBT
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Status |
+|---|---|---|---|---|---|---|
+| **B-27** | Decide which architecture is the target, then reconcile `D1`, `06-DEPLOYMENT.md` and `12-PRODUCTION-RUNBOOK.md` | Production runs a VPS with a Docker PostgreSQL; those three documents describe Neon + Vercel. Both are currently true of different things and the drift is disclosed in Master Plan §5b. It must not be silently rewritten to match production — a reader must not be told the blueprint was always the VPS. The correction needs an owner decision about which is the *target*. | — | MEDIUM | No | **OPEN — needs an owner decision** |
+| **B-28** | `shikhonbd.com` still appears in source comments, two operator-facing Bangla strings, the marketing footer's contact address and the default VAPID subject, while production serves `sikhon.systems` | No logic depends on it; the drift is in prose and defaults. | P6/P8 | LOW | No | **OPEN** (source: FINAL-PRODUCT-SURFACE-ARCHITECTURE §14) |
+| **B-29** | "Onboarded in under one hour" is **UNMEASURED** | The measurement machinery exists (`audit.platform_access` timestamps, `scripts/pilot-report.mjs`), and counts nothing that has not been designated a pilot. The only onboardings on record are seeded fixtures and the author's own walkthroughs. The target must not be claimed until B-5. | R-7/R-8 | — | No | **OPEN**, dependent on B-5 |

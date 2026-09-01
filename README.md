@@ -3,6 +3,23 @@
 Production blueprint for an AI-native, offline-first Learning Management System targeting
 Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 
+> ### Start here
+>
+> **New to this repository, with no chat history? Read
+> [`docs/00-START-HERE.md`](docs/00-START-HERE.md).** It answers twenty-two
+> questions about what this is, what is actually deployed, what is built, what
+> is not, and why — and it links to everything else.
+>
+> **Current state, 2026-09-01 at `95c34bf`:** production is
+> **`https://sikhon.systems/`** on a **VPS + Caddy + Docker PostgreSQL** —
+> *not* the Vercel + Neon architecture much of this README and
+> `docs/06-DEPLOYMENT.md` still describe. That drift is deliberate and
+> disclosed, not an oversight: see
+> [`docs/11-MASTER-PLAN.md` §5b](docs/11-MASTER-PLAN.md). 48 migrations ·
+> 227 RLS policies · 1,352 tests passing · UI phases P0–P4 complete and
+> **not yet deployed**. What is missing is one list:
+> [`docs/BACKLOG.md`](docs/BACKLOG.md).
+
 **Design envelope (non-negotiable constraints driving every decision below):**
 
 | Constraint | Target | Consequence |
@@ -227,11 +244,19 @@ rather than duplicating.
 
 ## Deployment
 
-Live at **`https://shikhon-lms.vercel.app`** (Vercel: static PWA + 12 serverless functions)
-on Neon Postgres. See [docs/07-IMPLEMENTATION-STATUS.md](docs/07-IMPLEMENTATION-STATUS.md)
-for the ops runbook and [docs/06-DEPLOYMENT.md](docs/06-DEPLOYMENT.md) for connection
-strings, roles and maintenance scheduling. Preview every screen without logging in at
-`https://shikhon-lms.vercel.app/?demo=1`.
+Live at **`https://sikhon.systems/`** since 2026-08-31 — a Hostinger VPS running one Node
+process under systemd behind Caddy, with PostgreSQL in a dedicated Docker container on
+loopback. Preview every screen without logging in at **`https://sikhon.systems/demo`**.
+
+*Superseded, and named so nobody mistakes it for production:* the deployment was
+`https://shikhon-lms.vercel.app` (Vercel + Neon) and that host now serves a **stale
+revision**. The blueprint documents below still describe Vercel + Neon; the drift, its
+reasons and its security implications are set out in
+[docs/11-MASTER-PLAN.md §5b](docs/11-MASTER-PLAN.md), and reconciling them needs an owner
+decision (`B-27`).
+
+See [docs/07-IMPLEMENTATION-STATUS.md](docs/07-IMPLEMENTATION-STATUS.md) for the current
+snapshot and [docs/12-PRODUCTION-RUNBOOK.md](docs/12-PRODUCTION-RUNBOOK.md) for operations.
 
 ⚠️ **`neondb_owner` has `BYPASSRLS`.** If the application connects as it, every tenant-isolation
 guarantee is silently void. The app must connect as **`shikhon_runtime`** (created, `BYPASSRLS =
@@ -240,8 +265,11 @@ plain `SET` — for tenant context.
 
 ## Status
 
-**Complete and deployed:** the system blueprint (7 documents); the database layer
-(15 migrations, 88 tables, 103 RLS policies) deployed and verified on Neon; tenant
+**Complete** — and note that *deployed* is a separate question, answered above:
+the system blueprint (7 documents); the database layer
+(**48 migrations, 227 RLS policies over 110 RLS-enabled tables, 108 carrying
+`tenant_id`** — verified on production 2026-08-31; this line read
+"15 migrations, 88 tables, 103 RLS policies" until D17's reconciliation); tenant
 provisioning; three SQL test suites; rollback migrations; the offline sync engine; the PWA
 (login, shell, attendance, roster, routine, offline marks entry, demo mode); all eight
 service directories compiled into 9 Vercel functions (exams/marks, fee engine, AI gateway,

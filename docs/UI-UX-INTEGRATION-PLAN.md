@@ -1,5 +1,13 @@
 # UI/UX integration plan — Ata Ekta into the functional `/app`
 
+> **Currency (D17).** This document opened as a plan and is now part plan,
+> part delivery record. **P0–P4 are delivered** (§21–§24 below); **P5–P8 are
+> not started**. The authoritative status board for every phase is
+> [11-MASTER-PLAN.md §5a](11-MASTER-PLAN.md); what is *not* built is
+> [BACKLOG.md](BACKLOG.md). Last reconciled 2026-09-01 at `95c34bf`. The
+> "PLAN ONLY" line immediately below was true on the day it was written and is
+> kept for that reason — it is not true of the document today.
+
 **Status: PLAN ONLY. No application code has been changed, no screen redesigned,
 `/design` untouched, routing/API/schema unchanged.**
 
@@ -725,7 +733,7 @@ of P0 is what makes this phase a one-file rollback.
 
 ---
 
-## 21. P1 — delivered (2026-09-01)
+## 21a. P1 — delivered (2026-09-01)
 
 The shell, and only the shell. Commits `0466861` (A–D), `2c4d68d` (E–F).
 

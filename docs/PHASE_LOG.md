@@ -7957,3 +7957,9 @@ in this pass's gate table.
 
 **Next phase: P5 — Principal + IT Admin.** It opens with `B-7`, whose design
 is written above.
+
+## Commit
+
+**This entry is commit `9ac1446`** (`9b3cdef..9ac1446`, pushed to
+`origin/main`), recorded by the convention D17's entry established: write,
+commit, append the hash.

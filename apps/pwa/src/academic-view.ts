@@ -31,6 +31,7 @@ import {
 import {
   structureForm, createdNote, type StructureOptions, type StructureKind,
 } from './structure-forms.ts';
+import { openRename } from './structure-edit.ts';
 import { GuardianPanel } from './guardian-panel.ts';
 
 // ── Shapes returned by /api/v1/academics/hierarchy ──────────────────────
@@ -507,6 +508,28 @@ export class AcademicView {
     root.append(list);
   }
 
+  /** B-6. "Correct the name" for one `classes` row. */
+  private renameClassButton(
+    classId: string, nameBn: string, nameEn: string, levelNo: number,
+  ): HTMLButtonElement {
+    const d = this.o.doc;
+    const b = d.createElement('button');
+    b.type = 'button';
+    b.className = 'btn-secondary btn-small';
+    b.textContent = 'শ্রেণির নাম সংশোধন';
+    b.addEventListener('click', () => {
+      openRename({
+        doc: d,
+        auth: this.o.auth,
+        target: { kind: 'class', id: classId, nameBn, nameEn },
+        // Re-read the tree: the level heading, the breadcrumb and every row
+        // beneath carry this name.
+        onSaved: () => { this.depth = { at: 'level', levelNo }; void this.loadTree(); },
+      });
+    });
+    return b;
+  }
+
   private renderLevel(root: HTMLElement, levelNo: number): void {
     const d = this.o.doc;
     const lvl = this.tree?.classes.find((c) => c.levelNo === levelNo);
@@ -515,11 +538,32 @@ export class AcademicView {
     const bar = this.createBar(['section']);
     if (bar) root.append(bar);
 
+    // B-6. The class whose sections these are.
+    //
+    // A "level" in this tree is a level NUMBER, and `classes` rows hang off
+    // its groups — নবম বিজ্ঞান and নবম ব্যবসায় are two rows, not one. So the
+    // button is offered per group, from the group heading below, and only
+    // when the level has exactly one group is it offered here as well, where
+    // there is no ambiguity about which record it means.
+    if (this.o.canManage && bar && lvl.groups.length === 1) {
+      bar.append(this.renameClassButton(lvl.groups[0].classId, lvl.nameBn, lvl.nameEn, levelNo));
+    }
+
     for (const g of lvl.groups) {
       const h = d.createElement('h2');
       h.className = 'section-heading';
       h.textContent = `${g.groupBn} · ${bnNum(g.sectionCount)} সেকশন · ${bnNum(g.studentCount)} জন`;
       root.append(h);
+
+      // One class row per group, so the rename sits with the group it names.
+      if (this.o.canManage && lvl.groups.length > 1) {
+        const gbar = d.createElement('div');
+        gbar.className = 'action-row';
+        gbar.style.padding = '0 var(--s-4) var(--s-3)';
+        gbar.append(this.renameClassButton(
+          g.classId, `${lvl.nameBn} — ${g.groupBn}`, lvl.nameEn, levelNo));
+        root.append(gbar);
+      }
 
       if (g.sections.length === 0) {
         root.append(emptyState(d, {
@@ -571,6 +615,35 @@ export class AcademicView {
     const d = this.o.doc;
     const det = this.detail;
     if (!det) return;
+
+    // ── B-6: correct the name ──
+    // On the detail screen rather than the list: a rename needs the current
+    // value in front of you, and a pencil against forty rows invites the
+    // wrong one. Same four roles the endpoint and migration 042 allow.
+    if (this.o.canManage) {
+      const bar = d.createElement('div');
+      bar.className = 'action-row';
+      bar.style.padding = '0 var(--s-4) var(--s-3)';
+      const rename = d.createElement('button');
+      rename.type = 'button';
+      rename.className = 'btn-secondary btn-small';
+      rename.textContent = 'নাম সংশোধন করুন';
+      rename.addEventListener('click', () => {
+        openRename({
+          doc: d,
+          auth: this.o.auth,
+          target: {
+            kind: 'section', id: det.section.id, nameBn: det.section.name,
+            capacity: det.section.capacity, studentCount: det.section.studentCount,
+          },
+          // Re-read rather than patch in place: the tree, the heading and the
+          // breadcrumb all carry this name, and one of them would be missed.
+          onSaved: () => { void this.openSection(det.section.id); },
+        });
+      });
+      bar.append(rename);
+      root.append(bar);
+    }
 
     // ── Class teacher ──
     const h1 = d.createElement('h2');

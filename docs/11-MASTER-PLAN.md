@@ -1327,7 +1327,7 @@ DEFERRED · NOT STARTED · SUPERSEDED · PLANNED**. Historical detail for every
 row is in [PHASE_LOG.md](PHASE_LOG.md); the current snapshot of the repository
 is [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md).
 
-Last reconciled **2026-09-01**, at commit `95c34bf`.
+Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
 
 ### Functional roadmap (R-series)
 
@@ -1355,15 +1355,25 @@ Last reconciled **2026-09-01**, at commit `95c34bf`.
 | P3 | Teacher experience | **COMPLETE** 2026-09-01 | `5959975`, `d5100ee` |
 | P3.1 | Stability gate | **COMPLETE** 2026-09-01 | `f62b8db` |
 | P4 | Student + guardian experience | **COMPLETE** 2026-09-01 | `95c34bf` |
-| P5 | Principal + IT admin restyle | **NOT STARTED** | opens with two items P4 identified — see below |
+| — | **Pre-P5 Product Closure Pass** | **COMPLETE** 2026-09-01 | B-8 logout/cache privacy · B-15 student routine (migration 049) · B-6 class/section rename · permission-message polish. B-7 deferred with its design written |
+| P5 | Principal + IT admin restyle | **NOT STARTED** | opens with `B-7` — see below |
 | P6 | Screens that still need designing | **NOT STARTED** | — |
 | P7 | Platform Console restyle **+ D16 commercial controls** | **NOT STARTED** | D16 is recorded and explicitly reserved for P7 |
 | P8 | Retire the legacy `--c-*` alias layer | **NOT STARTED** | — |
 
-**P5 opens with**, in order: (1) what `doLogout` does about the read-through
-caches on a shared device, given the sync outbox may hold unsent attendance;
-(2) a section-scoped routine endpoint, so a student can be told what class is
-next; (3) the principal and IT-admin screens themselves.
+**P5 opened with three items and two of them are now closed.** The Pre-P5
+Product Closure Pass took `B-8` (logout and cache privacy, including the
+question P4 deferred about a teacher's unsent attendance) and `B-15` (the
+student routine, migration 049), and additionally closed `B-6` (class and
+section rename) and the permission-message inconsistency.
+
+**P5 now opens with `B-7` — guardian unlink** — which the closure pass audited
+and deliberately did not force. `guardianships` has no way to express an ended
+link, and adding one touches `app.my_ward_ids()` and `app.can_see_student()`,
+which RLS policies across the schema depend on, plus 21 read sites including
+the SMS and notice fan-out. The full design and blast radius are in
+PHASE_LOG under "Pre-P5 Product Closure Pass". Then the principal and IT-admin
+screens themselves.
 
 ### What is complete does not mean what is deployed
 

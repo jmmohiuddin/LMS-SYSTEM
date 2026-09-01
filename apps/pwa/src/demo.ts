@@ -13,6 +13,7 @@ import type { PushRequest, PushResponse } from '../../../packages/offline/src/ty
 import type { SectionSummary, RosterStudent } from './roster-view.ts';
 import type { RoutineSlot } from './routine-view.ts';
 import { parseBranding } from '../../../packages/ui-core/src/branding.ts';
+import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { brandedDocumentSet, type BrandedSection } from '../../../packages/ui-core/src/branded-doc.ts';
 import {
   documentBodyCss, buildFeeReceipt, buildReportCard, buildAdmitCard, buildIdCard,
@@ -650,12 +651,22 @@ const DEMO_SECTION_F_ROSTER = Array.from({ length: 40 }, (_, i) => ({
   status: 'active',
 }));
 
+/**
+ * How many children the demo's section F holds.
+ *
+ * ONE constant, read by the roster fixture below AND by the capacity refusal,
+ * because the first version had 40 in one and 42 in the other — and the form
+ * duly said "40 enrolled" above a refusal that said "42". Two numbers for one
+ * fact is how a demo teaches an office to distrust the screen.
+ */
+const DEMO_SECTION_ENROLLED = 40;
+
 const DEMO_SECTIONS_SCIENCE = ['A', 'B', 'C', 'D', 'E', 'F'].map((name, i) => ({
   id: `demo-sec-${name}`,
   name,
   shift: 'morning',
   capacity: 60,
-  studentCount: name === 'F' ? 40 : 38 - i,
+  studentCount: name === 'F' ? DEMO_SECTION_ENROLLED : 38 - i,
   classTeacher: name === 'F'
     ? { id: 'demo-t1', nameBn: 'রহিম স্যার' }
     : (i % 3 === 2 ? null : { id: `demo-t${(i % 5) + 1}`, nameBn: DEMO_TEACHERS[i % 5].nameBn }),
@@ -692,7 +703,50 @@ const DEMO_GATES: Record<string, string[]> = {
   // R-4's calendar is deliberately absent from this map: every role reads it.
   // Only its WRITES are gated, and the demo answers reads only.
   '/api/v1/finance/generate':  ['principal', 'school_owner', 'accountant'],
+  // §9.1's guardian panel. NOT staff-only — a class teacher legitimately looks
+  // at what a guardian sees — but emphatically not a STUDENT, who would read
+  // their classmates' siblings' attendance, fees and results. Mirrors
+  // WARD_ROLES in services/academics-svc/api/ward.ts, which is where the
+  // demo-gate test reads the expectation from.
+  '/api/v1/academics/ward': ['guardian', 'principal', 'school_owner',
+                             'academic_coordinator', 'class_teacher'],
+  // A whole class's performance. Mirrors PERF_ROLES.
+  '/api/v1/academics/classperf': ['class_teacher', 'subject_teacher',
+                                  'academic_coordinator', 'principal', 'school_owner'],
+  // Who takes which optional subject, for the whole cohort. CHOICE_ROLES.
+  '/api/v1/academics/subjectchoice': ['principal', 'school_owner', 'academic_coordinator'],
+  // The routine editor. EDITOR_ROLES.
+  '/api/v1/rms/editor': ['principal', 'school_owner', 'academic_coordinator'],
 };
+
+/**
+ * The student's own day (B-15). Not the teacher's: no student_count, no
+ * attendanceTaken, no deliveryLogged — the real endpoint does not return them
+ * and a demo that did would be advertising a leak the product does not have.
+ *
+ * Period 2 is a religion variant: the whole section is not in this room, and
+ * `app.student_day` picks it from `student_subjects`. Period 4 is covered by
+ * somebody else today, so it names the substitute and says so.
+ */
+const DEMO_STUDENT_DAY = [
+  { slotId: 'demo-sd-1', periodNo: 1, startsAt: '08:00', endsAt: '08:45',
+    subjectBn: 'বাংলা ১ম পত্র', subjectEn: 'Bangla 1st', sectionLabel: 'নবম — ক',
+    roomCode: '১০১', teacherNameBn: 'নাজমা সুলতানা', isSubstitution: false },
+  { slotId: 'demo-sd-2', periodNo: 2, startsAt: '08:50', endsAt: '09:35',
+    subjectBn: 'ইসলাম ও নৈতিক শিক্ষা', subjectEn: 'Islamic Studies',
+    sectionLabel: 'নবম — ক', roomCode: '১০৪', teacherNameBn: 'মাওলানা ইদ্রিস',
+    isSubstitution: false },
+  { slotId: 'demo-sd-3', periodNo: 3, startsAt: '09:40', endsAt: '10:25',
+    subjectBn: 'গণিত', subjectEn: 'Mathematics', sectionLabel: 'নবম — ক',
+    roomCode: '১০১', teacherNameBn: 'রফিকুল ইসলাম', isSubstitution: false },
+  { slotId: 'demo-sd-4', periodNo: 4, startsAt: '11:00', endsAt: '11:45',
+    subjectBn: 'পদার্থবিজ্ঞান', subjectEn: 'Physics', sectionLabel: 'নবম — ক',
+    roomCode: 'ল্যাব-১', teacherNameBn: 'শাহনাজ পারভীন', isSubstitution: true },
+  { slotId: 'demo-sd-5', periodNo: 5, startsAt: '11:50', endsAt: '12:35',
+    subjectBn: 'ইংরেজি ২য় পত্র', subjectEn: 'English 2nd', sectionLabel: 'নবম — ক',
+    roomCode: '১০২', teacherNameBn: 'ফারহানা ইয়াসমিন', isSubstitution: false },
+];
+
 
 /**
  * requireStaff: students and guardians are the blocklist, as in auth.ts.
@@ -1608,6 +1662,28 @@ export class DemoAuth extends Auth {
 
       // ── R-3 completion pass ────────────────────────────────────────
       case '/api/v1/ops/structure': {
+        // B-6. The rename. Answers the same shapes the endpoint does, INCLUDING
+        // the capacity refusal — a demo that only shows the happy path teaches
+        // an office that the form always says yes.
+        if (init.method === 'PATCH') {
+          const req = JSON.parse(String(init.body ?? '{}')) as {
+            kind?: string; id?: string; nameBn?: string; name?: string; capacity?: number;
+          };
+          if (req.kind === 'class') {
+            return ok({ id: req.id, kind: 'class', nameBn: req.nameBn });
+          }
+          if (typeof req.capacity === 'number' && req.capacity < DEMO_SECTION_ENROLLED) {
+            return new Response(JSON.stringify({
+              error: 'capacity_below_enrolled',
+              // Bangla digits, exactly as the real endpoint renders it. A demo
+              // that prints 40 where production prints ৪০ is showing a
+              // different product.
+              message: `এই শাখায় এখন ${formatCount(DEMO_SECTION_ENROLLED, 'bn')} জন শিক্ষার্থী আছে — `
+                + 'ধারণক্ষমতা তার কম দেওয়া যাবে না',
+            }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+          }
+          return ok({ id: req.id, kind: 'section', name: req.name, capacity: req.capacity });
+        }
         if (init.method === 'POST') {
           const req = JSON.parse(String(init.body ?? '{}')) as {
             kind?: string; label?: string; nameBn?: string; name?: string;
@@ -1835,6 +1911,17 @@ export class DemoAuth extends Auth {
           receipts: url.searchParams.get('invoiceId') === 'demo-inv-2'
             ? [{ receiptNo: 'RCP-2026-07-00012', amount: '1250.00', method: 'bkash', issuedAt: '2026-07-08T10:12:00Z' }]
             : [],
+        });
+
+      // B-15. A student's own day. Guardians reach it with ?studentId=, and
+      // the demo answers the same fixture for either child — the real
+      // endpoint scopes it through app.can_see_student, which no local
+      // fixture can imitate and which p4-privacy/b15 test against a database.
+      case '/api/v1/academics/myroutine':
+        return ok({
+          date: url.searchParams.get('date') ?? todayIso(),
+          studentId: url.searchParams.get('studentId') ?? 'demo-user',
+          slots: DEMO_STUDENT_DAY,
         });
 
       case '/api/v1/rms/routine': {

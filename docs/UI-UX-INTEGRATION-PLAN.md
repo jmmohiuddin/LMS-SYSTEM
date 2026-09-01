@@ -940,3 +940,61 @@ transitions frozen so the probe cannot read a mid-flip blend.
 - The guardian's roster/marks refusal reads as "could not fetch", not "you do
   not have permission". The attendance screen says the permission sentence
   properly; the other two say the generic one.
+
+## 25. Pre-P5 Product Closure Pass — delivered (2026-09-01)
+
+Not a phase: the four user-facing gaps P3 and P4 left, closed before P5 opens.
+Full detail, including everything the browser found, is in `PHASE_LOG.md` under
+"Pre-P5 Product Closure Pass".
+
+### Screens changed
+
+| Screen | Role | Change |
+|---|---|---|
+| Home — "আজকের ক্লাস" | student | **new card** (B-15). Today's periods, the one running NOW marked, subject · time · room · teacher, substitutions named |
+| Academic structure | principal · owner · coordinator · IT admin | **new rename drawer** (B-6), from the section detail and per class-group |
+| Roster · Marks · আমার সন্তান | all | a refusal now says the permission sentence, not "could not fetch" |
+
+### The routine card
+
+| State | What it says |
+|---|---|
+| loading | three-row skeleton, in place |
+| classes today | one row per period; `এখন চলছে` on the current one (also `is-urgent`), `পরবর্তী` on the next when nothing is running |
+| substituted | the covering teacher's name with `(বদলি)` — in the meta line, so it survives alongside the timing badge |
+| no classes | `আজ কোনো ক্লাস নেই।` — the heading stays; a vanished block reads as a failed load |
+| missing subject / teacher | `বিষয় নির্ধারিত হয়নি` / `বদলি শিক্ষক`. Never the word `undefined` |
+| the routine alone failed | its block empties; the rest of the screen renders |
+
+Bangla ordinals are per-number (`১ম ২য় ৩য় ৪র্থ ৫ম ৬ষ্ঠ`) — the first draft
+suffixed `ম` to every digit, which is right for period one and wrong for two,
+three, four and six.
+
+### The rename drawer
+
+P2 components throughout (`field`, `button`, `buttonRow`, `openDrawer`). Current
+name pre-filled and in the drawer title, so the before and the after are in one
+glance. Server refusals are shown in the drawer's `role="alert"` line **and**
+announced, because focus is on the button just pressed. Counts in Bangla digits
+on both sides of the wire — the first version said "40 জন" in the helper above a
+refusal that said "42 জন", from two different constants.
+
+### Acceptance
+
+| Area | 360 | 390 | 1440 | Light | Dark | Tenant B |
+|---|---|---|---|---|---|---|
+| Contrast | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ |
+| Overflow | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Unnamed controls | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ |
+| `undefined` in a11y text | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ |
+
+**759 element-checks, 0 failures.** The rename drawer separately: `role=dialog`,
+`aria-modal`, labelled, focus contained, 0 contrast failures and no sub-44px
+control, in both themes.
+
+### Still legacy
+
+The seven student/guardian screens listed in §24 are unchanged. `B-30` records
+that four of them were **not** audited for the permission message, because they
+403 only in situations not yet reproduced and changing them unverified would be
+worse than leaving them.

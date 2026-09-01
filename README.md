@@ -10,15 +10,16 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 > questions about what this is, what is actually deployed, what is built, what
 > is not, and why — and it links to everything else.
 >
-> **Current state, 2026-09-01 at `95c34bf`:** production is
+> **Current state, 2026-09-01 (Pre-P5 Product Closure Pass):** production is
 > **`https://sikhon.systems/`** on a **VPS + Caddy + Docker PostgreSQL** —
 > *not* the Vercel + Neon architecture much of this README and
 > `docs/06-DEPLOYMENT.md` still describe. That drift is deliberate and
 > disclosed, not an oversight: see
-> [`docs/11-MASTER-PLAN.md` §5b](docs/11-MASTER-PLAN.md). 48 migrations ·
-> 227 RLS policies · 1,352 tests passing · UI phases P0–P4 complete and
-> **not yet deployed**. What is missing is one list:
-> [`docs/BACKLOG.md`](docs/BACKLOG.md).
+> [`docs/11-MASTER-PLAN.md` §5b](docs/11-MASTER-PLAN.md). **49 migrations in
+> the repository** (production is on 48 — migration 049 is not deployed) ·
+> 227 RLS policies · **1,407 tests passing** · UI phases P0–P4 complete, plus a
+> Pre-P5 closure pass, and **none of it deployed**. What is missing is one
+> list: [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 **Design envelope (non-negotiable constraints driving every decision below):**
 

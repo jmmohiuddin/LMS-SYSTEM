@@ -55,6 +55,7 @@ import {
   tenantKeyFromHost,
 } from './branding.ts';
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
+import { purgeLocalData, sweepNow } from './local-data.ts';
 import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { TeacherHomeView } from './teacher-home-view.ts';
@@ -963,56 +964,20 @@ async function main() {
               // children's names — the exact opposite of what §21 promises.
               // The reload happens either way: a purge that fails must not
               // strand the picker.
-              void purgeCaches().finally(() => location.reload());
+              // Not a sign-out: the demo has no session to end, so tier 1
+              // stays and only the previous role's cached SCREENS go. Same
+              // classification as logout, one parameter apart (local-data.ts).
+              void purgeLocalData('role-switch').finally(() => {
+                // Synchronous, immediately before the reload: a screen still
+                // mounted from the previous role can resolve a fetch and
+                // re-cache itself in the gap otherwise.
+                sweepNow('role-switch');
+                location.reload();
+              });
             },
           }
         : undefined,
     });
-  }
-
-  /**
-   * Keys that survive a demo role switch. Everything else under `shikhon_`
-   * goes.
-   *
-   * A keep-list rather than a delete-list, deliberately: the read-through
-   * caches are one localStorage key per screen and there are twenty of them,
-   * so a delete-list is a list somebody forgets to extend. What is kept is
-   * who you are (`auth`, `tid`, the demo selectors), what the school looks
-   * like (`branding_`, which is public and identical for every role), and
-   * three UI preferences that describe the DEVICE rather than the person.
-   */
-  const KEEP_ON_ROLE_SWITCH = new Set([
-    'shikhon_auth', 'shikhon_tid', 'shikhon_demo_role', 'shikhon_demo_tenant',
-    'shikhon_theme', 'shikhon_sidebar_rail', 'shikhon_reader_textsize',
-    // deviceId('d'). It names the DEVICE, not the person, and dropping it
-    // mints a new uuid on every role switch — churning the sync and push
-    // registrations that are keyed by it for no benefit.
-    'shikhon_d',
-  ]);
-
-  /**
-   * Everything this origin cached for whoever was signed in a moment ago.
-   *
-   * Read-through caches only. The sync outbox is untouched — it lives in
-   * IndexedDB and may hold a teacher's unsent attendance, and losing that is
-   * a far worse outcome than a stale screen. That is also why this is the
-   * DEMO role picker and not `doLogout`: a real session ending on a shared
-   * device is a different question, and P4 is not where it gets answered.
-   */
-  async function purgeCaches(): Promise<void> {
-    try {
-      const drop: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith('shikhon_') && !KEEP_ON_ROLE_SWITCH.has(k)
-            && !k.startsWith('shikhon_branding_')) drop.push(k);
-      }
-      for (const k of drop) localStorage.removeItem(k);
-    } catch { /* private mode: the reload still happens */ }
-    try {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-    } catch { /* no Cache API */ }
   }
 
   let shell: Shell | null = null;
@@ -1066,9 +1031,41 @@ async function main() {
     });
   }
 
+  /**
+   * Sign out, and leave nothing of this person on the device except the work
+   * they have not managed to send yet.  (B-8)
+   *
+   * Order matters and is deliberate:
+   *
+   *   1. `auth.logout()` first, so the refresh token is revoked server-side
+   *      while it is still in hand. It swallows its own network failure —
+   *      an offline logout is still a logout locally.
+   *   2. `purgeLocalData('logout')` second: the session key and every
+   *      read-through screen cache, plus the service worker's copies of GET
+   *      responses. This is the step that stops the next person's first paint
+   *      being the previous person's roster.
+   *   3. `showLogin()` last, so the login screen is drawn over an empty store
+   *      rather than a full one.
+   *
+   * What is NOT here, and must never be: the IndexedDB outbox. A teacher's
+   * unsent attendance exists nowhere else, and the register is not a thing to
+   * lose because somebody handed the phone back. It stays, and the sync engine
+   * only ever sends ops matching the signed-in identity, so it cannot be
+   * posted by whoever logs in next.
+   *
+   * The purge is awaited but cannot fail the logout: every step inside it is
+   * individually guarded, and `finally` runs `showLogin()` regardless.
+   */
   async function doLogout(): Promise<void> {
-    await auth.logout();
-    showLogin();
+    try {
+      await auth.logout();
+      await purgeLocalData('logout');
+    } finally {
+      // Last word, synchronously, with the login screen drawn in the same
+      // block: whatever resolved while the caches were being deleted goes too.
+      sweepNow('logout');
+      showLogin();
+    }
   }
 
   if (auth.isLoggedIn()) {

@@ -108,6 +108,10 @@ const SENTINELS = [
   // rows themselves. Absent, a College provisions with classes and no
   // subjects — and cannot import a single student.
   ['048_higher_secondary_subjects',    'rows',       "subject_catalogue WHERE min_level_no >= 11"],
+  // 049's one function. Absent, /academics/myroutine 500s and the student
+  // home loses the card it was built around — the same absence P4 shipped
+  // deliberately, which is why it needs probing rather than noticing.
+  ['049_student_day',                  'function',   'app.student_day'],
 ];
 
 /**
@@ -163,6 +167,7 @@ const MEANING = {
   '046_go_live_unlocks':             'R-8 — a delivery report can be recorded, and the AI budget is spent before it is billed',
   '047_web_push':                    'R-9 — a notice can reach a parent over the internet instead of over SMS',
   '048_higher_secondary_subjects':   'R-7 — a College and the upper half of a School & College get subjects at all',
+  '049_student_day':                 'B-15 — a student can be told what class is next, section-scoped and parallel-block filtered',
 };
 
 const QUERIES = {

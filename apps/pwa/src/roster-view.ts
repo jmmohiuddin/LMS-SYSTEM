@@ -16,7 +16,7 @@ import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import {
   el, append, pageHeader, field, button, dataTable,
-  listSkeleton, emptyState, errorState, announce, type Column,
+  listSkeleton, emptyState, errorState, announce, humanError, type Column,
 } from './ui/index.ts';
 
 export interface SectionSummary {
@@ -39,6 +39,18 @@ export interface RosterStudent {
   studentId: string;
   fullName: { bn: string | null; en: string | null };
   phone: string | null;
+}
+
+/**
+ * A rejection that still knows its HTTP status.
+ *
+ * Declared as an explicit field rather than a parameter property: Node runs
+ * this repo's TypeScript in strip-only mode, where `constructor(readonly x)`
+ * compiles under tsc and throws at runtime. P3 lost an afternoon to that.
+ */
+class HttpStatus extends Error {
+  status: number;
+  constructor(status: number) { super(String(status)); this.status = status; }
 }
 
 const SECTIONS_CACHE_KEY = 'shikhon_sections_cache';
@@ -110,14 +122,24 @@ export class RosterView {
   private async loadSections(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/sections');
-      if (!res.ok) throw new Error(String(res.status));
+      // The STATUS travels with the failure. Throwing `new Error(String(status))`
+      // and catching it bare is how "you do not have permission" became "could
+      // not fetch" on this screen while the attendance screen said it properly.
+      if (!res.ok) throw new HttpStatus(res.status);
       const body = (await res.json()) as { sections: SectionSummary[] };
       this.sections = body.sections;
       this.offline = false;
       this.writeCache(SECTIONS_CACHE_KEY, this.sections);
-    } catch {
-      this.offline = this.sections.length > 0;
-      if (this.sections.length === 0) this.errorMsg = 'সেকশনের তালিকা আনা যায়নি।';
+    } catch (err) {
+      const status = err instanceof HttpStatus ? err.status : undefined;
+      // A 403 is not an offline state and never becomes one on retry: a
+      // cached list must not be shown as "last saved" to somebody who may
+      // not have it.
+      this.offline = status !== 403 && this.sections.length > 0;
+      if (status === 403) { this.sections = []; this.roster = []; }
+      if (this.sections.length === 0) {
+        this.errorMsg = humanError(navigator.onLine ? null : 'offline', status);
+      }
     }
     this.render();
   }
@@ -129,7 +151,7 @@ export class RosterView {
       const res = await this.o.auth.authedFetch(
         `/api/v1/academics/roster?sectionId=${encodeURIComponent(sectionId)}`,
       );
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) throw new HttpStatus(res.status);
       const body = (await res.json()) as { roster: RosterStudent[] };
       this.roster = body.roster;
       this.offline = false;
@@ -140,9 +162,13 @@ export class RosterView {
       // the year instead of guessing at both.
       const picked = this.sections.find((x) => x.id === sectionId);
       if (picked) localStorage.setItem(LAST_SECTION_META_KEY, JSON.stringify(picked));
-    } catch {
-      this.offline = this.roster.length > 0;
-      if (this.roster.length === 0) this.errorMsg = 'শিক্ষার্থী তালিকা আনা যায়নি।';
+    } catch (err) {
+      const status = err instanceof HttpStatus ? err.status : undefined;
+      this.offline = status !== 403 && this.roster.length > 0;
+      if (status === 403) this.roster = [];
+      if (this.roster.length === 0) {
+        this.errorMsg = humanError(navigator.onLine ? null : 'offline', status);
+      }
     }
     this.loading = false;
     this.render();

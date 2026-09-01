@@ -15,7 +15,7 @@ import type {
   OutboxOp,
   PushResult,
   SyncEngineOptions,
-  SyncState,
+  SyncState, OpOwner,
 } from './types.ts';
 import { backoffMs, ClockSync, Mutex, uuidv7 } from './util.ts';
 
@@ -51,6 +51,18 @@ export class SyncEngine {
 
   private get now(): number {
     return (this.o.now ?? Date.now)();
+  }
+
+  /**
+   * Whose ops this engine may send: the session that constructed it.
+   *
+   * B-8. The outbox survives a logout — losing a teacher's unsent attendance
+   * is worse than any stale screen — so on a shared device it can hold work
+   * belonging to somebody who is not signed in. This session flushes its own
+   * and steps over the rest; they drain when their author signs back in here.
+   */
+  private get owner(): OpOwner {
+    return { tenantId: this.o.tenantId, actorId: this.o.actorId };
   }
   private get random(): () => number {
     return this.o.random ?? Math.random;
@@ -110,7 +122,7 @@ export class SyncEngine {
     let rounds = 0;
 
     for (;;) {
-      const batch = await this.o.store.claimBatch(this.o.batchSize, this.now);
+      const batch = await this.o.store.claimBatch(this.o.batchSize, this.now, this.owner);
       if (batch.length === 0) break;
       rounds++;
 
@@ -260,7 +272,10 @@ export class SyncEngine {
   }
 
   async state(): Promise<SyncState> {
-    const c = await this.o.store.counts();
+    // Owner-scoped, for the same reason drain() is: a badge reading
+    // "3 unsent" for work the person looking at it did not do is a bug
+    // report waiting to happen.
+    const c = await this.o.store.counts(this.owner);
     return {
       pending: c.pending,
       inflight: c.inflight,

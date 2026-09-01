@@ -8,6 +8,9 @@ been copy-pasted forward through five phases. Nothing here is new work
 invented for the file; every row cites where it came from.
 
 Created **2026-09-01** at commit `95c34bf`, under D17 §10.
+Last updated **2026-09-01** after the **Pre-P5 Product Closure Pass** — see
+[PHASE_LOG.md](PHASE_LOG.md). Resolved rows keep their ID, their history and
+their reason; nothing is deleted.
 
 ## How to use it
 
@@ -30,6 +33,10 @@ Created **2026-09-01** at commit `95c34bf`, under D17 §10.
 
 ## 1. MUST FIX BEFORE PILOT
 
+**Still open: `B-1`, `B-2`, `B-3`, `B-4`, `B-5`.** `B-6` is resolved and keeps
+its row — the category says when an item *had* to be fixed, not whether it
+still is, and deleting a closed row loses the reason it was ever opened.
+
 | ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
 |---|---|---|---|---|---|---|---|---|
 | **B-1** | An SMS aggregator contract, and `OTP_SENDING_ENABLED=true` | Every SMS path in the product is built, suppression-aware and tested against a **fake** aggregator. Nothing has been sent to a real handset. | R-8 | HIGH | **Yes** for SMS login; **No** for a pilot that uses activation codes | Commercial contract (**external**) | **BLOCKED** — see also B-15 | PHASE_LOG R-8 "gates still open" |
@@ -37,18 +44,23 @@ Created **2026-09-01** at commit `95c34bf`, under D17 §10.
 | **B-3** | `ALERT_WEBHOOK_URL` set to something a human reads | `/ops/monitor` runs every 15 minutes on production and evaluates correctly. With no webhook it logs to a file nobody is watching, so an outage is discovered by a school phoning up. | R-8 | HIGH | **Yes** | One env var + a destination | **OPEN** | PHASE_LOG R-8 |
 | **B-4** | Cross-tenant isolation probe **on production** | RLS posture was verified on the production database directly (227 policies, 0 tenants visible without context). The *probe* — tenant A's token reaching for tenant B's data through the live API — needs two tenants and production has none. | R-8 | HIGH | **Yes** | B-5 | **BLOCKED** on B-5 | PHASE_LOG R-8 |
 | **B-5** | A first pilot institution | 0 institutions exist in production. Four gates below cannot be closed without one. | R-8 | HIGH | **Yes** | Owner / commercial | **OPEN** | PHASE_LOG R-8 |
-| **B-6** | Class / section **edit** UI | `structure.ts` has GET and POST. A section created with a typo can only be corrected with SQL, and the pilot runbook calls that a blocker. Creation has a screen; correction does not. | P5 | HIGH | **Yes** | — | **OPEN** — needs backend + API + UI + tests, i.e. owner approval as a feature | PHASE_LOG R-8 cleanup audit; 07 §9e |
+| **B-6** | Class / section **edit** UI | `structure.ts` had GET and POST only. A section created with a typo could only be corrected with SQL, and the pilot runbook calls that a blocker. **The gap was never in the database** — migration 042 has allowed UPDATE on both tables for four roles since R-3. | Closure pass | HIGH | ~~Yes~~ | — | **RESOLVED** 2026-09-01 · `PATCH /api/v1/ops/structure` + a P2 drawer on the section-detail and per class-group screens. Renaming only: level, stream, group, parent class and year are refused, because they re-base every enrolment beneath them. 12 DB tests, browser-verified including the capacity refusal. | PHASE_LOG R-8 cleanup audit; closure pass |
 
 ## 2. SHOULD FIX BEFORE PILOT
 
+**Still open: `B-7` (deferred with a design), `B-9`, `B-10`.** `B-8` is
+resolved.
+
 | ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
 |---|---|---|---|---|---|---|---|---|
-| **B-7** | Guardian **unlink** | `guardians.ts` has no DELETE. Linking a guardian and changing `can_pay_fees` both have screens (added in R-3's completion pass); undoing a wrong link does not. A guardian linked to the wrong child is a privacy incident that needs SQL to end. | P5 | HIGH | No — but it is the highest-consequence gap in this table | — | **OPEN** | PHASE_LOG R-8 cleanup audit |
-| **B-8** | What `doLogout` does about the read-through caches | Every screen caches its last answer in a `shikhon_*` localStorage key. On a shared device the next person to sign in can be painted the previous user's data from cache before the network answers. P4 fixed this for the **demo role picker**, which is the surface a stranger can reach; a real logout still leaves the caches. Deliberately not fixed in P4: the sync outbox lives alongside them and may hold a teacher's unsent attendance, and losing that is worse than a stale screen. | P5 (first item) | HIGH | No | A decision about unsent outbox work | **OPEN** | PHASE_LOG P4 |
+| **B-7** | Guardian **unlink** | `guardians.ts` has no DELETE, and migration 042 denies it at the database (`guardianship_delete_scope … USING (false)`) **deliberately** — its own comment says a family relationship should not have a delete button. **Audited in the closure pass; the constraint is exact:** `guardianships` has no `ended_on`/`revoked_at` column, so the model cannot express "this link ended". A soft-end column is the right answer and is not small — `guardianships` is read at **21 sites across 11 files**, including `sms-svc/dispatch.ts` and `ops-svc/api/notices.ts`, so a revoke that misses one keeps sending a stranger the child's absence texts; and both unique constraints plus `app.my_ward_ids()` / `app.can_see_student()` (read by RLS across the schema) must change with it. | **P5, first item** | HIGH | No — but it is the highest-consequence gap in this table | a product decision about the SMS and notice pipelines | **DEFERRED, designed** — full design and blast radius in PHASE_LOG, "Pre-P5 Product Closure Pass" | PHASE_LOG R-8 cleanup audit; closure pass |
+| **B-8** | ~~What `doLogout` does about the read-through caches~~ **RESOLVED 2026-09-01** | Every screen caches its last answer in a `shikhon_*` localStorage key. On a shared device the next person to sign in can be painted the previous user's data from cache before the network answers. P4 fixed this for the **demo role picker**, which is the surface a stranger can reach; a real logout still leaves the caches. Deliberately not fixed in P4: the sync outbox lives alongside them and may hold a teacher's unsent attendance, and losing that is worse than a stale screen. | Closure pass | HIGH | No | — | **RESOLVED** · `apps/pwa/src/local-data.ts` classifies local state in four tiers; logout clears session + screen caches + the Cache API and **never** touches the IndexedDB outbox. The question that made P4 defer it — what happens to a teacher's unsent attendance — is answered by the sync engine instead: a session flushes only ops matching its own `tenantId`/`actorId`, so another person's work is preserved rather than posted under the wrong token. A cache-rewrite race found in the browser is closed by a synchronous final sweep. 14 tests + three browser transitions. | PHASE_LOG P4, closure pass |
 | **B-9** | AI soft-limit notification | `soft_limit_notified_at` is stamped at 80%; nothing is wired to R-2's notification system, so a principal learns of the limit by being refused. | P5/P6 | MEDIUM | No | — | **OPEN** | 07 §9j |
 | **B-10** | Operator SSO for the Platform Console | Console sign-in is two pasted secrets. Expected at R-7, not built. | P7 | MEDIUM | No | — | **OPEN** | 07 §9j |
 
 ## 3. NICE TO HAVE
+
+**Still open: `B-11`, `B-12`, `B-13`, `B-14`, `B-16`.** `B-15` is resolved.
 
 | ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
 |---|---|---|---|---|---|---|---|---|
@@ -56,7 +68,7 @@ Created **2026-09-01** at commit `95c34bf`, under D17 §10.
 | **B-12** | CSV export endpoints | `toCsv()` exists in the codebase and nothing calls it. Listed under R-5 for five phases without being built. | R-5 / P6 | LOW | No | — | **OPEN** | PHASE_LOG R-5 → R-8 |
 | **B-13** | Multi-card ID layout | One ID card per sheet today. Cosmetic; a school prints more paper. | R-5 | LOW | No | — | **OPEN** | PHASE_LOG R-5 |
 | **B-14** | Attendance date-range filter, and search type-ahead | Both are conveniences over working screens. | R-6 / P6 | LOW | No | — | **OPEN** | PHASE_LOG R-6 |
-| **B-15** | A student-facing routine card | §4 of the UI brief lists "today's classes" first and the product cannot answer it: `GET /rms/routine` wraps `app.teacher_day(claims.sub)`, so a student gets their own empty teaching day. P4 left the card out rather than fabricate a timetable. Needs one section-scoped endpoint. | P5 | MEDIUM | No | — | **OPEN** | PHASE_LOG P4 |
+| **B-15** | A student-facing routine card | §4 lists "today's classes" first and the product could not answer it: `GET /rms/routine` wraps `app.teacher_day(claims.sub)`, so a student got their own empty teaching day. P4 left the card out rather than fabricate a timetable. | Closure pass | MEDIUM | No | — | **RESOLVED** 2026-09-01 · migration 049 `app.student_day` + `GET /academics/myroutine`. Section-scoped, parallel-block filtered through `student_subjects`, substitutions resolved to the covering teacher, gated by `app.can_see_student` so a guardian reads their own child and nobody reads a classmate. 18 DB/API tests + 10 UI tests. | PHASE_LOG P4, closure pass |
 | **B-16** | Money formatting | Carried in the R-5 deferral line since R-5 and never closed. | R-5 | LOW | No | — | **OPEN** | PHASE_LOG R-5 → R-8 |
 
 ## 4. POST-PILOT
@@ -92,6 +104,13 @@ it ended.
 | **B-24** | "No audit viewer — backend complete, UI pending" | **RESOLVED** in R-3's completion pass. `audit-view.ts` exists and `audit` is in the navigation for principal and IT admin. The stale bullet survived in `07-IMPLEMENTATION-STATUS.md` §9e until D17's reconciliation found it contradicting §1 of the same file. | 2026-08-29, found 2026-09-01 | 07 §9e, corrected |
 | **B-25** | "Guardian management is read-only" | **RESOLVED** in R-3's completion pass. `guardian-panel.ts` posts a new link and patches `canPayFees`. Same stale bullet as B-24. Unlinking is still missing and is tracked separately as **B-7**. | 2026-08-29, found 2026-09-01 | 07 §9e, corrected |
 | **B-26** | Neon + Vercel as the deployed architecture | **SUPERSEDED in practice** by the VPS + Caddy + Docker-PostgreSQL deployment of 2026-08-31. The blueprint documents have **not** been rewritten, on purpose — see B-27. | 2026-08-31 | Master Plan §5b |
+
+### Opened by the closure pass
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Status | Source |
+|---|---|---|---|---|---|---|---|
+| **B-30** | The permission message is canonical on the screens that can 403 — but **`fees`, `documents`, `learn` and `assignments` were not audited** for it | The closure pass fixed roster, marks and the guardian home, which are the screens a wrong-role URL actually reaches. The remaining student screens 403 only in situations not yet reproduced, so they were left alone rather than changed unverified. | P5/P6 | LOW | No | **OPEN** | closure pass |
+| **B-31** | `tsc -p .` does not cover `apps/pwa` | The root `tsconfig.json` **excludes** it. CI runs three configs; anyone running one locally is typechecking the services and not the app. P4's and D17's gate tables recorded "TypeScript ×3" meaning three runs of one config. A single `npm run typecheck` script that runs all three would make the local gate match CI. | P5 | MEDIUM | No | **OPEN** — all three are green as of the closure pass | closure pass |
 
 ## 7. DOCUMENTATION DEBT
 

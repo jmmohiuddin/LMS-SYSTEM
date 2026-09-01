@@ -82,6 +82,12 @@ const TODAY: Record<string, { glyph: string; labelBn: string; tone: string }> = 
 };
 
 const ENDPOINT = '/api/v1/academics/ward';
+/** A rejection that still knows its HTTP status. Explicit field: strip-only. */
+class HttpStatus extends Error {
+  status: number;
+  constructor(status: number) { super(String(status)); this.status = status; }
+}
+
 const CACHE_KEY = 'shikhon_guardian_home';
 
 export class GuardianView {
@@ -92,6 +98,8 @@ export class GuardianView {
   private loading = true;
   private offline = false;
   private error = false;
+  /** The HTTP status behind `error`, so a 403 can say so. */
+  private errStatus: number | undefined;
 
   constructor(options: GuardianViewOptions) {
     this.o = options;
@@ -123,12 +131,13 @@ export class GuardianView {
     try {
       const res = await this.o.auth.authedFetch(
         target ? `${ENDPOINT}?studentId=${encodeURIComponent(target)}` : ENDPOINT);
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) throw new HttpStatus(res.status);
       const body = (await res.json()) as { wards: WardSummary[]; student: WardHome | null };
       this.wards = body.wards;
       this.home = body.student;
       this.offline = false;
       this.error = false;
+      this.errStatus = undefined;
 
       // With no child chosen the first request only returns the list, so
       // pick one and fetch it. A guardian with one child must never have
@@ -144,11 +153,16 @@ export class GuardianView {
       try {
         localStorage.setItem(CACHE_KEY, JSON.stringify({ wards: this.wards, home: this.home }));
       } catch { /* quota */ }
-    } catch {
+    } catch (err) {
+      const status = err instanceof HttpStatus ? err.status : undefined;
+      this.errStatus = status;
       // Cached data plus a banner beats an error page: last week's
       // attendance is still worth reading, and the fee balance changes
-      // slowly.
-      if (this.home) this.offline = true;
+      // slowly. But NOT for a 403 — showing a cached child to somebody the
+      // server has just refused is the opposite of what the refusal meant,
+      // and no retry will change it.
+      if (status === 403) { this.home = null; this.wards = []; this.error = true; }
+      else if (this.home) this.offline = true;
       else this.error = true;
     } finally {
       this.loading = false;
@@ -188,7 +202,11 @@ export class GuardianView {
     }));
 
     if (this.error) {
-      append(root, errorState(d, humanError(navigator.onLine ? null : 'offline'), () => {
+      // The status, not just the connectivity: a guardian who reaches a screen
+      // that is not theirs is told so, instead of being offered a retry that
+      // cannot work.
+      append(root, errorState(d, humanError(
+        navigator.onLine ? null : 'offline', this.errStatus), () => {
         this.error = false; this.loading = true; this.render(); void this.load();
       }));
       return;

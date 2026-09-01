@@ -16,7 +16,7 @@
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import {
-  el, append, icon, pageHeader, badge, emptyState, toast,
+  el, append, icon, pageHeader, badge, emptyState, toast, humanError,
 } from './ui/index.ts';
 
 export interface ExamSubjectOption {
@@ -76,6 +76,12 @@ export interface MarksViewOptions {
   outbox: MarksOutbox;
 }
 
+/** A rejection that still knows its HTTP status. Explicit field: strip-only. */
+class HttpStatus extends Error {
+  status: number;
+  constructor(status: number) { super(String(status)); this.status = status; }
+}
+
 const EXAMS_CACHE_PREFIX = 'shikhon_exams_cache_';
 const MARKS_CACHE_PREFIX = 'shikhon_marks_cache_';
 
@@ -87,6 +93,8 @@ export class MarksView {
   private sheet: MarksResponse | null = null;
   private dirty = new Map<string, Partial<MarkRow>>();
   private offline = false;
+  /** The server refused this read. Not an outage; no retry will help. */
+  private denied = false;
   private loading = false;
   private savedAt = 0;
   private completeEl: HTMLElement | null = null;
@@ -110,13 +118,20 @@ export class MarksView {
       const res = await this.o.auth.authedFetch(
         `/api/v1/academics/exams?sectionId=${encodeURIComponent(this.sectionId)}`,
       );
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) throw new HttpStatus(res.status);
       const body = (await res.json()) as { exams: ExamSummary[] };
       this.exams = body.exams;
       this.offline = false;
+      this.denied = false;
       this.cacheSet(EXAMS_CACHE_PREFIX + this.sectionId, this.exams);
-    } catch {
-      this.offline = this.exams.length > 0;
+    } catch (err) {
+      const status = err instanceof HttpStatus ? err.status : undefined;
+      // A refusal is not an offline state. Showing a cached exam list under
+      // "সর্বশেষ সংরক্ষিত" to somebody the server just refused says the
+      // opposite of what the server said, and offers a retry that cannot work.
+      this.denied = status === 403;
+      if (this.denied) { this.exams = []; this.sheet = null; }
+      this.offline = !this.denied && this.exams.length > 0;
     }
     this.render();
   }
@@ -148,12 +163,16 @@ export class MarksView {
       const res = await this.o.auth.authedFetch(
         `/api/v1/academics/marks?examSubjectId=${encodeURIComponent(examSubjectId)}`,
       );
-      if (!res.ok) throw new Error(String(res.status));
+      if (!res.ok) throw new HttpStatus(res.status);
       this.sheet = (await res.json()) as MarksResponse;
       this.offline = false;
+      this.denied = false;
       this.cacheSet(MARKS_CACHE_PREFIX + examSubjectId, this.sheet);
-    } catch {
-      this.offline = this.sheet !== null;
+    } catch (err) {
+      const status = err instanceof HttpStatus ? err.status : undefined;
+      this.denied = status === 403;
+      if (this.denied) this.sheet = null;
+      this.offline = !this.denied && this.sheet !== null;
     }
     this.loading = false;
     this.render();
@@ -327,6 +346,16 @@ export class MarksView {
           text: 'এই পরীক্ষার ফলাফল প্রকাশিত হয়ে গেছে, তাই নম্বর আর পরিবর্তন করা যাবে না। '
             + 'সংশোধন প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন।',
         })));
+    }
+
+    // §5 of the closure pass: ONE permission sentence across the product,
+    // from humanError(), rather than each screen inventing "could not fetch".
+    if (this.denied) {
+      append(root, emptyState(d, {
+        message: humanError('forbidden')
+          + ' প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন।',
+      }));
+      return;
     }
 
     if (this.offline) {

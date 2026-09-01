@@ -390,3 +390,115 @@ describe('end-to-end: a teacher takes attendance with no signal', () => {
       'no duplicates, no omissions');
   });
 });
+
+describe('B-8 — a shared device holds more than one person’s work', () => {
+  /**
+   * The situation this exists for, in full:
+   *
+   *   A teacher takes attendance on the staff-room phone with no signal. The
+   *   ops sit in the outbox. She logs out. The next teacher logs in on the
+   *   same phone — same school, different person — and his session comes up
+   *   and starts syncing.
+   *
+   * Logout does not clear the outbox: losing an unsent register is
+   * unrecoverable, and it is the one thing the offline design promises never
+   * to do. So the outbox necessarily contains work belonging to somebody who
+   * is not signed in, and the question is what the new session does with it.
+   *
+   * Before B-8: sent it, under his token. The server's TENANT_MISMATCH guard
+   * would not fire — same school — and `appliers.ts` writes `op.actorId` as
+   * `taken_by`, so her register would be applied inside HIS RLS context:
+   * succeeding if he happens to teach that section, and parked as `failed` if
+   * he does not, which is the loss the outbox exists to prevent.
+   */
+  const HER = 'usr_teacher';
+  const HIM = 'usr_other_teacher';
+  const SCHOOL = '11111111-1111-4111-8111-111111111111';
+
+  /** Put one op in the store as if a different person had authored it. */
+  async function queueFor(store: MemoryOutboxStore, actorId: string, studentId: string) {
+    await store.append({
+      opId: `op_${actorId}_${studentId}`,
+      seq: await store.nextSeq(),
+      deviceId: 'dev_test',
+      tenantId: SCHOOL,
+      actorId,
+      entity: 'attendance_record',
+      operation: 'upsert',
+      occurredAt: new Date(clock).toISOString(),
+      payload: { sessionId: 'sess_1', studentId, status: 'absent' },
+      status: 'pending',
+      attempts: 0,
+      nextAttemptAt: 0,
+    });
+  }
+
+  test('a session sends its own ops and not the other teacher’s', async () => {
+    const transport = new ScriptedTransport(allApplied);
+    const { engine, store } = makeEngine(transport, { actorId: HIM });
+
+    // Hers first, so they are OLDEST and would be claimed first.
+    await queueFor(store, HER, 'stu_hers_1');
+    await queueFor(store, HER, 'stu_hers_2');
+    await engine.enqueue(attendance('stu_his_1'));
+
+    await engine.flush();
+
+    const sent = transport.requests.flatMap((r) => r.ops.map((o) => o.actorId));
+    assert.deepEqual([...new Set(sent)], [HIM],
+      'only the signed-in teacher’s work leaves the device');
+    // And hers is still here, unharmed, waiting for her.
+    const left = await store.byStatus('pending');
+    assert.deepEqual(left.map((o) => o.actorId), [HER, HER]);
+  });
+
+  test('another tenant’s ops are left alone as well', async () => {
+    const transport = new ScriptedTransport(allApplied);
+    const { engine, store } = makeEngine(transport);
+    await store.append({
+      opId: 'op_other_tenant', seq: await store.nextSeq(), deviceId: 'dev_test',
+      tenantId: '22222222-2222-4222-8222-222222222222', actorId: 'usr_teacher',
+      entity: 'attendance_record', operation: 'upsert',
+      occurredAt: new Date(clock).toISOString(),
+      payload: { sessionId: 's', studentId: 'x', status: 'absent' },
+      status: 'pending', attempts: 0, nextAttemptAt: 0,
+    });
+    await engine.enqueue(attendance('stu_mine'));
+    await engine.flush();
+
+    // Stated as the property rather than by reconstructing an id: exactly one
+    // op left the device, it was not the other school's, and the other
+    // school's is still sitting here pending.
+    const sent = transport.requests.flatMap((r) => r.ops);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].tenantId, SCHOOL);
+    const pending = await store.byStatus('pending');
+    assert.deepEqual(pending.map((o) => o.opId), ['op_other_tenant']);
+  });
+
+  test('a full batch of somebody else’s ops does not starve this session', async () => {
+    // The reason the owner test is inside the cursor rather than applied to
+    // the batch afterwards. With batchSize 5 and six of hers queued first, a
+    // filter-after-claim would return an empty batch every round, `drain()`
+    // would break on `batch.length === 0`, and his op would never be sent —
+    // silently, and forever.
+    const transport = new ScriptedTransport(allApplied);
+    const { engine, store } = makeEngine(transport, { actorId: HIM, batchSize: 5 });
+    for (let i = 0; i < 6; i++) await queueFor(store, HER, `stu_${i}`);
+    await engine.enqueue(attendance('stu_his_only'));
+
+    const res = await engine.flush();
+    assert.equal(res.acked, 1, 'his one op got through six of hers');
+    assert.equal((await store.byStatus('pending')).length, 6);
+  });
+
+  test('the unsent badge counts this person’s work, not the device’s', async () => {
+    const { engine, store } = makeEngine(new ScriptedTransport(offline), { actorId: HIM });
+    await queueFor(store, HER, 'stu_hers');
+    await engine.enqueue(attendance('stu_his'));
+
+    const state = await engine.state();
+    assert.equal(state.pending, 1,
+      '"2 unsent" for work he did not do is a support call, not a status');
+  });
+});

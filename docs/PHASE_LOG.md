@@ -7614,3 +7614,346 @@ without one. The convention, so nobody has to solve it again: **write the
 entry without the hash, commit, then append the hash in a one-line follow-up
 like this one.** The alternative — amending the commit — would rewrite
 history to make the record look tidy, which is the one thing D10 forbids.
+
+---
+
+# Pre-P5 Product Closure Pass   (2026-09-01)
+
+Five items, four of them closed and one deferred on evidence. P5 has not
+started, no Principal or IT Admin screen was redesigned, and no D16 commercial
+control was built.
+
+---
+
+## B-8 — logout, cache privacy, and the outbox
+
+### The audit, before any code
+
+Four kinds of local state, and they had never been distinguished:
+
+| Tier | Where | On logout |
+|---|---|---|
+| 1 · session | `shikhon_auth`, `shikhon_otp_login` | **cleared** — it *is* the logout |
+| 2 · screen cache | ~20 `shikhon_*` keys + the service worker's Cache API | **cleared** — this is the tier that leaks |
+| 3 · **outbox** | IndexedDB `shikhon` (attendance and marks authored offline) | **NEVER cleared, by anything** |
+| 4 · device | `shikhon_d`, `shikhon_tid`, `shikhon_branding_*`, theme, rail, text size | kept |
+
+Tier 4 is kept for reasons, not by omission: dropping `shikhon_d` mints a new
+device id on every sign-out and churns the push and sync registrations keyed
+to it, and dropping `shikhon_tid` returns a school to a generic login screen,
+which D12 exists to prevent.
+
+`apps/pwa/src/local-data.ts` holds the classification, once, for both callers.
+It is a **keep-list**, not a delete-list: tier 2 is one key per screen and a
+delete-list is a list somebody forgets to extend — where the cost of
+forgetting is a privacy leak that looks like a cache hit.
+
+### The question the brief did not ask, which keeping the outbox forces
+
+If the outbox survives a logout, then on a shared device it contains work
+belonging to somebody who is not signed in. What does the new session do
+with it?
+
+Before this pass: **sent it, under the new person's token.** `drain()` claimed
+every pending op and posted it with the current credentials. The server's
+`TENANT_MISMATCH` guard would not fire — same school — and `appliers.ts`
+writes `op.actorId` as `taken_by`, so teacher A's register would be applied
+inside teacher B's RLS context: succeeding if B happens to teach that section,
+and parked as **`failed`** if he does not. That last outcome is the permanent
+loss the outbox exists to prevent.
+
+The fix needed no new concept. `OutboxOp` has carried `tenantId` and `actorId`
+since this package was written, and `SyncEngine` is constructed with both. A
+session now flushes **its own** ops; anybody else's stay pending, untouched,
+and drain when their author signs in on that device again — which is what
+"preserved" has to mean if it means anything.
+
+Filtered **inside the cursor**, beside the backoff test, not after the batch.
+Filtering the result would let 25 of somebody else's ops starve this session's
+out of every round, permanently and silently. There is a test for exactly that.
+
+The unsent badge is owner-scoped for the same reason: "৩টি অপেক্ষমাণ" for work
+the person reading it did not do is a support call, not a status.
+
+### A race, found in a browser and not by any test
+
+Driving guardian → student through the picker: `shikhon_guardian_home` was
+gone afterwards and `shikhon_invoices_cache` was **not**. Both are tier 2 and
+both were swept.
+
+The sweep was correct; its **position** was not. It ran first and then awaited
+the Cache API — and that await gives a resolved `authedFetch` a turn. The fee
+screen was the last one open, its request was still in flight, and its entire
+job on resolving is to write what it received into its cache. It re-cached
+itself into an already-emptied store.
+
+Now: caches first, `localStorage` last, and `sweepNow()` — the synchronous
+half — runs in the same block as the reload, with no await between them, so
+nothing can interleave.
+
+### Verified in a browser, all three transitions
+
+| Transition | `shikhon_` keys before | after | previous role's data on any screen |
+|---|---|---|---|
+| teacher → student | 13 | 4 | none |
+| teacher → guardian | 10 | 4 | none |
+| guardian → student | 8 | 4 | none |
+
+The four survivors are `shikhon_d`, `shikhon_tid`-equivalent demo selectors and
+`shikhon_branding_*` — tier 4, exactly as designed.
+
+**Honest scope of that evidence:** this is the demo's role picker, because
+production login is disabled and a real logout→login cycle cannot be driven
+here. Both paths call the same `purgeLocalData`, one parameter apart, and a
+test asserts that the two reasons differ in exactly one tier. The *logout*
+path's behaviour is TESTED, not OBSERVED.
+
+---
+
+## B-15 — a student's own routine
+
+### The schema, read before anything was added
+
+`app.teacher_day` answers "which periods is this PERSON responsible for", in
+both directions, and returns three facts a student must never read:
+`student_count`, `attendance_taken`, `delivery_logged`. Widening it would mean
+leaking those or branching on role inside a function RLS policies depend on.
+
+So: `app.student_day(p_student, p_date)`, **migration 049**, a sibling keyed on
+the SECTION. And an index for it was not needed — migration 011 created
+`ix_slots_section_day` with the comment *"Section day view (student/guardian
+'today's classes')"* and nothing had ever called it.
+
+### Three things a naive section lookup gets wrong
+
+1. **Parallel blocks.** Migration 034's `parallel_pool` puts two religion
+   variants in the same section at the same hour. A student attends one.
+   Filtered through `student_subjects` (025), so the Hindu student is not shown
+   an Islamic-studies period on their own timetable — not a leak of anyone
+   else's data, but fabricated curriculum for them, which §10 forbids.
+2. **The academic year.** Resolved by the year that CONTAINS the date, not the
+   one flagged current, so a date in last year answers with last year's section.
+3. **Substitutions.** A section's day never loses the period; it changes who
+   takes it. Resolved to the covering teacher, flagged.
+
+### SECURITY DEFINER, and why the first draft was wrong
+
+The first version was invoker-rights like `teacher_day`. Running it produced
+`teacher_name_bn: null` on every period and `is_substitution: false` on a
+covered one — because under a student's session `SELECT count(*) FROM users`
+returns **1**. Migration 010 shows a student themselves and their household
+and nothing else, correctly, and that is not changing for a timetable.
+
+Definer-rights, with the safety moved from "RLS will catch it" to "there is
+nothing to catch": `app.can_see_student` gates every row, **every** join
+carries an explicit `tenant_id = app.current_tenant()` including the lookups
+invoker rights would have covered for free, and exactly one column is taken
+from `users` — `full_name_bn`. What that widens, stated plainly: a student
+learns the display name of the teacher taking a period on their own timetable.
+That is a person standing at the front of their classroom.
+
+### Authorization, tested against a database
+
+`GET /api/v1/academics/myroutine`, 18 tests, two tenants, twice:
+
+- a student reads their own day; **a classmate's returns nothing**
+- a guardian reads their own child; another family's child returns nothing
+- a teacher scoped to no section reads nothing, even for a slot they teach
+- another tenant's principal, given a valid uuid, gets nothing
+- **the refusal is silent**: a forbidden id and a nonexistent id return
+  byte-identical answers, so the endpoint is not an id oracle
+- a student naming a classmate is refused 403 **and the id is not echoed back**
+- teacher-only fields are asserted absent from the response
+
+### Two defects the browser found and no test would have
+
+- **"২ম পিরিয়ড".** Bangla ordinals are per-number — ১ম ২য় ৩য় ৪র্থ ৫ম ৬ষ্ঠ —
+  and only 1, 5, 7 and 8 take ম. The bug is invisible in a screenshot of
+  period one. A student would read it the way an English speaker reads "2th".
+- **A covered period that was also the current one silently stopped saying it
+  was covered**, because badge precedence gave the one slot to "এখন চলছে".
+  Timing and identity are different facts; the substitution moved to the meta
+  line beside the name it qualifies — "শাহনাজ পারভীন (বদলি)" — where it
+  answers "who" and "is this the usual teacher" in one read.
+
+---
+
+## B-6 — class and section edit
+
+**Implemented.** The audit found the gap was never in the database: migration
+042 has allowed UPDATE on `classes` and `sections` for principal,
+school_owner, academic_coordinator and it_admin since R-3. What was missing
+was the distance between that policy and a person — `structure.ts` handled GET
+and a create-POST and nothing else, so a section typed "কক" instead of "ক"
+needed SQL, which the pilot runbook calls a blocker.
+
+`PATCH /api/v1/ops/structure` corrects a NAME. It deliberately refuses
+everything that re-bases records underneath it:
+
+| Editable | Refused | Because |
+|---|---|---|
+| class `name_bn`, `name_en`, `display_order` | `level_no`, `stream`, `group` | they decide which subject template the class draws from; every enrolment and mark below was derived on that basis |
+| section `name`, `capacity` | `class_id`, `academic_year_id` | moving a section moves every child in it without one enrolment row changing |
+
+A capacity below the children already enrolled is refused with the real
+number, because the enrolment cap reads that column and accepting it silently
+breaks admission the next morning.
+
+The UI is a drawer built from P2 components, opened from the section detail
+screen and per class-group on the level screen — a level is a level *number*
+and `classes` rows hang off its groups, so নবম বিজ্ঞান and নবম ব্যবসায় are two
+records, not one. 12 DB tests, run twice. Verified in a browser including the
+refusal path, dialog semantics, focus containment and both themes.
+
+---
+
+## B-7 — guardian unlink: **DEFERRED**, and here is the exact constraint
+
+The brief asked why it was blocked. It was blocked **on purpose**, and
+migration 042 says so in its own words:
+
+> Unlinking a guardian removes the record that they were ever responsible.
+> The office marks a link inactive by moving `is_primary` and the permissions,
+> which keeps the row; a genuine data-entry error is rare enough to be worth a
+> support request rather than a delete button on a family relationship.
+
+`guardianship_delete_scope ... USING (false)` — DELETE is denied to
+`shikhon_app` for every role, at the database.
+
+**The constraint, precisely.** `guardianships` has no `ended_on`, `revoked_at`
+or `is_active` column. So the model cannot express "this link ended", and
+there are exactly two ways forward:
+
+1. a hard DELETE — forbidden by design, and by the brief's "do not force a
+   destructive implementation";
+2. a soft-end column, which is a schema change with a wider blast radius than
+   it first appears.
+
+**Sized honestly.** `guardianships` is read at **21 sites across 11 files**,
+including `sms-svc/dispatch.ts` and `ops-svc/api/notices.ts`. A revoke that
+misses one of those keeps sending a stranger the child's absence texts — a
+privacy failure that no existing test would catch, because every existing test
+asserts the guardian *does* receive them. It also needs:
+
+- `UNIQUE (tenant_id, student_id, guardian_id)` made partial, or a revoked
+  link can never be re-created;
+- `uq_guardianship_primary` made partial for the same reason;
+- `app.my_ward_ids()` and therefore `app.can_see_student()` — read by RLS
+  policies across the schema — changed.
+
+**Why that is not this pass's work.** The change can only ever *narrow*
+access, which makes it safer than it looks; but it touches the two helper
+functions every guardian-facing policy in the product depends on, and it
+requires a decision about the SMS and notice pipelines that is a product
+decision, not a refactor. The brief's own rule applies: *"If the current data
+model cannot safely support it, leave it deferred and document the exact
+constraint."*
+
+**Recorded as `B-7`, priority HIGH, owner P5**, with the design above so P5
+implements it rather than re-deriving it. It remains the
+highest-consequence open item in the backlog: a guardian linked to the wrong
+child is a live privacy incident that currently ends only with SQL.
+
+---
+
+## §5 — one permission sentence
+
+`humanError()` has had the right words since P2 — "এই কাজটি করার অনুমতি আপনার
+নেই।" — and only the attendance screen passed it the HTTP status. Everywhere
+else threw it away:
+
+    roster-view    catch { errorMsg = 'সেকশনের তালিকা আনা যায়নি।' }
+    marks-view     same shape
+    guardian-view  humanError(onLine ? null : 'offline')   — no status
+
+So a guardian who reached a teacher's URL was told the fetch failed: wrong,
+and offering a retry that cannot work. Two messages for one condition is worse
+than either alone, because a support call gets a different answer depending on
+which screen the caller was looking at.
+
+Fixed by carrying the status rather than by adding a string — `HttpStatus`
+instead of `new Error(String(status))` — and by one further rule that matters
+more than the wording: **a 403 is not an offline state.** The affected screens
+now discard their cache on a refusal instead of showing it under "সর্বশেষ
+সংরক্ষিত", which had been saying the opposite of what the server said.
+
+Browser-verified as a guardian: roster and attendance both now say the
+permission sentence; nothing says "আনা যায়নি".
+
+---
+
+## Two more demo gates, and a test that was too narrow
+
+P4 built a test that DERIVES the demo's staff-only list from the services so
+it cannot drift. It covered `requireStaff` and nothing else — and this pass,
+driving the demo as a **student**, opened `#/guardian` and read two children's
+names, sections, roll numbers, attendance, fees and results.
+
+`/academics/ward` is not staff-only; it is `requireRole(WARD_ROLES)`, which
+excludes students. A different gate, the same hole, and a green test.
+
+The derivation now covers every `requireRole(claims, X)` on a GET, resolving
+`X` to its role list. That found three more the demo answered to anyone:
+`/academics/classperf`, `/academics/subjectchoice` and `/rms/editor`. All four
+are gated now with the service's own role lists.
+
+Two false positives in the widened detector were fixed rather than silenced:
+`ops/calendar` answers its GET and returns *before* the guard (its read is
+deliberately open to every role — "a guardian planning around ঈদের ছুটি is the
+whole point of publishing one"), and `/rms/examroutine` and `/rms/generation`
+have no demo route at all, so they 404, which is a stricter refusal than a
+gate.
+
+---
+
+## A correction to this project's own record
+
+**`tsc -p .` does not typecheck `apps/pwa`.** The root `tsconfig.json`
+excludes it, and CI runs **three** configs:
+
+```
+tsconfig.json · apps/pwa/tsconfig.json · apps/pwa/tsconfig.sw.json
+```
+
+P4's and D17's gate tables record "TypeScript ×3 — 0 errors". That meant three
+*runs of one config*. The PWA — the surface P0–P4 built — was never
+typechecked by me in either pass. Running the right three here found nine
+errors, all in code written minutes earlier in this pass, so the app config was
+clean before it; but the claim was broader than the evidence, which is exactly
+the failure D17(a) exists to prevent. All three are green now and all three are
+in this pass's gate table.
+
+---
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite, run 1 | **1,407 passing**, 12 workspaces |
+| Full suite, run 2 | **1,407 passing** — re-runnable |
+| B-15 suite ×2 | 18/18, 18/18 |
+| B-6 suite ×2 | 12/12, 12/12 |
+| TypeScript — `tsconfig.json` | 0 errors |
+| TypeScript — `apps/pwa/tsconfig.json` | 0 errors |
+| TypeScript — `apps/pwa/tsconfig.sw.json` | 0 errors |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | **49/49 applied**, fully migrated; 049 probed by `app.student_day` |
+| Rollback | `db/rollback/049_student_day.sql` — one statement, no residue |
+| Browser — student home | 390 / 360 / 1440 × light + dark, tenant B: **759 checks, 0 contrast failures, 0 overflow, 0 unnamed controls, 0 `undefined` in accessible text** |
+| Browser — rename drawer | `role=dialog`, `aria-modal`, labelled, focus contained, 0 failures both themes |
+| Browser — B-8 | three role transitions, 0 keys of the previous user's data left |
+| `index.html` | SHA `496199bd` — unchanged |
+
+## New tests
+
+| File | Tests | Guards |
+|---|---|---|
+| `services/academics-svc/test/b15-student-routine.test.ts` | 18 | student routine: scope, parallel blocks, silent refusal, cross-tenant |
+| `services/ops-svc/test/b6-structure-edit.test.ts` | 12 | rename, and everything that must stay uncorrectable |
+| `apps/pwa/test/local-data.test.ts` | 10 | the four tiers, and that the outbox is never touched |
+| `apps/pwa/test/student-home-view.test.ts` | 10 | Bangla ordinals, current/next, substitution survives |
+| `packages/offline/test/sync-engine.test.ts` (added suite) | 4 | one device, two people, no starvation |
+| `apps/pwa/test/demo-gate.test.ts` (widened) | +1 | `requireRole` gates, derived |
+
+**Next phase: P5 — Principal + IT Admin.** It opens with `B-7`, whose design
+is written above.

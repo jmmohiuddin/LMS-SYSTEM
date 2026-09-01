@@ -37,6 +37,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole, requireStaff } from '../../../packages/server-core/src/auth.ts';
+import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { writeAudit } from '../../../packages/server-core/src/audit.ts';
 
 /** Mirrors classes_insert_scope / sections_insert_scope in migration 042. */
@@ -52,6 +53,8 @@ const SHIFTS = new Set(['morning', 'day', 'evening', 'single']);
 
 interface CreateBody {
   kind?: 'class' | 'section' | 'year';
+  /** PATCH only: which row to correct. */
+  id?: string;
   // class
   levelNo?: number | string;
   nameBn?: string;
@@ -87,6 +90,19 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       requireStaff(claims);
       json(res, 200, await options(db, ctx), cors);
       return;
+    }
+    // B-6. PATCH corrects a name; POST creates. Same roles, same RLS scope
+    // (migration 042 has allowed UPDATE on both tables since R-3) — what was
+    // missing was any way for a person to reach it.
+    if (req.method === 'PATCH') {
+      requireRole(claims, STRUCTURE_ROLES);
+      const body = await readJson<CreateBody>(req);
+      switch (body.kind) {
+        case 'class':   json(res, 200, await updateClass(db, ctx, body), cors); return;
+        case 'section': json(res, 200, await updateSection(db, ctx, body), cors); return;
+        default:
+          throw new HttpError(400, 'kind must be class or section', 'bad_kind', { field: 'kind' });
+      }
     }
     if (req.method !== 'POST') { json(res, 405, { error: 'method_not_allowed' }, cors); return; }
 
@@ -197,6 +213,119 @@ async function createClass(db: Db, ctx: Ctx, b: CreateBody) {
     });
 
     return { id, kind: 'class', levelNo, nameBn, nameEn, stream, group };
+  });
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requireId(b: CreateBody): string {
+  const id = (b.id ?? '').trim();
+  if (!UUID_RE.test(id)) throw new HttpError(400, 'id দরকার', 'bad_id', { field: 'id' });
+  return id;
+}
+
+/**
+ * Correct a class's NAME. Not its level, stream or group.
+ *
+ * Those three decide which subject template the class draws from, and every
+ * enrolment, mark and result beneath it was derived on that basis. Changing
+ * one after the fact does not migrate anything — it silently makes the
+ * history wrong. A school that genuinely needs it needs the rollover tool.
+ */
+async function updateClass(db: Db, ctx: Ctx, b: CreateBody) {
+  const id = requireId(b);
+  const nameBn = (b.nameBn ?? '').trim();
+  if (!nameBn) throw new HttpError(400, 'বাংলা নাম লিখুন', 'bad_name', { field: 'nameBn' });
+  const nameEn = (b.nameEn ?? '').trim() || nameBn;
+  const displayOrder = Number.isFinite(Number(b.displayOrder))
+    ? Number(b.displayOrder) : undefined;
+
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query<{
+      name_bn: string; name_en: string; display_order: number;
+    }>(`SELECT name_bn, name_en, display_order FROM classes WHERE id = $1`, [id]);
+    // RLS makes another school's class invisible, so "not found" and "not
+    // yours" are the same answer here — deliberately.
+    if (before.length === 0) throw new HttpError(404, 'শ্রেণি পাওয়া যায়নি', 'class_not_found');
+
+    const { rowCount } = await c.query(
+      `UPDATE classes
+          SET name_bn = $2, name_en = $3,
+              display_order = COALESCE($4, display_order)
+        WHERE id = $1`,
+      [id, nameBn, nameEn, displayOrder ?? null],
+    );
+    // The UPDATE policy is RESTRICTIVE, so a role outside STRUCTURE_ROLES
+    // matches no rows rather than raising. Zero rows after a successful SELECT
+    // means RLS refused the write, and saying so beats reporting success.
+    if (rowCount === 0) throw new HttpError(403, 'পরিবর্তনের অনুমতি নেই', 'forbidden');
+
+    await writeAudit(c, ctx, {
+      action: 'academic.class.update',
+      entityType: 'class',
+      entityId: id,
+      before: { nameBn: before[0].name_bn, nameEn: before[0].name_en,
+                displayOrder: before[0].display_order },
+      after: { nameBn, nameEn, displayOrder: displayOrder ?? before[0].display_order },
+    });
+    return { id, kind: 'class', nameBn, nameEn };
+  });
+}
+
+/**
+ * Correct a section's name or capacity. Not its class or its year.
+ *
+ * Moving a section between classes moves every child enrolled in it, without
+ * a single enrolment row changing — the roster would simply appear somewhere
+ * else. That is the rollover tool's job, where it is explicit and audited per
+ * student.
+ */
+async function updateSection(db: Db, ctx: Ctx, b: CreateBody) {
+  const id = requireId(b);
+  const name = (b.name ?? '').trim();
+  if (!name) throw new HttpError(400, 'সেকশনের নাম লিখুন', 'bad_name', { field: 'name' });
+  if (name.length > 20) throw new HttpError(400, 'নাম খুব বড়', 'bad_name', { field: 'name' });
+
+  const capacity = Number(b.capacity);
+  const hasCapacity = b.capacity !== undefined && b.capacity !== null && b.capacity !== '';
+  if (hasCapacity && (!Number.isInteger(capacity) || capacity < 1 || capacity > 300)) {
+    throw new HttpError(400, 'ধারণক্ষমতা ১ থেকে ৩০০-এর মধ্যে দিন', 'bad_capacity',
+      { field: 'capacity' });
+  }
+
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query<{
+      name: string; capacity: number; student_count: number;
+    }>(`SELECT name, capacity, student_count FROM sections WHERE id = $1`, [id]);
+    if (before.length === 0) throw new HttpError(404, 'সেকশন পাওয়া যায়নি', 'section_not_found');
+
+    // A capacity below the children already in the room is not a typo the
+    // office wants saved silently; the enrolment cap reads this column.
+    if (hasCapacity && capacity < before[0].student_count) {
+      throw new HttpError(400,
+        // Bangla digits here too. The message is read by the same person, on
+        // the same screen, immediately under a helper that says it in Bangla.
+        `এই শাখায় এখন ${formatCount(before[0].student_count, 'bn')} জন শিক্ষার্থী আছে — `
+        + 'ধারণক্ষমতা তার কম দেওয়া যাবে না',
+        'capacity_below_enrolled', { field: 'capacity' });
+    }
+
+    const { rowCount } = await c.query(
+      `UPDATE sections
+          SET name = $2, capacity = COALESCE($3, capacity)
+        WHERE id = $1`,
+      [id, name, hasCapacity ? capacity : null],
+    );
+    if (rowCount === 0) throw new HttpError(403, 'পরিবর্তনের অনুমতি নেই', 'forbidden');
+
+    await writeAudit(c, ctx, {
+      action: 'academic.section.update',
+      entityType: 'section',
+      entityId: id,
+      before: { name: before[0].name, capacity: before[0].capacity },
+      after: { name, capacity: hasCapacity ? capacity : before[0].capacity },
+    });
+    return { id, kind: 'section', name, capacity: hasCapacity ? capacity : before[0].capacity };
   });
 }
 

@@ -1,0 +1,11 @@
+-- Rollback for 049 — app.student_day.
+--
+-- Drops the function. Nothing else changed: 049 created no table, no column
+-- and no index (ix_slots_section_day has existed since migration 011, which
+-- created it for exactly this read and then never had a caller). So the
+-- rollback is one statement and leaves no residue.
+--
+-- What breaks after this runs: GET /api/v1/academics/myroutine answers 500,
+-- and the student home's "today's classes" card goes back to being absent —
+-- which is the state P4 shipped and documented.
+DROP FUNCTION IF EXISTS app.student_day(uuid, date);

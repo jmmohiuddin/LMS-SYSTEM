@@ -5,16 +5,22 @@
  * §4 wants the top of the screen to answer three questions: what do I have
  * today, what needs attention, what is coming next.
  *
- * ── What this screen deliberately does NOT show ────────────────────────────
- * **Today's class routine.** §4 lists it first, and the product cannot answer
- * it: `GET /rms/routine` wraps `app.teacher_day(claims.sub, …)`, so a student
- * calling it gets their own — empty — teaching day, not their section's
- * timetable. There is no student-facing routine endpoint, and inventing a
- * plausible one on the client would be fabricated curriculum data, which §10
- * forbids in the same breath. The gap is named in the PHASE_LOG rather than
- * papered over with a card that would be right for a teacher and wrong here.
+ * ── Today's classes: the card this screen was built around ─────────────────
+ * §4 lists it first, and for the whole of P4 the product could not answer it:
+ * `GET /rms/routine` wraps `app.teacher_day(claims.sub, …)`, so a student
+ * calling it received their own — empty — TEACHING day. Rather than invent a
+ * plausible timetable on the client (fabricated curriculum data, which §10
+ * forbids in the same breath as asking for the card) P4 shipped without it and
+ * wrote the gap down.
  *
- * ── What it shows instead, all from endpoints that exist ───────────────────
+ * B-15 closed it properly: `app.student_day` (migration 049) and
+ * `GET /academics/myroutine`, section-scoped, parallel-block filtered by what
+ * this student actually takes, substitutions resolved to whoever is really
+ * taking the period. Not a widening of the teacher endpoint — a sibling, for a
+ * different reader asking a different question.
+ *
+ * ── The rest, all from endpoints that already existed ──────────────────────
+ *   `GET /academics/myroutine`   today's classes, current and next (B-15)
  *   `GET /academics/next`        what needs attention — homework due inside
  *                                three days and not submitted, a practice
  *                                question last answered wrong, the next
@@ -58,6 +64,19 @@ interface RecentResult {
 
 interface NoticeRow { id: string; titleBn: string; publishedAt: string; readAt: string | null }
 
+/** One period of the student's own day. Mirrors StudentSlot on the server. */
+export interface RoutineSlot {
+  slotId: string;
+  periodNo: number;
+  /** 'HH:MM', already trimmed server-side. */
+  startsAt: string;
+  endsAt: string;
+  subjectBn: string | null;
+  roomCode: string | null;
+  teacherNameBn: string | null;
+  isSubstitution: boolean;
+}
+
 export interface StudentHomeOptions {
   root: HTMLElement;
   doc: Document;
@@ -77,6 +96,7 @@ const KIND_GLYPH: Record<string, string> = {
 
 export class StudentHomeView {
   private readonly o: StudentHomeOptions;
+  private slots: RoutineSlot[] | null = null;
   private next: Suggestion[] | null = null;
   private totals: AttendanceTotals | null = null;
   private result: RecentResult | null = null;
@@ -108,6 +128,10 @@ export class StudentHomeView {
     };
 
     const jobs = [
+      // B-15. First in the list because it is first on the screen, and its own
+      // request because a slow inbox must not delay "where do I have to be".
+      get<{ slots: RoutineSlot[] }>('/api/v1/academics/myroutine')
+        .then((b) => { this.slots = b?.slots ?? []; this.repaint(); }),
       get<{ suggestions: Suggestion[] }>('/api/v1/academics/next')
         .then((b) => { this.next = b?.suggestions ?? []; this.repaint(); }),
       get<{ totals: AttendanceTotals }>('/api/v1/academics/attendance?months=1')
@@ -123,7 +147,8 @@ export class StudentHomeView {
     // Everything failed AND nothing is cached from a previous paint: that is
     // an error worth a screen. One failure among four is not — the block that
     // failed simply shows its own empty state.
-    if (this.next === null && this.totals === null && !this.notices.length) {
+    if (this.next === null && this.totals === null && this.slots === null
+        && !this.notices.length) {
       this.failed = true;
       this.errText = humanError(navigator.onLine ? null : 'offline');
     }
@@ -157,7 +182,76 @@ export class StudentHomeView {
       return;
     }
 
-    append(root, this.attention(), this.summary(), this.noticeBlock(), this.quick());
+    append(root, this.today(), this.attention(), this.summary(),
+           this.noticeBlock(), this.quick());
+  }
+
+  /**
+   * Today's classes, with the one that is happening NOW called out.
+   *
+   * §4 wants three questions answered at the top of the screen and this is the
+   * first of them. The current period is marked rather than merely listed:
+   * a student glancing at their phone between periods is asking "which room
+   * next", and making them read six rows to work that out is the difference
+   * between a timetable and an answer.
+   *
+   * `now` comes from the same injectable clock the greeting uses, so the
+   * "current period" is testable rather than dependent on when the suite runs.
+   */
+  private today(): HTMLElement {
+    const d = this.o.doc;
+    const wrap = el(d, 'section');
+    append(wrap, sectionHeading(d, { title: 'আজকের ক্লাস' }));
+
+    if (this.slots === null) { append(wrap, listSkeleton(d, 3)); return wrap; }
+
+    if (!this.slots.length) {
+      // A holiday, a weekend, or a routine that has not been published. The
+      // screen says the true thing it knows and does not guess which.
+      append(wrap, emptyState(d, { message: 'আজ কোনো ক্লাস নেই।' }));
+      return wrap;
+    }
+
+    const mins = this.now().getHours() * 60 + this.now().getMinutes();
+    const at = (t: string): number => {
+      const [h, m] = t.split(':').map(Number);
+      return (h ?? 0) * 60 + (m ?? 0);
+    };
+    const currentIdx = this.slots.findIndex(
+      (s) => mins >= at(s.startsAt) && mins < at(s.endsAt));
+    const nextIdx = currentIdx >= 0
+      ? -1
+      : this.slots.findIndex((s) => at(s.startsAt) > mins);
+
+    const items = this.slots.map((s, i) => {
+      const when = `${periodBn(s.periodNo)} পিরিয়ড · ${bnTime(s.startsAt)}–${bnTime(s.endsAt)}`;
+      // The substitution rides with the NAME it qualifies, not in the badge:
+      // "who is taking this" and "when is this" are different facts, and the
+      // badge can only hold one. Putting substitution there meant a covered
+      // period that happened to be running now silently stopped saying it was
+      // covered — which is the one moment the student needs to know.
+      const teacher = s.teacherNameBn
+        ? (s.isSubstitution ? `${s.teacherNameBn} (বদলি)` : s.teacherNameBn)
+        : (s.isSubstitution ? 'বদলি শিক্ষক' : null);
+      const where = [s.roomCode ? `রুম ${s.roomCode}` : null, teacher]
+        .filter(Boolean).join(' · ');
+      return listItem(d, {
+        title: s.subjectBn ?? 'বিষয় নির্ধারিত হয়নি',
+        subtitle: when,
+        meta: where || undefined,
+        glyph: 'clock',
+        // A word, never a tint alone: this list is read at a glance in a
+        // corridor between periods.
+        status: i === currentIdx
+          ? statusBadge(d, { state: 'due', label: 'এখন চলছে' })
+          : i === nextIdx
+            ? statusBadge(d, { state: 'pending', label: 'পরবর্তী' })
+            : undefined,
+        className: i === currentIdx ? 'is-urgent' : undefined,
+      });
+    });
+    append(wrap, list(d, 'আজকের ক্লাস', ...items));
+    return wrap;
   }
 
   /**
@@ -287,6 +381,34 @@ const DAYS = ['রবিবার', 'সোমবার', 'মঙ্গলবা
 
 export function todayBn(now: Date): string {
   return `${DAYS[now.getDay()]}, ${formatCount(now.getDate(), 'bn')} ${MONTHS[now.getMonth()]}`;
+}
+
+/**
+ * Bangla ordinals. NOT `formatCount(n) + 'ম'`, which is how the first draft
+ * of this card produced "২ম পিরিয়ড" — the suffix differs per number and only
+ * 1, 5, 7 and 8 take ম, so the bug is invisible in a screenshot of period one.
+ * Beyond the table it degrades to the plain number rather than guessing a
+ * suffix: a school with a fifteenth period is unlikely, and "১৫" is honest
+ * where "১৫ম" would be invented grammar.
+ */
+const PERIOD_BN = [
+  '', '১ম', '২য়', '৩য়', '৪র্থ', '৫ম', '৬ষ্ঠ', '৭ম', '৮ম', '৯ম', '১০ম',
+  '১১তম', '১২তম',
+];
+
+export function periodBn(n: number): string {
+  return PERIOD_BN[n] ?? formatCount(n, 'bn');
+}
+
+/**
+ * 'HH:MM' in Bangla digits. Times are read, not cross-checked against a paper
+ * register, so unlike a roll number they are localised — `formatIdentifier`
+ * exists for the opposite case and this is deliberately not it.
+ */
+export function bnTime(hhmm: string): string {
+  const [h, m] = hhmm.split(':');
+  return `${formatCount(Number(h), 'bn')}:${(m ?? '00').replace(/\d/g,
+    (x) => '০১২৩৪৫৬৭৮৯'[Number(x)])}`;
 }
 
 function bnDate(iso: string): string {

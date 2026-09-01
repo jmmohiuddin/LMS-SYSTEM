@@ -3439,6 +3439,57 @@ async function setStatus(db, ctx, req) {
   });
 }
 
+// packages/ui-core/src/format.ts
+var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var LATIN_DIGITS = "0123456789";
+function toLatinDigits(s) {
+  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
+}
+function toBanglaDigits(s) {
+  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
+}
+function formatCount(n, locale) {
+  return locale === "bn" ? toBanglaDigits(n) : String(n);
+}
+function formatBdt(amount) {
+  const n = typeof amount === "string" ? Number(toLatinDigits(amount)) : amount;
+  if (!Number.isFinite(n)) return "\u09F3 \u2014";
+  return `\u09F3 ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+var BN_MONTHS = [
+  "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AE\u09BE\u09B0\u09CD\u099A",
+  "\u098F\u09AA\u09CD\u09B0\u09BF\u09B2",
+  "\u09AE\u09C7",
+  "\u099C\u09C1\u09A8",
+  "\u099C\u09C1\u09B2\u09BE\u0987",
+  "\u0986\u0997\u09B8\u09CD\u099F",
+  "\u09B8\u09C7\u09AA\u09CD\u099F\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u0985\u0995\u09CD\u099F\u09CB\u09AC\u09B0",
+  "\u09A8\u09AD\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u09A1\u09BF\u09B8\u09C7\u09AE\u09CD\u09AC\u09B0"
+];
+var EN_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+function formatDayMonth(isoDate, locale) {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
+}
+
 // services/ops-svc/api/structure.ts
 var STRUCTURE_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
 var STREAMS = /* @__PURE__ */ new Set([
@@ -3472,6 +3523,20 @@ async function handler14(req, res) {
       requireStaff(claims);
       json(res, 200, await options(db, ctx), cors);
       return;
+    }
+    if (req.method === "PATCH") {
+      requireRole(claims, STRUCTURE_ROLES);
+      const body2 = await readJson(req);
+      switch (body2.kind) {
+        case "class":
+          json(res, 200, await updateClass(db, ctx, body2), cors);
+          return;
+        case "section":
+          json(res, 200, await updateSection(db, ctx, body2), cors);
+          return;
+        default:
+          throw new HttpError(400, "kind must be class or section", "bad_kind", { field: "kind" });
+      }
     }
     if (req.method !== "POST") {
       json(res, 405, { error: "method_not_allowed" }, cors);
@@ -3567,6 +3632,88 @@ async function createClass(db, ctx, b) {
       after: { levelNo, nameBn, stream, group }
     });
     return { id, kind: "class", levelNo, nameBn, nameEn, stream, group };
+  });
+}
+var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireId(b) {
+  const id = (b.id ?? "").trim();
+  if (!UUID_RE4.test(id)) throw new HttpError(400, "id \u09A6\u09B0\u0995\u09BE\u09B0", "bad_id", { field: "id" });
+  return id;
+}
+async function updateClass(db, ctx, b) {
+  const id = requireId(b);
+  const nameBn = (b.nameBn ?? "").trim();
+  if (!nameBn) throw new HttpError(400, "\u09AC\u09BE\u0982\u09B2\u09BE \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_name", { field: "nameBn" });
+  const nameEn = (b.nameEn ?? "").trim() || nameBn;
+  const displayOrder = Number.isFinite(Number(b.displayOrder)) ? Number(b.displayOrder) : void 0;
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(`SELECT name_bn, name_en, display_order FROM classes WHERE id = $1`, [id]);
+    if (before.length === 0) throw new HttpError(404, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "class_not_found");
+    const { rowCount } = await c.query(
+      `UPDATE classes
+          SET name_bn = $2, name_en = $3,
+              display_order = COALESCE($4, display_order)
+        WHERE id = $1`,
+      [id, nameBn, nameEn, displayOrder ?? null]
+    );
+    if (rowCount === 0) throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
+    await writeAudit(c, ctx, {
+      action: "academic.class.update",
+      entityType: "class",
+      entityId: id,
+      before: {
+        nameBn: before[0].name_bn,
+        nameEn: before[0].name_en,
+        displayOrder: before[0].display_order
+      },
+      after: { nameBn, nameEn, displayOrder: displayOrder ?? before[0].display_order }
+    });
+    return { id, kind: "class", nameBn, nameEn };
+  });
+}
+async function updateSection(db, ctx, b) {
+  const id = requireId(b);
+  const name = (b.name ?? "").trim();
+  if (!name) throw new HttpError(400, "\u09B8\u09C7\u0995\u09B6\u09A8\u09C7\u09B0 \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8", "bad_name", { field: "name" });
+  if (name.length > 20) throw new HttpError(400, "\u09A8\u09BE\u09AE \u0996\u09C1\u09AC \u09AC\u09A1\u09BC", "bad_name", { field: "name" });
+  const capacity = Number(b.capacity);
+  const hasCapacity = b.capacity !== void 0 && b.capacity !== null && b.capacity !== "";
+  if (hasCapacity && (!Number.isInteger(capacity) || capacity < 1 || capacity > 300)) {
+    throw new HttpError(
+      400,
+      "\u09A7\u09BE\u09B0\u09A3\u0995\u09CD\u09B7\u09AE\u09A4\u09BE \u09E7 \u09A5\u09C7\u0995\u09C7 \u09E9\u09E6\u09E6-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8",
+      "bad_capacity",
+      { field: "capacity" }
+    );
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(`SELECT name, capacity, student_count FROM sections WHERE id = $1`, [id]);
+    if (before.length === 0) throw new HttpError(404, "\u09B8\u09C7\u0995\u09B6\u09A8 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "section_not_found");
+    if (hasCapacity && capacity < before[0].student_count) {
+      throw new HttpError(
+        400,
+        // Bangla digits here too. The message is read by the same person, on
+        // the same screen, immediately under a helper that says it in Bangla.
+        `\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u098F\u0996\u09A8 ${formatCount(before[0].student_count, "bn")} \u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0986\u099B\u09C7 \u2014 \u09A7\u09BE\u09B0\u09A3\u0995\u09CD\u09B7\u09AE\u09A4\u09BE \u09A4\u09BE\u09B0 \u0995\u09AE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE`,
+        "capacity_below_enrolled",
+        { field: "capacity" }
+      );
+    }
+    const { rowCount } = await c.query(
+      `UPDATE sections
+          SET name = $2, capacity = COALESCE($3, capacity)
+        WHERE id = $1`,
+      [id, name, hasCapacity ? capacity : null]
+    );
+    if (rowCount === 0) throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
+    await writeAudit(c, ctx, {
+      action: "academic.section.update",
+      entityType: "section",
+      entityId: id,
+      before: { name: before[0].name, capacity: before[0].capacity },
+      after: { name, capacity: hasCapacity ? capacity : before[0].capacity }
+    });
+    return { id, kind: "section", name, capacity: hasCapacity ? capacity : before[0].capacity };
   });
 }
 async function createSection(db, ctx, b) {
@@ -4544,54 +4691,6 @@ function brandedDocumentSet(o) {
     "</body>",
     "</html>"
   ].filter(Boolean).join("\n");
-}
-
-// packages/ui-core/src/format.ts
-var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var LATIN_DIGITS = "0123456789";
-function toLatinDigits(s) {
-  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
-}
-function toBanglaDigits(s) {
-  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
-}
-function formatBdt(amount) {
-  const n = typeof amount === "string" ? Number(toLatinDigits(amount)) : amount;
-  if (!Number.isFinite(n)) return "\u09F3 \u2014";
-  return `\u09F3 ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-var BN_MONTHS = [
-  "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
-  "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
-  "\u09AE\u09BE\u09B0\u09CD\u099A",
-  "\u098F\u09AA\u09CD\u09B0\u09BF\u09B2",
-  "\u09AE\u09C7",
-  "\u099C\u09C1\u09A8",
-  "\u099C\u09C1\u09B2\u09BE\u0987",
-  "\u0986\u0997\u09B8\u09CD\u099F",
-  "\u09B8\u09C7\u09AA\u09CD\u099F\u09C7\u09AE\u09CD\u09AC\u09B0",
-  "\u0985\u0995\u09CD\u099F\u09CB\u09AC\u09B0",
-  "\u09A8\u09AD\u09C7\u09AE\u09CD\u09AC\u09B0",
-  "\u09A1\u09BF\u09B8\u09C7\u09AE\u09CD\u09AC\u09B0"
-];
-var EN_MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December"
-];
-function formatDayMonth(isoDate, locale) {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  if (!y || !m || !d) return isoDate;
-  return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
 }
 
 // packages/ui-core/src/documents.ts

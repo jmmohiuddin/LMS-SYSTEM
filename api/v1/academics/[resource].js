@@ -5419,6 +5419,86 @@ async function loadFees2(c, studentId) {
   };
 }
 
+// services/academics-svc/api/myroutine.ts
+var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+var ROUTINE_ROLES = [
+  "student",
+  "guardian",
+  "class_teacher",
+  "subject_teacher",
+  "principal",
+  "school_owner",
+  "academic_coordinator"
+];
+async function handler22(req, res) {
+  const cors = corsHeaders();
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, ROUTINE_ROLES);
+    const url = new URL(req.url ?? "/", "http://internal");
+    const qsStudent = url.searchParams.get("studentId") ?? "";
+    const qsDate = url.searchParams.get("date") ?? "";
+    if (qsStudent && !UUID_RE18.test(qsStudent)) {
+      throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
+    }
+    if (qsDate && !DATE_RE.test(qsDate)) {
+      throw new HttpError(400, "date must be YYYY-MM-DD", "invalid_date");
+    }
+    if (claims.role === "student" && qsStudent && qsStudent !== claims.sub) {
+      throw new HttpError(403, "a student may only read their own routine", "forbidden");
+    }
+    const studentId = qsStudent || claims.sub;
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const rows = await db.withTenant(ctx, async (c) => {
+      const r = await c.query(
+        `SELECT slot_id, period_no, starts_at::text, ends_at::text, slot_kind,
+                subject_bn, subject_en, section_label, room_code,
+                teacher_name_bn, is_substitution
+           FROM app.student_day($1::uuid, COALESCE($2::date, CURRENT_DATE))`,
+        [studentId, qsDate || null]
+      );
+      return r.rows;
+    });
+    const slots = rows.map((r) => ({
+      slotId: r.slot_id,
+      periodNo: r.period_no,
+      // `time` comes back as HH:MM:SS; the screen wants HH:MM and should not
+      // have to know that.
+      startsAt: r.starts_at.slice(0, 5),
+      endsAt: r.ends_at.slice(0, 5),
+      kind: r.slot_kind,
+      subjectBn: r.subject_bn,
+      subjectEn: r.subject_en,
+      sectionLabel: r.section_label,
+      roomCode: r.room_code,
+      teacherNameBn: r.teacher_name_bn,
+      isSubstitution: r.is_substitution
+    }));
+    json(res, 200, {
+      date: qsDate || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+      studentId,
+      slots
+    }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message }, cors);
+      return;
+    }
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+
 // services/academics-svc/api/index.ts
 var ROUTES = {
   sections: handler,
@@ -5440,6 +5520,7 @@ var ROUTES = {
   subjectchoice: handler17,
   classperf: handler18,
   hierarchy: handler19,
+  myroutine: handler22,
   // R-6. The master plan writes these as /academics/students/search and
   // /academics/students/history — two segments, where both hosts route a
   // single ':resource'. The dispatcher below keys off the LAST segment, so
@@ -5449,7 +5530,7 @@ var ROUTES = {
   search: handler20,
   history: handler21
 };
-async function handler22(req, res) {
+async function handler23(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -5464,5 +5545,5 @@ async function handler22(req, res) {
   return route(req, res);
 }
 export {
-  handler22 as default
+  handler23 as default
 };

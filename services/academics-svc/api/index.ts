@@ -28,6 +28,9 @@ import classperf from './classperf.ts';
 import hierarchy from './hierarchy.ts';
 import search from './search.ts';
 import studenthistory from './studenthistory.ts';
+// B-15 — the student's own day. A sibling of /rms/routine, not a widening
+// of it: different reader, different question, different function.
+import myroutine from './myroutine.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -35,7 +38,7 @@ const ROUTES: Record<string, Handler> = {
   sections, roster, exams, marks, publish, scripts, chapters, topics, results,
   assignments, practice, next, subjects, attendance,
   import: importStudents,
-  ward, subjectchoice, classperf, hierarchy,
+  ward, subjectchoice, classperf, hierarchy, myroutine,
   // R-6. The master plan writes these as /academics/students/search and
   // /academics/students/history — two segments, where both hosts route a
   // single ':resource'. The dispatcher below keys off the LAST segment, so

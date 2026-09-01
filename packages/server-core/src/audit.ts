@@ -61,7 +61,12 @@ export type AuditAction =
   // R-4.
   | 'academic.calendar.create'
   | 'academic.calendar.update'
-  | 'academic.calendar.delete';
+  | 'academic.calendar.delete'
+  // Pre-P5 closure pass (B-6). Correcting a class or section NAME. Not its
+  // level, stream, group, parent class or year — none of those are editable,
+  // because changing them silently re-bases every enrolment beneath them.
+  | 'academic.class.update'
+  | 'academic.section.update';
 
 export interface AuditEntry {
   action: AuditAction;

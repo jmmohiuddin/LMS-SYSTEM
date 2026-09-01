@@ -107,6 +107,21 @@ export interface SyncTransport {
   push(req: PushRequest): Promise<PushResponse>;
 }
 
+/**
+ * Whose ops these are. One device, one origin, potentially several people —
+ * a staff room phone, a family tablet — so an op's owner is a fact about the
+ * op, not about the app.
+ */
+export interface OpOwner {
+  tenantId: string;
+  actorId: string;
+}
+
+/** True when `op` was authored by `owner`. The one definition of that. */
+export function ownedBy(op: Pick<OutboxOp, 'tenantId' | 'actorId'>, owner?: OpOwner): boolean {
+  return !owner || (op.tenantId === owner.tenantId && op.actorId === owner.actorId);
+}
+
 export interface SyncEngineOptions {
   deviceId: string;
   tenantId: string;
@@ -145,11 +160,20 @@ export interface OutboxStore {
   /** Next monotonic seq for this device. */
   nextSeq(): Promise<number>;
   /** Oldest-first pending ops whose nextAttemptAt has elapsed. */
-  claimBatch(limit: number, now: number): Promise<OutboxOp[]>;
+  /**
+   * Oldest-first pending ops whose backoff has elapsed.
+   *
+   * `owner` restricts them to one session's own work. It is optional so the
+   * contract stays usable without it, and every caller in this repo passes it:
+   * on a shared device the outbox holds more than one person's ops and a
+   * session must never post somebody else's under its own token (B-8).
+   */
+  claimBatch(limit: number, now: number, owner?: OpOwner): Promise<OutboxOp[]>;
   update(op: OutboxOp): Promise<void>;
   remove(opId: string): Promise<void>;
   byStatus(status: OpStatus): Promise<OutboxOp[]>;
   get(opId: string): Promise<OutboxOp | undefined>;
   all(): Promise<OutboxOp[]>;
-  counts(): Promise<Record<OpStatus, number>>;
+  /** Tally by status, restricted to `owner` when one is given. */
+  counts(owner?: OpOwner): Promise<Record<OpStatus, number>>;
 }

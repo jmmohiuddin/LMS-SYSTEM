@@ -6,7 +6,7 @@ the repository; where the honest answer is "not built" or "not observed", it
 says so, because a document that rounds those up to "done" is the specific
 failure D17 exists to prevent.
 
-Last reconciled **2026-09-01**, at commit `95c34bf`.
+Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
 
 ## Read in this order
 
@@ -145,21 +145,23 @@ afternoon), and the frontend is *never* the enforcement layer.
 ### 10. What has been completed?
 
 Functional roadmap R-0 … R-7 complete (R-5 and R-6 **PARTIAL** — see the
-board). UI/UX roadmap **P0 … P4 complete**. Full table with the exact
-qualifications: `11-MASTER-PLAN.md` **§5a**.
+board). UI/UX roadmap **P0 … P4 complete**, plus a **Pre-P5 Product Closure
+Pass** that closed `B-6` (class/section rename), `B-8` (logout and cache
+privacy) and `B-15` (the student routine, migration 049). Full table with the
+exact qualifications: `11-MASTER-PLAN.md` **§5a**.
 
 ### 11. What is currently being built?
 
-Nothing is in progress. **P4 closed at `95c34bf`** and the next approved phase
-is **P5 — Principal + IT Admin**, not started. R-8 remains open in
-external-dependency mode.
+Nothing is in progress. P4 closed at `95c34bf`, the Pre-P5 Product Closure
+Pass closed after it, and the next approved phase is **P5 — Principal + IT
+Admin**, not started. R-8 remains open in external-dependency mode.
 
 ### 12. What is not built?
 
 [`BACKLOG.md`](BACKLOG.md), in full, with IDs. The short version: real SMS,
 push observed on a device, an alert webhook, a production cross-tenant probe,
-a pilot school, class/section **edit**, guardian **unlink**, object storage,
-CSV export, operator SSO, section chat.
+a pilot school, guardian **unlink**, object storage, CSV export, operator SSO,
+section chat. (Class/section **edit** was closed by the closure pass.)
 
 ### 13. Why is it not built?
 
@@ -177,18 +179,21 @@ Three different reasons, and they are not interchangeable:
 
 ### 14. What is the next phase?
 
-**P5 — Principal + IT Admin.** It opens with two items P4 identified and
-deliberately did not take: (1) what `doLogout` does about the read-through
-caches on a shared device, given the outbox may hold unsent attendance
-(`B-8`); (2) a section-scoped routine endpoint so a student can be told what
-class is next (`B-15`). Then P6, P7 (+D16), P8, production hardening, the
-final audit.
+**P5 — Principal + IT Admin.** The two items P4 named — `B-8` and `B-15` —
+were taken by the Pre-P5 closure pass, so P5 now opens with **`B-7`, guardian
+unlink**, which that pass audited and deliberately did not force: the
+`guardianships` table cannot express an ended link, and adding that touches
+`app.my_ward_ids()` / `app.can_see_student()` plus 21 read sites including the
+SMS and notice fan-out. Its design is written in PHASE_LOG. Then the principal
+and IT-admin screens, P6, P7 (+D16), P8, production hardening, the final
+audit.
 
 ### 15. What production blockers exist?
 
 `B-3` alert webhook · `B-4` cross-tenant probe on production · `B-5` a pilot
-institution · `B-6` class/section edit. `B-1` (real SMS) blocks SMS login but
-**not** a pilot, because login uses activation codes.
+institution. (`B-6`, class/section edit, was a blocker and is closed.) `B-1`
+(real SMS) blocks SMS login but **not** a pilot, because login uses activation
+codes.
 
 ### 16. What decisions were made?
 
@@ -271,7 +276,10 @@ with a failing type-check that nobody had run.
 - **Never weaken a test** to make a gate green.
 - **Run the gates and read the result.** `npm test` skips the DB suites
   silently unless `DATABASE_URL` is set — it prints "NOTHING RAN" when that
-  happens, and that line is the difference between 1,042 and 1,352 tests.
+  happens, and that line is the difference between ~1,090 and **1,407** tests.
+- **`tsc -p .` does not typecheck `apps/pwa`** — the root config excludes it.
+  CI runs three configs and so must you: `tsconfig.json`,
+  `apps/pwa/tsconfig.json`, `apps/pwa/tsconfig.sw.json` (`B-31`).
 - **Append to `PHASE_LOG.md` before calling anything complete** (D10, D17).
 - Node runs this repository's TypeScript in **strip-only** mode: `tsc` is a
   separate gate, and `constructor(public readonly x)` is valid TypeScript that

@@ -10,7 +10,8 @@
  *  * remove() is the ONLY way an op leaves the store, and the engine calls it
  *    exclusively on a server acknowledgement
  */
-import type { OpStatus, OutboxOp, OutboxStore } from './types.ts';
+import { ownedBy, type OpOwner, type OpStatus, type OutboxOp, type OutboxStore }
+  from './types.ts';
 
 export class MemoryOutboxStore implements OutboxStore {
   private readonly ops = new Map<string, OutboxOp>();
@@ -26,9 +27,9 @@ export class MemoryOutboxStore implements OutboxStore {
     if (op.seq > this.seq) this.seq = op.seq;
   }
 
-  async claimBatch(limit: number, now: number): Promise<OutboxOp[]> {
+  async claimBatch(limit: number, now: number, owner?: OpOwner): Promise<OutboxOp[]> {
     return [...this.ops.values()]
-      .filter((o) => o.status === 'pending' && o.nextAttemptAt <= now)
+      .filter((o) => o.status === 'pending' && o.nextAttemptAt <= now && ownedBy(o, owner))
       .sort((a, b) => a.seq - b.seq)
       .slice(0, limit)
       .map((o) => ({ ...o }));
@@ -56,9 +57,9 @@ export class MemoryOutboxStore implements OutboxStore {
     return [...this.ops.values()].sort((a, b) => a.seq - b.seq);
   }
 
-  async counts(): Promise<Record<OpStatus, number>> {
+  async counts(owner?: OpOwner): Promise<Record<OpStatus, number>> {
     const c: Record<OpStatus, number> = { pending: 0, inflight: 0, conflict: 0, failed: 0 };
-    for (const o of this.ops.values()) c[o.status]++;
+    for (const o of this.ops.values()) if (ownedBy(o, owner)) c[o.status]++;
     return c;
   }
 }
@@ -130,7 +131,7 @@ export class IndexedDbOutboxStore implements OutboxStore {
     }
   }
 
-  async claimBatch(limit: number, now: number): Promise<OutboxOp[]> {
+  async claimBatch(limit: number, now: number, owner?: OpOwner): Promise<OutboxOp[]> {
     const idx = this.tx('readonly').index('status_seq');
     const range = IDBKeyRange.bound(['pending', -Infinity], ['pending', Infinity]);
     const out: OutboxOp[] = [];
@@ -140,7 +141,11 @@ export class IndexedDbOutboxStore implements OutboxStore {
         const cur = req.result;
         if (!cur || out.length >= limit) return resolve();
         const op = cur.value as OutboxOp;
-        if (op.nextAttemptAt <= now) out.push(op);
+        // The owner test sits INSIDE the cursor, beside the backoff test, so
+        // another user's ops are stepped over rather than filling the batch.
+        // Filtering the result instead would let 25 of somebody else's ops
+        // starve this session's out of every round, permanently (B-8).
+        if (op.nextAttemptAt <= now && ownedBy(op, owner)) out.push(op);
         cur.continue();
       };
       req.onerror = () => reject(req.error);
@@ -170,9 +175,9 @@ export class IndexedDbOutboxStore implements OutboxStore {
     return all.sort((a, b) => a.seq - b.seq);
   }
 
-  async counts(): Promise<Record<OpStatus, number>> {
+  async counts(owner?: OpOwner): Promise<Record<OpStatus, number>> {
     const c: Record<OpStatus, number> = { pending: 0, inflight: 0, conflict: 0, failed: 0 };
-    for (const o of await this.all()) c[o.status]++;
+    for (const o of await this.all()) if (ownedBy(o, owner)) c[o.status]++;
     return c;
   }
 }

@@ -9704,3 +9704,5 @@ Every mutation states its consequence, demands a reason of at least three
 characters, confirms inside the surface that raised it, and writes
 `audit.platform_access` carrying the operator's own sentence. The last
 exception — `/status`, the legacy suspension — was closed in this pass.
+
+**Commit:** `c5ab9d0`.

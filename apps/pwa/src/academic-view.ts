@@ -33,7 +33,10 @@ import {
 } from './structure-forms.ts';
 import { openRename } from './structure-edit.ts';
 import { GuardianPanel } from './guardian-panel.ts';
-import { permissionMessage } from './ui/index.ts';
+import {
+  permissionMessage, pageHeader, sectionHeading, buttonRow, button, card,
+  dataTable, statusBadge, field, setFieldError, clearFieldError, el, append,
+  type Field, serverMessage,} from './ui/index.ts';
 
 // ── Shapes returned by /api/v1/academics/hierarchy ──────────────────────
 
@@ -229,7 +232,7 @@ export class AcademicView {
         kind?: string; label?: string; nameBn?: string; name?: string;
         classNameBn?: string; message?: string;
       };
-      if (!res.ok) { this.error = body.message ?? 'তৈরি করা যায়নি।'; return; }
+      if (!res.ok) { this.error = serverMessage(body, res.status, 'তৈরি করা যায়নি।'); return; }
       this.created = body;
       this.creating = null;
       // The options list is now stale — the new class must be selectable as a
@@ -274,7 +277,7 @@ export class AcademicView {
         replaced?: { nameBn: string } | null; unchanged?: boolean;
         teacher?: { nameBn: string }; message?: string;
       };
-      if (!res.ok) { this.error = body.message ?? 'নির্ধারণ করা যায়নি।'; return; }
+      if (!res.ok) { this.error = serverMessage(body, res.status, 'নির্ধারণ করা যায়নি।'); return; }
       this.error = '';
       this.notice = body.unchanged
         ? 'ইনি ইতিমধ্যে এই দায়িত্বে ছিলেন — কিছু পরিবর্তন হয়নি।'
@@ -303,7 +306,7 @@ export class AcademicView {
         committed?: boolean; overCapacity?: boolean; message?: string;
         section?: { countAfter: number; capacity: number };
       };
-      if (!res.ok) { this.error = body.message ?? 'স্থানান্তর করা যায়নি।'; return; }
+      if (!res.ok) { this.error = serverMessage(body, res.status, 'স্থানান্তর করা যায়নি।'); return; }
       this.error = '';
       if (body.committed) {
         this.notice = `${bnNum(body.moving?.length ?? 0)} জন শিক্ষার্থী স্থানান্তরিত হয়েছে।`;
@@ -366,38 +369,86 @@ export class AcademicView {
     }
   }
 
-  /** Breadcrumb + back. Depth without a way out is a trap on a phone. */
+  /**
+   * The trail, as real crumbs rather than a sentence.
+   *
+   * `pageHeader`'s `crumbs` render as links a person can click to jump two
+   * levels back — the old `page-sub` said "শিক্ষাবর্ষ ২০২৬ · নবম শ্রেণি · ..."
+   * as prose, which reads the same and goes nowhere. The back button stays:
+   * on a phone the crumb row is the least reachable thing on the screen.
+   */
   private header(): HTMLElement {
     const d = this.o.doc;
-    const header = d.createElement('header');
-    header.className = 'page-header';
-
+    const crumbs: Array<{ label: string; onClick?: () => void }> = [];
+    const year = this.tree?.year?.label ?? '';
     if (this.depth.at !== 'tree') {
-      const bar = d.createElement('div');
-      bar.className = 'back-bar';
-      const back = d.createElement('button');
-      back.type = 'button';
-      back.className = 'back-btn';
-      back.textContent = '← ফিরে যান';
-      back.addEventListener('click', () => {
+      crumbs.push({
+        label: year ? `শিক্ষাবর্ষ ${year}` : 'একাডেমিক কাঠামো',
+        onClick: () => { this.depth = { at: 'tree' }; this.error = ''; this.notice = ''; this.render(); },
+      });
+    }
+    if (this.depth.at === 'section' && this.detail) {
+      const levelNo = this.detail.section.levelNo;
+      crumbs.push({
+        label: this.detail.section.classNameBn,
+        onClick: () => { this.depth = { at: 'level', levelNo }; this.error = ''; this.render(); },
+      });
+    }
+    if (this.depth.at === 'student') {
+      // Resolved from the TREE by the id we drilled through, not from
+      // `student.current.section`. Those are the same row in real data and
+      // were not in the demo — and a crumb that names a section other than
+      // the one the person came from sends them somewhere else when clicked.
+      const sectionId = this.depth.sectionId;
+      const found = this.findSection(sectionId);
+      if (found) {
+        crumbs.push({
+          label: found.classNameBn,
+          onClick: () => { this.depth = { at: 'level', levelNo: found.levelNo }; this.error = ''; this.render(); },
+        });
+        crumbs.push({
+          label: `সেকশন ${found.name}`,
+          onClick: () => void this.openSection(sectionId),
+        });
+      }
+    }
+
+    // The current depth, as the LAST crumb. `breadcrumb()` renders the final
+    // entry as "you are here" and every earlier one as a link — so without
+    // this the one crumb at level depth was plain text and went nowhere. It
+    // repeats the h1 on purpose: that is what a breadcrumb trail is.
+    if (crumbs.length) crumbs.push({ label: this.title() });
+
+    const back = this.depth.at === 'tree' ? undefined : button(d, {
+      label: 'ফিরে যান', variant: 'ghost', size: 'sm', glyph: 'arrow-left',
+      onClick: () => {
         this.notice = '';
         if (this.depth.at === 'student') void this.openSection(this.depth.sectionId);
         else if (this.depth.at === 'section') { this.depth = { at: 'tree' }; this.error = ''; this.render(); }
         else { this.depth = { at: 'tree' }; this.render(); }
-      });
-      bar.append(back);
-      header.append(bar);
+      },
+    });
+
+    return pageHeader(d, {
+      title: this.title(),
+      subtitle: this.subtitle(),
+      crumbs: crumbs.length ? crumbs : undefined,
+      actions: back ? [back] : undefined,
+    });
+  }
+
+  /** Where a section sits in the tree, by id. Used by the crumbs. */
+  private findSection(sectionId: string): { name: string; classNameBn: string; levelNo: number } | null {
+    for (const lvl of this.tree?.classes ?? []) {
+      for (const g of lvl.groups) {
+        for (const sec of g.sections) {
+          if (sec.id === sectionId) {
+            return { name: sec.name, classNameBn: `${lvl.nameBn} · ${g.groupBn}`, levelNo: lvl.levelNo };
+          }
+        }
+      }
     }
-
-    const h1 = d.createElement('h1');
-    h1.textContent = this.title();
-    header.append(h1);
-
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.breadcrumb();
-    header.append(sub);
-    return header;
+    return null;
   }
 
   private title(): string {
@@ -414,7 +465,11 @@ export class AcademicView {
     return 'একাডেমিক কাঠামো';
   }
 
-  private breadcrumb(): string {
+  /**
+   * The one line of context the crumbs cannot carry: how many people this
+   * depth is about. Renamed from `breadcrumb` because the crumbs are now real.
+   */
+  private subtitle(): string {
     const year = this.tree?.year?.label ?? '';
     if (this.depth.at === 'section' && this.detail) {
       const s = this.detail.section;
@@ -441,24 +496,19 @@ export class AcademicView {
   private createBar(kinds: StructureKind[]): HTMLElement | null {
     if (!this.o.canManage || this.creating) return null;
     const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'action-row';
-    bar.style.padding = '0 var(--s-4) var(--s-3)';
     const labels: Record<StructureKind, string> = {
       year: 'শিক্ষাবর্ষ তৈরি', class: 'নতুন শ্রেণি', section: 'নতুন সেকশন',
     };
-    for (const k of kinds) {
-      const b = d.createElement('button');
-      b.type = 'button';
-      b.className = 'btn-secondary btn-small';
-      b.textContent = labels[k];
-      b.addEventListener('click', () => {
+    const glyphs: Record<StructureKind, string> = {
+      year: 'calendar', class: 'layers', section: 'users',
+    };
+    return buttonRow(d, ...kinds.map((k) => button(d, {
+      label: labels[k], variant: 'secondary', size: 'sm', glyph: glyphs[k],
+      onClick: () => {
         this.creating = k; this.created = null;
         if (!this.structureOptions) void this.loadStructureOptions(); else this.render();
-      });
-      bar.append(b);
-    }
-    return bar;
+      },
+    })));
   }
 
   private renderTree(root: HTMLElement): void {
@@ -487,46 +537,45 @@ export class AcademicView {
       }));
       return;
     }
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const lvl of levels) {
-      const row = d.createElement('button');
-      row.type = 'button';
-      row.className = 'system-row';
-      const t = d.createElement('span');
-      t.className = 'system-title';
-      t.textContent = lvl.nameBn;
-      const desc = d.createElement('span');
-      desc.className = 'system-desc';
-      // The counts the brief asks for at every level.
-      desc.textContent =
-        `${lvl.groups.map((g) => g.groupBn).join(' · ')} · ` +
-        `${bnNum(lvl.sectionCount)} সেকশন · ${bnNum(lvl.studentCount)} জন`;
-      row.append(t, desc);
-      row.addEventListener('click', () => { this.depth = { at: 'level', levelNo: lvl.levelNo }; this.render(); });
-      list.append(row);
-    }
-    root.append(list);
+    // The counts the brief asks for, as COLUMNS rather than a sentence: a
+    // head teacher comparing section counts across six classes reads a column
+    // in one pass and a run-on `·` line six times.
+    root.append(dataTable(d, {
+      caption: 'শ্রেণির তালিকা',
+      rows: levels,
+      rowKey: (l) => String(l.levelNo),
+      onRowClick: (l) => { this.depth = { at: 'level', levelNo: l.levelNo }; this.render(); },
+      columns: [
+        { key: 'name', header: 'শ্রেণি', mobile: 'title', cell: (l) => l.nameBn,
+          width: 'minmax(0, 1.4fr)' },
+        { key: 'groups', header: 'বিভাগ', mobile: 'subtitle',
+          cell: (l) => l.groups.map((g) => g.groupBn).join(' · ') || 'বিভাগ নেই',
+          width: 'minmax(0, 2fr)' },
+        { key: 'sections', header: 'সেকশন', mobile: 'meta', numeric: true,
+          cell: (l) => bnNum(l.sectionCount), width: '110px' },
+        { key: 'students', header: 'শিক্ষার্থী', mobile: 'meta', numeric: true,
+          cell: (l) => bnNum(l.studentCount), width: '110px' },
+      ],
+    }));
   }
 
   /** B-6. "Correct the name" for one `classes` row. */
   private renameClassButton(
     classId: string, nameBn: string, nameEn: string, levelNo: number,
-  ): HTMLButtonElement {
+  ): HTMLElement {
     const d = this.o.doc;
-    const b = d.createElement('button');
-    b.type = 'button';
-    b.className = 'btn-secondary btn-small';
-    b.textContent = 'শ্রেণির নাম সংশোধন';
-    b.addEventListener('click', () => {
-      openRename({
-        doc: d,
-        auth: this.o.auth,
-        target: { kind: 'class', id: classId, nameBn, nameEn },
-        // Re-read the tree: the level heading, the breadcrumb and every row
-        // beneath carry this name.
-        onSaved: () => { this.depth = { at: 'level', levelNo }; void this.loadTree(); },
-      });
+    const b = button(d, {
+      label: 'শ্রেণির নাম সংশোধন', variant: 'secondary', size: 'sm', glyph: 'edit',
+      onClick: () => {
+        openRename({
+          doc: d,
+          auth: this.o.auth,
+          target: { kind: 'class', id: classId, nameBn, nameEn },
+          // Re-read the tree: the level heading, the crumbs and every row
+          // beneath carry this name.
+          onSaved: () => { this.depth = { at: 'level', levelNo }; void this.loadTree(); },
+        });
+      },
     });
     return b;
   }
@@ -558,12 +607,8 @@ export class AcademicView {
 
       // One class row per group, so the rename sits with the group it names.
       if (this.o.canManage && lvl.groups.length > 1) {
-        const gbar = d.createElement('div');
-        gbar.className = 'action-row';
-        gbar.style.padding = '0 var(--s-4) var(--s-3)';
-        gbar.append(this.renameClassButton(
-          g.classId, `${lvl.nameBn} — ${g.groupBn}`, lvl.nameEn, levelNo));
-        root.append(gbar);
+        root.append(buttonRow(d, this.renameClassButton(
+          g.classId, `${lvl.nameBn} — ${g.groupBn}`, lvl.nameEn, levelNo)));
       }
 
       if (g.sections.length === 0) {
@@ -579,36 +624,30 @@ export class AcademicView {
         continue;
       }
 
-      const list = d.createElement('div');
-      list.className = 'system-list';
-      for (const s of g.sections) {
-        const row = d.createElement('button');
-        row.type = 'button';
-        row.className = 'system-row';
-        const t = d.createElement('span');
-        t.className = 'system-title';
-        t.textContent = `সেকশন ${s.name}`;
-        const desc = d.createElement('span');
-        desc.className = 'system-desc';
-        desc.textContent =
-          `${bnNum(s.studentCount)} জন · ` +
-          (s.classTeacher ? `শ্রেণি শিক্ষক: ${s.classTeacher.nameBn}` : 'শ্রেণি শিক্ষক নেই') +
-          ` · ${bnNum(s.subjectTeacherCount)} বিষয় শিক্ষক`;
-        row.append(t, desc);
-        // A section with no class teacher is the thing this screen exists to
-        // surface, so it is marked rather than left to be read out of a
-        // sentence.
-        if (!s.classTeacher) {
-          const chip = d.createElement('span');
-          chip.className = 'status-chip';
-          chip.setAttribute('data-state', 'warning');
-          chip.textContent = 'শিক্ষক নেই';
-          row.append(chip);
-        }
-        row.addEventListener('click', () => void this.openSection(s.id));
-        list.append(row);
-      }
-      root.append(list);
+      root.append(dataTable(d, {
+        caption: `${lvl.nameBn} ${g.groupBn} — সেকশনের তালিকা`,
+        rows: g.sections,
+        rowKey: (sec) => sec.id,
+        onRowClick: (sec) => void this.openSection(sec.id),
+        columns: [
+          { key: 'name', header: 'সেকশন', mobile: 'title',
+            cell: (sec) => `সেকশন ${sec.name}`, width: 'minmax(0, 1fr)' },
+          { key: 'teacher', header: 'শ্রেণি শিক্ষক', mobile: 'subtitle',
+            cell: (sec) => sec.classTeacher?.nameBn ?? 'নির্ধারণ করা হয়নি',
+            width: 'minmax(0, 2fr)' },
+          { key: 'subj', header: 'বিষয় শিক্ষক', mobile: 'meta', numeric: true,
+            cell: (sec) => bnNum(sec.subjectTeacherCount), width: '120px' },
+          { key: 'students', header: 'শিক্ষার্থী', mobile: 'meta', numeric: true,
+            cell: (sec) => bnNum(sec.studentCount), width: '110px' },
+          // A section with no class teacher is the thing this screen exists to
+          // surface, so it is a state in its own column rather than a clause
+          // at the end of a sentence.
+          { key: 'state', header: 'অবস্থা', mobile: 'status', width: '130px',
+            cell: (sec) => sec.classTeacher
+              ? statusBadge(d, { state: 'published', label: 'সম্পূর্ণ' })
+              : statusBadge(d, { state: 'pending', label: 'শিক্ষক নেই' }) },
+        ],
+      }));
     }
   }
 
@@ -622,206 +661,184 @@ export class AcademicView {
     // value in front of you, and a pencil against forty rows invites the
     // wrong one. Same four roles the endpoint and migration 042 allow.
     if (this.o.canManage) {
-      const bar = d.createElement('div');
-      bar.className = 'action-row';
-      bar.style.padding = '0 var(--s-4) var(--s-3)';
-      const rename = d.createElement('button');
-      rename.type = 'button';
-      rename.className = 'btn-secondary btn-small';
-      rename.textContent = 'নাম সংশোধন করুন';
-      rename.addEventListener('click', () => {
-        openRename({
-          doc: d,
-          auth: this.o.auth,
-          target: {
-            kind: 'section', id: det.section.id, nameBn: det.section.name,
-            capacity: det.section.capacity, studentCount: det.section.studentCount,
-          },
-          // Re-read rather than patch in place: the tree, the heading and the
-          // breadcrumb all carry this name, and one of them would be missed.
-          onSaved: () => { void this.openSection(det.section.id); },
-        });
-      });
-      bar.append(rename);
-      root.append(bar);
+      root.append(buttonRow(d, button(d, {
+        label: 'নাম সংশোধন করুন', variant: 'secondary', size: 'sm', glyph: 'edit',
+        onClick: () => {
+          openRename({
+            doc: d,
+            auth: this.o.auth,
+            target: {
+              kind: 'section', id: det.section.id, nameBn: det.section.name,
+              capacity: det.section.capacity, studentCount: det.section.studentCount,
+            },
+            // Re-read rather than patch in place: the tree, the heading and
+            // the crumbs all carry this name.
+            onSaved: () => { void this.openSection(det.section.id); },
+          });
+        },
+      })));
     }
 
     // ── Class teacher ──
-    const h1 = d.createElement('h2');
-    h1.className = 'section-heading';
-    h1.textContent = 'শ্রেণি শিক্ষক';
-    root.append(h1);
-
-    const ctCard = d.createElement('div');
-    ctCard.className = 'card';
-    ctCard.style.margin = '0 var(--s-4) var(--s-3)';
-    const ctName = d.createElement('p');
-    ctName.className = 'system-title';
-    ctName.textContent = det.classTeacher?.nameBn ?? 'নির্ধারণ করা হয়নি';
-    ctCard.append(ctName);
-    if (det.classTeacher?.since) {
-      const since = d.createElement('p');
-      since.className = 'att-sub';
-      since.textContent = `${bnDate(det.classTeacher.since)} থেকে`;
-      ctCard.append(since);
-    }
-    if (this.o.canManage) {
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-secondary btn-small';
-      btn.textContent = det.classTeacher ? 'শিক্ষক বদল করুন' : 'শিক্ষক নির্ধারণ করুন';
-      btn.addEventListener('click', () => {
-        this.panel = 'assign';
-        this.assignTarget = { subjectId: null, subjectBn: 'শ্রেণি শিক্ষক', current: det.classTeacher?.nameBn ?? null };
-        if (!this.candidates) void this.loadCandidates(det.section.id); else this.render();
-      });
-      ctCard.append(btn);
-    }
-    root.append(ctCard);
+    // A card rather than a heading plus a bare div: the assign/replace action
+    // belongs in the card's own header row, beside the thing it changes.
+    root.append(card(d, {
+      title: 'শ্রেণি শিক্ষক',
+      glyph: 'user',
+      tone: det.classTeacher ? 'primary' : 'warn',
+      action: this.o.canManage
+        ? button(d, {
+            label: det.classTeacher ? 'শিক্ষক বদল করুন' : 'শিক্ষক নির্ধারণ করুন',
+            variant: 'secondary', size: 'sm',
+            onClick: () => {
+              this.panel = 'assign';
+              this.assignTarget = {
+                subjectId: null, subjectBn: 'শ্রেণি শিক্ষক',
+                current: det.classTeacher?.nameBn ?? null,
+              };
+              if (!this.candidates) void this.loadCandidates(det.section.id); else this.render();
+            },
+          })
+        : undefined,
+    },
+      el(d, 'p', {
+        className: 'ui-card-lead',
+        text: det.classTeacher?.nameBn ?? 'নির্ধারণ করা হয়নি',
+      }),
+      det.classTeacher?.since
+        ? el(d, 'p', { className: 'ui-card-note', text: `${bnDate(det.classTeacher.since)} থেকে` })
+        : null,
+    ));
 
     // ── Subject teachers ──
-    const h2 = d.createElement('h2');
-    h2.className = 'section-heading';
-    h2.textContent = `বিষয় শিক্ষক · ${bnNum(det.subjectTeachers.length)}`;
-    root.append(h2);
-
-    if (det.subjectTeachers.length === 0 && det.unassignedSubjects.length === 0) {
-      root.append(emptyState(d, {
-        message: 'এই শ্রেণির জন্য কোনো বিষয় নির্ধারণ করা হয়নি।',
-      }));
-    } else {
-      const list = d.createElement('div');
-      list.className = 'system-list';
-      for (const st of det.subjectTeachers) {
-        list.append(this.subjectRow(det.section.id, st.subject.id, st.subject.nameBn, st.teacher.nameBn));
-      }
-      // Subjects with nobody teaching them — the most useful thing this
-      // screen can tell a principal in January.
-      for (const u of det.unassignedSubjects) {
-        list.append(this.subjectRow(det.section.id, u.id, u.nameBn, null));
-      }
-      root.append(list);
-    }
+    // Assigned and unassigned in ONE table, unassigned last. Two lists would
+    // let a principal read the first one and stop; the empty subjects are the
+    // most useful thing this screen can tell them in January.
+    const subjectRows: Array<{ subjectId: string; subjectBn: string; teacherBn: string | null }> = [
+      ...det.subjectTeachers.map((st) => ({
+        subjectId: st.subject.id, subjectBn: st.subject.nameBn, teacherBn: st.teacher.nameBn,
+      })),
+      ...det.unassignedSubjects.map((u) => ({
+        subjectId: u.id, subjectBn: u.nameBn, teacherBn: null,
+      })),
+    ];
+    root.append(sectionHeading(d, { title: `বিষয় শিক্ষক · ${bnNum(subjectRows.length)}` }));
+    root.append(dataTable(d, {
+      caption: 'বিষয় ও শিক্ষকের তালিকা',
+      rows: subjectRows,
+      rowKey: (r) => r.subjectId,
+      onRowClick: this.o.canManage
+        ? (r) => {
+            this.panel = 'assign';
+            this.assignTarget = {
+              subjectId: r.subjectId, subjectBn: r.subjectBn, current: r.teacherBn,
+            };
+            if (!this.candidates) void this.loadCandidates(det.section.id); else this.render();
+          }
+        : undefined,
+      empty: { message: 'এই শ্রেণির জন্য কোনো বিষয় নির্ধারণ করা হয়নি।' },
+      columns: [
+        { key: 'subject', header: 'বিষয়', mobile: 'title', cell: (r) => r.subjectBn,
+          width: 'minmax(0, 1.6fr)' },
+        { key: 'teacher', header: 'শিক্ষক', mobile: 'subtitle',
+          cell: (r) => r.teacherBn ?? 'নির্ধারণ করা হয়নি', width: 'minmax(0, 2fr)' },
+        { key: 'state', header: 'অবস্থা', mobile: 'status', width: '120px',
+          cell: (r) => r.teacherBn
+            ? statusBadge(d, { state: 'published', label: 'নির্ধারিত' })
+            : statusBadge(d, { state: 'pending', label: 'খালি' }) },
+      ],
+    }));
 
     if (this.panel === 'assign') root.append(this.assignPanel(det));
 
     // ── History ──
     if (det.history.length > 0) {
-      const h3 = d.createElement('h2');
-      h3.className = 'section-heading';
-      h3.textContent = 'দায়িত্ব পরিবর্তনের রেকর্ড';
-      root.append(h3);
-      const list = d.createElement('div');
-      list.className = 'system-list';
-      for (const h of det.history) {
-        const row = d.createElement('div');
-        row.className = 'system-row';
-        const t = d.createElement('span');
-        t.className = 'system-title';
-        t.textContent = h.subjectBn ? `${h.subjectBn} — ${h.teacherBn}` : `শ্রেণি শিক্ষক — ${h.teacherBn}`;
-        const desc = d.createElement('span');
-        desc.className = 'system-desc';
-        desc.textContent = `${bnDate(h.startedOn)} → ${bnDate(h.endedOn)} · ${h.endReason}`;
-        row.append(t, desc);
-        list.append(row);
-      }
-      root.append(list);
+      root.append(sectionHeading(d, { title: 'দায়িত্ব পরিবর্তনের রেকর্ড' }));
+      root.append(dataTable(d, {
+        caption: 'দায়িত্ব পরিবর্তনের রেকর্ড',
+        rows: det.history,
+        rowKey: (h) => `${h.teacherBn}-${h.startedOn}-${h.subjectBn ?? 'ct'}`,
+        columns: [
+          { key: 'role', header: 'দায়িত্ব', mobile: 'title',
+            cell: (h) => h.subjectBn ?? 'শ্রেণি শিক্ষক', width: 'minmax(0, 1.4fr)' },
+          { key: 'teacher', header: 'শিক্ষক', mobile: 'subtitle', cell: (h) => h.teacherBn,
+            width: 'minmax(0, 1.6fr)' },
+          { key: 'period', header: 'সময়কাল', mobile: 'meta',
+            cell: (h) => `${bnDate(h.startedOn)} → ${bnDate(h.endedOn)}`,
+            width: 'minmax(0, 1.6fr)' },
+          { key: 'reason', header: 'কারণ', mobile: 'meta', cell: (h) => h.endReason,
+            width: 'minmax(0, 1.4fr)' },
+        ],
+      }));
     }
 
     // ── Roster ──
-    const h4 = d.createElement('h2');
-    h4.className = 'section-heading';
-    h4.textContent = `শিক্ষার্থী · ${bnNum(det.roster.length)}`;
-    root.append(h4);
+    root.append(sectionHeading(d, {
+      title: `শিক্ষার্থী · ${bnNum(det.roster.length)}`,
+      action: this.o.canManage && det.roster.length > 0
+        ? button(d, {
+            label: this.panel === 'move' ? 'নির্বাচন বন্ধ করুন' : 'একসাথে স্থানান্তর',
+            variant: 'ghost', size: 'sm',
+            onClick: () => {
+              this.panel = this.panel === 'move' ? 'none' : 'move';
+              this.selected.clear();
+              this.render();
+            },
+          })
+        : undefined,
+    }));
 
-    if (det.roster.length === 0) {
-      root.append(emptyState(d, {
+    root.append(dataTable(d, {
+      caption: `সেকশন ${det.section.name} — শিক্ষার্থীর তালিকা`,
+      rows: det.roster,
+      rowKey: (r) => r.studentId,
+      // While selecting for a move, the row must NOT navigate: a tap that
+      // opens a child's record when the person meant to tick them loses the
+      // whole selection.
+      onRowClick: this.panel === 'move' ? undefined : (r) => void this.openStudent(r.studentId),
+      empty: {
         message: 'এই সেকশনে এখনো কোনো শিক্ষার্থী নেই। অন্য সেকশন থেকে স্থানান্তর করুন বা আমদানি করুন।',
-      }));
-      return;
-    }
-
-    if (this.o.canManage) {
-      const bar = d.createElement('div');
-      bar.className = 'action-row';
-      bar.style.padding = '0 var(--s-4) var(--s-2)';
-      const sel = d.createElement('button');
-      sel.type = 'button';
-      sel.className = 'btn-ghost btn-small';
-      sel.textContent = this.panel === 'move' ? 'নির্বাচন বন্ধ করুন' : 'একসাথে স্থানান্তর';
-      sel.addEventListener('click', () => {
-        this.panel = this.panel === 'move' ? 'none' : 'move';
-        this.selected.clear();
-        this.render();
-      });
-      bar.append(sel);
-      root.append(bar);
-    }
-
-    const list = d.createElement('ul');
-    list.className = 'roster-list';
-    for (const s of det.roster) {
-      const li = d.createElement('li');
-      li.className = 'roster-row';
-
-      if (this.panel === 'move') {
-        const cb = d.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = this.selected.has(s.studentId);
-        cb.setAttribute('aria-label', `${s.nameBn} নির্বাচন`);
-        cb.addEventListener('change', () => {
-          if (cb.checked) this.selected.add(s.studentId); else this.selected.delete(s.studentId);
-          this.render();
-        });
-        li.append(cb);
-      }
-
-      const roll = d.createElement('span');
-      roll.className = 'roster-roll';
-      roll.textContent = bnNum(s.rollNo);
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'roster-name';
-      btn.style.textAlign = 'start';
-      btn.textContent = s.nameBn;
-      btn.addEventListener('click', () => void this.openStudent(s.studentId));
-      li.append(roll, btn);
-      list.append(li);
-    }
-    root.append(list);
+      },
+      columns: [
+        ...(this.panel === 'move' ? [{
+          key: 'pick', header: 'নির্বাচন', mobile: 'status' as const, width: '96px',
+          cell: (r: { studentId: string; nameBn: string }) => this.pickBox(r.studentId, r.nameBn),
+        }] : []),
+        { key: 'roll', header: 'রোল', mobile: 'meta', numeric: true,
+          cell: (r) => bnNum(r.rollNo), width: '90px' },
+        { key: 'name', header: 'নাম', mobile: 'title', cell: (r) => r.nameBn,
+          width: 'minmax(0, 2fr)' },
+        // The school's permanent id, never the uuid.
+        { key: 'code', header: 'স্থায়ী আইডি', mobile: 'meta',
+          cell: (r) => r.studentCode || '—', width: 'minmax(0, 1fr)' },
+        { key: 'status', header: 'অবস্থা', mobile: 'status', width: '120px',
+          cell: (r) => statusBadge(d, {
+            state: r.status === 'active' ? 'published' : 'overdue',
+            label: r.status === 'active' ? 'সক্রিয়' : r.status,
+          }) },
+      ],
+    }));
 
     if (this.panel === 'move' && this.selected.size > 0) root.append(this.movePanel(det));
   }
 
-  private subjectRow(
-    sectionId: string, subjectId: string, subjectBn: string, teacherBn: string | null,
-  ): HTMLElement {
+  /**
+   * One roster checkbox. Wrapped in its own `<label>` because a bare 13px
+   * `<input type=checkbox>` is not a touch target — the label is what a
+   * thumb hits, and it is what a screen reader announces.
+   */
+  private pickBox(studentId: string, nameBn: string): HTMLElement {
     const d = this.o.doc;
-    const row = d.createElement(this.o.canManage ? 'button' : 'div');
-    row.className = 'system-row';
-    if (row instanceof HTMLButtonElement) row.type = 'button';
-    const t = d.createElement('span');
-    t.className = 'system-title';
-    t.textContent = subjectBn;
-    const desc = d.createElement('span');
-    desc.className = 'system-desc';
-    desc.textContent = teacherBn ?? 'শিক্ষক নির্ধারণ করা হয়নি';
-    row.append(t, desc);
-    if (!teacherBn) {
-      const chip = d.createElement('span');
-      chip.className = 'status-chip';
-      chip.setAttribute('data-state', 'warning');
-      chip.textContent = 'খালি';
-      row.append(chip);
-    }
-    if (this.o.canManage) {
-      row.addEventListener('click', () => {
-        this.panel = 'assign';
-        this.assignTarget = { subjectId, subjectBn, current: teacherBn };
-        if (!this.candidates) void this.loadCandidates(sectionId); else this.render();
-      });
-    }
-    return row;
+    const box = el(d, 'input', { className: 'ui-check-box' }) as HTMLInputElement;
+    box.type = 'checkbox';
+    box.checked = this.selected.has(studentId);
+    box.addEventListener('change', () => {
+      if (box.checked) this.selected.add(studentId); else this.selected.delete(studentId);
+      this.render();
+    });
+    const label = el(d, 'label', { className: 'ui-check' }, box,
+      el(d, 'span', { className: 'ui-sr-only', text: `${nameBn} নির্বাচন` }));
+    return label;
   }
 
   private assignTarget: { subjectId: string | null; subjectBn: string; current: string | null } | null = null;
@@ -829,103 +846,102 @@ export class AcademicView {
   private assignPanel(det: SectionDetail): HTMLElement {
     const d = this.o.doc;
     const target = this.assignTarget;
-    const card = d.createElement('form');
-    card.className = 'card card-form';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
+    const form = el(d, 'form', { className: 'ui-card ui-card-form' });
 
-    const h = d.createElement('p');
-    h.className = 'notice-confirm-label';
-    h.textContent = target?.current
-      ? `${target.subjectBn} — শিক্ষক বদল`
-      : `${target?.subjectBn ?? ''} — শিক্ষক নির্ধারণ`;
-    card.append(h);
+    append(form, el(d, 'h3', {
+      className: 'ui-card-title',
+      text: target?.current
+        ? `${target.subjectBn} — শিক্ষক বদল`
+        : `${target?.subjectBn ?? ''} — শিক্ষক নির্ধারণ`,
+    }));
 
-    if (!this.candidates) { card.append(skeleton(d, 2)); return card; }
+    if (!this.candidates) { append(form, skeleton(d, 2)); return form; }
 
-    const teacherField = d.createElement('label');
-    teacherField.className = 'field';
-    teacherField.textContent = 'শিক্ষক';
-    const select = d.createElement('select');
-    select.className = 'field-input';
-    const blank = d.createElement('option');
-    blank.value = ''; blank.textContent = 'বেছে নিন…';
-    select.append(blank);
-    for (const t of this.candidates.teachers) {
-      const opt = d.createElement('option');
-      opt.value = t.id;
-      // Current load is shown because handing a sixth section to somebody
-      // already carrying five is a decision, and it should be a visible one.
-      const expert = target?.subjectId && t.expertiseSubjectIds.includes(target.subjectId) ? ' · এই বিষয়ে দক্ষ' : '';
-      opt.textContent = `${t.nameBn} (${bnNum(t.currentLoad)} বিষয়)${expert}`;
-      select.append(opt);
-    }
-    teacherField.append(select);
-    card.append(teacherField);
+    // Current load rides in the option label because handing a sixth section
+    // to somebody already carrying five is a decision, and it should be a
+    // visible one at the moment it is made.
+    const teacher = field(d, {
+      label: 'শিক্ষক',
+      name: 'teacher',
+      kind: 'select',
+      required: true,
+      helper: 'বন্ধনীতে বর্তমান দায়িত্বের সংখ্যা।',
+      options: [
+        { value: '', label: 'বেছে নিন…' },
+        ...this.candidates.teachers.map((t) => ({
+          value: t.id,
+          label: `${t.nameBn} (${bnNum(t.currentLoad)} বিষয়)` +
+            (target?.subjectId && t.expertiseSubjectIds.includes(target.subjectId)
+              ? ' · এই বিষয়ে দক্ষ' : ''),
+        })),
+      ],
+    });
+    append(form, teacher.root);
 
-    const dateField = d.createElement('label');
-    dateField.className = 'field';
-    dateField.textContent = 'কার্যকর তারিখ';
-    const date = d.createElement('input');
-    date.type = 'date';
-    date.className = 'field-input';
-    date.value = new Date().toISOString().slice(0, 10);
-    dateField.append(date);
-    card.append(dateField);
+    const when = field(d, {
+      label: 'কার্যকর তারিখ',
+      name: 'startedOn',
+      kind: 'date',
+      required: true,
+      value: new Date().toISOString().slice(0, 10),
+      helper: 'এই তারিখ থেকে নতুন শিক্ষক দায়িত্বে থাকবেন।',
+    });
+    append(form, when.root);
 
-    let reason: HTMLInputElement | null = null;
+    let reason: Field | null = null;
     if (target?.current) {
-      const rf = d.createElement('label');
-      rf.className = 'field';
-      rf.textContent = 'পরিবর্তনের কারণ';
-      reason = d.createElement('input');
-      reason.type = 'text';
-      reason.className = 'field-input';
-      reason.placeholder = 'যেমন: বদলি হয়েছেন';
-      reason.required = true;
-      rf.append(reason);
-      card.append(rf);
-
-      // The visible half of migration 041.
-      const keep = d.createElement('p');
-      keep.className = 'att-sub';
-      keep.textContent =
-        `${target.current}-এর রেকর্ড মুছে যাবে না — কে কখন দায়িত্বে ছিলেন তা সংরক্ষিত থাকবে।`;
-      card.append(keep);
+      reason = field(d, {
+        label: 'পরিবর্তনের কারণ',
+        name: 'reason',
+        required: true,
+        placeholder: 'যেমন: বদলি হয়েছেন',
+        // The visible half of migration 041: a school that believes a
+        // replacement erases the old teacher will stop recording
+        // replacements, and then the register and the truth diverge quietly.
+        helper: `${target.current}-এর রেকর্ড মুছে যাবে না — কে কখন দায়িত্বে ছিলেন তা সংরক্ষিত থাকবে।`,
+      });
+      append(form, reason.root);
     }
 
-    const row = d.createElement('div');
-    row.className = 'action-row';
-    const cancel = d.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'btn-secondary';
-    cancel.textContent = 'বাতিল';
-    cancel.addEventListener('click', () => { this.panel = 'none'; this.assignTarget = null; this.render(); });
+    append(form, buttonRow(d,
+      button(d, {
+        label: 'বাতিল', variant: 'secondary',
+        onClick: () => { this.panel = 'none'; this.assignTarget = null; this.render(); },
+      }),
+      button(d, {
+        label: 'নিশ্চিত করুন', variant: 'primary', type: 'submit', busy: this.busy,
+      }),
+    ));
 
-    const save = d.createElement('button');
-    save.type = 'submit';
-    save.className = 'btn-primary';
-    save.textContent = this.busy ? 'অপেক্ষা করুন…' : 'নিশ্চিত করুন';
-    save.disabled = this.busy;
-    row.append(cancel, save);
-    card.append(row);
-
-    card.addEventListener('submit', (e) => {
+    form.addEventListener('submit', (e) => {
       e.preventDefault();
-      if (!select.value) { this.error = 'শিক্ষক বেছে নিন।'; this.render(); return; }
-      if (target?.current && !(reason?.value ?? '').trim()) {
-        this.error = 'পরিবর্তনের কারণ লিখুন।'; this.render(); return;
+      // Field-level, and NOT via `this.error` + a repaint: repainting rebuilds
+      // this form from scratch and throws away the date and the reason the
+      // person had already typed.
+      clearFieldError(teacher.root);
+      if (reason) clearFieldError(reason.root);
+      if (!teacher.value()) {
+        setFieldError(teacher.root, 'শিক্ষক বেছে নিন।');
+        teacher.input.focus();
+        return;
       }
-      const teacherName = this.candidates?.teachers.find((t) => t.id === select.value)?.nameBn ?? '';
+      if (target?.current && !reason?.value().trim()) {
+        setFieldError(reason!.root, 'পরিবর্তনের কারণ লিখুন।');
+        reason!.input.focus();
+        return;
+      }
+      const teacherName = this.candidates?.teachers.find((t) => t.id === teacher.value())?.nameBn ?? '';
       const go = () => void this.submitAssign(
-        det.section.id, target?.subjectId ?? null, select.value, date.value, reason?.value ?? '');
+        det.section.id, target?.subjectId ?? null, teacher.value(), when.value(),
+        reason?.value() ?? '');
 
       // Replacement is irreversible in the sense that matters: it closes a
       // record with a date. Confirm it, naming both people.
       if (target?.current) {
-        card.append(confirmDialog({
+        form.append(confirmDialog({
           doc: d,
           title: 'শিক্ষক বদল নিশ্চিত করুন',
-          body: `${target.subjectBn}: ${target.current} → ${teacherName}, ${bnDate(date.value)} থেকে। ` +
+          body: `${target.subjectBn}: ${target.current} → ${teacherName}, ${bnDate(when.value())} থেকে। ` +
                 `${target.current}-এর আগের দায়িত্বের রেকর্ড সংরক্ষিত থাকবে।`,
           confirmLabel: 'বদল করুন',
           danger: true,
@@ -937,116 +953,113 @@ export class AcademicView {
       }
     });
 
-    return card;
+    return form;
   }
 
   private movePanel(det: SectionDetail): HTMLElement {
     const d = this.o.doc;
-    const card = d.createElement('div');
-    card.className = 'card';
-    card.style.margin = 'var(--s-3) var(--s-4)';
+    const host = el(d, 'section', { className: 'ui-card ui-card-form' });
 
-    const h = d.createElement('p');
-    h.className = 'notice-confirm-label';
-    h.textContent = `${bnNum(this.selected.size)} জন নির্বাচিত`;
-    card.append(h);
+    append(host, el(d, 'h3', {
+      className: 'ui-card-title', text: `${bnNum(this.selected.size)} জন নির্বাচিত`,
+    }));
 
-    const field = d.createElement('label');
-    field.className = 'field';
-    field.textContent = 'যে সেকশনে পাঠাবেন';
-    const select = d.createElement('select');
-    select.className = 'field-input';
-    const blank = d.createElement('option');
-    blank.value = ''; blank.textContent = 'বেছে নিন…';
-    select.append(blank);
+    const options = [{ value: '', label: 'বেছে নিন…' }];
     for (const lvl of this.tree?.classes ?? []) {
       for (const g of lvl.groups) {
-        for (const s of g.sections) {
-          if (s.id === det.section.id) continue;
-          const opt = d.createElement('option');
-          opt.value = s.id;
-          opt.textContent = `${lvl.nameBn} · ${g.groupBn} · ${s.name} (${bnNum(s.studentCount)} জন)`;
-          select.append(opt);
+        for (const sec of g.sections) {
+          if (sec.id === det.section.id) continue;
+          options.push({
+            value: sec.id,
+            label: `${lvl.nameBn} · ${g.groupBn} · ${sec.name} (${bnNum(sec.studentCount)} জন)`,
+          });
         }
       }
     }
-    field.append(select);
-    card.append(field);
-
-    const row = d.createElement('div');
-    row.className = 'action-row';
-    const cancel = d.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'btn-secondary';
-    cancel.textContent = 'বাতিল';
-    cancel.addEventListener('click', () => { this.panel = 'none'; this.selected.clear(); this.render(); });
-
-    const go = d.createElement('button');
-    go.type = 'button';
-    go.className = 'btn-primary';
-    go.textContent = this.busy ? 'অপেক্ষা করুন…' : 'পূর্বরূপ দেখুন';
-    go.disabled = this.busy;
-    go.addEventListener('click', () => {
-      if (!select.value) { this.error = 'সেকশন বেছে নিন।'; this.render(); return; }
-      const label = select.options[select.selectedIndex].textContent ?? '';
-      const target = select.value;
-      // Preview before commit, as the brief requires — and the preview comes
-      // from the same endpoint that will do the move, so it cannot disagree.
-      card.append(confirmDialog({
-        doc: d,
-        title: 'স্থানান্তর নিশ্চিত করুন',
-        body: `${bnNum(this.selected.size)} জন শিক্ষার্থী ${label}-এ যাবে। ` +
-              `নতুন রোল নম্বর দেওয়া হবে; আগের বছরের রেকর্ড অপরিবর্তিত থাকবে।`,
-        confirmLabel: 'স্থানান্তর করুন',
-        danger: true,
-        onConfirm: () => void this.submitMove(target, false),
-      }));
+    const dest = field(d, {
+      label: 'যে সেকশনে পাঠাবেন',
+      name: 'toSection',
+      kind: 'select',
+      required: true,
+      helper: 'বন্ধনীতে ওই সেকশনের বর্তমান শিক্ষার্থী সংখ্যা।',
+      options,
     });
-    row.append(cancel, go);
-    card.append(row);
-    return card;
+    append(host, dest.root);
+
+    append(host, buttonRow(d,
+      button(d, {
+        label: 'বাতিল', variant: 'secondary',
+        onClick: () => { this.panel = 'none'; this.selected.clear(); this.render(); },
+      }),
+      button(d, {
+        label: 'পূর্বরূপ দেখুন', variant: 'primary', busy: this.busy,
+        onClick: () => {
+          clearFieldError(dest.root);
+          if (!dest.value()) {
+            setFieldError(dest.root, 'সেকশন বেছে নিন।');
+            dest.input.focus();
+            return;
+          }
+          const label = options.find((o) => o.value === dest.value())?.label ?? '';
+          const to = dest.value();
+          // Preview before commit, as the brief requires — and the preview
+          // comes from the same endpoint that will do the move, so the two
+          // cannot disagree.
+          host.append(confirmDialog({
+            doc: d,
+            title: 'স্থানান্তর নিশ্চিত করুন',
+            body: `${bnNum(this.selected.size)} জন শিক্ষার্থী ${label}-এ যাবে। ` +
+                  `নতুন রোল নম্বর দেওয়া হবে; আগের বছরের রেকর্ড অপরিবর্তিত থাকবে।`,
+            confirmLabel: 'স্থানান্তর করুন',
+            danger: true,
+            onConfirm: () => void this.submitMove(to, false),
+          }));
+        },
+      }),
+    ));
+    return host;
   }
 
   private renderStudent(root: HTMLElement): void {
     const d = this.o.doc;
-    const s = this.student;
-    if (!s) return;
+    const stu = this.student;
+    if (!stu) return;
 
-    const card = d.createElement('div');
-    card.className = 'card';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
-    const rows: [string, string][] = [
-      ['স্থায়ী আইডি', s.student.studentCode ?? '—'],
-      ['ভর্তির তারিখ', bnDate(s.student.admissionDate)],
-      ['অবস্থা', s.student.status === 'active' ? 'সক্রিয়' : s.student.status],
+    // Identity as a definition list, not five `system-row` paragraphs each
+    // saying "label: value". A <dl> is what this is, and it is what a screen
+    // reader announces as pairs.
+    const facts: Array<[string, string]> = [
+      ['স্থায়ী আইডি', stu.student.studentCode ?? '—'],
+      ['ভর্তির তারিখ', bnDate(stu.student.admissionDate)],
+      ['অবস্থা', stu.student.status === 'active' ? 'সক্রিয়' : stu.student.status],
     ];
-    if (s.current) {
-      rows.splice(1, 0,
-        ['শ্রেণি', `${s.current.classBn} · ${s.current.groupBn}`],
-        ['সেকশন ও রোল', `${s.current.section} · ${bnNum(s.current.rollNo)}`]);
+    if (stu.current) {
+      facts.splice(1, 0,
+        ['শ্রেণি', `${stu.current.classBn} · ${stu.current.groupBn}`],
+        ['সেকশন ও রোল', `${stu.current.section} · ${bnNum(stu.current.rollNo)}`]);
     }
-    for (const [k, v] of rows) {
-      const p = d.createElement('p');
-      p.className = 'system-row';
-      p.textContent = `${k}: ${v}`;
-      card.append(p);
+    const dl = el(d, 'dl', { className: 'ui-facts' });
+    for (const [k, v] of facts) {
+      append(dl,
+        el(d, 'dt', { className: 'ui-facts-key', text: k }),
+        el(d, 'dd', { className: 'ui-facts-val', text: v }));
     }
-    root.append(card);
+    root.append(card(d, { title: 'পরিচয়', glyph: 'user' }, dl));
 
-    const att = s.attendance90d;
-    const h = d.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = 'গত ৯০ দিনের হাজিরা';
-    root.append(h);
-    const attP = d.createElement('p');
-    attP.className = 'att-sub';
-    attP.style.padding = '0 var(--s-4) var(--s-3)';
-    attP.textContent = att.total > 0
-      ? `${bnNum(Math.round((att.present / att.total) * 100))}% · ${bnNum(att.present)} / ${bnNum(att.total)}`
-      : 'এই সময়ে কোনো হাজিরা নেওয়া হয়নি।';
-    root.append(attP);
+    // ৯০ days of attendance, as a figure rather than a sentence — and `null`
+    // when nobody has taken any, because ০% is a claim about the child.
+    const att = stu.attendance90d;
+    root.append(card(d, { title: 'গত ৯০ দিনের হাজিরা', glyph: 'check-square', tone: 'info' },
+      att.total > 0
+        ? el(d, 'p', {
+            className: 'ui-card-lead',
+            text: `${bnNum(Math.round((att.present / att.total) * 100))}% · ` +
+                  `${bnNum(att.present)} / ${bnNum(att.total)} দিন`,
+          })
+        : el(d, 'p', { className: 'ui-card-note', text: 'এই সময়ে কোনো হাজিরা নেওয়া হয়নি।' }),
+    ));
 
-    // R-3 completion: the guardian block is now a live panel — linking,
+    // R-3 completion: the guardian block is a live panel — linking,
     // relationship, SMS and fee permission — with its own loading, empty and
     // error states. It mounts into its own container so re-rendering it does
     // not rebuild the whole student drawer under the user's finger.
@@ -1054,29 +1067,32 @@ export class AcademicView {
     root.append(guardianHost);
     new GuardianPanel({
       root: guardianHost, doc: d, auth: this.o.auth,
-      studentId: s.student.id,
-      studentNameBn: s.student.nameBn,
+      studentId: stu.student.id,
+      studentNameBn: stu.student.nameBn,
       canManage: this.o.canManageGuardians,
     });
 
-    const hh = d.createElement('h2');
-    hh.className = 'section-heading';
-    hh.textContent = 'শিক্ষাবর্ষভিত্তিক ইতিহাস';
-    root.append(hh);
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const e of s.history) {
-      const row = d.createElement('div');
-      row.className = 'system-row';
-      const t = d.createElement('span');
-      t.className = 'system-title';
-      t.textContent = `${e.yearLabel} · ${e.classBn} ${e.section}`;
-      const desc = d.createElement('span');
-      desc.className = 'system-desc';
-      desc.textContent = `রোল ${bnNum(e.rollNo)} · ${e.status}`;
-      row.append(t, desc);
-      list.append(row);
-    }
-    root.append(list);
+    root.append(sectionHeading(d, { title: 'শিক্ষাবর্ষভিত্তিক ইতিহাস' }));
+    root.append(dataTable(d, {
+      caption: `${stu.student.nameBn} — শিক্ষাবর্ষভিত্তিক ইতিহাস`,
+      rows: stu.history,
+      rowKey: (h) => `${h.yearLabel}-${h.section}-${h.rollNo}`,
+      empty: { message: 'আগের কোনো শিক্ষাবর্ষের রেকর্ড নেই।' },
+      columns: [
+        { key: 'year', header: 'শিক্ষাবর্ষ', mobile: 'title', cell: (h) => h.yearLabel,
+          width: 'minmax(0, 1fr)' },
+        { key: 'class', header: 'শ্রেণি', mobile: 'subtitle',
+          cell: (h) => `${h.classBn} · ${h.groupBn}`, width: 'minmax(0, 1.6fr)' },
+        { key: 'section', header: 'সেকশন', mobile: 'meta', cell: (h) => h.section,
+          width: '110px' },
+        { key: 'roll', header: 'রোল', mobile: 'meta', numeric: true,
+          cell: (h) => bnNum(h.rollNo), width: '90px' },
+        { key: 'status', header: 'অবস্থা', mobile: 'status', width: '120px',
+          cell: (h) => statusBadge(d, {
+            state: h.status === 'active' ? 'published' : 'draft',
+            label: h.status === 'active' ? 'সক্রিয়' : h.status,
+          }) },
+      ],
+    }));
   }
 }

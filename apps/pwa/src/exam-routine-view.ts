@@ -28,6 +28,7 @@ import {
   formatCount, formatIdentifier, formatDayMonth, formatTime,
 } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { serverMessage } from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -147,7 +148,7 @@ export class ExamRoutineView {
         this.error = null;
       } else {
         // The server's refusal is the honest text: it names a student.
-        this.error = payload.message ?? 'কাজটি সম্পন্ন হয়নি।';
+        this.error = serverMessage(payload, res.status, 'কাজটি সম্পন্ন হয়নি।');
         await this.loadRoutine();
         return;
       }

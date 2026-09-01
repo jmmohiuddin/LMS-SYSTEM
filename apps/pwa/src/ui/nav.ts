@@ -82,7 +82,14 @@ const P = {
   publish:     { path: 'publish',     labelBn: 'ফলাফল প্রকাশ',      glyph: 'award' },
   users:       { path: 'users',       labelBn: 'ব্যবহারকারী',       glyph: 'users' },
   rollover:    { path: 'rollover',    labelBn: 'বার্ষিক উন্নয়ন',    glyph: 'repeat' },
-  imports:     { path: 'import',      labelBn: 'শিক্ষার্থী আমদানি', glyph: 'upload' },
+  // P5. Three labels, one route. The screen imports students OR staff and the
+  // endpoint gates the two differently — students to principal · owner ·
+  // coordinator, staff to principal · owner · IT admin — so a nav entry that
+  // says "শিক্ষার্থী আমদানি" to an IT admin is naming the one thing they are
+  // not allowed to do.
+  imports:     { path: 'import',      labelBn: 'আমদানি',            glyph: 'upload' },
+  importsStu:  { path: 'import',      labelBn: 'শিক্ষার্থী আমদানি', glyph: 'upload' },
+  importsStaff:{ path: 'import',      labelBn: 'শিক্ষক ও কর্মী আমদানি', glyph: 'upload' },
   branding:    { path: 'branding',    labelBn: 'প্রতিষ্ঠানের পরিচয়', glyph: 'star' },
   settings:    { path: 'adminsettings', labelBn: 'সেটিংস',         glyph: 'settings' },
   audit:       { path: 'audit',       labelBn: 'কার্যবিবরণী',       glyph: 'lock' },
@@ -165,7 +172,10 @@ const ACCOUNTANT: RoleNav = {
 const PRINCIPAL: RoleNav = {
   groups: [
     { labelBn: G.org, items: [P.home, P.institution, P.academic, P.calendar] },
-    { labelBn: G.people, items: [P.students, P.users, P.attendance] },
+    // P5. `imports` was reachable only from the More menu, and a principal is
+    // the role bulk import was built for — 784 rows on day one is their job,
+    // not a thing they do so rarely it belongs in an overflow list.
+    { labelBn: G.people, items: [P.students, P.users, P.imports, P.attendance] },
     { labelBn: G.teach, items: [P.publish, P.results, P.documents] },
     { labelBn: G.money, items: [P.fees, P.invoices, P.ledger] },
     { labelBn: G.comms, items: [P.inbox, P.compose] },
@@ -180,7 +190,7 @@ const IT_ADMIN: RoleNav = {
     // §28: structure and accounts, not teaching. An IT admin has no class, so
     // there is no attendance row here to invite a 403.
     { labelBn: G.org, items: [P.home, P.academic, P.rollover] },
-    { labelBn: G.people, items: [P.users, P.students, P.imports] },
+    { labelBn: G.people, items: [P.users, P.students, P.importsStaff] },
     { labelBn: G.admin, items: [P.branding, P.settings, P.system, P.audit] },
     TAIL,
   ],
@@ -190,7 +200,7 @@ const IT_ADMIN: RoleNav = {
 const COORDINATOR: RoleNav = {
   groups: [
     { labelBn: G.org, items: [P.home, P.academic, P.routine, P.calendar] },
-    { labelBn: G.people, items: [P.students, P.attendance, P.substitute] },
+    { labelBn: G.people, items: [P.students, P.importsStu, P.attendance, P.substitute] },
     { labelBn: G.teach, items: [P.publish, P.results, P.documents] },
     { labelBn: G.comms, items: [P.inbox, P.compose] },
     TAIL,

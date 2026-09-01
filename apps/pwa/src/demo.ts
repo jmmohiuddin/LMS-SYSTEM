@@ -693,6 +693,9 @@ const DEMO_GATES: Record<string, string[]> = {
   '/api/v1/ops/enrol':     ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
   '/api/v1/ops/rollover':  ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
   '/api/v1/ops/users':     ['principal', 'school_owner', 'it_admin', 'academic_coordinator'],
+  // P5. Ungated, so the public preview showed a STUDENT the school's SMS
+  // policy and its cost figures. Mirrors SETTINGS_ROLES in ops-svc.
+  '/api/v1/ops/settings':  ['principal', 'school_owner', 'it_admin', 'academic_coordinator'],
   '/api/v1/academics/publish': ['principal', 'school_owner', 'academic_coordinator'],
   '/api/v1/ops/structure':  ['principal', 'school_owner', 'academic_coordinator', 'it_admin'],
   '/api/v1/ops/guardians':  ['principal', 'school_owner', 'it_admin', 'academic_coordinator',
@@ -703,6 +706,19 @@ const DEMO_GATES: Record<string, string[]> = {
   // R-4's calendar is deliberately absent from this map: every role reads it.
   // Only its WRITES are gated, and the demo answers reads only.
   '/api/v1/finance/generate':  ['principal', 'school_owner', 'accountant'],
+  // P5. These three were ungated, so the PUBLIC preview showed a class
+  // teacher the school's chart of accounts, its MFS reconciliation totals and
+  // three invoices — which `LEDGER_ROLES` in finance-svc and `invoice_scope`
+  // in migration 010 both refuse. Mirrors LEDGER_ROLES exactly.
+  '/api/v1/finance/ledger':   ['principal', 'school_owner', 'accountant'],
+  // Invoices are narrower than the ledger in one direction and wider in
+  // another: a guardian and a student read THEIR OWN, which `invoice_scope`
+  // enforces by row. The demo fixture is one family's, so the roles that may
+  // see it are the family plus the money roles.
+  '/api/v1/finance/invoices': ['principal', 'school_owner', 'accountant',
+                               'guardian', 'student'],
+  '/api/v1/finance/receipts': ['principal', 'school_owner', 'accountant',
+                               'guardian', 'student'],
   // §9.1's guardian panel. NOT staff-only — a class teacher legitimately looks
   // at what a guardian sees — but emphatically not a STUDENT, who would read
   // their classmates' siblings' attendance, fees and results. Mirrors
@@ -792,6 +808,46 @@ function demoForbidden(pathname: string): Response | null {
  * so the preview shows what the server's masking does rather than only
  * claiming it happens.
  */
+const DEMO_LEDGER = {
+  accounts: [
+    { code: 'MFS-BKASH',  nameBn: 'bKash সংগ্রহ',   type: 'asset',  balance: '18450.00' },
+    { code: 'MFS-NAGAD',  nameBn: 'Nagad সংগ্রহ',   type: 'asset',  balance: '9200.00' },
+    { code: 'MFS-ROCKET', nameBn: 'Rocket সংগ্রহ',  type: 'asset',  balance: '3100.00' },
+    { code: 'CASH',       nameBn: 'নগদ',            type: 'asset',  balance: '5750.00' },
+    { code: 'FEE-INCOME', nameBn: 'বেতন ও ফি আয়',   type: 'income', balance: '36500.00' },
+  ],
+  batches: [
+    {
+      batchId: 'demo-b1', entryDate: '2026-08-08', memo: 'bKash-এ ফি জমা',
+      lines: [
+        { accountCode: 'MFS-BKASH', debit: '1250.00', credit: '0' },
+        { accountCode: 'FEE-INCOME', debit: '0', credit: '1250.00' },
+      ],
+    },
+    {
+      batchId: 'demo-b2', entryDate: '2026-08-08', memo: 'Nagad-এ ফি জমা',
+      lines: [
+        { accountCode: 'MFS-NAGAD', debit: '750.00', credit: '0' },
+        { accountCode: 'FEE-INCOME', debit: '0', credit: '750.00' },
+      ],
+    },
+    {
+      batchId: 'demo-b3', entryDate: '2026-08-07', memo: 'bKash-এ ফি জমা',
+      lines: [
+        { accountCode: 'MFS-BKASH', debit: '1000.00', credit: '0' },
+        { accountCode: 'FEE-INCOME', debit: '0', credit: '1000.00' },
+      ],
+    },
+  ],
+  // Rocket deliberately does NOT reconcile: a preview where every figure
+  // matches teaches an accountant nothing about what a mismatch looks like.
+  reconciliation: [
+    { provider: 'bKash',  posted: '18450.00', reconciled: '18450.00' },
+    { provider: 'Nagad',  posted: '9200.00',  reconciled: '9200.00' },
+    { provider: 'Rocket', posted: '3100.00',  reconciled: '2350.00' },
+  ],
+};
+
 const DEMO_AUDIT = [
   {
     id: '5', at: '2026-08-28T09:12:00Z',
@@ -1925,6 +1981,14 @@ export class DemoAuth extends Auth {
           topics: DEMO_TOPICS,
         });
       }
+
+      // P5. The ledger fixture lives HERE now, gated by the map above.
+      // It used to live inside `ledger-view` as a `DEMO` constant the screen
+      // fell back to on a 403 — so a refused coordinator was shown a complete
+      // set of plausible taka figures labelled "নমুনা". Sample data belongs in
+      // the demo, where it is gated and where nothing calls it production.
+      case '/api/v1/finance/ledger':
+        return ok(DEMO_LEDGER);
 
       case '/api/v1/finance/invoices':
         return ok({ invoices: DEMO_INVOICES });

@@ -38,7 +38,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, bnNum, bnDate,
 } from './view-states.ts';
-import { permissionMessage } from './ui/index.ts';
+import { permissionMessage, pageHeader, card, statusBadge,} from './ui/index.ts';
 
 export type DocKind =
   | 'fee_receipt' | 'report_card' | 'admit_card'
@@ -276,17 +276,23 @@ export class DocumentsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'নথি ও ছাপা';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.kind
-      ? this.spec()!.labelBn
-      : 'প্রতিষ্ঠানের নিজস্ব লোগো, সিল ও স্বাক্ষরসহ';
-    header.append(h1, sub);
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'নথি ও ছাপা',
+      subtitle: this.kind
+        ? this.spec()!.descBn
+        : 'প্রতিষ্ঠানের নিজস্ব লোগো, সিল ও স্বাক্ষরসহ',
+      // The chosen document as a real crumb, so the way back is a control and
+      // not a sentence.
+      crumbs: this.kind
+        ? [
+            { label: 'নথি ও ছাপা', onClick: () => {
+                this.kind = null; this.previewHtml = ''; this.error = ''; this.notice = '';
+                this.render();
+              } },
+            { label: this.spec()!.labelBn },
+          ]
+        : undefined,
+    }));
 
     if (this.notice) root.append(successNote(d, this.notice));
     if (this.error) {
@@ -300,12 +306,22 @@ export class DocumentsView {
 
     if (!this.kind) { root.append(this.typePicker()); return; }
 
-    root.append(this.backBar());
     if (this.loading) { root.append(skeleton(d, 3)); return; }
 
     root.append(this.selectors());
     root.append(this.actions());
     if (this.previewHtml) root.append(this.preview());
+  }
+
+  /**
+   * Whether a section-wide request resolves to more than this reader.
+   *
+   * The endpoint decides for real: `app.can_see_student` returns the caller's
+   * own record for a student and their wards for a guardian, whatever section
+   * id is asked for. This only decides whether to SAY "একসাথে সবার".
+   */
+  private canBulk(): boolean {
+    return !['student', 'guardian'].includes(this.o.auth.role);
   }
 
   private typePicker(): HTMLElement {
@@ -320,46 +336,30 @@ export class DocumentsView {
       return wrap;
     }
 
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const s of offered) {
-      const row = d.createElement('button');
-      row.type = 'button';
-      row.className = 'system-row';
-      const t = d.createElement('span');
-      t.className = 'system-title';
-      t.textContent = s.labelBn;
-      const desc = d.createElement('span');
-      desc.className = 'system-desc';
-      desc.textContent = s.descBn;
-      row.append(t, desc);
-      if (s.bulk) {
-        const chip = d.createElement('span');
-        chip.className = 'status-chip';
-        chip.textContent = 'একসাথে সবার';
-        row.append(chip);
-      }
-      row.addEventListener('click', () => void this.pick(s.kind));
-      list.append(row);
+    // Cards, not a table. These are a CHOICE of what to print, each with a
+    // sentence explaining when to use it — and a sentence does not belong in
+    // a table cell. The grid gives a desktop three across instead of six
+    // full-width strips down a 1120px column.
+    const grid = d.createElement('div');
+    grid.className = 'ui-card-grid';
+    for (const spec of offered) {
+      grid.append(card(d, {
+        title: spec.labelBn,
+        subtitle: spec.descBn,
+        glyph: 'book',
+        variant: 'interactive',
+        onClick: () => void this.pick(spec.kind),
+        // Only where "everyone" is more than one person. `DOCS_FOR` rightly
+        // lets a family print its own mark sheet, and the endpoint narrows a
+        // student's section request to their own row via `app.can_see_student`
+        // — so the badge was promising a child a capability they do not have.
+        action: spec.bulk && this.canBulk()
+          ? statusBadge(d, { state: 'invited', label: 'একসাথে সবার' })
+          : undefined,
+      }));
     }
-    wrap.append(list);
+    wrap.append(grid);
     return wrap;
-  }
-
-  private backBar(): HTMLElement {
-    const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'back-bar';
-    const back = d.createElement('button');
-    back.type = 'button';
-    back.className = 'back-btn';
-    back.textContent = '← অন্য নথি';
-    back.addEventListener('click', () => {
-      this.kind = null; this.previewHtml = ''; this.error = ''; this.notice = '';
-      this.render();
-    });
-    bar.append(back);
-    return bar;
   }
 
   private selectors(): HTMLElement {

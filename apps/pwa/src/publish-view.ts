@@ -30,7 +30,10 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
-import { pageHeader } from './ui/page-header.ts';
+import {
+  pageHeader, sectionHeading, card, button, buttonRow, dataTable, statusBadge,
+  append,
+} from './ui/index.ts';
 
 interface ExamRow {
   examId: string;
@@ -147,114 +150,96 @@ export class PublishView {
     for (const e of pending) root.append(this.examCard(e));
 
     if (published.length > 0) {
-      const h = d.createElement('h2');
-      h.className = 'section-heading';
-      h.textContent = 'প্রকাশিত';
-      root.append(h);
+      root.append(sectionHeading(d, { title: 'প্রকাশিত' }));
       for (const e of published) root.append(this.examCard(e));
     }
   }
 
   private examCard(exam: ExamRow): HTMLElement {
     const d = this.o.doc;
-    const card = d.createElement('div');
-    card.className = 'card';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
-
     const isPublished = exam.status === 'published';
     const totalEnrolled = exam.subjects.reduce((n, s) => n + s.enrolled, 0);
     const totalMarked = exam.subjects.reduce((n, s) => n + s.marked, 0);
     const incomplete = exam.subjects.filter((s) => s.marked < s.enrolled);
+    const open = this.expanded.has(exam.examId);
 
-    const head = d.createElement('div');
-    head.className = 'page-header-row';
-    const title = d.createElement('p');
-    title.className = 'system-title';
-    title.textContent = exam.examNameBn;
-    const chip = d.createElement('span');
-    chip.className = 'status-chip';
-    if (isPublished) chip.setAttribute('data-state', 'success');
-    else if (incomplete.length > 0) chip.setAttribute('data-state', 'warning');
-    chip.textContent = isPublished ? 'প্রকাশিত'
-      : incomplete.length > 0 ? `${bnNum(incomplete.length)} বিষয়ে নম্বর বাকি`
-      : 'প্রকাশের জন্য প্রস্তুত';
-    head.append(title, chip);
-    card.append(head);
+    // The state as a badge in the card's own header row, so "৩ বিষয়ে নম্বর
+    // বাকি" sits beside the exam it is about rather than under it.
+    const state = isPublished
+      ? statusBadge(d, { state: 'published', label: 'প্রকাশিত' })
+      : incomplete.length > 0
+        ? statusBadge(d, { state: 'partial', label: `${bnNum(incomplete.length)} বিষয়ে নম্বর বাকি` })
+        : statusBadge(d, { state: 'pending', label: 'প্রকাশের জন্য প্রস্তুত' });
 
-    const meta = d.createElement('p');
-    meta.className = 'att-sub';
-    meta.textContent =
-      `${bnNum(exam.subjects.length)} বিষয় · নম্বর দেওয়া হয়েছে ${bnNum(totalMarked)} / ${bnNum(totalEnrolled)}`;
-    card.append(meta);
+    const host = card(d, {
+      title: exam.examNameBn,
+      subtitle: `${bnNum(exam.subjects.length)} বিষয় · নম্বর দেওয়া হয়েছে ` +
+                `${bnNum(totalMarked)} / ${bnNum(totalEnrolled)}`,
+      glyph: 'award',
+      tone: isPublished ? 'success' : incomplete.length > 0 ? 'warn' : 'primary',
+      action: state,
+      headingLevel: 3,
+    });
 
     // Per-subject completeness. This is the "validate" step of the workflow,
     // and it has to be visible BEFORE the button, not reported after it.
-    const toggle = d.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn-ghost btn-small';
-    const open = this.expanded.has(exam.examId);
-    toggle.setAttribute('aria-expanded', String(open));
-    toggle.textContent = open ? 'বিষয়ভিত্তিক অবস্থা লুকান' : 'বিষয়ভিত্তিক অবস্থা দেখুন';
-    toggle.addEventListener('click', () => {
-      if (open) this.expanded.delete(exam.examId); else this.expanded.add(exam.examId);
-      this.render();
+    const toggle = button(d, {
+      label: open ? 'বিষয়ভিত্তিক অবস্থা লুকান' : 'বিষয়ভিত্তিক অবস্থা দেখুন',
+      variant: 'ghost', size: 'sm',
+      attrs: { 'aria-expanded': String(open) },
+      onClick: () => {
+        if (open) this.expanded.delete(exam.examId); else this.expanded.add(exam.examId);
+        this.render();
+      },
     });
-    card.append(toggle);
+    append(host, toggle);
 
     if (open) {
-      if (exam.subjects.length === 0) {
-        card.append(emptyState(d, { message: 'এই পরীক্ষায় কোনো বিষয় যুক্ত করা হয়নি।' }));
-      } else {
-        const list = d.createElement('div');
-        list.className = 'system-list';
-        for (const s of exam.subjects) {
-          const row = d.createElement('div');
-          row.className = 'system-row';
-          const t = d.createElement('span');
-          t.className = 'system-title';
-          t.textContent = s.sectionName ? `${s.subjectBn} · ${s.sectionName}` : s.subjectBn;
-          const desc = d.createElement('span');
-          desc.className = 'system-desc';
-          desc.textContent = `${bnNum(s.marked)} / ${bnNum(s.enrolled)}`;
-          row.append(t, desc);
-          if (s.marked < s.enrolled) {
-            const c = d.createElement('span');
-            c.className = 'status-chip';
-            c.setAttribute('data-state', 'warning');
-            c.textContent = 'অসম্পূর্ণ';
-            row.append(c);
-          }
-          list.append(row);
-        }
-        card.append(list);
-      }
+      append(host, dataTable(d, {
+        caption: `${exam.examNameBn} — বিষয়ভিত্তিক অবস্থা`,
+        rows: exam.subjects,
+        rowKey: (sub) => `${sub.subjectBn}-${sub.sectionName ?? ''}`,
+        empty: { message: 'এই পরীক্ষায় কোনো বিষয় যুক্ত করা হয়নি।' },
+        columns: [
+          { key: 'subject', header: 'বিষয়', mobile: 'title',
+            cell: (sub) => sub.subjectBn, width: 'minmax(0, 2fr)' },
+          { key: 'section', header: 'সেকশন', mobile: 'subtitle',
+            cell: (sub) => sub.sectionName || '—', width: 'minmax(0, 1fr)' },
+          { key: 'done', header: 'নম্বর দেওয়া', mobile: 'meta', numeric: true,
+            cell: (sub) => `${bnNum(sub.marked)} / ${bnNum(sub.enrolled)}`,
+            width: 'minmax(0, 1.2fr)' },
+          { key: 'state', header: 'অবস্থা', mobile: 'status', width: '130px',
+            cell: (sub) => (sub.marked < sub.enrolled
+              ? statusBadge(d, { state: 'partial', label: 'অসম্পূর্ণ' })
+              : statusBadge(d, { state: 'published', label: 'সম্পূর্ণ' })) },
+        ],
+      }));
     }
 
     if (!isPublished) {
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-primary';
-      btn.disabled = this.busy === exam.examId;
-      btn.textContent = this.busy === exam.examId ? 'প্রকাশ হচ্ছে…' : 'ফলাফল প্রকাশ করুন';
-      btn.addEventListener('click', () => {
-        card.append(confirmDialog({
-          doc: d,
-          title: 'ফলাফল প্রকাশ নিশ্চিত করুন',
-          // The consequence, in numbers, including the part that is wrong.
-          body:
-            `${exam.examNameBn} — ${bnNum(totalMarked)} টি নম্বর প্রকাশিত হবে। ` +
-            (incomplete.length > 0
-              ? `${bnNum(incomplete.length)} টি বিষয়ে এখনো নম্বর সম্পূর্ণ হয়নি। `
-              : '') +
-            'প্রকাশের পর নম্বর আর সম্পাদনা করা যাবে না, এবং শিক্ষার্থী ও অভিভাবকদের জানানো হবে।',
-          confirmLabel: 'প্রকাশ করুন',
-          danger: true,
-          onConfirm: () => void this.publish(exam),
-        }));
-      });
-      card.append(btn);
+      append(host, buttonRow(d, button(d, {
+        label: 'ফলাফল প্রকাশ করুন',
+        variant: 'primary',
+        busy: this.busy === exam.examId,
+        onClick: () => {
+          host.append(confirmDialog({
+            doc: d,
+            title: 'ফলাফল প্রকাশ নিশ্চিত করুন',
+            // The consequence, in numbers, including the part that is wrong.
+            body:
+              `${exam.examNameBn} — ${bnNum(totalMarked)} টি নম্বর প্রকাশিত হবে। ` +
+              (incomplete.length > 0
+                ? `${bnNum(incomplete.length)} টি বিষয়ে এখনো নম্বর সম্পূর্ণ হয়নি। `
+                : '') +
+              'প্রকাশের পর নম্বর আর সম্পাদনা করা যাবে না, এবং শিক্ষার্থী ও অভিভাবকদের জানানো হবে।',
+            confirmLabel: 'প্রকাশ করুন',
+            danger: true,
+            onConfirm: () => void this.publish(exam),
+          }));
+        },
+      })));
     }
 
-    return card;
+    return host;
   }
 }

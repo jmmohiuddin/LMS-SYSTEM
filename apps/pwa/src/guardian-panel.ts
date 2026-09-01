@@ -24,7 +24,7 @@
  * invisible is one nobody trusts and everybody works around.
  */
 import type { Auth } from './auth.ts';
-import { humanError } from './ui/index.ts';
+import { humanError, serverMessage } from './ui/index.ts';
 import { skeleton, errorState, emptyState, successNote, confirmDialog, bnNum } from './view-states.ts';
 
 export interface GuardianLink {
@@ -123,7 +123,7 @@ export class GuardianPanel {
         body: JSON.stringify({ ...payload, studentId: this.o.studentId }),
       });
       const body = await res.json() as { reusedExisting?: boolean; created?: boolean; message?: string };
-      if (!res.ok) { this.error = body.message ?? 'যুক্ত করা যায়নি।'; return; }
+      if (!res.ok) { this.error = serverMessage(body, res.status, 'যুক্ত করা যায়নি।'); return; }
       // The office typed a new person and got an existing one. Say so, or the
       // name on screen will not be the name they typed and they will not know
       // why.
@@ -153,7 +153,7 @@ export class GuardianPanel {
         }),
       });
       const body = await res.json() as { feeNoticesChanged?: boolean; message?: string };
-      if (!res.ok) { this.error = body.message ?? 'পরিবর্তন করা যায়নি।'; return; }
+      if (!res.ok) { this.error = serverMessage(body, res.status, 'পরিবর্তন করা যায়নি।'); return; }
       // Naming the consequence is the point of the setting.
       this.notice = body.feeNoticesChanged
         ? `সংরক্ষিত — ${g.nameBn} এখন থেকে ফি ও ইনভয়েসের বার্তা ` +

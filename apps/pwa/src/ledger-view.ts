@@ -9,7 +9,22 @@
  */
 import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
-import { pageHeader } from './ui/page-header.ts';
+import {
+  pageHeader, sectionHeading, card, dataTable, statRow, statCard, listSkeleton,
+  permissionState, permissionMessage,
+} from './ui/index.ts';
+import { errorState } from './view-states.ts';
+import { isDenied } from './http-status.ts';
+import { bnDate } from './view-states.ts';
+
+/** The account types this chart uses, in words rather than in English keys. */
+const ACCOUNT_TYPE_BN: Record<string, string> = {
+  asset: 'সম্পদ',
+  liability: 'দায়',
+  income: 'আয়',
+  expense: 'ব্যয়',
+  equity: 'মূলধন',
+};
 
 interface AccountBalance {
   code: string;
@@ -50,26 +65,37 @@ export class LedgerView {
   private readonly o: LedgerViewOptions;
   private data: LedgerPayload | null = null;
   private loading = true;
-  private notice = '';
+  /** The server refused. No retry can help, and no data may be shown. */
+  private denied = false;
+  private error = '';
 
   constructor(options: LedgerViewOptions) {
     this.o = options;
     void this.load();
   }
 
+  /**
+   * P5. A refusal renders a refusal.
+   *
+   * This method used to answer a 403 with `this.data = DEMO` — a complete,
+   * plausible chart of accounts and three double-entry batches in taka, under
+   * one quiet line saying they were samples. Two rules at once: B-30's "a
+   * refusal is not a data state", and the standing rule against faking
+   * production state. A school's coordinator opening this saw numbers that
+   * looked exactly like their books and were not.
+   *
+   * Nothing is fabricated here now. The demo's own fixture lives in
+   * `demo.ts`, gated to the roles `LEDGER_ROLES` allows, like every other
+   * screen's demo data.
+   */
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/finance/ledger');
-      if (res.ok) {
-        this.data = (await res.json()) as LedgerPayload;
-      } else if (res.status === 401 || res.status === 403) {
-        this.notice = 'শুধু হিসাবরক্ষক পর্যায়ের জন্য — নমুনা ডেটা দেখানো হচ্ছে।';
-        this.data = DEMO;
-      } else {
-        this.data = DEMO;
-      }
+      if (isDenied(res)) { this.denied = true; }
+      else if (res.ok) { this.data = (await res.json()) as LedgerPayload; }
+      else { this.error = 'হিসাব আনা যায়নি — সংযোগ পেলে আবার দেখা যাবে।'; }
     } catch {
-      this.data = DEMO;
+      this.error = 'সংযোগ নেই — হিসাব আনা যায়নি।';
     }
     this.loading = false;
     this.render();
@@ -80,126 +106,83 @@ export class LedgerView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = pageHeader(d, {
+    root.append(pageHeader(d, {
       title: 'লেজার ও পুনর্মিলন',
       subtitle: 'দ্বৈত-এন্ট্রি হিসাব — bKash/Nagad পুনর্মিলন সহ',
-    });
-    root.append(header);
+    }));
 
-    if (this.notice) {
-      const n = d.createElement('p');
-      n.className = 'inline-notice';
-      n.textContent = this.notice;
-      root.append(n);
-    }
-
-    if (this.loading || !this.data) {
-      const p = d.createElement('p'); p.className = 'page-sub'; p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('লেজার ও পুনর্মিলন'),
+        contact: 'প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও হিসাবরক্ষক',
+      }));
       return;
     }
+    if (this.error) { root.append(errorState(d, this.error, () => void this.load())); return; }
+    if (this.loading || !this.data) { root.append(listSkeleton(d, 4)); return; }
 
-    // Reconciliation cards — the money-in view.
-    const recH = d.createElement('h2');
-    recH.className = 'section-heading';
-    recH.textContent = 'MFS পুনর্মিলন';
-    root.append(recH);
-    const recGrid = d.createElement('div');
-    recGrid.className = 'recon-grid';
-    for (const r of this.data.reconciliation) {
-      const card = d.createElement('div');
-      card.className = 'card recon-card';
-      const label = d.createElement('span'); label.className = 'recon-provider'; label.textContent = r.provider;
-      const posted = d.createElement('span'); posted.className = 'recon-posted'; posted.textContent = taka(r.posted);
-      const meta = d.createElement('span'); meta.className = 'recon-meta';
-      const match = Number(r.reconciled) === Number(r.posted);
-      meta.textContent = match ? '✓ সম্পূর্ণ মিলেছে' : `${taka(r.reconciled)} মিলেছে`;
-      meta.dataset.state = match ? 'ok' : 'partial';
-      card.append(label, posted, meta);
-      recGrid.append(card);
-    }
-    root.append(recGrid);
+    // ── MFS reconciliation: the money-in view ──
+    // Stat cards, because each provider is one figure with one verdict, and
+    // that is what a stat card is for. Cards that did this by hand had their
+    // own `.recon-card` class and their own margins.
+    root.append(sectionHeading(d, { title: 'MFS পুনর্মিলন' }));
+    root.append(statRow(d, ...this.data.reconciliation.map((r) => {
+      const matched = Number(r.reconciled) === Number(r.posted);
+      return statCard(d, {
+        label: r.provider,
+        value: taka(r.posted),
+        glyph: 'wallet',
+        tone: matched ? 'success' : 'warn',
+        // Never the tint alone: a school reconciling money must be able to
+        // tell "all matched" from "some matched" without seeing colour.
+        note: matched ? 'সম্পূর্ণ মিলেছে' : `${taka(r.reconciled)} মিলেছে — বাকিটা মেলেনি`,
+      });
+    })));
 
-    // Chart of accounts.
-    const acctH = d.createElement('h2');
-    acctH.className = 'section-heading';
-    acctH.textContent = 'হিসাব-তালিকা';
-    root.append(acctH);
-    const acctList = d.createElement('ul');
-    acctList.className = 'ledger-list';
-    for (const a of this.data.accounts) {
-      const li = d.createElement('li');
-      li.className = 'ledger-row';
-      li.dataset.type = a.type;
-      const code = d.createElement('span'); code.className = 'ledger-code'; code.textContent = a.code;
-      const name = d.createElement('span'); name.className = 'ledger-name'; name.textContent = a.nameBn;
-      const bal = d.createElement('span'); bal.className = 'ledger-bal'; bal.textContent = taka(a.balance);
-      li.append(code, name, bal);
-      acctList.append(li);
-    }
-    root.append(acctList);
+    // ── Chart of accounts ──
+    root.append(sectionHeading(d, { title: 'হিসাব-তালিকা' }));
+    root.append(dataTable(d, {
+      caption: 'হিসাব-তালিকা',
+      rows: this.data.accounts,
+      rowKey: (a) => a.code,
+      columns: [
+        { key: 'code', header: 'কোড', mobile: 'meta', cell: (a) => a.code,
+          width: 'minmax(0, 1.2fr)' },
+        { key: 'name', header: 'হিসাব', mobile: 'title', cell: (a) => a.nameBn,
+          width: 'minmax(0, 2fr)' },
+        { key: 'type', header: 'ধরন', mobile: 'subtitle',
+          cell: (a) => ACCOUNT_TYPE_BN[a.type] ?? a.type, width: 'minmax(0, 1fr)' },
+        { key: 'bal', header: 'ব্যালেন্স', mobile: 'meta', numeric: true,
+          cell: (a) => taka(a.balance), width: 'minmax(0, 1.2fr)' },
+      ],
+    }));
 
-    // Recent entries.
-    const batchH = d.createElement('h2');
-    batchH.className = 'section-heading';
-    batchH.textContent = 'সাম্প্রতিক এন্ট্রি';
-    root.append(batchH);
+    // ── Recent entries ──
+    // One table per batch: double entry is READ as a table, and the fact that
+    // the two columns sum to the same number is the whole point of the layout.
+    root.append(sectionHeading(d, { title: 'সাম্প্রতিক এন্ট্রি' }));
     for (const b of this.data.batches) {
-      const card = d.createElement('div');
-      card.className = 'card batch-card';
-      const memo = d.createElement('div'); memo.className = 'batch-memo';
-      memo.textContent = `${b.entryDate} · ${b.memo}`;
-      card.append(memo);
-      for (const line of b.lines) {
-        const row = d.createElement('div');
-        row.className = 'batch-line';
-        const acct = d.createElement('span'); acct.textContent = line.accountCode;
-        const dr = d.createElement('span'); dr.className = 'batch-dr';
-        dr.textContent = Number(line.debit) > 0 ? `DR ${taka(line.debit)}` : '';
-        const cr = d.createElement('span'); cr.className = 'batch-cr';
-        cr.textContent = Number(line.credit) > 0 ? `CR ${taka(line.credit)}` : '';
-        row.append(acct, dr, cr);
-        card.append(row);
-      }
-      root.append(card);
+      root.append(card(d, {
+        title: b.memo,
+        subtitle: bnDate(b.entryDate),
+        glyph: 'book',
+        headingLevel: 3,
+      }, dataTable(d, {
+        caption: `${b.memo} — ডেবিট ও ক্রেডিট`,
+        rows: b.lines,
+        rowKey: (l) => `${b.batchId}-${l.accountCode}`,
+        columns: [
+          { key: 'acct', header: 'হিসাব', mobile: 'title', cell: (l) => l.accountCode,
+            width: 'minmax(0, 2fr)' },
+          { key: 'dr', header: 'ডেবিট', mobile: 'meta', numeric: true,
+            cell: (l) => (Number(l.debit) > 0 ? taka(l.debit) : '—'),
+            width: 'minmax(0, 1.2fr)' },
+          { key: 'cr', header: 'ক্রেডিট', mobile: 'meta', numeric: true,
+            cell: (l) => (Number(l.credit) > 0 ? taka(l.credit) : '—'),
+            width: 'minmax(0, 1.2fr)' },
+        ],
+      })));
     }
   }
-}
 
-const DEMO: LedgerPayload = {
-  accounts: [
-    { code: 'MFS-BKASH',  nameBn: 'bKash সংগ্রহ',   type: 'asset',  balance: '18450.00' },
-    { code: 'MFS-NAGAD',  nameBn: 'Nagad সংগ্রহ',   type: 'asset',  balance: '9200.00' },
-    { code: 'MFS-ROCKET', nameBn: 'Rocket সংগ্রহ',  type: 'asset',  balance: '3100.00' },
-    { code: 'CASH',       nameBn: 'নগদ',            type: 'asset',  balance: '5750.00' },
-    { code: 'FEE-INCOME', nameBn: 'বেতন ও ফি আয়',   type: 'income', balance: '36500.00' },
-  ],
-  batches: [
-    {
-      batchId: 'demo-b1', entryDate: '2026-08-08', memo: 'MFS payment received (bKash)',
-      lines: [
-        { accountCode: 'MFS-BKASH', debit: '1250.00', credit: '0' },
-        { accountCode: 'FEE-INCOME', debit: '0', credit: '1250.00' },
-      ],
-    },
-    {
-      batchId: 'demo-b2', entryDate: '2026-08-08', memo: 'MFS payment received (Nagad)',
-      lines: [
-        { accountCode: 'MFS-NAGAD', debit: '750.00', credit: '0' },
-        { accountCode: 'FEE-INCOME', debit: '0', credit: '750.00' },
-      ],
-    },
-    {
-      batchId: 'demo-b3', entryDate: '2026-08-07', memo: 'MFS payment received (bKash)',
-      lines: [
-        { accountCode: 'MFS-BKASH', debit: '1000.00', credit: '0' },
-        { accountCode: 'FEE-INCOME', debit: '0', credit: '1000.00' },
-      ],
-    },
-  ],
-  reconciliation: [
-    { provider: 'bKash',  posted: '18450.00', reconciled: '18450.00' },
-    { provider: 'Nagad',  posted: '9200.00',  reconciled: '9200.00' },
-    { provider: 'Rocket', posted: '3100.00',  reconciled: '2350.00' },
-  ],
-};
+}

@@ -32,6 +32,17 @@ export interface Crumb {
   label: string;
   /** Hash path without `#/`. Omit for the current (last) crumb. */
   path?: string;
+  /**
+   * For depth the ROUTER does not hold.
+   *
+   * P5: the academic screen is four levels deep behind one hash — year →
+   * class → section → student — because those four are one thought and
+   * splitting them into routes would mean re-choosing the section three times
+   * to do three things to the same forty children. A crumb that can only
+   * carry a `path` is decoration on a screen like that, so it may carry a
+   * handler instead and renders a real `<button>`.
+   */
+  onClick?: () => void;
 }
 
 export interface PageHeaderOptions {
@@ -108,7 +119,12 @@ export function breadcrumb(doc: Document, crumbs: Crumb[]): HTMLElement {
         className: 'ui-crumb-sep', text: '›', attrs: { 'aria-hidden': 'true' },
       }));
     }
-    if (c.path && !last) {
+    if (c.onClick && !last) {
+      // A button, not an anchor: it goes nowhere a URL names, and an `<a>`
+      // with no href is invisible to the keyboard.
+      append(li, el(doc, 'button', { className: 'ui-crumb-link', text: c.label,
+        attrs: { type: 'button' }, on: { click: c.onClick } }));
+    } else if (c.path && !last) {
       append(li, el(doc, 'a', { className: 'ui-crumb-link', text: c.label,
         attrs: { href: `#/${c.path}` } }));
     } else {

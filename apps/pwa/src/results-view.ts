@@ -23,7 +23,7 @@
 import type { Auth } from './auth.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage } from './ui/index.ts';
+import { permissionState, permissionMessage, pageHeader, field, statusBadge,} from './ui/index.ts';
 
 interface SubjectRow {
   subjectBn: string;
@@ -130,37 +130,31 @@ export class ResultsView {
     root.textContent = '';
     root.setAttribute('lang', 'bn');
 
-    const header = d.createElement('header');
-    header.className = 'page-header page-header-row';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'ফলাফল';
-    header.append(h1);
-
     // The exam selector from §6.5's "[ প্রথম সাময়িক ▾ ]". A <select> rather
-    // than a custom menu: it is one control, it works offline, and the
-    // native picker is the one control every Android user already knows.
-    if (this.results.length > 1) {
-      const sel = d.createElement('select');
-      sel.className = 'exam-select';
-      sel.setAttribute('aria-label', 'পরীক্ষা বেছে নিন');
-      for (const r of this.results) {
-        const opt = d.createElement('option');
-        opt.value = r.examId;
-        opt.textContent = r.examNameBn;
-        if (r.examId === this.selected) opt.selected = true;
-        sel.append(opt);
-      }
-      sel.addEventListener('change', () => { this.selected = sel.value; this.render(); });
-      header.append(sel);
-    }
-    root.append(header);
+    // than a custom menu: it is one control, it works offline, and the native
+    // picker is the one control every Android user already knows. Now a
+    // `field()`, so it carries a visible label rather than an `aria-label`
+    // only a screen reader ever meets.
+    const picker = this.results.length > 1
+      ? field(d, {
+          label: 'পরীক্ষা',
+          name: 'exam',
+          kind: 'select',
+          value: this.selected ?? undefined,
+          className: 'exam-select-field',
+          options: this.results.map((r) => ({ value: r.examId, label: r.examNameBn })),
+          onChange: (v) => { this.selected = v; this.render(); },
+        })
+      : null;
 
-    if (this.offline) {
-      const b = d.createElement('p');
-      b.className = 'inline-notice';
-      b.textContent = 'অফলাইন — সংরক্ষিত ফলাফল দেখানো হচ্ছে';
-      root.append(b);
-    }
+    root.append(pageHeader(d, {
+      title: 'ফলাফল',
+      subtitle: 'প্রকাশিত পরীক্ষার ফলাফল ও মার্কশিট',
+      badge: this.offline
+        ? statusBadge(d, { state: 'pending', label: 'অফলাইন — সংরক্ষিত ফলাফল' })
+        : undefined,
+      actions: picker ? [picker.root] : undefined,
+    }));
 
     // B-30. A refusal outranks the offline banner, the skeleton and the
     // empty state: nothing is loading, there is nothing to show, and

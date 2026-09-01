@@ -270,16 +270,22 @@ describe('the event form', () => {
     await mountOctober(PAYLOAD());
     fire(byLabel(/নতুন এন্ট্রি/)!);
     await settle();
-    const form = root().querySelector('.card-form')!;
+    const form = root().querySelector('.ui-card-form')!;
     fire(form, 'submit');
-    assert.match(form.querySelector('[role=alert]')?.textContent ?? '', /শিরোনাম লিখুন/);
+    // P5: the message is in the TITLE field's own error slot, not in one
+    // shared line at the top of the form. The old form said "শিরোনাম লিখুন"
+    // above the date input, which is where the eye was not.
+    const title = form.querySelector('[name="titleBn"]')!.closest('.ui-field')!;
+    assert.match(title.querySelector('.ui-field-error')?.textContent ?? '', /শিরোনাম লিখুন/);
+    assert.equal(title.querySelector('.ui-field-error')?.hasAttribute('hidden'), false);
+    assert.equal(form.querySelector('[name="titleBn"]')?.getAttribute('aria-invalid'), 'true');
   });
 
   test('SMS is unavailable until notify is chosen', async () => {
     await mountOctober(PAYLOAD());
     fire(byLabel(/নতুন এন্ট্রি/)!);
     await settle();
-    const boxes = [...root().querySelectorAll('.card-form input[type=checkbox]')] as HTMLInputElement[];
+    const boxes = [...root().querySelectorAll('.ui-card-form input[type=checkbox]')] as HTMLInputElement[];
     const sms = boxes[boxes.length - 1];
     const notify = boxes[boxes.length - 2];
     assert.equal(sms.disabled, true, 'an SMS with no notice behind it is a stray charge');
@@ -292,8 +298,8 @@ describe('the event form', () => {
     await mountOctober(PAYLOAD());
     fire(byLabel(/নতুন এন্ট্রি/)!);
     await settle();
-    const form = root().querySelector('.card-form')!;
-    (form.querySelector('input[type=text]') as HTMLInputElement).value = 'ছুটি';
+    const form = root().querySelector('.ui-card-form')!;
+    (form.querySelector('[name="titleBn"]') as HTMLInputElement).value = 'ছুটি';
     const boxes = [...form.querySelectorAll('input[type=checkbox]')] as HTMLInputElement[];
     const notify = boxes[boxes.length - 2];
     notify.checked = true;
@@ -308,8 +314,8 @@ describe('the event form', () => {
     const auth = await mountOctober(PAYLOAD());
     fire(byLabel(/নতুন এন্ট্রি/)!);
     await settle();
-    const form = root().querySelector('.card-form')!;
-    (form.querySelector('input[type=text]') as HTMLInputElement).value = 'ছুটি';
+    const form = root().querySelector('.ui-card-form')!;
+    (form.querySelector('[name="titleBn"]') as HTMLInputElement).value = 'ছুটি';
     fire(form, 'submit');
     await settle(); await settle();
     const post = auth.calls.find((c) => c.init?.method === 'POST');
@@ -368,8 +374,8 @@ describe('the four states', () => {
     const auth = await mountOctober(PAYLOAD());
     fire(byLabel(/নতুন এন্ট্রি/)!);
     await settle();
-    const form = root().querySelector('.card-form')!;
-    (form.querySelector('input[type=text]') as HTMLInputElement).value = 'ছুটি';
+    const form = root().querySelector('.ui-card-form')!;
+    (form.querySelector('[name="titleBn"]') as HTMLInputElement).value = 'ছুটি';
     fire(form, 'submit');
     await settle(); await settle();
     assert.match(text(), /শিক্ষাপঞ্জিতে যুক্ত হয়েছে/);
@@ -526,7 +532,7 @@ describe('working weekend', () => {
       .some((o) => o.textContent === 'খোলা'), 'a school can find its make-up days');
     fire(byLabel(/নতুন এন্ট্রি/)!);
     await settle();
-    const kinds = [...(root().querySelector('.card-form select') as HTMLSelectElement).options]
+    const kinds = [...(root().querySelector('.ui-card-form select') as HTMLSelectElement).options]
       .map((o) => o.value);
     assert.ok(kinds.includes('working_weekend'));
   });

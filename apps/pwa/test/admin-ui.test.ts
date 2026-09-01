@@ -26,6 +26,7 @@ import { PublishView } from '../src/publish-view.ts';
 import { InvoiceView } from '../src/invoice-view.ts';
 import { AdminSettingsView } from '../src/admin-settings-view.ts';
 import { RolloverView } from '../src/rollover-view.ts';
+import { permissionMessage } from '../src/ui/feedback.ts';
 import { UsersView } from '../src/users-view.ts';
 import { bnNum, skeleton, emptyState, errorState } from '../src/view-states.ts';
 
@@ -52,8 +53,16 @@ const text = () => root().textContent ?? '';
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /** Click the nth row currently on screen. */
+/**
+ * Open the i-th row of the screen's list.
+ *
+ * P5 moved the academic drill-down onto `dataTable`, which renders the table
+ * AND the mobile list from one definition and lets CSS decide which is seen.
+ * `.ui-row-open` is the table's own activation control, so this drives the
+ * desktop shape — the shape a school office is actually on.
+ */
 const clickRow = (i = 0) =>
-  ([...root().querySelectorAll('.system-row')][i] as HTMLElement)
+  ([...root().querySelectorAll('table.ui-table tbody .ui-row-open, .system-row')][i] as HTMLElement)
     .dispatchEvent(new dom.window.Event('click'));
 
 /**
@@ -306,7 +315,14 @@ describe('academic hierarchy', () => {
     await settle();
     assert.match(text(), /নবম শ্রেণি/);
     assert.match(text(), /বিজ্ঞান/);
-    assert.match(text(), new RegExp(`${bnNum(78)} জন`));
+    // P5: the counts are columns. "৭৮ জন" became a "শিক্ষার্থী" header over a
+    // "৭৮" cell — repeating the unit in every cell of a column that already
+    // names it is noise, and a column is what lets six classes be compared in
+    // one pass.
+    const heads = [...root().querySelectorAll('thead th')].map((h) => h.textContent);
+    assert.ok(heads.includes('শিক্ষার্থী'), 'the count has its own column');
+    assert.ok(heads.includes('সেকশন'));
+    assert.match(text(), new RegExp(bnNum(78)));
   });
 
   test('a section with no class teacher is marked, not left to be read', async () => {
@@ -402,7 +418,12 @@ describe('academic hierarchy', () => {
     new AcademicView({ root: root(), doc: doc(), auth: fakeAuth(withStudent) as never, canManage: true, canManageGuardians: true });
     await settle();
     await openSectionF();
-    [...root().querySelectorAll('.roster-name')][0].dispatchEvent(new dom.window.Event('click'));
+    // The roster is a `dataTable` since P5, so a student is opened by the
+    // table's own row control rather than by a bespoke `.roster-name` button.
+    const tables = [...root().querySelectorAll('table.ui-table')];
+    const roster = tables[tables.length - 1];
+    (roster.querySelector('tbody .ui-row-open') as HTMLElement)
+      .dispatchEvent(new dom.window.Event('click'));
     await settle();
     assert.match(text(), /২০২৫/, 'the ten-year history is the point of never overwriting enrolments');
     assert.match(text(), /আব্দুল করিম/);
@@ -472,7 +493,11 @@ describe('invoice generation', () => {
     });
     new InvoiceView({ root: root(), doc: doc(), auth: auth as never, canGenerate: true });
     await settle();
-    clickLabel('ইনভয়েস তৈরি করুন');
+    // P5 made this a real `<form>`, so the act is a submit. jsdom does not
+    // run default behaviour for a manually dispatched click, which is why
+    // pressing the button is expressed as the submit it causes.
+    (root().querySelector('form.ui-card-form') as HTMLFormElement)
+      .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
     await settle();
     clickLabel('তৈরি করুন');
     // generate() awaits the POST and then a reload; both need to land.
@@ -495,7 +520,10 @@ describe('invoice generation — permission', () => {
     });
     await settle();
     assert.equal(root().querySelectorAll('input[type=month]').length, 0);
-    assert.match(text(), /অনুমতি কেবল/);
+    // P5 replaced this screen's bespoke sentence with the canonical one, and
+    // asserts it through the function so it cannot drift again.
+    assert.match(text(), new RegExp(permissionMessage('ইনভয়েস তৈরি')));
+    assert.match(text(), /প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও হিসাবরক্ষক/);
   });
 });
 
@@ -505,10 +533,16 @@ describe('SMS notice settings', () => {
   test('the limits come from the server, not from a constant in the browser', async () => {
     new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
-    const input = root().querySelector('input[type=number]') as HTMLInputElement;
-    assert.equal(input.min, '70');
-    assert.equal(input.max, '480');
+    // `field({ kind: 'number' })` renders `type="text"` with
+    // `inputmode="numeric"` on purpose — `type=number` silently discards what
+    // it considers invalid, so a mis-keyed value vanishes instead of being
+    // corrected. The bounds still come from the server and are still on the
+    // control, which is what this test is about.
+    const input = root().querySelector('[name="noticeMaxChars"]') as HTMLInputElement;
+    assert.equal(input.getAttribute('min'), '70');
+    assert.equal(input.getAttribute('max'), '480');
     assert.equal(input.value, '180');
+    assert.equal(input.getAttribute('inputmode'), 'numeric');
   });
 
   test('cost is shown in segments, because that is the unit the bill arrives in', async () => {
@@ -520,7 +554,7 @@ describe('SMS notice settings', () => {
   test('going over the recommendation warns in multiples of the bill', async () => {
     new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
-    const input = root().querySelector('input[type=number]') as HTMLInputElement;
+    const input = root().querySelector('[name="noticeMaxChars"]') as HTMLInputElement;
     input.value = '420';
     input.dispatchEvent(new dom.window.Event('input'));
     const warn = root().querySelector('.inline-notice') as HTMLElement;
@@ -531,7 +565,7 @@ describe('SMS notice settings', () => {
   test('an out-of-range value cannot be saved', async () => {
     new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: true, canManageGuardians: true });
     await settle();
-    const input = root().querySelector('input[type=number]') as HTMLInputElement;
+    const input = root().querySelector('[name="noticeMaxChars"]') as HTMLInputElement;
     input.value = '9000';
     input.dispatchEvent(new dom.window.Event('input'));
     const save = [...root().querySelectorAll('button')].find((b) => b.textContent?.includes('সংরক্ষণ'))!;
@@ -548,8 +582,12 @@ describe('SMS notice settings', () => {
   test('a caller who may not change it gets a disabled form and a reason', async () => {
     new AdminSettingsView({ root: root(), doc: doc(), auth: fakeAuth({ '/api/v1/ops/settings': settings }) as never, canManage: false, canManageGuardians: false });
     await settle();
-    assert.equal((root().querySelector('input[type=number]') as HTMLInputElement).disabled, true);
-    assert.match(text(), /অনুমতি কেবল/);
+    assert.equal((root().querySelector('[name="noticeMaxChars"]') as HTMLInputElement).disabled, true);
+    // P5: names all FOUR roles the endpoint allows. The old sentence said
+    // "প্রধান শিক্ষক ও আইটি অ্যাডমিন" and left out the owner and the
+    // coordinator, both of whom may in fact change this.
+    assert.match(text(), /আপনি শুধু দেখতে পারবেন/);
+    assert.match(text(), /প্রধান শিক্ষক, প্রতিষ্ঠান মালিক, আইটি অ্যাডমিন ও একাডেমিক সমন্বয়ক/);
   });
 });
 

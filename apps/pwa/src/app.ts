@@ -876,6 +876,7 @@ async function main() {
           new AdminSettingsView({
             root: container, doc: document, auth,
             canManage: MANAGE_SETTINGS.has(auth.role),
+            go: (path) => { location.hash = `#/${path}`; },
           });
         },
       },

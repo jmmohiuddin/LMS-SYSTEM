@@ -68,7 +68,7 @@ export type { TabItem, FilterDef } from './filter.ts';
 
 export {
   toast, announce, inlineLoader, progress, tooltip,
-  listSkeleton, permissionState, humanError, permissionMessage,
+  listSkeleton, permissionState, humanError, permissionMessage, serverMessage,
   permissionMessageWithContact,
   skeleton, emptyState, errorState, successNote, pageSkeleton,
 } from './feedback.ts';

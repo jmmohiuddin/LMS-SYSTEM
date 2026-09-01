@@ -32,8 +32,16 @@ import {
   type NoticeCategory,
 } from '../../../packages/ui-core/src/notice.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { serverMessage, pageHeader, field as uiField, setFieldError, clearFieldError, permissionState, permissionMessage,} from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
+
+/**
+ * Who may author a notice. Mirrors `AUTHOR_ROLES` in
+ * `services/ops-svc/api/notices.ts`, which is the real gate — this copy only
+ * decides whether the form is offered, never whether the send succeeds.
+ */
+const AUTHOR_ROLES = ['principal', 'school_owner', 'academic_coordinator', 'class_teacher'];
 
 export interface SectionOption {
   id: string;
@@ -190,7 +198,7 @@ export class NoticeComposeView {
       if (!res.ok) {
         if (body.field) this.fieldError = { field: body.field, message: body.message ?? 'ভুল আছে।' };
         else {
-          this.notice = body.message ?? 'পাঠানো যায়নি। আবার চেষ্টা করুন।';
+          this.notice = serverMessage(body, res.status, 'পাঠানো যায়নি। আবার চেষ্টা করুন।', 'নোটিশ');
           this.noticeKind = 'error';
         }
         return;
@@ -324,6 +332,16 @@ export class NoticeComposeView {
     }
   }
 
+  /**
+   * One of the composer's two text fields, on the P2 primitive.
+   *
+   * What this replaces was a `<label class="login-label">` with the error
+   * appended INSIDE it and no `aria-describedby`, so a screen reader met the
+   * error only by wandering into it. `field()` wires the description, and
+   * `setFieldError` puts the message in a slot that already exists — which
+   * matters because the old path reported errors by re-rendering, and a
+   * re-render of this screen throws away the notice the person just typed.
+   */
   private field(
     parent: HTMLElement,
     labelBn: string,
@@ -331,35 +349,28 @@ export class NoticeComposeView {
     opts: { multiline?: boolean; max: number },
   ): void {
     const d = this.o.doc;
-    const label = d.createElement('label');
-    label.className = 'login-label brand-field';
-    const span = d.createElement('span');
-    span.textContent = labelBn;
-    label.append(span);
-
-    const input = opts.multiline ? d.createElement('textarea') : d.createElement('input');
-    input.className = 'login-input';
-    if (opts.multiline) (input as HTMLTextAreaElement).rows = 6;
-    (input as HTMLInputElement | HTMLTextAreaElement).value = this[key];
-    (input as HTMLInputElement).maxLength = opts.max;
-    input.addEventListener('input', () => {
-      this[key] = (input as HTMLInputElement).value;
-      this.fieldError = null;
-      this.syncLive();
-      // The body decides the segment count and the title is part of the sent
-      // message, so both change the estimate.
-      this.scheduleEstimate();
+    const f = uiField(d, {
+      label: labelBn,
+      name: key,
+      kind: opts.multiline ? 'textarea' : 'text',
+      value: this[key],
+      required: true,
+      helper: opts.multiline
+        ? 'পুরো নোটিশ অ্যাপে যাবে; এসএমএসে সংক্ষিপ্ত অংশ যাবে।'
+        : `সর্বোচ্চ ${bn(opts.max)} অক্ষর।`,
+      attrs: { maxlength: opts.max, ...(opts.multiline ? { rows: 6 } : {}) },
+      onInput: (v) => {
+        this[key] = v;
+        this.fieldError = null;
+        clearFieldError(f.root);
+        this.syncLive();
+        // The body decides the segment count and the title is part of the
+        // sent message, so both change the estimate.
+        this.scheduleEstimate();
+      },
     });
-    label.append(input);
-
-    if (this.fieldError?.field === key) {
-      const err = d.createElement('p');
-      err.className = 'login-error';
-      err.setAttribute('role', 'alert');
-      err.textContent = this.fieldError.message;
-      label.append(err);
-    }
-    parent.append(label);
+    if (this.fieldError?.field === key) setFieldError(f.root, this.fieldError.message);
+    parent.append(f.root);
   }
 
   private render(): void {
@@ -367,17 +378,26 @@ export class NoticeComposeView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header brand-head';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'নোটিশ পাঠান';
-    const sub = d.createElement('p');
-    sub.className = 'att-sub';
-    sub.textContent = this.isManagement()
-      ? 'যাদের জন্য পাঠাবেন, শুধু তারাই দেখবে।'
-      : 'আপনি নিজের শাখাগুলোতে নোটিশ পাঠাতে পারবেন।';
-    header.append(h1, sub);
-    root.append(header);
+    // Mirrors AUTHOR_ROLES in ops-svc/api/notices.ts. A student or a guardian
+    // typing this URL used to meet the whole composer — title, body, and
+    // audience chips reading "শিক্ষকদের জন্য · অভিভাবকদের জন্য". The endpoint
+    // would have refused the send; the screen should not have offered a child
+    // a broadcast to the school in the first place.
+    if (!AUTHOR_ROLES.includes(this.o.auth.role)) {
+      root.append(pageHeader(d, { title: 'নোটিশ পাঠান' }));
+      root.append(permissionState(d, {
+        message: permissionMessage('নোটিশ পাঠানো'),
+        contact: 'প্রধান শিক্ষক, প্রতিষ্ঠান মালিক, একাডেমিক সমন্বয়ক ও শ্রেণি শিক্ষক',
+      }));
+      return;
+    }
+
+    root.append(pageHeader(d, {
+      title: 'নোটিশ পাঠান',
+      subtitle: this.isManagement()
+        ? 'যাদের জন্য পাঠাবেন, শুধু তারাই দেখবে।'
+        : 'আপনি নিজের শাখাগুলোতে নোটিশ পাঠাতে পারবেন।',
+    }));
 
     if (this.notice) {
       const n = d.createElement('p');

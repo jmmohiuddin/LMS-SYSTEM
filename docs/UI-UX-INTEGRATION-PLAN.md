@@ -1128,3 +1128,56 @@ Academic structure, imports, settings hierarchy, dedicated teacher/guardian
 list screens, publish · calendar · documents · fees · invoices · ledger ·
 compose · inbox, and system health's state vocabulary. All render and sweep
 clean; none is on P2 primitives. **P5 remains PARTIAL.**
+
+## 29. P5 close — the remaining IT Admin + Principal screens (2026-09-01) · **COMPLETE**
+
+Detail in `PHASE_LOG.md`. The measurement first, because it set the scope:
+every one of these screens rendered **0 `.ui-card`, 0 `.ui-btn`,
+0 `.ui-field`**, and at 1440 each list was full-width strips down a 1110px
+column — the phone shape stretched, which §4 forbids.
+
+### Migrated
+
+| Screen | Shape now |
+|---|---|
+| academic | four depths, four tables · real crumbs · both forms on `field()` |
+| import | rebuilt — role-chosen kind, resolved year, `fileUpload`, error table |
+| settings | two groups: what this endpoint owns, and what lives elsewhere |
+| system | table + a legend defining all four states |
+| fees | table; the invoice's lines and receipts in a drawer |
+| invoices · ledger · documents · publish · calendar · compose · inbox | see the log |
+
+**Exceptions, recorded with reasons rather than left as omissions.**
+`results` keeps its own `<table>` — `dataTable` cannot express the `colSpan`
+cell reading **অনুপস্থিত** across the marks of a child who did not sit, and
+migrating would have deleted it. `inbox` stays a disclosure list: a notice is
+a title that opens into a paragraph.
+
+### Primitives that grew
+
+`Crumb.onClick` (depth the router does not hold) · `FieldKind: 'month'` ·
+`serverMessage()` · `.ui-facts` · `.ui-card-lead/-note` · `.ui-card-grid` ·
+`.ui-check` · `.ui-fieldset`.
+
+### Eleven defects
+
+Five security or privacy — a ledger that **fabricated a school's accounts
+under a 403**; three finance endpoints ungated in the public demo; a live
+search bar under a refusal; the notice composer offered to a student; a
+"একসাথে সবার" badge promising a child a bulk capability they do not have.
+Six correctness or truth — student import that could never work, a teacher
+importer with no UI, `requireRole`'s English role codes reaching a Bangla
+screen through fifteen views, `isDenied(res)` silently always false, `2026-08`
+printed at a parent, and `fileUpload`'s hidden input scrolling the page
+sideways at 1280.
+
+### Acceptance
+
+| Persona | Widths | Routes | Checks |
+|---|---|---|---|
+| IT Admin, tenant A | 360 · 375 · 390 · 1024 · **1280** · 1440 · 1600 | 10 | 6,226 |
+| Principal, tenant B | same seven | 17 | 13,586 |
+
+**0 failures.** 0 contrast · 0 overflow · 0 unnamed controls · 0 `undefined` ·
+0 uuids · 0 ISO dates as values. 1280 is where the `fileUpload` overflow was
+found; B-34 never drove it.

@@ -8599,3 +8599,271 @@ and this is the part of it that is not ticked:
   brief's four words cannot express and an operator needs.
 
 **Commit:** `5800906`.
+
+---
+
+# P5 — the remaining IT Admin and Principal screens   (2026-09-01) · **COMPLETE**
+
+Closes P5. Fourteen screens migrated, **eleven defects found and fixed** — five
+of them security or privacy, one of them a screen that fabricated a school's
+accounts under a refusal.
+
+---
+
+## What the measurement said before any code
+
+Rendered at 1440 as each persona, and counted:
+
+| Screen | What was actually there |
+|---|---|
+| `academic` | 2 `.system-row` across a 1110px column, counts pushed to the far edge |
+| `documents` | 6 `.system-row` @1120 |
+| `fees` | 3 `.fees-row` @1120 |
+| `invoices` | 3 `.system-row` @1120 |
+| `ledger` | 5 `.ledger-row` @1110 |
+| `system` | 12 `.card.system-row` @1110 |
+| all of them | **0 `.ui-card`, 0 `.ui-btn`, 0 `.ui-field`** |
+
+So the finding was the same one B-34 made and the diagnosis was the same: the
+MOBILE shape was already right and the DESKTOP shape was a phone layout
+stretched, which is what §4 forbids outright.
+
+## Migrated
+
+| Screen | Shape now |
+|---|---|
+| **academic** | four depths, four tables — classes · sections · subjects · roster · history — plus real crumbs and both forms on `field()` |
+| **import** | rebuilt: role-chosen kind, resolved year, `fileUpload`, error table, confirmation |
+| **settings** | two groups — what this endpoint owns, and what lives on its own screen |
+| **system** | table + a legend defining all four states |
+| **fees** | table, with the invoice's lines and receipts in a drawer |
+| **invoices** | form on `field()` + a table of recent runs |
+| **ledger** | stat cards for reconciliation, a table for accounts, one DR/CR table per batch |
+| **documents** | choice-cards in a grid; the type as a crumb |
+| **publish** | `card()` per exam, a table for per-subject completeness |
+| **calendar** | every control on P2; the form's errors per-field |
+| **compose** | the two text fields on `field()`; the header on `pageHeader` |
+| **inbox** | `pageHeader`, `countBadge`, canonical states, `au-rows` desktop rhythm |
+| **results** | chrome only — see the exceptions below |
+
+### Two deliberate exceptions, each with a reason
+
+- **`results` keeps its own `<table>`.** It already builds correct markup with
+  `th scope=row`, a conditional practical/CA column set, a superscript tied to
+  a footnote, and — the part `dataTable` cannot express — a `colSpan` cell
+  reading **অনুপস্থিত** across the marks of a child who did not sit the exam.
+  Migrating it would have DELETED that.
+- **`inbox` stays a disclosure list**, like `audit`. A notice is a title that
+  opens into a paragraph, and a table cell cannot hold a paragraph.
+
+## Eleven defects
+
+### Security and privacy — found by driving the matrix, not by reading code
+
+**1. `ledger-view` answered a 403 by fabricating a ledger.** The worst of the
+eleven, and it is in the PRODUCT rather than the demo:
+
+```ts
+} else if (res.status === 401 || res.status === 403) {
+  this.notice = 'শুধু হিসাবরক্ষক পর্যায়ের জন্য — নমুনা ডেটা দেখানো হচ্ছে।';
+  this.data = DEMO;
+```
+
+A refused coordinator was shown a complete chart of accounts, MFS
+reconciliation totals and three double-entry batches in taka, under one quiet
+line calling them samples. B-30's "a refusal is not a data state" and the
+standing rule against faking production state, at once. The fallback is gone;
+the fixture moved into `demo.ts` where it is gated by role.
+
+**2. Three finance endpoints were ungated in the demo.** `/finance/ledger`,
+`/finance/invoices`, `/finance/receipts` — so the PUBLIC preview showed a class
+teacher the school's books and three invoices, which `LEDGER_ROLES` and
+`invoice_scope` both refuse. Same class as P4's role-switch cache leak, on the
+same public surface. `/ops/settings` was ungated too: a student read the
+school's SMS cost policy.
+
+**3. `users-view` offered a live search bar under its own refusal.** The
+refusal rendered correctly, and then a name box, a role filter and a
+"খুঁজুন" button — three controls whose only outcome is a second 403.
+
+**4. The notice composer gave a student the whole form**, audience chips and
+all: "শিক্ষকদের জন্য · অভিভাবকদের জন্য". `AUTHOR_ROLES` would have refused
+the send. A screen that offers a child a broadcast to nine hundred families
+and then fails is worse than one that says no.
+
+**5. "একসাথে সবার" was offered to a student.** `DOCS_FOR` rightly lets a
+family print its own mark sheet; the BULK badge came off the document spec, so
+it was shown to everyone. The endpoint is safe — `app.can_see_student` narrows
+a student's section request to their own row — but the badge promised a
+capability the reader does not have.
+
+### Correctness
+
+**6. Student import could not work at all.** `academicYearId` was an optional
+option nobody passed — `app.ts` mounts `new ImportView({ root, doc, auth })` —
+so every request went out without a year and came back 400. The screen now
+asks `/hierarchy` itself.
+
+**7. The teacher importer had no UI.** R-7 shipped `runTeacherImport` and the
+endpoint gates it to principal · owner · **IT admin** — and this screen sent
+`kind: 'student'` unconditionally, which those same IT admins may not do. So
+the one import an IT admin may run was unreachable and the one they could
+reach refused them. The nav said "শিক্ষার্থী আমদানি" to them, naming the one
+thing they cannot do; a **principal had no import nav entry at all**, though
+784 rows on day one is their job.
+
+**8. `requireRole` printed English role codes into a Bangla UI.**
+
+```
+this endpoint requires one of: principal, school_owner, it_admin
+```
+
+Fifteen views rendered `body.message ?? 'কিছু হয়নি'`, which is right when the
+endpoint wrote a sentence for a person and wrong when it did not. Fixed at the
+seam — `serverMessage()` uses a server's words only when they are written in
+the language the reader is reading, and never for a 401/403.
+
+**9. `isDenied(res)` silently returned `false` everywhere.** Mine: I wrote it
+against `Response` at four new call sites, and it only understood a thrown
+`HttpStatus`. A refusal check that never fires is worse than none, because the
+screen looks like it has one. `statusOf` now reads the property, not the class.
+
+### UI truth
+
+**10. `2026-08` and `2026-08-10` on screen.** A billing period as a database
+key and an ISO date, both in front of a parent. `bnMonth` is new because
+`Date.parse('2026-08')` succeeds — `bnDate` would have printed "১ আগস্ট ২০২৬",
+a day the invoice has nothing to do with.
+
+**11. `fileUpload`'s hidden input scrolled the page sideways.** A dead rule,
+`.import-card input[type='file'] { width: 100% }`, outranked `.ui-sr-only` on
+specificity: a 1270px invisible input inside a 1280px viewport. Found only
+because **1280 was driven this time** — B-34 never measured it. The dead rule
+is gone AND `.ui-sr-only` is now unarguable for controls, because any legacy
+descendant selector with a width could do this again.
+
+## System health: the vocabulary, derived rather than invented
+
+The brief proposed healthy / warning / blocked / unavailable. Four words
+cannot express the state most of that list is in, so the MODEL is unchanged
+and only the naming moved:
+
+| was | is | means |
+|---|---|---|
+| `on` | **চালু আছে** | the endpoint answered |
+| `invisible` | **সবসময় চালু** | a database- or server-level guarantee. No page, no switch, nothing to check |
+| `dark` | **ইচ্ছাকৃতভাবে বন্ধ** | a kill switch is on. **Not a fault** — a school reading "সমস্যা" against AI files a ticket about a decision |
+| `unknown` | **যাচাই করা যায়নি** | the probe got no answer |
+
+Every state is now defined on the screen itself. Nothing reports a health it
+did not measure: `সবসময় চালু` says so out loud by never being probed.
+
+## Primitives that grew
+
+- `Crumb.onClick` — the academic screen is four levels deep behind one hash,
+  and a crumb that can only carry a `path` is decoration on a screen like that
+- `FieldKind: 'month'` — a billing period is a month, not a day
+- `serverMessage()` — see defect 8
+- `.ui-facts`, `.ui-card-lead/-note`, `.ui-card-grid`, `.ui-check`,
+  `.ui-fieldset` — five shapes that five screens were each inventing
+
+## Browser acceptance
+
+Both personas, both themes, **seven widths including 1280**, transitions frozen.
+
+| Persona | Widths | Routes | Element checks |
+|---|---|---|---|
+| IT Admin, tenant A | 360 · 375 · 390 · 1024 · 1280 · 1440 · 1600 | 10 | 6,226 |
+| Principal, tenant B | same seven | 17 | 13,586 |
+| | | | **19,812** |
+
+**0 contrast failures · 0 horizontal overflow · 0 unnamed controls ·
+0 `undefined` · 0 uuids on screen · 0 ISO dates presented as values.**
+
+Two accepted exceptions, both desktop-only `pointer: fine` and both above
+WCAG 2.2 AA's 24×24: `d-rail-toggle` at 32×32, and a collapsed-rail `dnav` at
+41×44 (the sidebar auto-collapses at 1024). No mobile surface has a sub-44px
+target — the calendar's day cells were 40px at 360 and were fixed by giving
+the grid its gutters back below 400px.
+
+Branding, measured: tenant A `--c-primary: #156a3f`, tenant B `#1b3e7a`, with
+`--c-info` derived per tenant AND per theme (B-34's fix) to four different
+values across the four combinations.
+
+## Security matrix, as pairs
+
+**Refused, canonical sentence, 0 rows, 0 live controls:**
+
+| Role | Routes refused |
+|---|---|
+| class teacher | users · audit · rollover · publish · invoices · ledger · fees · import · adminsettings |
+| student | + academic · compose |
+| guardian | same as student |
+
+Read-only where read-only is right: `branding` for a class teacher (0 of 12
+fields, and says why), `academic` for a class teacher (2 class rows, no create
+or rename controls), `documents` for a family (own receipt, own mark sheet,
+own admit card — **and no bulk badge**).
+
+**Legitimate half:** a principal meets no refusal on any of 17 routes. An IT
+admin gets 26 live controls on `users`, 12 branding fields, academic, settings,
+audit, rollover, staff import and system health — **and is refused from
+`ledger` and `invoices`**, because the school's money is not their job.
+
+Platform console: no route, no nav entry, and `#/platform` falls through to
+home. **Not claimed as evidence:** `/api/v1/platform/tenants` answers 503 from
+the static preview because the preview mounts no API; the boundary rests on
+platform-svc's 26 tests and R-7's three-credential design.
+
+D16: no subscription, plan, package or billing-of-shikhonBD wording on any of
+the 27 routes swept.
+
+## Tests
+
+`apps/pwa/test/p5-screens.test.ts` — 30 tests. The one that matters is named
+as such: **a 403 shows the refusal and NO numbers**, asserting the absence of
+`MFS-BKASH`, of `18450`, and of the word নমুনা.
+
+**Five existing suites were re-pointed, none weakened.** Every assertion keeps
+its meaning; what changed is how the control is addressed:
+
+- `notices-ui`, `notice-safety` — `.login-input` → `[name="title"]` /
+  `[name="body"]`. `notice-safety`'s stub also had to say who it was, because
+  the composer now refuses a role outside `AUTHOR_ROLES` and the stub had
+  never set one while claiming `canPublishAll: true`.
+- `import-view` — the totals are stat cards, the errors are a table, and the
+  commit passes through a confirmation. One assertion got STRONGER: with no
+  importable rows the button is not rendered at all, where it used to be
+  rendered and disabled.
+- `calendar-ui` — `.card-form` → `.ui-card-form`, and the shared `[role=alert]`
+  became the title field's own error slot, which is the improvement: the old
+  form said "শিরোনাম লিখুন" above the date input.
+- `admin-ui` — the drill-down is a table, the number field is `type=text` with
+  `inputmode=numeric` by P2's own decision, and three bespoke refusal
+  sentences became the canonical one asserted through `permissionMessage()` so
+  it cannot drift again.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,506 passing**, 0 failing, 12 workspaces |
+| TypeScript — all three CI configs | 0 errors |
+| Typecheck drift guard | passed; baseline 63 → **64** (the new test file, which joins the 49 test files already outside every tsconfig — no exclusion was changed) |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | **50/50**, fully migrated |
+| `index.html` | git hash `496199bd` — unchanged |
+| Browser | 19,812 element checks, 0 failures |
+
+**One disclosed anomaly.** The first of ten runs of `b6-structure-edit` +
+`b7-guardian-revoke` reported `pass 12, fail 1`; the failing test was not
+captured. It did not reproduce in **nine** subsequent runs — three sequential,
+three in the same shape as the original, three in parallel with academics-svc —
+all `28/28`. The most likely cause is contention with the full `npm test` run
+that had just finished against the same database, but that is **INFERRED, not
+established**. Recorded rather than smoothed over.
+
+## Backlog
+
+**B-34 → RESOLVED.** Every screen the completion gate names is on the design
+system, or is a recorded exception with a reason.

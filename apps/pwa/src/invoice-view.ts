@@ -30,6 +30,12 @@ import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum,
 } from './view-states.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { bnMonth } from './view-states.ts';
+import {
+  serverMessage, sectionHeading, buttonRow, button, dataTable, statusBadge,
+  field, setFieldError, clearFieldError, permissionState, permissionMessage,
+  el, append,
+} from './ui/index.ts';
 
 interface InvoiceRow {
   id: string; invoiceNo: string; billingPeriod: string;
@@ -99,7 +105,7 @@ export class InvoiceView {
       if (!res.ok) {
         this.error = body.error === 'no_academic_year'
           ? 'এই মাসটি কোনো শিক্ষাবর্ষের মধ্যে পড়ে না।'
-          : body.message ?? 'ইনভয়েস তৈরি করা যায়নি।';
+          : serverMessage(body, res.status, 'ইনভয়েস তৈরি করা যায়নি।', 'ইনভয়েস');
         return;
       }
       const n = body.invoiceCount ?? 0;
@@ -136,52 +142,56 @@ export class InvoiceView {
     }
 
     if (!this.o.canGenerate) {
-      const note = d.createElement('p');
-      note.className = 'att-sub';
-      note.style.padding = '0 var(--s-4) var(--s-3)';
-      note.textContent = 'ইনভয়েস তৈরির অনুমতি কেবল প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও হিসাবরক্ষকের।';
-      root.append(note);
-      this.renderRecent(root);
+      // The refusal, and NOTHING under it.
+      //
+      // This first said "a reader who may not generate may still read what
+      // was generated", and then the student pass showed a child their own
+      // three invoices under the heading "সাম্প্রতিক ইনভয়েস" on a screen
+      // called "ইনভয়েস তৈরি". A family reading its own bills has `#/fees`,
+      // which is built for it; this screen is the monthly billing run.
+      root.append(permissionState(d, {
+        message: permissionMessage('ইনভয়েস তৈরি'),
+        contact: 'প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও হিসাবরক্ষক',
+      }));
       return;
     }
 
-    const card = d.createElement('div');
-    card.className = 'card card-form';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
+    const form = el(d, 'form', { className: 'ui-card ui-card-form' });
+    append(form, el(d, 'h3', { className: 'ui-card-title', text: 'নতুন ইনভয়েস' }));
 
-    const field = d.createElement('label');
-    field.className = 'field';
-    field.textContent = 'বিলিং মাস';
-    const input = d.createElement('input');
-    input.type = 'month';
-    input.className = 'field-input';
-    input.value = this.period;
-    input.addEventListener('change', () => { this.period = input.value; });
-    field.append(input);
-    card.append(field);
+    const period = field(d, {
+      label: 'বিলিং মাস',
+      name: 'period',
+      kind: 'month',
+      value: this.period,
+      required: true,
+      // Said before the button, not after the second press.
+      helper: 'একই মাসে দুইবার চালালে কারও দ্বিতীয় ইনভয়েস তৈরি হবে না — ' +
+              'যাদের ইনভয়েস আগেই আছে তাদের বাদ দেওয়া হয়।',
+      onChange: (v) => { this.period = v; },
+    });
+    append(form, period.root);
 
-    // Said before the button, not after the second press.
-    const safe = d.createElement('p');
-    safe.className = 'att-sub';
-    safe.textContent =
-      'একই মাসে দুইবার চালালে কারও দ্বিতীয় ইনভয়েস তৈরি হবে না — ' +
-      'যাদের ইনভয়েস আগেই আছে তাদের বাদ দেওয়া হয়।';
-    card.append(safe);
+    append(form, buttonRow(d, button(d, {
+      label: 'ইনভয়েস তৈরি করুন', variant: 'primary', type: 'submit', busy: this.busy,
+    })));
 
-    const btn = d.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn-primary';
-    btn.disabled = this.busy;
-    btn.textContent = this.busy ? 'তৈরি হচ্ছে…' : 'ইনভয়েস তৈরি করুন';
-    btn.addEventListener('click', () => {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.period = period.value();
       if (!/^\d{4}-\d{2}$/.test(this.period)) {
-        this.error = 'মাস বেছে নিন।'; this.render(); return;
+        // Field-level: the month picker keeps whatever the person set while
+        // they fix it, instead of the whole screen repainting under them.
+        setFieldError(period.root, 'মাস বেছে নিন।');
+        period.input.focus();
+        return;
       }
-      card.append(confirmDialog({
+      clearFieldError(period.root);
+      form.append(confirmDialog({
         doc: d,
         title: 'ইনভয়েস তৈরি নিশ্চিত করুন',
         body:
-          `${this.period} মাসের জন্য ইনভয়েস তৈরি হবে। ` +
+          `${bnMonth(this.period)} মাসের জন্য ইনভয়েস তৈরি হবে। ` +
           'যাদের এই মাসের ইনভয়েস আগেই আছে, তাদের নতুন ইনভয়েস হবে না। ' +
           'ফি পরিশোধের দায়িত্বে থাকা অভিভাবকদের জানানো হবে।',
         confirmLabel: 'তৈরি করুন',
@@ -189,18 +199,14 @@ export class InvoiceView {
         onConfirm: () => void this.generate(),
       }));
     });
-    card.append(btn);
-    root.append(card);
+    root.append(form);
 
     this.renderRecent(root);
   }
 
   private renderRecent(root: HTMLElement): void {
     const d = this.o.doc;
-    const h2 = d.createElement('h2');
-    h2.className = 'section-heading';
-    h2.textContent = 'সাম্প্রতিক ইনভয়েস';
-    root.append(h2);
+    root.append(sectionHeading(d, { title: 'সাম্প্রতিক ইনভয়েস' }));
 
     if (this.loading) { root.append(skeleton(d, 3)); return; }
     if (this.recent.length === 0) {
@@ -210,25 +216,25 @@ export class InvoiceView {
       return;
     }
 
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const inv of this.recent) {
-      const row = d.createElement('div');
-      row.className = 'system-row';
-      const t = d.createElement('span');
-      t.className = 'system-title';
-      t.textContent = inv.invoiceNo;
-      const desc = d.createElement('span');
-      desc.className = 'system-desc';
-      // Amounts printed exactly as the server sent them: decimal strings.
-      desc.textContent = `${inv.billingPeriod} · ${formatBdt(inv.totalAmount)}`;
-      const chip = d.createElement('span');
-      chip.className = 'status-chip';
-      if (Number(inv.balanceAmount) <= 0) chip.setAttribute('data-state', 'success');
-      chip.textContent = Number(inv.balanceAmount) <= 0 ? 'পরিশোধিত' : 'বকেয়া';
-      row.append(t, desc, chip);
-      list.append(row);
-    }
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'সাম্প্রতিক ইনভয়েস',
+      rows: this.recent,
+      rowKey: (inv) => inv.invoiceNo,
+      columns: [
+        { key: 'no', header: 'ইনভয়েস', mobile: 'title', cell: (inv) => inv.invoiceNo,
+          width: 'minmax(0, 1.8fr)' },
+        // Was `2026-08`, printed straight out of the database.
+        { key: 'period', header: 'মাস', mobile: 'subtitle',
+          cell: (inv) => bnMonth(inv.billingPeriod), width: 'minmax(0, 1.2fr)' },
+        // Amounts printed exactly as the server sent them: decimal strings.
+        { key: 'total', header: 'মোট', mobile: 'meta', numeric: true,
+          cell: (inv) => formatBdt(inv.totalAmount), width: 'minmax(0, 1.2fr)' },
+        { key: 'state', header: 'অবস্থা', mobile: 'status', width: '130px',
+          cell: (inv) => statusBadge(d, {
+            state: Number(inv.balanceAmount) <= 0 ? 'paid' : 'due',
+            label: Number(inv.balanceAmount) <= 0 ? 'পরিশোধিত' : 'বকেয়া',
+          }) },
+      ],
+    }));
   }
 }

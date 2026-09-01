@@ -40,7 +40,17 @@ import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum, bnDate,
 } from './view-states.ts';
 import { pageHeader } from './ui/page-header.ts';
-import { permissionMessage } from './ui/index.ts';
+import { permissionMessage, serverMessage,
+  sectionHeading, card, button, buttonRow, statusBadge, field, setFieldError,
+  clearFieldError, el, append,
+} from './ui/index.ts';
+
+/** The shared badge vocabulary, so a holiday tints like every other warning. */
+const KIND_BADGE: Record<string, string> = {
+  holiday: 'partial',
+  working_weekend: 'published',
+  exam: 'pending',
+};
 
 export interface CalendarEntry {
   id: string;
@@ -156,7 +166,7 @@ export class CalendarView {
       });
       const body = await res.json() as { notified?: number; message?: string };
       if (!res.ok) {
-        this.error = body.message ?? 'সংরক্ষণ করা যায়নি।';
+        this.error = serverMessage(body, res.status, 'সংরক্ষণ করা যায়নি।', 'শিক্ষাপঞ্জি');
         return;
       }
       this.notice = (editingId ? 'পরিবর্তন সংরক্ষিত হয়েছে।' : 'শিক্ষাপঞ্জিতে যুক্ত হয়েছে।')
@@ -179,7 +189,7 @@ export class CalendarView {
       if (!res.ok) {
         this.error = res.status === 403
           ? 'এই এন্ট্রি পরিবর্তনের অনুমতি আপনার নেই।'
-          : body.message ?? 'মুছে ফেলা যায়নি।';
+          : serverMessage(body, res.status, 'মুছে ফেলা যায়নি।', 'শিক্ষাপঞ্জি');
         return;
       }
       this.notice = `"${entry.titleBn}" শিক্ষাপঞ্জি থেকে সরানো হয়েছে।`;
@@ -282,37 +292,29 @@ export class CalendarView {
 
   private monthNav(): HTMLElement {
     const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'page-header-row';
-    bar.style.padding = '0 var(--s-4) var(--s-3)';
-
-    const prev = d.createElement('button');
-    prev.type = 'button';
-    prev.className = 'btn-secondary btn-small';
-    prev.setAttribute('aria-label', 'আগের মাস');
-    prev.textContent = '← আগের';
-    prev.addEventListener('click', () => this.step(-1));
-
-    const today = d.createElement('button');
-    today.type = 'button';
-    today.className = 'btn-ghost btn-small';
-    today.textContent = 'আজ';
-    today.addEventListener('click', () => {
-      const t = new Date();
-      this.year = t.getFullYear(); this.month = t.getMonth();
-      this.selectedDay = this.todayIso();
-      void this.load();
-    });
-
-    const next = d.createElement('button');
-    next.type = 'button';
-    next.className = 'btn-secondary btn-small';
-    next.setAttribute('aria-label', 'পরের মাস');
-    next.textContent = 'পরের →';
-    next.addEventListener('click', () => this.step(1));
-
-    bar.append(prev, today, next);
-    return bar;
+    return buttonRow(d,
+      button(d, {
+        label: 'আগের', variant: 'secondary', size: 'sm', glyph: 'arrow-left',
+        // Named by MONTH, not "previous": three identical "আগের" buttons on
+        // one screen are three identical announcements.
+        ariaLabel: `আগের মাস — ${MONTH_BN[(this.month + 11) % 12]}`,
+        onClick: () => this.step(-1),
+      }),
+      button(d, {
+        label: 'আজ', variant: 'ghost', size: 'sm',
+        onClick: () => {
+          const t = new Date();
+          this.year = t.getFullYear(); this.month = t.getMonth();
+          this.selectedDay = this.todayIso();
+          void this.load();
+        },
+      }),
+      button(d, {
+        label: 'পরের', variant: 'secondary', size: 'sm', glyph: 'arrow-right',
+        ariaLabel: `পরের মাস — ${MONTH_BN[(this.month + 1) % 12]}`,
+        onClick: () => this.step(1),
+      }),
+    );
   }
 
   private filters(): HTMLElement {
@@ -345,19 +347,13 @@ export class CalendarView {
 
   private createBar(): HTMLElement {
     const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'action-row';
-    bar.style.padding = '0 var(--s-4) var(--s-3)';
-    const b = d.createElement('button');
-    b.type = 'button';
-    b.className = 'btn-secondary btn-small';
-    b.textContent = 'নতুন এন্ট্রি';
-    b.disabled = this.creating || this.editing !== null;
-    b.addEventListener('click', () => {
-      this.creating = true; this.editing = null; this.notice = ''; this.render();
-    });
-    bar.append(b);
-    return bar;
+    return buttonRow(d, button(d, {
+      label: 'নতুন এন্ট্রি', variant: 'secondary', size: 'sm', glyph: 'calendar',
+      disabled: this.creating || this.editing !== null,
+      onClick: () => {
+        this.creating = true; this.editing = null; this.notice = ''; this.render();
+      },
+    }));
   }
 
   /**
@@ -368,8 +364,11 @@ export class CalendarView {
   private grid(): HTMLElement {
     const d = this.o.doc;
     const scroll = d.createElement('div');
-    scroll.className = 'table-scroll';
-    scroll.style.padding = '0 var(--s-4)';
+    // Its own class as well as the shared one: the month grid is seven fixed
+    // columns and needs the gutters back on a narrow phone, and that must not
+    // change every other `.table-scroll` in the app. See `.cal-scroll` in
+    // app.css for the measurement.
+    scroll.className = 'table-scroll cal-scroll';
 
     const table = d.createElement('table');
     table.className = 'data-table cal-grid';
@@ -552,45 +551,14 @@ export class CalendarView {
 
   private entryCard(e: CalendarEntry): HTMLElement {
     const d = this.o.doc;
-    const card = d.createElement('article');
-    card.className = 'card';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
-
-    const head = d.createElement('div');
-    head.className = 'page-header-row';
-    const title = d.createElement('p');
-    title.className = 'system-title';
-    title.textContent = e.titleBn;
-    const chip = d.createElement('span');
-    chip.className = 'status-chip';
-    if (e.kind === 'holiday') chip.setAttribute('data-state', 'warning');
-    else if (e.kind === 'working_weekend') chip.setAttribute('data-state', 'success');
-    else if (e.kind === 'exam') chip.setAttribute('data-state', 'pending');
-    chip.textContent = KIND_BN[e.kind] ?? e.kind;
-    head.append(title, chip);
-    card.append(head);
-
-    if (e.descriptionBn) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      // textContent, never innerHTML: typed by a person at the school and
-      // rendered in every reader's browser.
-      p.textContent = e.descriptionBn;
-      card.append(p);
-    }
-
+    const notes: string[] = [];
     if (e.kind === 'working_weekend') {
-      const effect = d.createElement('p');
-      effect.className = 'att-sub';
-      effect.textContent =
-        'এই দিনটি সাপ্তাহিক ছুটি হলেও স্বাভাবিক কর্মদিবস হিসেবে গণ্য হবে — ' +
-        'হাজিরা ও নোটিশের এসএমএস যথারীতি যাবে।';
-      card.append(effect);
+      notes.push('এই দিনটি সাপ্তাহিক ছুটি হলেও স্বাভাবিক কর্মদিবস হিসেবে গণ্য হবে — ' +
+                 'হাজিরা ও নোটিশের এসএমএস যথারীতি যাবে।');
     }
-
     const meta: string[] = [];
     if (e.appliesToShifts?.length) {
-      meta.push(`কেবল ${e.appliesToShifts.map((s) => SHIFT_BN[s] ?? s).join(', ')} শিফট`);
+      meta.push(`কেবল ${e.appliesToShifts.map((sh) => SHIFT_BN[sh] ?? sh).join(', ')} শিফট`);
     }
     if (!e.editable) {
       // Say WHERE it comes from, so nobody hunts for an edit button that will
@@ -599,63 +567,66 @@ export class CalendarView {
     } else if (e.createdByNameBn) {
       meta.push(`যোগ করেছেন ${e.createdByNameBn}`);
     }
-    if (meta.length) {
-      const m = d.createElement('p');
-      m.className = 'att-sub';
-      m.textContent = meta.join(' · ');
-      card.append(m);
-    }
+
+    const host = card(d, {
+      title: e.titleBn,
+      glyph: e.kind === 'exam' ? 'award' : 'calendar',
+      tone: e.kind === 'holiday' ? 'warn' : e.kind === 'working_weekend' ? 'success' : 'info',
+      headingLevel: 3,
+      action: statusBadge(d, { state: KIND_BADGE[e.kind] ?? 'draft', label: KIND_BN[e.kind] ?? e.kind }),
+    },
+      // textContent via `text`, never innerHTML: typed by a person at the
+      // school and rendered in every reader's browser.
+      e.descriptionBn ? el(d, 'p', { className: 'ui-card-note', text: e.descriptionBn }) : null,
+      ...notes.map((n) => el(d, 'p', { className: 'ui-card-note', text: n })),
+      meta.length ? el(d, 'p', { className: 'ui-card-note', text: meta.join(' · ') }) : null,
+    );
 
     if (this.o.canManage && e.editable) {
-      const row = d.createElement('div');
-      row.className = 'action-row';
-      const edit = d.createElement('button');
-      edit.type = 'button';
-      edit.className = 'btn-ghost btn-small';
-      edit.textContent = 'সম্পাদনা';
-      edit.disabled = this.busy;
-      edit.addEventListener('click', () => {
-        this.editing = e; this.creating = false; this.notice = ''; this.render();
-      });
-
-      const del = d.createElement('button');
-      del.type = 'button';
-      del.className = 'btn-ghost btn-small';
-      del.textContent = 'মুছে ফেলুন';
-      del.disabled = this.busy;
-      del.addEventListener('click', () => {
-        card.append(confirmDialog({
-          doc: d,
-          title: 'শিক্ষাপঞ্জি থেকে সরানো',
-          // Both of these kinds change whether messages go out that day, in
-          // opposite directions. Saying only "this will be removed" leaves
-          // the office to discover the effect from a parent's complaint.
-          body: e.kind === 'holiday'
-            ? `"${e.titleBn}" (${bnDate(e.day)}) সরানো হবে। ছুটি সরালে ওই দিনের ` +
-              'হাজিরার এসএমএস আবার পাঠানো হবে।'
-            : e.kind === 'working_weekend'
-              ? `"${e.titleBn}" (${bnDate(e.day)}) সরানো হবে। এরপর দিনটি আবার ` +
-                'সাপ্তাহিক ছুটি হিসেবে গণ্য হবে এবং ওই দিনের এসএমএস বন্ধ থাকবে।'
-              : `"${e.titleBn}" (${bnDate(e.day)}) শিক্ষাপঞ্জি থেকে সরানো হবে।`,
-          confirmLabel: 'সরান',
-          danger: true,
-          onConfirm: () => void this.remove(e),
-        }));
-      });
-      row.append(edit, del);
-      card.append(row);
+      append(host, buttonRow(d,
+        button(d, {
+          label: 'সম্পাদনা', variant: 'ghost', size: 'sm', glyph: 'edit',
+          ariaLabel: `${e.titleBn} সম্পাদনা করুন`,
+          disabled: this.busy,
+          onClick: () => {
+            this.editing = e; this.creating = false; this.notice = ''; this.render();
+          },
+        }),
+        button(d, {
+          label: 'মুছে ফেলুন', variant: 'ghost', size: 'sm',
+          ariaLabel: `${e.titleBn} শিক্ষাপঞ্জি থেকে সরান`,
+          disabled: this.busy,
+          onClick: () => {
+            host.append(confirmDialog({
+              doc: d,
+              title: 'শিক্ষাপঞ্জি থেকে সরানো',
+              // Both of these kinds change whether messages go out that day,
+              // in opposite directions. Saying only "this will be removed"
+              // leaves the office to discover the effect from a parent's
+              // complaint.
+              body: e.kind === 'holiday'
+                ? `"${e.titleBn}" (${bnDate(e.day)}) সরানো হবে। ছুটি সরালে ওই দিনের ` +
+                  'হাজিরার এসএমএস আবার পাঠানো হবে।'
+                : e.kind === 'working_weekend'
+                  ? `"${e.titleBn}" (${bnDate(e.day)}) সরানো হবে। এরপর দিনটি আবার ` +
+                    'সাপ্তাহিক ছুটি হিসেবে গণ্য হবে এবং ওই দিনের এসএমএস বন্ধ থাকবে।'
+                  : `"${e.titleBn}" (${bnDate(e.day)}) শিক্ষাপঞ্জি থেকে সরানো হবে।`,
+              confirmLabel: 'সরান',
+              danger: true,
+              onConfirm: () => void this.remove(e),
+            }));
+          },
+        }),
+      ));
     }
-    return card;
+    return host;
   }
 
   /** The next things coming, across the whole month on screen. */
   private upcoming(): HTMLElement {
     const d = this.o.doc;
     const wrap = d.createElement('section');
-    const h = d.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = 'আসন্ন';
-    wrap.append(h);
+    wrap.append(sectionHeading(d, { title: 'আসন্ন' }));
 
     const today = this.todayIso();
     const next = (this.data?.entries ?? [])
@@ -710,57 +681,32 @@ export class CalendarView {
   private form(): HTMLElement {
     const d = this.o.doc;
     const e = this.editing;
-    const form = d.createElement('form');
-    form.className = 'card card-form';
-    form.style.margin = '0 var(--s-4) var(--s-3)';
+    const form = el(d, 'form', { className: 'ui-card ui-card-form' });
 
-    const h = d.createElement('p');
-    h.className = 'notice-confirm-label';
-    h.textContent = e ? 'এন্ট্রি সম্পাদনা' : 'নতুন এন্ট্রি';
-    form.append(h);
+    append(form, el(d, 'h3', {
+      className: 'ui-card-title', text: e ? 'এন্ট্রি সম্পাদনা' : 'নতুন এন্ট্রি',
+    }));
 
-    const err = d.createElement('p');
-    err.className = 'login-error';
-    err.setAttribute('role', 'alert');
-    err.hidden = true;
-    form.append(err);
-
-    const field = (labelBn: string, el: HTMLElement): void => {
-      const l = d.createElement('label');
-      l.className = 'field';
-      l.textContent = labelBn;
-      l.append(el);
-      form.append(l);
-    };
-
-    const kind = d.createElement('select');
-    kind.className = 'field-input';
-    for (const [k, labelBn] of Object.entries(KIND_BN)) {
-      const opt = d.createElement('option');
-      opt.value = k; opt.textContent = labelBn;
-      opt.selected = e ? e.kind === k : k === 'holiday';
-      kind.append(opt);
-    }
-    field('ধরন', kind);
-
-    const title = d.createElement('input');
-    title.type = 'text';
-    title.className = 'field-input';
-    title.value = e?.titleBn ?? '';
-    title.maxLength = 120;
-    field('শিরোনাম', title);
-
-    const desc = d.createElement('textarea');
-    desc.className = 'field-input';
-    desc.rows = 3;
-    desc.value = e?.descriptionBn ?? '';
-    field('বিবরণ (ঐচ্ছিক)', desc);
-
-    const day = d.createElement('input');
-    day.type = 'date';
-    day.className = 'field-input';
-    day.value = e?.day ?? this.selectedDay ?? this.todayIso();
-    field('তারিখ', day);
+    const kind = field(d, {
+      label: 'ধরন', name: 'kind', kind: 'select', required: true,
+      value: e?.kind ?? 'holiday',
+      options: Object.entries(KIND_BN).map(([k, labelBn]) => ({ value: k, label: labelBn })),
+    });
+    const title = field(d, {
+      label: 'শিরোনাম', name: 'titleBn', required: true,
+      value: e?.titleBn ?? '', attrs: { maxlength: 120 },
+      helper: 'ক্যালেন্ডারের ঘরে এই লেখাটিই দেখা যাবে।',
+    });
+    const desc = field(d, {
+      label: 'বিবরণ', name: 'descriptionBn', kind: 'textarea',
+      value: e?.descriptionBn ?? '', attrs: { rows: 3 },
+      helper: 'ঐচ্ছিক।',
+    });
+    const day = field(d, {
+      label: 'তারিখ', name: 'day', kind: 'date', required: true,
+      value: e?.day ?? this.selectedDay ?? this.todayIso(),
+    });
+    append(form, kind.root, title.root, desc.root, day.root);
 
     // The audience this schema has. Only offered when the school actually
     // runs more than one shift — a single-shift school choosing "which
@@ -768,86 +714,79 @@ export class CalendarView {
     const shifts = this.data?.shifts ?? [];
     let shiftBoxes: HTMLInputElement[] = [];
     if (shifts.length > 1) {
-      const group = d.createElement('fieldset');
-      group.style.border = '0';
-      group.style.padding = '0';
-      const legend = d.createElement('legend');
-      legend.className = 'field';
-      legend.textContent = 'কোন শিফটে প্রযোজ্য (খালি রাখলে সব শিফটে)';
-      group.append(legend);
-      shiftBoxes = shifts.map((s) => {
-        const l = d.createElement('label');
-        l.className = 'sms-toggle';
-        const cb = d.createElement('input');
+      const group = el(d, 'fieldset', { className: 'ui-fieldset' });
+      append(group, el(d, 'legend', {
+        className: 'ui-field-label', text: 'কোন শিফটে প্রযোজ্য (খালি রাখলে সব শিফটে)',
+      }));
+      shiftBoxes = shifts.map((sh) => {
+        const cb = el(d, 'input', { className: 'ui-check-box' }) as HTMLInputElement;
         cb.type = 'checkbox';
-        cb.value = s;
-        cb.checked = e?.appliesToShifts?.includes(s) ?? false;
-        l.append(cb, d.createTextNode(' ' + (SHIFT_BN[s] ?? s)));
-        group.append(l);
+        cb.value = sh;
+        cb.checked = e?.appliesToShifts?.includes(sh) ?? false;
+        append(group, el(d, 'label', { className: 'sms-toggle' },
+          el(d, 'span', { className: 'ui-check' }, cb),
+          el(d, 'span', { text: SHIFT_BN[sh] ?? sh })));
         return cb;
       });
-      form.append(group);
+      append(form, group);
     }
 
     // Notify through R-2. Never a second pipeline.
-    const notifyLabel = d.createElement('label');
-    notifyLabel.className = 'sms-toggle';
-    const notify = d.createElement('input');
+    const notify = el(d, 'input', { className: 'ui-check-box' }) as HTMLInputElement;
     notify.type = 'checkbox';
-    notifyLabel.append(notify, d.createTextNode(' সবাইকে নোটিশ পাঠান'));
-    form.append(notifyLabel);
-
-    const smsLabel = d.createElement('label');
-    smsLabel.className = 'sms-toggle';
-    const sms = d.createElement('input');
+    const sms = el(d, 'input', { className: 'ui-check-box' }) as HTMLInputElement;
     sms.type = 'checkbox';
     sms.disabled = true;
-    smsLabel.append(sms, d.createTextNode(' এসএমএসও পাঠান'));
-    form.append(smsLabel);
-
-    const smsNote = d.createElement('p');
-    smsNote.className = 'att-sub';
-    smsNote.textContent =
-      'নোটিশ সবার নোটিফিকেশনে যাবে। এসএমএস খরচসাপেক্ষ — শুধু জরুরি ঘোষণায় ব্যবহার করুন।';
-    form.append(smsNote);
+    append(form,
+      el(d, 'label', { className: 'sms-toggle' },
+        el(d, 'span', { className: 'ui-check' }, notify),
+        el(d, 'span', { text: 'সবাইকে নোটিশ পাঠান' })),
+      el(d, 'label', { className: 'sms-toggle' },
+        el(d, 'span', { className: 'ui-check' }, sms),
+        el(d, 'span', { text: 'এসএমএসও পাঠান' })),
+      el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'নোটিশ সবার নোটিফিকেশনে যাবে। এসএমএস খরচসাপেক্ষ — ' +
+              'শুধু জরুরি ঘোষণায় ব্যবহার করুন।',
+      }));
 
     notify.addEventListener('change', () => {
       sms.disabled = !notify.checked;
       if (!notify.checked) sms.checked = false;
     });
 
-    const row = d.createElement('div');
-    row.className = 'action-row';
-    const cancel = d.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'btn-secondary';
-    cancel.textContent = 'বাতিল';
-    cancel.addEventListener('click', () => {
-      this.creating = false; this.editing = null; this.render();
-    });
-    const save = d.createElement('button');
-    save.type = 'submit';
-    save.className = 'btn-primary';
-    save.disabled = this.busy;
-    save.textContent = this.busy ? 'সংরক্ষণ হচ্ছে…' : 'সংরক্ষণ করুন';
-    row.append(cancel, save);
-    form.append(row);
+    append(form, buttonRow(d,
+      button(d, {
+        label: 'বাতিল', variant: 'secondary',
+        onClick: () => { this.creating = false; this.editing = null; this.render(); },
+      }),
+      button(d, {
+        label: 'সংরক্ষণ করুন', variant: 'primary', type: 'submit', busy: this.busy,
+      }),
+    ));
 
     form.addEventListener('submit', (ev) => {
       ev.preventDefault();
-      err.hidden = true;
-      if (!title.value.trim()) {
-        err.textContent = 'শিরোনাম লিখুন'; err.hidden = false; return;
+      // Each message in its OWN field. The single error line at the top of
+      // this form once said "শিরোনাম লিখুন" while the cursor sat in the date.
+      clearFieldError(title.root);
+      clearFieldError(day.root);
+      if (!title.value().trim()) {
+        setFieldError(title.root, 'শিরোনাম লিখুন।');
+        title.input.focus();
+        return;
       }
-      if (!day.value) {
-        err.textContent = 'তারিখ দিন'; err.hidden = false; return;
+      if (!day.value()) {
+        setFieldError(day.root, 'তারিখ দিন।');
+        day.input.focus();
+        return;
       }
       const chosen = shiftBoxes.filter((b) => b.checked).map((b) => b.value);
       const payload: Record<string, unknown> = {
-        kind: kind.value,
-        titleBn: title.value.trim(),
-        descriptionBn: desc.value.trim(),
-        day: day.value,
+        kind: kind.value(),
+        titleBn: title.value().trim(),
+        descriptionBn: desc.value().trim(),
+        day: day.value(),
         appliesToShifts: chosen.length ? chosen : null,
         notify: notify.checked,
         sendSms: sms.checked,
@@ -860,7 +799,7 @@ export class CalendarView {
         form.append(confirmDialog({
           doc: d,
           title: 'নোটিশ পাঠানো নিশ্চিত করুন',
-          body: `"${title.value.trim()}" সম্পর্কে প্রতিষ্ঠানের সবাইকে নোটিশ যাবে` +
+          body: `"${title.value().trim()}" সম্পর্কে প্রতিষ্ঠানের সবাইকে নোটিশ যাবে` +
                 (sms.checked ? ', এবং অভিভাবকদের এসএমএসও যাবে' : '') +
                 '। নোটিশ পাঠানোর পর ফিরিয়ে নেওয়া যায় না।',
           confirmLabel: 'পাঠান',

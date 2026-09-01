@@ -47,6 +47,10 @@ const CLEAN = {
 
 function stubAuth(reply: unknown, sent: Array<Record<string, unknown>> = []) {
   return {
+    // P5 made the screen choose WHICH import to offer from the role, because
+    // the endpoint gates students and staff differently. This suite is about
+    // the student workflow, so its operator is a principal.
+    role: 'principal',
     authedFetch: async (_url: string, init?: { body?: string }) => {
       if (init?.body) sent.push(JSON.parse(init.body) as Record<string, unknown>);
       const b = sent[sent.length - 1];
@@ -77,13 +81,36 @@ async function toReview(reply: unknown, sent: Array<Record<string, unknown>> = [
   return { root, view };
 }
 
+/**
+ * Press the import button and confirm.
+ *
+ * P5 put a `confirmDialog` between step 3 and the write. §10.2's own rule is
+ * that the skipped count is never silent, and the dialog restates it at the
+ * moment of the only irreversible act on this screen — 768 student records
+ * written in one transaction.
+ */
+async function importAndConfirm(r: HTMLElement) {
+  (r.querySelector('.import-go') as HTMLButtonElement).click();
+  await new Promise((res) => setTimeout(res, 0));
+  const ok = [...r.querySelectorAll('.notice-confirm button')]
+    .find((b) => b.textContent?.includes('আমদানি করুন')) as HTMLButtonElement | undefined;
+  ok?.click();
+  for (let i = 0; i < 6; i++) await new Promise((res) => setTimeout(res, 0));
+  return ok;
+}
+
 describe('bulk import screen (§10.2)', () => {
   let root: HTMLElement;
 
   test('starts at step 1 with a file picker and no way to import', async () => {
     const r = dom.window.document.getElementById('root') as HTMLElement;
     r.textContent = '';
-    new ImportView({ root: r, doc: dom.window.document, auth: stubAuth(CLEAN) });
+    new ImportView({
+      root: r, doc: dom.window.document, auth: stubAuth(CLEAN),
+      // P5: without one the screen asks `/hierarchy` for the current year
+      // rather than silently posting a request the server rejects.
+      academicYearId: '7f000000-0000-4000-8000-000000000091',
+    });
     assert.ok(r.querySelector('input[type=file]'));
     // "Nothing is written until step 4" — there is no button that could.
     const labels = [...r.querySelectorAll('button')].map((b) => b.textContent ?? '');
@@ -104,23 +131,33 @@ describe('bulk import screen (§10.2)', () => {
     });
 
     test('counts both totals in Bangla numerals', () => {
-      const text = root.textContent ?? '';
-      assert.match(text, /৭৮৪টি সারি পড়া হয়েছে/);
-      assert.match(text, /১৬টি সারিতে সমস্যা/);
+      // P5 made these three stat cards — read / importable / skipped — so the
+      // decision is made from a comparison rather than from two sentences.
+      const text = (root.textContent ?? '').replace(/\s+/g, ' ');
+      assert.match(text, /পড়া হয়েছে/);
+      assert.match(text, /৭৮৪টি সারি/);
+      assert.match(text, /বাদ পড়বে/);
+      assert.match(text, /১৬টি/);
+      assert.match(text, /আমদানির উপযুক্ত/);
+      assert.match(text, /৭৬৮টি/);
     });
 
     test('errors are listed per row with a reason, not as a count', () => {
-      const items = root.querySelectorAll('.import-errors li');
-      assert.ok(items.length > 0);
-      assert.match(items[0].textContent ?? '', /সারি ৪২/);
-      assert.match(items[0].textContent ?? '', /শাখা "ঘ" নেই/);
+      // A table since P5 — the row number is what the operator types into
+      // Excel's "go to row" box, so it gets its own column.
+      const rows = [...root.querySelectorAll('table.ui-table tbody tr')];
+      assert.ok(rows.length > 0);
+      const first = rows[0].textContent ?? '';
+      assert.match(first, /সারি ৪২/);
+      assert.match(first, /শাখা "ঘ" নেই/);
+      const heads = [...root.querySelectorAll('thead th')].map((h) => h.textContent);
+      assert.deepEqual(heads.slice(0, 3), ['সারি', 'রোল / আইডি', 'কারণ']);
     });
 
     test('a long list is truncated with the REMAINING COUNT, never a bare ellipsis', () => {
       // "···" alone tells the operator nothing about whether to keep
       // scrolling or go and fix the spreadsheet.
-      const more = root.querySelector('.import-more');
-      assert.match(more?.textContent ?? '', /আরও ৪টি/);
+      assert.match((root.textContent ?? '').replace(/\s+/g, ' '), /আরও ৪টি/);
     });
 
     test('the error list is downloadable, as §10.2 requires', () => {
@@ -132,8 +169,7 @@ describe('bulk import screen (§10.2)', () => {
     test('the skipped count is still stated AFTER the import finishes', async () => {
       const sent: Array<Record<string, unknown>> = [];
       const { root: r2 } = await toReview(DIRTY, sent);
-      (r2.querySelector('.import-go') as HTMLButtonElement).click();
-      for (let i = 0; i < 4; i++) await new Promise((res) => setTimeout(res, 0));
+      await importAndConfirm(r2);
 
       assert.match(r2.textContent ?? '', /৭৬৮টি শিক্ষার্থী আমদানি হয়েছে/);
       // No silent truncation: the 16 are on screen once the work is done,
@@ -150,8 +186,7 @@ describe('bulk import screen (§10.2)', () => {
       assert.equal(sent[0].commit, undefined, 'the dry run must not ask to write');
       assert.equal(sent[0].kind, 'student');
 
-      (r.querySelector('.import-go') as HTMLButtonElement).click();
-      for (let i = 0; i < 4; i++) await new Promise((res) => setTimeout(res, 0));
+      await importAndConfirm(r);
 
       assert.equal(sent.length, 2);
       assert.equal(sent[1].commit, true);
@@ -174,7 +209,9 @@ describe('bulk import screen (§10.2)', () => {
     test('the button is disabled and the screen says what to do', async () => {
       const dead = { ...DIRTY, rowsValid: 0, rowsRejected: 784 };
       const { root: r } = await toReview(dead);
-      assert.equal((r.querySelector('.import-go') as HTMLButtonElement).disabled, true);
+      // Stronger than P5 found it: the control is not rendered at all, so
+      // there is nothing to press rather than something disabled.
+      assert.equal(r.querySelector('.import-go'), null);
       assert.match(r.textContent ?? '', /ফাইলটি ঠিক করে আবার চেষ্টা করুন/);
     });
   });

@@ -25,7 +25,7 @@ import {
 } from './view-states.ts';
 import { ROLE_BN } from './ui/roles.ts';
 import { pageHeader } from './ui/page-header.ts';
-import { el, append, button, dataTable, statusBadge } from './ui/index.ts';
+import { el, append, button, dataTable, statusBadge, permissionState, permissionMessage,} from './ui/index.ts';
 
 interface UserRow {
   id: string; nameBn: string; nameEn: string | null; phone: string | null;
@@ -74,6 +74,8 @@ export class UsersView {
   private roleFilter = '';
   private loading = true;
   private error = '';
+  /** The server refused. Distinct from `error`: no control on this screen helps. */
+  private denied = false;
   private notice = '';
   private busy = false;
   private creating = false;
@@ -85,13 +87,13 @@ export class UsersView {
   }
 
   private async load(): Promise<void> {
-    this.loading = true; this.error = ''; this.render();
+    this.loading = true; this.error = ''; this.denied = false; this.render();
     try {
       const qs = new URLSearchParams();
       if (this.term) qs.set('q', this.term);
       if (this.roleFilter) qs.set('role', this.roleFilter);
       const res = await this.o.auth.authedFetch(`/api/v1/ops/users?${qs}`);
-      if (res.status === 403) { this.error = 'ব্যবহারকারী দেখার অনুমতি আপনার নেই।'; return; }
+      if (res.status === 403) { this.denied = true; return; }
       if (!res.ok) throw new Error(String(res.status));
       const body = (await res.json()) as { users: UserRow[]; truncated: boolean };
       this.users = body.users ?? [];
@@ -158,11 +160,23 @@ export class UsersView {
     });
     root.append(header);
 
-    if (this.notice) root.append(successNote(d, this.notice));
-    if (this.error) {
-      root.append(errorState(d, this.error,
-        this.error.includes('অনুমতি') ? undefined : () => void this.load()));
+    // P5. A refusal is the WHOLE answer, and it comes before the search bar.
+    //
+    // The security matrix drove this screen as a class teacher and found the
+    // refusal rendered correctly — and then a live name box, a role filter
+    // and a "খুঁজুন" button underneath it. Three controls whose only possible
+    // outcome is a second 403: an invitation to a refusal, which is the
+    // pattern this codebase removes everywhere else.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('ব্যবহারকারী'),
+        contact: 'প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও আইটি অ্যাডমিন',
+      }));
+      return;
     }
+
+    if (this.notice) root.append(successNote(d, this.notice));
+    if (this.error) root.append(errorState(d, this.error, () => void this.load()));
     // Above the list, so it is the first thing read after issuing.
     if (this.issued) root.append(this.issuedCard());
 

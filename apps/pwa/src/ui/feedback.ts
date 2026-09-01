@@ -273,6 +273,48 @@ export function humanError(
  * does not. What is unified is the SHAPE and the ending; the specificity was
  * the good part of the bespoke strings.
  */
+/**
+ * P5. The one safe way to put a server's own words on a Bangla screen.
+ *
+ * Almost every view in this app wrote `body.message ?? 'কিছু হয়নি'`, which is
+ * right whenever the endpoint wrote a sentence for a person and wrong the
+ * moment it did not. `requireRole` in server-core throws
+ *
+ *     "this endpoint requires one of: principal, school_owner, it_admin"
+ *
+ * so ANY 403 from ANY of those endpoints printed English role codes into a
+ * Bangla UI — §14's "no cryptic backend messages in visible text", reached
+ * through fifteen screens by one shared primitive.
+ *
+ * Fixing it at fifteen call sites is a list somebody forgets, so it is fixed
+ * here: a server message is used only when it is actually addressed to a
+ * person, and "addressed to a person" is decided by whether it is written in
+ * the language the reader is reading.
+ *
+ * A 403 never uses the server's words at all, whatever language they are in:
+ * what a refused person needs is what they may do next, and the endpoint does
+ * not know that.
+ */
+export function serverMessage(
+  body: { message?: unknown; error?: unknown } | null | undefined,
+  status: number,
+  fallback: string,
+  subject?: string,
+): string {
+  if (status === 401 || status === 403) return permissionMessage(subject);
+  const raw = typeof body?.message === 'string' ? body.message.trim() : '';
+  // Bangla block. A message with no Bangla in it was written for a log.
+  if (raw && /[ঀ-৿]/.test(raw)) return raw;
+  const code = typeof body?.error === 'string' ? body.error : null;
+  if (code) {
+    const mapped = humanError(code, status, subject);
+    // `humanError` falls through to a generic sentence for a code it does not
+    // know; the caller's fallback is more specific than that, so prefer it.
+    if (mapped !== 'কিছু সমস্যা হয়েছে। আবার চেষ্টা করুন।') return mapped;
+  }
+  return fallback;
+}
+
 export function permissionMessage(subject?: string): string {
   return subject
     ? `${subject} দেখার অনুমতি আপনার নেই।`

@@ -45,9 +45,24 @@ export class HttpStatus extends Error {
   }
 }
 
-/** The status behind a rejection, when it carried one. */
+/**
+ * The status behind a rejection **or a response**.
+ *
+ * P5 widened this. Half the app checks a refusal after `catch`, where it holds
+ * an `HttpStatus`; the other half checks it before `await res.json()`, where
+ * it holds a `Response`. `isDenied(res)` reads correctly at every one of those
+ * call sites and, until this change, silently returned `false` for all of
+ * them — a refusal check that never fires is worse than no check, because the
+ * screen looks like it has one. Both shapes carry a numeric `status`, so this
+ * reads the property rather than the class.
+ */
 export function statusOf(err: unknown): number | undefined {
-  return err instanceof HttpStatus ? err.status : undefined;
+  if (err instanceof HttpStatus) return err.status;
+  if (typeof err === 'object' && err !== null) {
+    const s = (err as { status?: unknown }).status;
+    if (typeof s === 'number') return s;
+  }
+  return undefined;
 }
 
 /**

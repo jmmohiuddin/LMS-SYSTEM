@@ -40,6 +40,7 @@ import {
 } from '../../../packages/ui-core/src/branding.ts';
 import { brandedLetterhead } from '../../../packages/ui-core/src/branded-doc.ts';
 import { applyBranding, cacheBranding, cachedBranding } from './branding.ts';
+import { serverMessage } from './ui/index.ts';
 
 export interface BrandingViewOptions {
   root: HTMLElement;
@@ -258,7 +259,7 @@ export class BrandingView {
         } else if (body.field) {
           this.fieldError = { field: body.field, message: body.message ?? 'মানটি সঠিক নয়।' };
         } else {
-          this.notice = body.message ?? 'সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।';
+          this.notice = serverMessage(body, res.status, 'সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।', 'প্রতিষ্ঠানের পরিচয়');
           this.noticeKind = 'error';
         }
         return;

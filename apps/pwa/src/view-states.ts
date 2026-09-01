@@ -222,6 +222,30 @@ export function bnNum(n: number | string): string {
  * where a teacher's tenure should be is worse than one that shows the raw
  * value.
  */
+/**
+ * A billing period — `2026-08` — as a month a person reads.
+ *
+ * P5 found `INV-2026-08-00001 · 2026-08` on the fees screen and
+ * `2026-08 · ৳ 1,250.00` on the invoice list. `2026-08` is a key, not a date,
+ * and `bnDate` cannot help: `Date.parse('2026-08')` is a valid instant, so it
+ * would silently print "১ আগস্ট ২০২৬" — a DAY the invoice has nothing to do
+ * with.
+ */
+export function bnMonth(period: string | null | undefined): string {
+  if (!period) return '—';
+  const m = /^(\d{4})-(\d{2})$/.exec(period.trim());
+  if (!m) return period;
+  const t = Date.parse(`${m[1]}-${m[2]}-01T00:00:00Z`);
+  if (Number.isNaN(t)) return period;
+  try {
+    return new Date(t).toLocaleDateString('bn-BD', {
+      month: 'long', year: 'numeric', timeZone: 'UTC',
+    });
+  } catch {
+    return period;
+  }
+}
+
 export function bnDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const t = Date.parse(iso);

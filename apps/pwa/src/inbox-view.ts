@@ -20,6 +20,10 @@
 import type { Auth } from './auth.ts';
 import { CATEGORY_LABELS_BN, type NoticeCategory } from '../../../packages/ui-core/src/notice.ts';
 import { iconSvg } from './icon.ts';
+import { emptyState, errorState } from './view-states.ts';
+import {
+  pageHeader, button, countBadge, listSkeleton,
+} from './ui/index.ts';
 
 export interface InboxNotice {
   receiptId: string;
@@ -137,50 +141,39 @@ export class InboxView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'নোটিশ';
-    header.append(h1);
-    if (this.unread > 0) {
-      const all = d.createElement('button');
-      all.type = 'button';
-      all.className = 'btn-ghost btn-small';
-      all.textContent = 'সব পড়া হয়েছে';
-      all.addEventListener('click', () => { void this.markAllRead(); });
-      header.append(all);
-    }
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'নোটিশ',
+      subtitle: 'বিদ্যালয়ের ঘোষণা ও বার্তা',
+      badge: this.unread > 0
+        ? countBadge(d, this.unread, 'পড়া হয়নি')
+        : undefined,
+      actions: this.unread > 0
+        ? [button(d, {
+            label: 'সব পড়া হয়েছে', variant: 'ghost', size: 'sm',
+            onClick: () => { void this.markAllRead(); },
+          })]
+        : undefined,
+    }));
 
-    if (this.loading) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.style.padding = 'var(--s-4)';
-      p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
-      return;
-    }
+    if (this.loading) { root.append(listSkeleton(d, 4)); return; }
 
     if (this.error) {
-      const p = d.createElement('p');
-      p.className = 'login-error';
-      p.setAttribute('role', 'alert');
-      p.style.margin = 'var(--s-4)';
-      p.textContent = this.error;
-      root.append(p);
+      root.append(errorState(d, this.error, () => { void this.load(); }));
     }
 
     if (this.notices.length === 0 && !this.error) {
-      const empty = d.createElement('p');
-      empty.className = 'att-sub';
-      empty.style.padding = 'var(--s-4)';
-      empty.textContent = 'এখনো কোনো নোটিশ নেই।';
-      root.append(empty);
+      root.append(emptyState(d, {
+        message: 'এখনো কোনো নোটিশ নেই। বিদ্যালয় কিছু জানালে এখানে দেখা যাবে।',
+      }));
       return;
     }
 
+    // A DISCLOSURE list, not a `dataTable`: a notice is a title that opens
+    // into a paragraph, and a table cell cannot hold a paragraph. `au-rows`
+    // gives it the same desktop column rhythm the audit log uses, so a 1440px
+    // screen scans like a table while each notice still opens beneath.
     const list = d.createElement('div');
-    list.className = 'notice-list';
+    list.className = 'notice-list au-rows';
 
     for (const n of this.notices) {
       const item = d.createElement('article');

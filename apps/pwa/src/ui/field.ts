@@ -31,6 +31,11 @@ import { el, icon, append, uid, type Child } from './dom.ts';
 
 export type FieldKind =
   | 'text' | 'number' | 'tel' | 'email' | 'password' | 'date' | 'time'
+  // P5. A BILLING PERIOD is a month, not a day: an invoice run is for আগস্ট
+  // ২০২৬ and picking the 1st of it would be answering a question nobody
+  // asked. Same reasoning as `date` in the module header — the OS picker is
+  // localised, offline, keyboard-operable and free.
+  | 'month'
   | 'search' | 'textarea' | 'select';
 
 export interface FieldOptions {

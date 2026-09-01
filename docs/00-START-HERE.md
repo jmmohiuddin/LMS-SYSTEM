@@ -6,7 +6,7 @@ the repository; where the honest answer is "not built" or "not observed", it
 says so, because a document that rounds those up to "done" is the specific
 failure D17 exists to prevent.
 
-Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
+Last reconciled **2026-09-01**, at the end of P5.
 
 ## Read in this order
 
@@ -145,23 +145,25 @@ afternoon), and the frontend is *never* the enforcement layer.
 ### 10. What has been completed?
 
 Functional roadmap R-0 … R-7 complete (R-5 and R-6 **PARTIAL** — see the
-board). UI/UX roadmap **P0 … P4 complete**, plus a **Pre-P5 Product Closure
+board). UI/UX roadmap **P0 … P5 complete**, plus a **Pre-P5 Product Closure
 Pass** that closed `B-6` (class/section rename), `B-8` (logout and cache
-privacy) and `B-15` (the student routine, migration 049). Full table with the
-exact qualifications: `11-MASTER-PLAN.md` **§5a**.
+privacy) and `B-15` (the student routine, migration 049). P5 closed `B-7`
+(guardian unlink, migration 050) and `B-34` (every Principal and IT Admin
+screen on the design system). Full table with the exact qualifications:
+`11-MASTER-PLAN.md` **§5a**.
 
 ### 11. What is currently being built?
 
-Nothing is in progress. P4 closed at `95c34bf`, the Pre-P5 Product Closure
-Pass closed after it, and the next approved phase is **P5 — Principal + IT
-Admin**, not started. R-8 remains open in external-dependency mode.
+Nothing is in progress. P5 closed on 2026-09-01; the next approved phase is
+**P6**, not started. R-8 remains open in external-dependency mode.
 
 ### 12. What is not built?
 
 [`BACKLOG.md`](BACKLOG.md), in full, with IDs. The short version: real SMS,
 push observed on a device, an alert webhook, a production cross-tenant probe,
 a pilot school, guardian **unlink**, object storage, CSV export, operator SSO,
-section chat. (Class/section **edit** was closed by the closure pass.)
+section chat. (Class/section **edit** was closed by the closure pass, and
+guardian **unlink** by P5 — migration 050.)
 
 ### 13. Why is it not built?
 
@@ -174,19 +176,21 @@ Three different reasons, and they are not interchangeable:
   costs write throughput on the largest write in the product; the pilot
   produces the numbers that should decide it.
 - **A feature needing owner approval** — class/section edit and guardian
-  unlink are backend + API + UI + tests, and the phases that found them were
-  forbidden to add features.
+  unlink were both of these; both are now built (the closure pass and P5).
+  What remains in this category is listed in `BACKLOG.md`.
 
 ### 14. What is the next phase?
 
-**P5 — Principal + IT Admin.** The two items P4 named — `B-8` and `B-15` —
-were taken by the Pre-P5 closure pass, so P5 now opens with **`B-7`, guardian
-unlink**, which that pass audited and deliberately did not force: the
-`guardianships` table cannot express an ended link, and adding that touches
-`app.my_ward_ids()` / `app.can_see_student()` plus 21 read sites including the
-SMS and notice fan-out. Its design is written in PHASE_LOG. Then the principal
-and IT-admin screens, P6, P7 (+D16), P8, production hardening, the final
-audit.
+**P6.** P5 is complete: `B-7` (guardian unlink, migration 050), the Principal
+dashboard, and `B-34` — every Principal and IT Admin screen on the canonical
+design system, with `results` and `inbox` recorded as deliberate exceptions
+rather than omissions. P5's own audit found eleven defects, five of them
+security or privacy; the worst was a ledger screen that answered a 403 by
+rendering a fabricated chart of accounts. All are fixed and described in
+PHASE_LOG under "P5 — the remaining IT Admin and Principal screens".
+
+After P6: P7 (+D16 commercial controls, which no earlier phase may implement),
+P8, production hardening, the final audit.
 
 ### 15. What production blockers exist?
 

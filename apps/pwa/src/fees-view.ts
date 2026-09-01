@@ -14,7 +14,11 @@
 import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage } from './ui/index.ts';
+import {
+  permissionState, permissionMessage, pageHeader, dataTable, statusBadge,
+  openDrawer, setOverlayBody, listSkeleton, el, append, type OverlayHandle,
+} from './ui/index.ts';
+import { bnDate, bnMonth } from './view-states.ts';
 
 interface InvoiceLine {
   descriptionBn: string;
@@ -45,6 +49,19 @@ interface Receipt {
 
 const CACHE_KEY = 'shikhon_invoices_cache';
 
+/**
+ * The shared badge vocabulary, so an unpaid invoice tints like every other
+ * overdue thing in the product rather than like fees only.
+ */
+const BADGE_STATE: Record<string, string> = {
+  issued: 'due',
+  partly_paid: 'partial',
+  paid: 'paid',
+  overdue: 'overdue',
+  waived: 'draft',
+  cancelled: 'draft',
+};
+
 const STATUS_BN: Record<string, string> = {
   issued: 'বকেয়া',
   partly_paid: 'আংশিক পরিশোধিত',
@@ -73,6 +90,8 @@ export class FeesView {
   private invoices: Invoice[] = [];
   private receipts = new Map<string, Receipt[]>();
   private expanded: string | null = null;
+  /** The open invoice drawer, so a late receipt can fill it without a repaint. */
+  private drawer: OverlayHandle | null = null;
   private offline = false;
   /**
    * The server refused this read (403). Distinct from `offline`, and the
@@ -121,10 +140,27 @@ export class FeesView {
     this.render();
   }
 
+  /**
+   * Open one invoice.
+   *
+   * A DRAWER, not an inline expansion. The list is now a table, and a table
+   * row cannot hold a second table of line items and receipts — and on a
+   * phone an expansion pushes every other invoice off the screen, which is
+   * the thing a parent is comparing against.
+   */
   private async toggle(invoiceId: string): Promise<void> {
-    this.expanded = this.expanded === invoiceId ? null : invoiceId;
-    this.render();
-    if (this.expanded === invoiceId && !this.receipts.has(invoiceId)) {
+    this.expanded = invoiceId;
+    const inv = this.invoices.find((i) => i.id === invoiceId);
+    if (!inv) return;
+    const handle = openDrawer(this.o.doc, {
+      title: inv.billingPeriod
+        ? `${inv.invoiceNo} · ${bnMonth(inv.billingPeriod)}`
+        : inv.invoiceNo,
+      body: this.detail(inv),
+      onClose: () => { this.expanded = null; },
+    });
+    this.drawer = handle;
+    if (!this.receipts.has(invoiceId)) {
       try {
         const res = await this.o.auth.authedFetch(
           `/api/v1/finance/receipts?invoiceId=${encodeURIComponent(invoiceId)}`,
@@ -132,10 +168,66 @@ export class FeesView {
         if (res.ok) {
           const body = (await res.json()) as { receipts: Receipt[] };
           this.receipts.set(invoiceId, body.receipts);
-          if (this.expanded === invoiceId) this.render();
+          // Re-fill the drawer in place. Re-rendering the whole screen would
+          // close it under the reader's finger.
+          if (this.expanded === invoiceId) setOverlayBody(handle, this.detail(inv));
         }
-      } catch { /* offline — lines still show */ }
+      } catch { /* offline — the lines still show; only receipts are missing */ }
     }
+  }
+
+  /** One invoice's lines, due date and receipts. Drawer body. */
+  private detail(inv: Invoice): HTMLElement {
+    const d = this.o.doc;
+    const host = el(d, 'div', { className: 'ui-card-form' });
+
+    append(host, dataTable(d, {
+      caption: `${inv.invoiceNo} — খাতওয়ারি`,
+      rows: inv.lines,
+      rowKey: (l) => l.descriptionBn,
+      columns: [
+        { key: 'what', header: 'খাত', mobile: 'title', cell: (l) => l.descriptionBn,
+          width: 'minmax(0, 2fr)' },
+        { key: 'amount', header: 'টাকা', mobile: 'meta', numeric: true,
+          cell: (l) => (Number(l.waiverAmount) > 0
+            ? `${money(l.netAmount)} (মওকুফ ${money(l.waiverAmount)})`
+            : money(l.amount)),
+          width: 'minmax(0, 1.4fr)' },
+      ],
+    }));
+
+    const dl = el(d, 'dl', { className: 'ui-facts' });
+    append(dl,
+      el(d, 'dt', { className: 'ui-facts-key', text: 'মোট' }),
+      el(d, 'dd', { className: 'ui-facts-val', text: money(inv.totalAmount) }),
+      el(d, 'dt', { className: 'ui-facts-key', text: 'পরিশোধিত' }),
+      el(d, 'dd', { className: 'ui-facts-val', text: money(inv.paidAmount) }),
+      el(d, 'dt', { className: 'ui-facts-key', text: 'বকেয়া' }),
+      el(d, 'dd', { className: 'ui-facts-val', text: money(inv.balanceAmount) }),
+      // Was `শেষ তারিখ: 2026-08-10` — an ISO date on a Bangla screen.
+      el(d, 'dt', { className: 'ui-facts-key', text: 'শেষ তারিখ' }),
+      el(d, 'dd', { className: 'ui-facts-val', text: bnDate(inv.dueOn) }));
+    append(host, dl);
+
+    const receipts = this.receipts.get(inv.id);
+    if (receipts && receipts.length > 0) {
+      append(host, dataTable(d, {
+        caption: `${inv.invoiceNo} — রসিদ`,
+        rows: receipts,
+        rowKey: (r) => r.receiptNo,
+        columns: [
+          { key: 'no', header: 'রসিদ', mobile: 'title', cell: (r) => r.receiptNo,
+            width: 'minmax(0, 1.6fr)' },
+          { key: 'how', header: 'মাধ্যম', mobile: 'subtitle', cell: (r) => r.method,
+            width: 'minmax(0, 1fr)' },
+          { key: 'amt', header: 'টাকা', mobile: 'meta', numeric: true,
+            cell: (r) => money(r.amount), width: 'minmax(0, 1fr)' },
+        ],
+      }));
+    } else if (Number(inv.paidAmount) > 0) {
+      append(host, el(d, 'p', { className: 'ui-card-note', text: 'রসিদ আনা হচ্ছে…' }));
+    }
+    return host;
   }
 
   private render(): void {
@@ -143,21 +235,11 @@ export class FeesView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'বেতন ও ফি';
-    header.append(h1);
-    if (this.offline) {
-      const banner = d.createElement('p');
-      banner.className = 'offline-banner';
-      banner.textContent = 'অফলাইন — সর্বশেষ সংরক্ষিত তথ্য দেখানো হচ্ছে';
-      header.append(banner);
-    }
     // B-30. A refusal outranks the offline banner, the skeleton and the
-    // empty state: nothing is loading, there is nothing to show, and
-    // calling it "offline" is the lie this item exists to remove.
+    // empty state: nothing is loading, there is nothing to show, and calling
+    // it "offline" is the lie that item exists to remove.
     if (this.denied) {
+      root.append(pageHeader(d, { title: 'বেতন ও ফি' }));
       root.append(permissionState(d, {
         message: permissionMessage('বেতন ও ফি'),
         contact: 'প্রধান শিক্ষক',
@@ -165,94 +247,41 @@ export class FeesView {
       return;
     }
 
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'বেতন ও ফি',
+      subtitle: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ',
+      badge: this.offline
+        ? statusBadge(d, { state: 'pending', label: 'অফলাইন — সর্বশেষ সংরক্ষিত' })
+        : undefined,
+    }));
 
-    if (this.loading) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
-      return;
-    }
-    if (this.invoices.length === 0) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'কোনো ইনভয়েস পাওয়া যায়নি। (অভিভাবক নিজের সন্তানের, হিসাবরক্ষক সবার ইনভয়েস দেখতে পান।)';
-      root.append(p);
-      return;
-    }
+    if (this.loading) { root.append(listSkeleton(d, 3)); return; }
 
-    const list = d.createElement('ul');
-    list.className = 'fees-list';
-    for (const inv of this.invoices) {
-      const li = d.createElement('li');
-      li.className = 'fees-row';
-      li.dataset.status = inv.status;
-
-      const head = d.createElement('button');
-      head.type = 'button';
-      head.className = 'fees-head';
-      head.setAttribute('aria-expanded', String(this.expanded === inv.id));
-
-      const title = d.createElement('span');
-      title.className = 'fees-title';
-      title.textContent = inv.billingPeriod ? `${inv.invoiceNo} · ${inv.billingPeriod}` : inv.invoiceNo;
-
-      const meta = d.createElement('span');
-      meta.className = 'fees-meta';
-      meta.textContent = `${STATUS_BN[inv.status] ?? inv.status} · বকেয়া ${money(inv.balanceAmount)}`;
-
-      const amount = d.createElement('span');
-      amount.className = 'fees-amount';
-      amount.textContent = money(inv.totalAmount);
-
-      head.append(title, meta, amount);
-      head.addEventListener('click', () => { void this.toggle(inv.id); });
-      li.append(head);
-
-      if (this.expanded === inv.id) {
-        const detail = d.createElement('div');
-        detail.className = 'fees-detail';
-
-        for (const line of inv.lines) {
-          const row = d.createElement('div');
-          row.className = 'fees-line';
-          const label = d.createElement('span');
-          label.textContent = line.descriptionBn;
-          const amt = d.createElement('span');
-          amt.textContent = Number(line.waiverAmount) > 0
-            ? `${money(line.netAmount)} (মওকুফ ${money(line.waiverAmount)})`
-            : money(line.amount);
-          row.append(label, amt);
-          detail.append(row);
-        }
-
-        const due = d.createElement('div');
-        due.className = 'fees-line fees-due';
-        due.textContent = `শেষ তারিখ: ${inv.dueOn}`;
-        detail.append(due);
-
-        const receipts = this.receipts.get(inv.id);
-        if (receipts && receipts.length > 0) {
-          const rh = d.createElement('div');
-          rh.className = 'fees-line fees-receipts-h';
-          rh.textContent = 'রসিদ:';
-          detail.append(rh);
-          for (const r of receipts) {
-            const row = d.createElement('div');
-            row.className = 'fees-line';
-            const label = d.createElement('span');
-            label.textContent = `${r.receiptNo} · ${r.method}`;
-            const amt = d.createElement('span');
-            amt.textContent = money(r.amount);
-            row.append(label, amt);
-            detail.append(row);
-          }
-        }
-        li.append(detail);
-      }
-      list.append(li);
-    }
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'ইনভয়েসের তালিকা',
+      rows: this.invoices,
+      rowKey: (inv) => inv.id,
+      onRowClick: (inv) => { void this.toggle(inv.id); },
+      empty: {
+        message: 'কোনো ইনভয়েস পাওয়া যায়নি। অভিভাবক নিজের সন্তানের এবং ' +
+                 'হিসাবরক্ষক সবার ইনভয়েস দেখতে পান।',
+      },
+      columns: [
+        { key: 'no', header: 'ইনভয়েস', mobile: 'title', cell: (inv) => inv.invoiceNo,
+          width: 'minmax(0, 1.6fr)' },
+        // Was `2026-08` — a database key printed at a parent.
+        { key: 'period', header: 'মাস', mobile: 'subtitle',
+          cell: (inv) => bnMonth(inv.billingPeriod), width: 'minmax(0, 1.2fr)' },
+        { key: 'total', header: 'মোট', mobile: 'meta', numeric: true,
+          cell: (inv) => money(inv.totalAmount), width: 'minmax(0, 1fr)' },
+        { key: 'balance', header: 'বকেয়া', mobile: 'meta', numeric: true,
+          cell: (inv) => money(inv.balanceAmount), width: 'minmax(0, 1fr)' },
+        { key: 'status', header: 'অবস্থা', mobile: 'status', width: '150px',
+          cell: (inv) => statusBadge(d, {
+            state: BADGE_STATE[inv.status] ?? 'pending',
+            label: STATUS_BN[inv.status] ?? inv.status,
+          }) },
+      ],
+    }));
   }
 }

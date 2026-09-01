@@ -340,7 +340,10 @@ describe('composer', () => {
     const send = () => root().querySelector<HTMLButtonElement>('[data-send]')!;
     assert.equal(send().disabled, true);
 
-    const [title, body] = [...root().querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('.login-input')];
+    // Addressed by `name`, not by a styling class: P5 moved these two onto
+    // the `field()` primitive and `.login-input` stopped naming them.
+    const title = root().querySelector<HTMLInputElement>('[name="title"]')!;
+    const body = root().querySelector<HTMLTextAreaElement>('[name="body"]')!;
     title.value = 'ছুটি';
     title.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     assert.equal(send().disabled, true, 'a title with no body is not a notice');
@@ -365,7 +368,7 @@ describe('composer', () => {
     const cost = root().querySelector('[data-sms-cost]');
     assert.ok(cost, 'the cost belongs next to the toggle that causes it');
 
-    const body = [...root().querySelectorAll<HTMLTextAreaElement>('textarea.login-input')][0];
+    const body = root().querySelector<HTMLTextAreaElement>('[name="body"]')!;
     body.value = 'ক'.repeat(71);          // Bangla: 70 chars per segment
     body.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     assert.match(cost!.textContent ?? '', /২/, 'a 71-character Bangla notice is two segments');
@@ -379,7 +382,8 @@ describe('composer', () => {
     new NoticeComposeView({ root: root(), doc: doc(), auth: auth as never });
     await settle();
 
-    const [title, body] = [...root().querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('.login-input')];
+    const title = root().querySelector<HTMLInputElement>('[name="title"]')!;
+    const body = root().querySelector<HTMLTextAreaElement>('[name="body"]')!;
     title.value = 'ছুটি';
     title.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     body.value = 'আগামীকাল বন্ধ';

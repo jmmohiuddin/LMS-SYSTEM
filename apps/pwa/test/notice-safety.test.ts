@@ -55,6 +55,10 @@ async function mount(next: () => unknown) {
     root: root as unknown as HTMLElement,
     doc: dom.window.document,
     auth: {
+      // P5 made the composer refuse a role outside AUTHOR_ROLES, so the stub
+      // has to say who it is. It already claimed to be one — `canPublishAll`
+      // below is a principal's capability — it just never said so.
+      role: 'principal',
       authedFetch: async (path: string) => new Response(
         JSON.stringify(path.includes('preview=1') ? next() : { sections: [] }),
         { status: 200, headers: { 'content-type': 'application/json' } }),
@@ -68,13 +72,18 @@ async function mount(next: () => unknown) {
 
 /** Type into the composer the way a person does, so the estimate is asked for. */
 async function compose(root: HTMLElement, doc: Document, title: string, body: string) {
-  const fields = [...root.querySelectorAll('input.login-input, textarea')];
-  const set = (el: Element, v: string) => {
-    (el as HTMLInputElement).value = v;
+  // Addressed by `name`. This used to select `input.login-input, textarea`,
+  // which put the two controls in DOM order and broke the moment P5 moved
+  // them onto the `field()` primitive — the title stopped being set at all
+  // and the estimate this whole file is about never ran.
+  const set = (sel: string, v: string) => {
+    const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel);
+    if (!el) return;
+    el.value = v;
     el.dispatchEvent(new doc.defaultView!.Event('input', { bubbles: true }));
   };
-  if (fields[0]) set(fields[0], title);
-  if (fields[1]) set(fields[1], body);
+  set('[name="title"]', title);
+  set('[name="body"]', body);
   const sms = [...root.querySelectorAll('input[type=checkbox]')]
     .find((b) => /এসএমএস/.test(b.parentElement?.textContent ?? ''));
   if (sms) {

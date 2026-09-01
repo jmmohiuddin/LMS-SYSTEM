@@ -27,6 +27,7 @@
 import type { Auth } from './auth.ts';
 import { formatCount, formatTime } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { serverMessage } from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -153,7 +154,7 @@ export class GenerationView {
         // The server's refusal names a teacher or a room. That text is the
         // whole value of the failure, so it is shown verbatim rather than
         // replaced with "could not publish".
-        this.error = body.message ?? 'কাজটি সম্পন্ন হয়নি।';
+        this.error = serverMessage(body, res.status, 'কাজটি সম্পন্ন হয়নি।');
       } else if (this.data) {
         this.data.routine.status = body.status ?? this.data.routine.status;
       }

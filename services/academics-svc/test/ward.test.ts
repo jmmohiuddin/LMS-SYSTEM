@@ -157,25 +157,61 @@ describe('guardian home (§9.1)', { skip }, () => {
   });
 
   test('attendance excludes excused from the denominator', async () => {
-    // A record hangs off a session — attendance is taken for a room full of
-    // children at once, never for one child in isolation.
+    // ── Why these four days are not simply CURRENT_DATE - 3 … CURRENT_DATE ──
+    //
+    // `monthPercent` is month-to-date by design: the guardian screen renders
+    // it as "এ মাসে ৯৪%", and the endpoint scopes on
+    // `taken_on >= date_trunc('month', CURRENT_DATE)`. That contract is right
+    // and is not what changed here.
+    //
+    // The fixture used to walk backwards from today, which silently assumed
+    // four consecutive days always share a calendar month. They do from the
+    // 4th onward and never on the 1st, 2nd or 3rd — on those dates the older
+    // days belong to the previous month, the filter drops them, and the ratio
+    // becomes whatever survives. On the 1st that is a single present day:
+    // 100%, against an expected 67%. The test therefore failed on three days
+    // of every month and passed on the rest, which is worse than failing
+    // always, because it looks like a flake.
+    //
+    // The window below is anchored so that it always contains today AND
+    // always lies inside the current month: it starts up to three days back,
+    // clamped at the month's first day, and extends forward to make four.
+    // Every month has at least 28 days, so month-start + 3 always exists.
+    //
+    //   1st  → 1st–4th      15th → 12th–15th      31st → 28th–31st
+    //
+    // Statuses are assigned relative to TODAY rather than by a fixed offset,
+    // because today's position inside the window now varies: today is
+    // present, then one more present, one absent, one excused — 2 of 3
+    // counted, the excused day excluded from the denominator.
     await post(
       `INSERT INTO attendance_sessions
          (id, tenant_id, section_id, academic_year_id, taken_on, taken_by, taken_at)
        SELECT gen_random_uuid(),$1,$2,$3,d::date,$4,now()
-         FROM generate_series(CURRENT_DATE - 3, CURRENT_DATE, interval '1 day') d`,
+         FROM generate_series(
+                CURRENT_DATE - LEAST(3, EXTRACT(day FROM CURRENT_DATE)::int - 1),
+                CURRENT_DATE - LEAST(3, EXTRACT(day FROM CURRENT_DATE)::int - 1) + 3,
+                interval '1 day') d`,
       [T, SEC9, YEAR, HEAD]);
     await post(
-      `INSERT INTO attendance_records
+      `WITH others AS (
+         SELECT s.id, s.taken_on,
+                row_number() OVER (ORDER BY s.taken_on) AS rn
+           FROM attendance_sessions s
+          WHERE s.section_id = $3 AND s.taken_on <> CURRENT_DATE
+       )
+       INSERT INTO attendance_records
          (tenant_id, session_id, student_id, section_id, taken_on, status, marked_by, marked_at)
        SELECT $1, s.id, $2, $3, s.taken_on,
-              CASE s.taken_on
-                WHEN CURRENT_DATE     THEN 'present'
-                WHEN CURRENT_DATE - 1 THEN 'present'
-                WHEN CURRENT_DATE - 2 THEN 'absent'
+              CASE
+                WHEN s.taken_on = CURRENT_DATE THEN 'present'
+                WHEN o.rn = 1 THEN 'present'
+                WHEN o.rn = 2 THEN 'absent'
                 ELSE 'excused' END::attendance_status,
               $4, now()
-         FROM attendance_sessions s WHERE s.section_id = $3`,
+         FROM attendance_sessions s
+         LEFT JOIN others o ON o.id = s.id
+        WHERE s.section_id = $3`,
       [T, ANIKA, SEC9, HEAD]);
 
     const r = await get(`studentId=${ANIKA}`);

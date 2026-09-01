@@ -1737,3 +1737,17 @@ storage, every API, RLS, and authorization.
 UI for its states is proved by 19 new tests. The full browser→server→database
 round trip is **not** proved — it needs a seeded tenant, and is the same gate
 the pilot closes.
+
+
+## P3.1 — stability gate (2026-09-01)
+
+`ward.test.ts` fixed: its fixture assumed four consecutive days share a
+calendar month, so it failed on the 1st–3rd of every month against a
+month-to-date metric. Production contract unchanged; fixture anchored to the
+current month and verified across every edge date.
+
+Attendance tiles no longer announce "undefined": the roster returns
+`fullName: { bn, en }`, not `nameBn`. A P3 regression, caught by the browser.
+
+DB suite **1,334 passing, twice**. Non-DB 1,039. tsc 3/3. 48/48 migrations.
+D11 52/52. `index.html` byte-identical to the deployed commit.

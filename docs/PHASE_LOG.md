@@ -7052,3 +7052,95 @@ Student, guardian, principal and IT-admin screens (P4/P5). The teacher's
 `assignments`, `substitute` and `classperf` screens keep their legacy markup —
 they are reached from More, not from the teaching day, and they belong to the
 phase that redesigns their role's surface.
+
+
+---
+
+# P3.1 — stability gate   (2026-09-01)
+
+Two defects fixed, both found by running things rather than reading them.
+
+## 1. `ward.test.ts` failed on three days of every month
+
+**Root cause, proven in PostgreSQL.** `monthPercent` is month-to-date by
+design — the endpoint scopes on `taken_on >= date_trunc('month', CURRENT_DATE)`
+and the guardian screen renders the result as **"এ মাসে ৯৪%"**. That contract
+is correct and was not changed.
+
+The FIXTURE walked backwards from today with
+`generate_series(CURRENT_DATE - 3, CURRENT_DATE)`, silently assuming four
+consecutive days always share a calendar month. Queried directly on
+2026-09-01:
+
+```
+ day          counted
+ 2026-08-29   false
+ 2026-08-30   false
+ 2026-08-31   false
+ 2026-09-01   true      ← only the 'present' day survives the month filter
+```
+
+One present of one counted = **100%**, against an expected 67. The test
+therefore failed on the **1st, 2nd and 3rd of every month** and passed on the
+other twenty-eight — which is worse than failing always, because it reads as a
+flake.
+
+**Fix — in the test only.** The window is now anchored to always contain today
+*and* lie inside the current month: it starts up to three days back, clamped at
+the month's first day, and extends forward to make four. Every month has at
+least 28 days, so month-start + 3 always exists. Statuses are assigned relative
+to today rather than by fixed offset, because today's position in the window
+now varies.
+
+Verified across every edge date — 1st, 2nd, 3rd, 4th, 15th, 29th, 30th,
+Feb 28th, Jan 31st, Dec 31st: four days, all in-month, always including today.
+
+## 2. Every attendance tile announced "undefined"
+
+Introduced by P3 and caught by the browser regression, not by any test or by
+`tsc`. `GET /academics/roster` returns `fullName: { bn, en }`; the new
+attendance screen declared `{ studentId, rollNo, nameBn }` and read `r.nameBn`.
+That compiles — the response is parsed from JSON — and produces `undefined`.
+
+Nothing looked wrong. The tile shows a roll number and a status glyph; the name
+only reaches `title` and `aria-label`. A screen reader announced
+**"রোল 1, undefined, উপস্থিত"** for every child in the class.
+
+The code P3 replaced had mapped it correctly, so this was a regression. The
+type is now imported from `roster-view.ts` rather than re-declared — the same
+correction the section shape needed earlier in P3, and for the same reason. A
+test now asserts no tile is ever announced as "undefined", including rows with
+an English-only name and rows with no name at all.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| DB suite, run 1 | **1,334 passing**, 12 workspaces |
+| DB suite, run 2 | **1,334 passing** — re-runnable |
+| `ward.test.ts` × 3 consecutive | 12/12 each time |
+| Non-DB suite | 1,039 passing |
+| TypeScript ×3 | 0 / 0 / 0 |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | 48/48, fully migrated |
+| D11 brand guard | 52 passing |
+| Teacher scoping (DB) | 112 passing |
+| Browser sweep | **3,010 element-checks** — 6 widths × light/dark × tenant A/B × 6 screens, **0 contrast failures, 0 overflow, 0 nameless controls** |
+| Save path | `packages/offline` untouched; `attendance-view.ts` +18/−1, header only |
+| `index.html` | SHA identical at `52d1609`, `9e3f604`, `2e0a54b`, HEAD |
+
+## Attendance states, re-verified in a browser
+
+present → absent → late → present (tap cycle) · saving (`disabled`,
+`aria-busy`) · saved (chip, snackbar, toast) · offline (shell banner + screen
+note) · save-while-offline ("এই যন্ত্রে সংরক্ষিত — সংযোগ পেলে নিজেই জমা হবে") ·
+back-online (note clears).
+
+**queued / sync-failed / retry** are covered by the 20 unit tests rather than
+the browser: demo mode answers locally, so its queue drains and those states
+cannot be produced there. Unchanged from P3, and recorded as such.
+
+**"Unmarked" does not exist.** `AttendanceGrid` starts every student at
+`present`; the register is a list of exceptions, not a set of blanks. The
+screen reports "হাতে চিহ্নিত N / M" — how many the teacher has actually
+decided about — which is the honest form of the same question.

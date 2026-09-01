@@ -63,9 +63,16 @@ const SECTIONS = [
   { id: 's2', name: 'খ', shift: 'morning', studentCount: 1,
     className: { bn: 'নবম শ্রেণি', en: 'Class 9' }, levelNo: 9, academicYearId: 'y1' },
 ];
+// The endpoint's real shape: `fullName: { bn, en }`, NOT `nameBn`.
 const ROSTER = [
-  { studentId: 'a', rollNo: 1, nameBn: 'সাদিয়া ইসলাম' },
-  { studentId: 'b', rollNo: 2, nameBn: 'মোহাম্মদ আব্দুল্লাহ আল-মামুন চৌধুরী' },
+  { studentId: 'a', rollNo: 1, fullName: { bn: 'সাদিয়া ইসলাম', en: 'Sadia Islam' }, phone: null },
+  { studentId: 'b', rollNo: 2,
+    fullName: { bn: 'মোহাম্মদ আব্দুল্লাহ আল-মামুন চৌধুরী', en: null }, phone: null },
+  // A child with no Bangla name recorded — the roster allows it, and the
+  // accessible name must still be a name.
+  { studentId: 'c', rollNo: 3, fullName: { bn: null, en: 'Rafi Hasan' }, phone: null },
+  // And one with neither, which is the row that produced "undefined".
+  { studentId: 'd', rollNo: 4, fullName: { bn: null, en: null }, phone: null },
 ];
 
 interface Route { status?: number; body?: unknown; throws?: boolean }
@@ -154,7 +161,7 @@ describe('P3 — the screen never invents a class', () => {
     mount({ outbox });
     await settle();
     const screen = host();
-    assert.ok(screen.querySelectorAll('.tile').length === 2);
+    assert.ok(screen.querySelectorAll('.tile').length === 4);
     // Proven through the save payload below; here, that the year is not the
     // literal that used to be sent.
     assert.doesNotMatch(text(), /yr-2026/);
@@ -199,14 +206,14 @@ describe('P3 — the states a teacher can be in', () => {
     // classroom with no signal must still be able to take the register.
     mount();
     await settle();
-    assert.equal(host().querySelectorAll('.tile').length, 2);
+    assert.equal(host().querySelectorAll('.tile').length, 4);
 
     host().textContent = '';
     setOnline(false);
     mount({ routes: { '/api/v1/academics/sections': { throws: true },
                       '/api/v1/academics/roster': { throws: true } } });
     await settle();
-    assert.equal(host().querySelectorAll('.tile').length, 2,
+    assert.equal(host().querySelectorAll('.tile').length, 4,
       'the cached roster did not survive');
     assert.match(text(), /এখন অফলাইন/);
   });
@@ -220,7 +227,7 @@ describe('P3 — the seven facts, in words', () => {
     const facts = [...host().querySelectorAll('.att-fact')].map((f) => f.textContent ?? '');
     assert.ok(facts.some((f) => f.includes('নবম শ্রেণি — ক')), 'section missing');
     assert.ok(facts.some((f) => f.includes('সেপ্টেম্বর')), 'date missing');
-    assert.ok(facts.some((f) => /২ জন/.test(f)), 'student count missing');
+    assert.ok(facts.some((f) => /৪ জন/.test(f)), 'student count missing');
     assert.ok(facts.some((f) => f.includes('হাতে চিহ্নিত')), 'marked count missing');
   });
 
@@ -232,7 +239,7 @@ describe('P3 — the seven facts, in words', () => {
     await settle();
     const marked = [...host().querySelectorAll('.att-fact')]
       .find((f) => (f.textContent ?? '').includes('হাতে চিহ্নিত'));
-    assert.match(marked?.textContent ?? '', /০ \/ ২/, 'should start at zero touched');
+    assert.match(marked?.textContent ?? '', /০ \/ ৪/, 'should start at zero touched');
   });
 
   test('offline is stated on this screen, not only in the shell banner', async () => {
@@ -337,7 +344,30 @@ describe('P3 — saving', () => {
     host().querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
     await settle();
     assert.match(doc().querySelector('.ui-toast')?.textContent ?? '', /সংরক্ষণ করা যায়নি/);
-    assert.equal(host().querySelectorAll('.tile').length, 2, 'the marks were cleared');
+    assert.equal(host().querySelectorAll('.tile').length, 4, 'the marks were cleared');
+  });
+});
+
+describe('P3 — every tile has a real accessible name', () => {
+  test('THE ONE THAT MATTERS — no tile is ever announced as "undefined"', async () => {
+    // The roster returns `fullName: { bn, en }`. Declaring `{ nameBn }` and
+    // reading `r.nameBn` compiles, produces `undefined` at runtime, and looks
+    // perfect on screen — the tile shows a roll number and a status glyph, and
+    // the name only reaches `title` and `aria-label`. A screen reader
+    // announced "রোল 1, undefined, উপস্থিত" for every child in the class.
+    mount();
+    await settle();
+    const tiles = [...host().querySelectorAll('.tile')];
+    assert.equal(tiles.length, 4);
+    for (const t of tiles) {
+      const label = t.getAttribute('aria-label') ?? '';
+      assert.doesNotMatch(label, /undefined|null/, `tile announced: ${label}`);
+      assert.match(label, /রোল/, 'every tile names its roll');
+    }
+    assert.match(tiles[0].getAttribute('aria-label') ?? '', /সাদিয়া ইসলাম/);
+    // English-only and name-less rows still get something sayable.
+    assert.match(tiles[2].getAttribute('aria-label') ?? '', /Rafi Hasan/);
+    assert.match(tiles[3].getAttribute('aria-label') ?? '', /রোল ৪|রোল 4/);
   });
 });
 

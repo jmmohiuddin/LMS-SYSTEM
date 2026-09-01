@@ -42,7 +42,10 @@
  * all seven, in words. Colour never carries any of them alone.
  */
 import type { Auth } from './auth.ts';
-import type { SectionSummary as RosterSectionSummary } from './roster-view.ts';
+import type {
+  SectionSummary as RosterSectionSummary,
+  RosterStudent as RosterRow,
+} from './roster-view.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 import { AttendanceView, type OutboxLike } from './attendance-view.ts';
 import {
@@ -67,12 +70,18 @@ function sectionLabel(s: SectionSummary): string {
   return `${s.className?.bn ?? ''} — ${s.name}`.replace(/^ — /, '');
 }
 
-interface RosterStudent {
-  studentId: string;
-  rollNo: number;
-  nameBn: string;
-  nameEn?: string | null;
-}
+/**
+ * The roster's real shape, imported rather than re-declared.
+ *
+ * The first cut of this file declared `{ studentId, rollNo, nameBn }` — but
+ * the endpoint returns `fullName: { bn, en }`, so every student's name mapped
+ * to `undefined`. Nothing looked wrong: the tiles show a roll number and a
+ * status glyph, and the name only reaches the `title` and the `aria-label`.
+ * A screen reader announced "রোল 1, undefined, উপস্থিত" for all sixty
+ * children. The code this replaced got it right; the browser caught the
+ * regression, and re-using the type is what stops it recurring.
+ */
+type RosterStudent = RosterRow;
 
 export interface AttendanceScreenOptions {
   root: HTMLElement;
@@ -456,8 +465,15 @@ export class AttendanceScreen {
 }
 
 function toStudent(r: RosterStudent): Student {
-  return { studentId: r.studentId, rollNo: r.rollNo, nameBn: r.nameBn,
-           nameEn: r.nameEn ?? undefined };
+  return {
+    studentId: r.studentId,
+    rollNo: r.rollNo,
+    // Never `undefined`: this string becomes the tile's accessible name, and
+    // a roll number is a worse label than a name but an infinitely better one
+    // than the word "undefined".
+    nameBn: r.fullName.bn || r.fullName.en || `রোল ${r.rollNo}`,
+    nameEn: r.fullName.en || r.fullName.bn || `Roll ${r.rollNo}`,
+  };
 }
 
 // No constructor parameter property: Node runs this repo's TypeScript in

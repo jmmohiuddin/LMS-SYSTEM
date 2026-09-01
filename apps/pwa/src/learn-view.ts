@@ -17,6 +17,8 @@ import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { PracticeView, type PracticeQuestion } from './practice-view.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { refuseUnlessOk, isDenied } from './http-status.ts';
+import { permissionState, permissionMessage } from './ui/index.ts';
 
 export interface Chapter {
   id: string;
@@ -78,6 +80,12 @@ export class LearnView {
   private blocks: Block[] = [];
   private topicTitle = '';
   private offline = false;
+  /**
+   * The server refused this read (403). Distinct from `offline`, and the
+   * distinction is the point: an outage is temporary and a refusal is not,
+   * so this state offers no retry and shows no cached data (B-30).
+   */
+  private denied = false;
   private loading = true;
   private readingSince = 0;
   private lastBlockSeen = 0;
@@ -140,12 +148,19 @@ export class LearnView {
       const res = await this.o.auth.authedFetch(
         `/api/v1/academics/chapters?classId=${encodeURIComponent(classId)}`,
       );
-      if (!res.ok) throw new Error(String(res.status));
+      refuseUnlessOk(res);
       const body = (await res.json()) as { chapters: Chapter[] };
       this.chapters = body.chapters;
       this.offline = false;
       this.cacheSet(CHAPTERS_CACHE, this.chapters);
-    } catch {
+    } catch (err) {
+      if (isDenied(err)) {
+        this.denied = true; this.chapters = []; this.offline = false;
+        try { localStorage.removeItem(CHAPTERS_CACHE); } catch { /* private mode */ }
+        // These two have no `finally { render() }`, so a bare return
+        // computed the denied state and never painted it.
+        this.loading = false; this.render(); return;
+      }
       this.offline = this.chapters.length > 0;
     }
     this.loading = false;
@@ -265,6 +280,17 @@ export class LearnView {
       subtitle: 'তোমার শ্রেণির অধ্যায় ও পাঠ',
     });
     root.append(header);
+
+    // B-30. A refusal outranks the offline banner, the skeleton and the
+    // empty state: nothing is loading, there is nothing to show, and
+    // calling it "offline" is the lie this item exists to remove.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('পড়াশোনার বিষয়বস্তু'),
+        contact: 'প্রধান শিক্ষক',
+      }));
+      return;
+    }
 
     if (this.offline) root.append(this.offlineBanner());
 

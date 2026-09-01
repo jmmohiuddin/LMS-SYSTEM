@@ -209,7 +209,9 @@ export function permissionState(doc: Document, o: {
     icon(doc, 'lock', 'ui-state-glyph'),
     el(doc, 'p', {
       className: 'ui-state-title',
-      text: o.message ?? 'এই অংশ দেখার অনুমতি আপনার নেই।',
+      // Defaults through permissionMessage() so this component is not a
+      // sixth wording of the same sentence — it was, until B-30.
+      text: o.message ?? permissionMessage(),
     }),
     o.contact
       ? el(doc, 'p', {
@@ -229,10 +231,18 @@ export function permissionState(doc: Document, o: {
  * name, and "duplicate key value violates unique constraint
  * students_tenant_id_roll_key" is not a sentence anyone should read.
  */
-export function humanError(code: string | null | undefined, status?: number): string {
+export function humanError(
+  code: string | null | undefined,
+  status?: number,
+  /**
+   * What was refused, when the screen knows — "শিক্ষাপঞ্জি", "রসিদ".
+   * Used only for 401/403/404; see `permissionMessage`.
+   */
+  subject?: string,
+): string {
   switch (code) {
     case 'offline':          return 'ইন্টারনেট সংযোগ নেই। সংযোগ পেলে আবার চেষ্টা করুন।';
-    case 'forbidden':        return 'এই কাজটি করার অনুমতি আপনার নেই।';
+    case 'forbidden':        return permissionMessage(subject);
     case 'not_found':        return 'তথ্যটি খুঁজে পাওয়া যায়নি।';
     case 'conflict':         return 'এই তথ্য ইতিমধ্যে আছে।';
     case 'validation':       return 'কিছু তথ্য ঠিক নেই। লাল চিহ্নিত ঘরগুলো দেখুন।';
@@ -240,10 +250,43 @@ export function humanError(code: string | null | undefined, status?: number): st
     default: break;
   }
   if (status === 401) return 'আপনার সেশন শেষ হয়ে গেছে। আবার লগইন করুন।';
-  if (status === 403) return 'এই কাজটি করার অনুমতি আপনার নেই।';
+  if (status === 403) return permissionMessage(subject);
   if (status === 404) return 'তথ্যটি খুঁজে পাওয়া যায়নি।';
   if (status && status >= 500) return 'সার্ভারে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।';
   return 'কিছু সমস্যা হয়েছে। আবার চেষ্টা করুন।';
+}
+
+/**
+ * The canonical refusal. ONE pattern, with room for a subject.  (B-30)
+ *
+ * Before this there were five wordings for one condition:
+ * `humanError`'s "এই কাজটি করার অনুমতি আপনার নেই।", the documents screen's
+ * "রসিদ দেখার অনুমতি আপনার নেই।" and "একাডেমিক কাঠামো দেখার অনুমতি নেই।", the
+ * calendar's "শিক্ষাপঞ্জি দেখার অনুমতি নেই।", and — on six other screens — no
+ * permission message at all, because a 403 fell through to "আনা যায়নি".
+ *
+ * A school support call gets a different sentence depending on which screen
+ * the caller happened to be looking at, which is worse than any one of them.
+ *
+ * The subject is kept rather than flattened away, because "শিক্ষাপঞ্জি দেখার
+ * অনুমতি আপনার নেই।" tells a person what they cannot see and the bare form
+ * does not. What is unified is the SHAPE and the ending; the specificity was
+ * the good part of the bespoke strings.
+ */
+export function permissionMessage(subject?: string): string {
+  return subject
+    ? `${subject} দেখার অনুমতি আপনার নেই।`
+    : 'এই কাজটি করার অনুমতি আপনার নেই।';
+}
+
+/**
+ * The refusal plus the one thing a person can actually do about it.
+ *
+ * Not folded into `permissionMessage` because it is wrong in one place: an
+ * IT admin refused something does not ring the head teacher about it.
+ */
+export function permissionMessageWithContact(subject?: string): string {
+  return `${permissionMessage(subject)} প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন।`;
 }
 
 /** A full-screen first-load skeleton. Re-exported name for discoverability. */

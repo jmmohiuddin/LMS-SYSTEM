@@ -22,6 +22,8 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
+import { refuseUnlessOk, isDenied } from './http-status.ts';
+import { permissionState, permissionMessage } from './ui/index.ts';
 
 interface SubjectRow {
   subjectBn: string;
@@ -74,6 +76,12 @@ export class ResultsView {
   private selected: string | null = null;
   private loading = true;
   private offline = false;
+  /**
+   * The server refused this read (403). Distinct from `offline`, and the
+   * distinction is the point: an outage is temporary and a refusal is not,
+   * so this state offers no retry and shows no cached data (B-30).
+   */
+  private denied = false;
 
   constructor(options: ResultsViewOptions) {
     this.o = options;
@@ -95,7 +103,7 @@ export class ResultsView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/results');
-      if (!res.ok) throw new Error(String(res.status));
+      refuseUnlessOk(res);
       const body = (await res.json()) as { results?: Result[] };
       this.results = body.results ?? [];
       this.selected = this.selected && this.results.some((r) => r.examId === this.selected)
@@ -103,7 +111,12 @@ export class ResultsView {
         : this.results[0]?.examId ?? null;
       this.offline = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.results)); } catch { /* quota */ }
-    } catch {
+    } catch (err) {
+      if (isDenied(err)) {
+        this.denied = true; this.results = []; this.offline = false;
+        try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
+        return;
+      }
       if (this.results.length > 0) this.offline = true;
     } finally {
       this.loading = false;
@@ -147,6 +160,17 @@ export class ResultsView {
       b.className = 'inline-notice';
       b.textContent = 'অফলাইন — সংরক্ষিত ফলাফল দেখানো হচ্ছে';
       root.append(b);
+    }
+
+    // B-30. A refusal outranks the offline banner, the skeleton and the
+    // empty state: nothing is loading, there is nothing to show, and
+    // calling it "offline" is the lie this item exists to remove.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('ফলাফল'),
+        contact: 'প্রধান শিক্ষক',
+      }));
+      return;
     }
 
     if (this.loading && this.results.length === 0) { this.skeleton(root); return; }

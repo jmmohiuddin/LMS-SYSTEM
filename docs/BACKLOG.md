@@ -8,7 +8,7 @@ been copy-pasted forward through five phases. Nothing here is new work
 invented for the file; every row cites where it came from.
 
 Created **2026-09-01** at commit `95c34bf`, under D17 §10.
-Last updated **2026-09-01** after the **Pre-P5 Product Closure Pass** — see
+Last updated **2026-09-01** after **P5-0** — see
 [PHASE_LOG.md](PHASE_LOG.md). Resolved rows keep their ID, their history and
 their reason; nothing is deleted.
 
@@ -61,6 +61,7 @@ resolved.
 ## 3. NICE TO HAVE
 
 **Still open: `B-11`, `B-12`, `B-13`, `B-14`, `B-16`.** `B-15` is resolved.
+`B-30` and `B-31` (below, opened by the closure pass) are resolved by P5-0.
 
 | ID | Item | Why it matters | Phase | Priority | Blocker | Depends on | Status | Source |
 |---|---|---|---|---|---|---|---|---|
@@ -109,8 +110,15 @@ it ended.
 
 | ID | Item | Why it matters | Phase | Priority | Blocker | Status | Source |
 |---|---|---|---|---|---|---|---|
-| **B-30** | The permission message is canonical on the screens that can 403 — but **`fees`, `documents`, `learn` and `assignments` were not audited** for it | The closure pass fixed roster, marks and the guardian home, which are the screens a wrong-role URL actually reaches. The remaining student screens 403 only in situations not yet reproduced, so they were left alone rather than changed unverified. | P5/P6 | LOW | No | **OPEN** | closure pass |
-| **B-31** | `tsc -p .` does not cover `apps/pwa` | The root `tsconfig.json` **excludes** it. CI runs three configs; anyone running one locally is typechecking the services and not the app. P4's and D17's gate tables recorded "TypeScript ×3" meaning three runs of one config. A single `npm run typecheck` script that runs all three would make the local gate match CI. | P5 | MEDIUM | No | **OPEN** — all three are green as of the closure pass | closure pass |
+| **B-30** | The permission message on the remaining student screens | The closure pass fixed roster, marks and the guardian home. Auditing every student-accessible view in P5-0 found the same shape in **nine**, and **five different wordings** for one condition. Worse than the wording: a 403 left the refused data on screen, out of a cache. | P5-0 | LOW→HIGH once measured | No | **RESOLVED** 2026-09-01 · one `permissionMessage(subject?)` that `humanError` and `permissionState` both route through; `http-status.ts` carries the status through the throw; every screen drops its cache on a refusal and offers no retry. 23 tests. **Note:** on six of the nine a 403 is not currently reachable — those endpoints are RLS-scoped and answer with an empty payload, so the handling is defensive and is documented as such. | closure pass, P5-0 |
+| **B-31** | `tsc -p .` does not cover `apps/pwa` | The root `tsconfig.json` **excludes** it. CI runs three configs; anyone running one locally typechecks the services and not the app. P4's, D17's and the closure pass's gate tables all recorded "TypeScript ×3" meaning three runs of one config. | P5-0 | MEDIUM | No | **RESOLVED** 2026-09-01 · `npm run typecheck` → `scripts/typecheck.mjs`, which **parses the CI workflow** for its config list so the two cannot drift, and fails when any new `.ts` appears outside every config. Verified in all three directions, including by catching its own author's new test file. | closure pass, P5-0 |
+
+### Opened by P5-0
+
+| ID | Item | Why it matters | Phase | Priority | Blocker | Status | Source |
+|---|---|---|---|---|---|---|---|
+| **B-32** | **46 test files are typechecked by nothing** | 34 `apps/pwa/test`, 7 `packages/ui-core/test`, 3 `services/sync-svc/test`, 2 `packages/offline/test`. The 592 tests guarding the application are themselves unchecked, so a test can be quietly wrong about a type and still pass. Measured cost of closing it: `@types/jsdom` plus **73 pre-existing errors** in test code. (The other 14 unchecked files are the `/design` prototype, outside the product by D14.) Frozen at 61 by `scripts/typecheck-baseline.json`, so it cannot grow. | P6 | MEDIUM | No | **OPEN** | P5-0 |
+| **B-33** | `demo-gate.test.ts` skips `index.ts` | The derivation assumes `index.ts` is a dispatcher; `finance-svc` and `identity-svc` put real handlers in theirs, so a role gate added there would be invisible. **Verified by hand in P5-0: no gap today.** Automating it needs the `ROUTES` table parsed to map handler names to path segments. | P6 | LOW | No | **OPEN**, noted in the test | P5-0 |
 
 ## 7. DOCUMENTATION DEBT
 

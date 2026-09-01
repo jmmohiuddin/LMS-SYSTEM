@@ -7963,3 +7963,237 @@ is written above.
 **This entry is commit `9ac1446`** (`9b3cdef..9ac1446`, pushed to
 `origin/main`), recorded by the convention D17's entry established: write,
 commit, append the hash.
+
+---
+
+# P5-0 — quality corrections before any UI work   (2026-09-01)
+
+Two backlog items, both closed. No Principal or IT Admin screen was touched.
+
+---
+
+## B-31 — the typecheck gate now matches CI, and cannot silently drift
+
+### What the audit found
+
+CI runs **three** configs, all in `.github/workflows/security.yml`:
+
+```
+tsc -p tsconfig.json               --noEmit
+tsc -p apps/pwa/tsconfig.json      --noEmit
+tsc -p apps/pwa/tsconfig.sw.json   --noEmit
+```
+
+The other four workflows (`database`, `frontend`, `offline`, `sync-svc`) run
+no compiler at all. So the CI scope is exactly those three — and the root
+config **excludes `apps/pwa`**, which is why `tsc -p .` exits 0 without
+looking at a single line of the application.
+
+### The measurement nobody had taken
+
+Running all three with `--listFiles` and subtracting from the repo's `.ts`
+files:
+
+| | files |
+|---|---|
+| repo `.ts` (tracked + untracked, `.gitignore` honoured) | 295 |
+| checked by at least one CI config | **235** |
+| **checked by nothing** | **60** |
+
+The 60 are 34 `apps/pwa/test`, 7 `packages/ui-core/test`, 3
+`services/sync-svc/test`, 2 `packages/offline/test` — and 14
+`apps/pwa/public/design/components/**`, which is the Ata Ekta prototype and
+is outside the product by D14.
+
+So **46 test files are typechecked by nothing**, including the 592 that guard
+the application. That is not fixed here and the reason is measured, not
+assumed: adding `apps/pwa/test` to the PWA config produces **73 errors** —
+mostly a missing `@types/jsdom`, plus real looseness in test code. That is its
+own piece of work, and the brief for this gate said not to modify tsconfig for
+convenience. Recorded as **`B-32`**.
+
+### What was built instead
+
+`scripts/typecheck.mjs`, run by `npm run typecheck`, and it does two things:
+
+**1. It reads the workflow to find out what to run.** It does not hold its own
+list of configs — it parses `tsc -p <config> --noEmit` out of
+`security.yml`. A config added to CI is picked up here with no edit; one
+removed stops being run. The two cannot disagree because there is one list and
+CI owns it. If the parse ever finds zero configs it exits 1 rather than
+reporting a pass, which is the same trap the workflow's own `--no-install`
+comment describes.
+
+**2. It freezes the coverage hole.** The union of `--listFiles` is subtracted
+from the repo's `.ts` files and compared against
+`scripts/typecheck-baseline.json`. **A new file that no config checks fails the
+gate.** Re-baselining is possible and deliberate (`--update`).
+
+Verified in all three directions, by doing them:
+
+| | result |
+|---|---|
+| clean tree | passes, reports 236/297 |
+| a new `.ts` outside every config | **FAILS** — named the file |
+| a real type error in a covered file | **FAILS** — printed the error |
+
+It caught its own author within the hour: `apps/pwa/test/permission-ux.test.ts`,
+written for B-30 below, failed the gate as a new unchecked file and had to be
+re-baselined on purpose.
+
+Two implementation notes worth keeping. `git ls-files '*.ts'` lists only
+TRACKED files, so the first version passed a brand-new module until somebody
+staged it — precisely backwards, since the gate is most useful while the file
+is being written; it uses `--cached --others --exclude-standard` now. And it
+invokes `node node_modules/typescript/bin/tsc` rather than `npx`: Node refuses
+to `execFileSync` a `.cmd` on Windows without a shell (EINVAL), and a shell
+would concatenate arguments unescaped through a repository path containing a
+space. Calling the local compiler directly IS what `--no-install` guarantees.
+
+CI gained one step (`node scripts/typecheck.mjs`) so the drift assertion runs
+there too. The three declared lines are unchanged — they are the contract the
+script parses.
+
+### Documentation corrected
+
+P4's, D17's and the closure pass's gate tables said "TypeScript ×3". That meant
+three *runs of one config*. The rows now name the three configs. The claim was
+broader than the evidence, which is what D17(a) exists to prevent.
+
+---
+
+## B-30 — a 403 is not an outage, on nine student-facing screens
+
+### The audit, wider than the backlog entry
+
+The backlog named four screens. Searching every student-accessible view found
+the same shape in **nine**:
+
+```ts
+if (!res.ok) throw new Error(String(res.status));
+…
+} catch { this.offline = this.data.length > 0; }
+```
+
+The status is turned into a string and then dropped by a bare `catch`, so a
+refusal and a dead network arrive at the same place. Three consequences, and
+they are not equally bad:
+
+1. the wrong sentence — "আনা যায়নি";
+2. a retry offered that can never succeed;
+3. **the data the server just refused stays on screen**, out of a cache filled
+   while this person was allowed to see it, or by somebody else on a shared
+   device. That one is a privacy failure, not a usability one.
+
+And the wording itself had **five variants** for one condition:
+`humanError`'s generic line, `permissionState`'s different generic line, and
+three bespoke strings in `documents-view` (×2) and `calendar-view`. A support
+call got a different answer depending on which screen the caller was on.
+
+### The pattern
+
+One function, `permissionMessage(subject?)`:
+
+| call | result |
+|---|---|
+| `permissionMessage()` | এই কাজটি করার অনুমতি আপনার নেই। |
+| `permissionMessage('শিক্ষাপঞ্জি')` | শিক্ষাপঞ্জি দেখার অনুমতি আপনার নেই। |
+
+The **subject is kept**, deliberately. It was the good part of the bespoke
+strings — it tells a person what they cannot see. What is unified is the shape
+and the ending. `humanError(code, status, subject?)` and `permissionState()`
+both route through it, so there is now one definition and no way to add a
+sixth by accident.
+
+`apps/pwa/src/http-status.ts` carries the status through the throw
+(`refuseUnlessOk` / `isDenied`), replacing three identical copies of
+`class HttpStatus` that the closure pass had left in three files. 401 is
+deliberately not a denial: a dead session is recoverable by signing in again.
+
+### What each screen does now on a 403
+
+- shows the canonical sentence with its own subject and who to ask;
+- **drops the cache** — from the DOM and from `localStorage`;
+- does not say "offline" and offers no retry.
+
+`permissionState()` — the P2 component built for exactly this and reachable
+from none of these screens — renders it, and it is placed *above* the offline
+banner, the skeleton and the empty state, because it outranks all three.
+
+### The finding that reframes the item
+
+**A 403 is not currently reachable on six of the nine.** `academics/subjects`,
+`attendance`, `results`, `assignments`, `chapters` and `finance/invoices` are
+not role-gated at all: they authenticate and let RLS scope the answer, so a
+reader who should not see a row gets an **empty payload, not a refusal**.
+`finance/invoices` says so in its own header — "guardians/students are scoped
+by RLS `invoice_scope`, so `authenticate()` alone is the right gate."
+
+So on those six the handling is **defensive**: correct, tested, and waiting for
+a caller that can produce a 403 — a future gate, a proxy, a permission changed
+mid-session, or `/academics/myroutine`, which the closure pass added and which
+*does* refuse a student naming a classmate. That is stated rather than dressed
+up as a fix for a live bug.
+
+The three where a 403 IS reachable — `academic`, `documents`, `guardian` — are
+browser-verified below.
+
+### A defect the browser found after the code was "done"
+
+As a student, `#/guardian` showed the canonical sentence **and still offered
+"আবার চেষ্টা করুন"**. The message had been fixed and the button had not:
+`errorState`'s whole shape is a sentence plus a retry. A 403 now gets
+`permissionState` there instead. Verified after: canonical sentence, lock
+state, no retry.
+
+### Tests
+
+`apps/pwa/test/permission-ux.test.ts` — 23 tests. Four screens driven through
+five cases each, plus the pattern itself. The two that matter most:
+
+- **the cache is gone** from the DOM *and* from `localStorage` after a 403;
+- **an ordinary network failure still shows the cache under a banner.** A fix
+  that turned every error into a lockout would pass every other assertion here
+  and ruin an offline-first product.
+
+`calendar-ui.test.ts`'s 403 assertion was re-pointed from a substring of the
+old bespoke wording to `permissionMessage('শিক্ষাপঞ্জি')` — the same claim,
+pinned to the function every screen now shares.
+
+---
+
+## A blind spot found in P4's own demo-gate test
+
+The derivation skips `index.ts`, on the assumption that it is a dispatcher.
+`finance-svc` and `identity-svc` put real handlers in theirs, so a role gate
+added there would be invisible to it.
+
+Checked by hand: there is **no gap today**. `/finance/invoices` is deliberately
+ungated, `/finance/generate` is POST-only and already in `DEMO_GATES`, and
+`/finance/ledger` has no demo route so it 404s. Automating it needs the
+`ROUTES` table parsed to map handler names to path segments. Recorded as
+**`B-33`** with that note in the test itself.
+
+---
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite, run 1 | **1,430 passing**, 12 workspaces |
+| Full suite, run 2 | **1,430 passing** — re-runnable |
+| DB suites (p4-privacy · b15 · b6) ×2 | 41/41, 41/41 |
+| TypeScript — `tsconfig.json` | 0 errors |
+| TypeScript — `apps/pwa/tsconfig.json` | 0 errors |
+| TypeScript — `apps/pwa/tsconfig.sw.json` | 0 errors |
+| Typecheck scope | **local == CI**, asserted by `npm run typecheck`; 236/297 files covered, 61 baselined |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | 49/49, fully migrated |
+| D11 brand guard + surfaces | 36/36 |
+| Browser — permission UX | `academic`, `guardian` show the canonical sentence with no retry; `calendar` correctly still renders (every role may read it) |
+| `index.html` | SHA `496199bd` — unchanged |
+
+**Backlog:** `B-30` and `B-31` **RESOLVED**. `B-32` (46 test files typechecked
+by nothing, 73 errors to fix) and `B-33` (the `index.ts` blind spot) opened.
+
+**P5 proper begins next: Principal and IT Admin.**

@@ -33,6 +33,7 @@ import {
 } from './structure-forms.ts';
 import { openRename } from './structure-edit.ts';
 import { GuardianPanel } from './guardian-panel.ts';
+import { permissionMessage } from './ui/index.ts';
 
 // ── Shapes returned by /api/v1/academics/hierarchy ──────────────────────
 
@@ -155,7 +156,7 @@ export class AcademicView {
     this.loading = true; this.error = ''; this.render();
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/hierarchy');
-      if (res.status === 403) { this.error = 'এই পাতা দেখার অনুমতি নেই।'; return; }
+      if (res.status === 403) { this.error = permissionMessage('একাডেমিক কাঠামো'); return; }
       if (!res.ok) throw new Error(String(res.status));
       this.tree = (await res.json()) as Tree;
     } catch {

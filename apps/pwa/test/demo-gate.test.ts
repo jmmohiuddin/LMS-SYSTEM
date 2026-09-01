@@ -100,6 +100,15 @@ function roleGatedGetPaths(): Array<{ path: string; allowed: string[] }> {
     const apiDir = join(servicesDir, svc, 'api');
     if (!existsSync(apiDir)) continue;
     for (const file of readdirSync(apiDir)) {
+      // KNOWN BLIND SPOT (B-33): `index.ts` is skipped because it is normally
+      // a dispatcher — but finance-svc and identity-svc put real handlers in
+      // theirs, so a role gate added there is invisible to this derivation.
+      // Checked by hand during P5-0 and there is no gap today:
+      // `/finance/invoices` is deliberately ungated (its own header explains
+      // that RLS `invoice_scope` is the right gate), `/finance/generate` is
+      // POST-only and already in DEMO_GATES, and `/finance/ledger` has no demo
+      // route at all so it 404s. Automating it needs the ROUTES table parsed
+      // to map handler names to path segments.
       if (!file.endsWith('.ts') || file === 'index.ts') continue;
       const src = readFileSync(join(apiDir, file), 'utf8');
       const lines = src.split('\n');

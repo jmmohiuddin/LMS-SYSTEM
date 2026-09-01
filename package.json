@@ -7,6 +7,7 @@
     "build": "node scripts/build.mjs",
     "vercel-build": "node scripts/build.mjs",
     "test": "node scripts/test-all.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
     "deploy:netlify": "node scripts/deploy-netlify.mjs"
   },
   "engines": {

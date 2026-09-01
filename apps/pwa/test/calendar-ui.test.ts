@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { CalendarView, type CalendarPayload, type CalendarEntry } from '../src/calendar-view.ts';
+import { permissionMessage } from '../src/ui/feedback.ts';
 
 let dom: JSDOM;
 
@@ -346,7 +347,11 @@ describe('the four states', () => {
     const auth = fakeAuth(PAYLOAD(), { status: 403 });
     new CalendarView({ root: root(), doc: doc(), auth: auth as never, canManage: false });
     await settle();
-    assert.match(text(), /অনুমতি নেই/);
+    // B-30 unified five wordings into one pattern, so this asserts the
+    // canonical sentence rather than a substring of the bespoke one it
+    // replaced ("শিক্ষাপঞ্জি দেখার অনুমতি নেই।" — no আপনার). Same claim,
+    // pinned to the function every screen now shares.
+    assert.match(text(), new RegExp(permissionMessage('শিক্ষাপঞ্জি')));
     assert.equal(root().querySelectorAll('.cal-day').length, 0,
       '"you may not see this" and "nothing is scheduled" are different claims');
   });

@@ -38,6 +38,7 @@ import type { Auth } from './auth.ts';
 import {
   skeleton, errorState, emptyState, successNote, bnNum, bnDate,
 } from './view-states.ts';
+import { permissionMessage } from './ui/index.ts';
 
 export type DocKind =
   | 'fee_receipt' | 'report_card' | 'admit_card'
@@ -135,13 +136,16 @@ export class DocumentsView {
       const need = this.spec()!.needs;
       if (need === 'receipt') {
         const res = await this.o.auth.authedFetch('/api/v1/finance/receipts?limit=30');
-        if (res.status === 403) { this.error = 'রসিদ দেখার অনুমতি আপনার নেই।'; return; }
+        // B-30: one pattern, from permissionMessage(). The SUBJECT is kept —
+        // "রসিদ দেখার অনুমতি আপনার নেই।" tells a person what they cannot see
+        // and the bare form does not. What is unified is the shape.
+        if (res.status === 403) { this.error = permissionMessage('রসিদ'); return; }
         if (!res.ok) throw new Error(String(res.status));
         const body = (await res.json()) as { receipts?: ReceiptRow[] };
         this.receipts = body.receipts ?? [];
       } else {
         const res = await this.o.auth.authedFetch('/api/v1/academics/hierarchy');
-        if (res.status === 403) { this.error = 'একাডেমিক কাঠামো দেখার অনুমতি নেই।'; return; }
+        if (res.status === 403) { this.error = permissionMessage('একাডেমিক কাঠামো'); return; }
         if (!res.ok) throw new Error(String(res.status));
         this.tree = (await res.json()) as Tree;
         if (need === 'exam+students') {

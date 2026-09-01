@@ -20,6 +20,8 @@ import {
   type MediaDraft,
 } from '../../../packages/ui-core/src/media.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { refuseUnlessOk, isDenied } from './http-status.ts';
+import { permissionState, permissionMessage } from './ui/index.ts';
 
 /**
  * F-902 kill switch. Mirrors SUBMISSION_MEDIA_ENABLED in the sync applier
@@ -132,6 +134,12 @@ export class AssignmentsView {
   private openId: string | null = null;
   private loading = true;
   private offline = false;
+  /**
+   * The server refused this read (403). Distinct from `offline`, and the
+   * distinction is the point: an outage is temporary and a refusal is not,
+   * so this state offers no retry and shows no cached data (B-30).
+   */
+  private denied = false;
   private notice: string | null = '';
   private draft = '';
   private draftStatusEl: HTMLElement | null = null;
@@ -166,12 +174,17 @@ export class AssignmentsView {
 
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/assignments');
-      if (!res.ok) throw new Error(String(res.status));
+      refuseUnlessOk(res);
       const body = (await res.json()) as { assignments: Assignment[] };
       this.list = body.assignments;
       this.offline = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.list)); } catch { /* ignore */ }
-    } catch {
+    } catch (err) {
+      if (isDenied(err)) {
+        this.denied = true; this.list = []; this.offline = false;
+        try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
+        this.loading = false; this.render(); return;
+      }
       this.offline = this.list.length > 0;
     }
     this.loading = false;
@@ -471,6 +484,17 @@ export class AssignmentsView {
       subtitle: this.isStaff ? 'দেওয়া কাজ ও জমা পড়া উত্তর' : 'তোমার জমা দিতে হবে যেসব',
     });
     root.append(header);
+
+    // B-30. A refusal outranks the offline banner, the skeleton and the
+    // empty state: nothing is loading, there is nothing to show, and
+    // calling it "offline" is the lie this item exists to remove.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('বাড়ির কাজ'),
+        contact: 'প্রধান শিক্ষক',
+      }));
+      return;
+    }
 
     if (this.offline) root.append(this.banner('অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));
     if (this.loading && this.list.length === 0) { root.append(this.msg('লোড হচ্ছে…')); return; }

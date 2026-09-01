@@ -246,3 +246,18 @@ jobs:
           npx --no-install tsc -p apps/pwa/tsconfig.json --noEmit
           npx --no-install tsc -p apps/pwa/tsconfig.sw.json --noEmit
           npm run build
+
+      # B-31. The three lines above are the DECLARED typecheck scope, and
+      # scripts/typecheck.mjs parses them out of this file rather than keeping
+      # its own copy — so `npm run typecheck` at a terminal runs exactly what
+      # CI runs and the two cannot drift apart. That mattered: `tsc -p .`
+      # excludes apps/pwa, so P4 and D17 both reported "TypeScript: 0 errors"
+      # having never typechecked the application.
+      #
+      # This step re-runs them, which costs about a minute, and buys the other
+      # half of the guarantee: it also asserts that no NEW .ts file has appeared
+      # outside every config. A file no tsconfig names is a file where a type
+      # error cannot fail any gate, and there are already 60 of them
+      # (scripts/typecheck-baseline.json, tracked as B-32).
+      - name: Typecheck scope has not drifted
+        run: node scripts/typecheck.mjs

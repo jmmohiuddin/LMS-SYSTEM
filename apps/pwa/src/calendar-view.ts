@@ -40,6 +40,7 @@ import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum, bnDate,
 } from './view-states.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { permissionMessage } from './ui/index.ts';
 
 export interface CalendarEntry {
   id: string;
@@ -135,7 +136,7 @@ export class CalendarView {
       const qs = new URLSearchParams({ from, to });
       if (this.kindFilter) qs.set('kind', this.kindFilter);
       const res = await this.o.auth.authedFetch(`/api/v1/ops/calendar?${qs}`);
-      if (res.status === 403) { this.error = 'শিক্ষাপঞ্জি দেখার অনুমতি নেই।'; return; }
+      if (res.status === 403) { this.error = permissionMessage('শিক্ষাপঞ্জি'); return; }
       if (!res.ok) throw new Error(String(res.status));
       this.data = (await res.json()) as CalendarPayload;
     } catch {

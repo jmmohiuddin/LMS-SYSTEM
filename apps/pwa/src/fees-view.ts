@@ -13,6 +13,8 @@
  */
 import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
+import { refuseUnlessOk, isDenied } from './http-status.ts';
+import { permissionState, permissionMessage } from './ui/index.ts';
 
 interface InvoiceLine {
   descriptionBn: string;
@@ -72,6 +74,12 @@ export class FeesView {
   private receipts = new Map<string, Receipt[]>();
   private expanded: string | null = null;
   private offline = false;
+  /**
+   * The server refused this read (403). Distinct from `offline`, and the
+   * distinction is the point: an outage is temporary and a refusal is not,
+   * so this state offers no retry and shows no cached data (B-30).
+   */
+  private denied = false;
   private loading = true;
 
   constructor(options: FeesViewOptions) {
@@ -91,12 +99,22 @@ export class FeesView {
 
     try {
       const res = await this.o.auth.authedFetch('/api/v1/finance/invoices');
-      if (!res.ok) throw new Error(String(res.status));
+      refuseUnlessOk(res);
       const body = (await res.json()) as { invoices: Invoice[] };
       this.invoices = body.invoices;
       this.offline = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.invoices)); } catch { /* best-effort */ }
-    } catch {
+    } catch (err) {
+      if (isDenied(err)) {
+        // Fees are the most sensitive thing on a student's phone after
+        // results: a stale invoice list left on screen after a refusal is
+        // somebody's money.
+        this.denied = true; this.invoices = []; this.offline = false;
+        try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
+        // These two have no `finally { render() }`, so a bare return
+        // computed the denied state and never painted it.
+        this.loading = false; this.render(); return;
+      }
       this.offline = this.invoices.length > 0;
     }
     this.loading = false;
@@ -136,6 +154,17 @@ export class FeesView {
       banner.textContent = 'অফলাইন — সর্বশেষ সংরক্ষিত তথ্য দেখানো হচ্ছে';
       header.append(banner);
     }
+    // B-30. A refusal outranks the offline banner, the skeleton and the
+    // empty state: nothing is loading, there is nothing to show, and
+    // calling it "offline" is the lie this item exists to remove.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('বেতন ও ফি'),
+        contact: 'প্রধান শিক্ষক',
+      }));
+      return;
+    }
+
     root.append(header);
 
     if (this.loading) {

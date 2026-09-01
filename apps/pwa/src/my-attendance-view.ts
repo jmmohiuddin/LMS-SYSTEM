@@ -19,6 +19,8 @@
 import type { Auth } from './auth.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { refuseUnlessOk, isDenied } from './http-status.ts';
+import { permissionState, permissionMessage } from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -74,6 +76,7 @@ export class MyAttendanceView {
   private loading = true;
   private offline = false;
   private error = false;
+  private denied = false;
 
   constructor(options: MyAttendanceViewOptions) {
     this.o = options;
@@ -93,11 +96,16 @@ export class MyAttendanceView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/attendance');
-      if (!res.ok) throw new Error(String(res.status));
+      refuseUnlessOk(res);
       this.data = (await res.json()) as Payload;
       this.offline = false; this.error = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.data)); } catch { /* quota */ }
-    } catch {
+    } catch (err) {
+      if (isDenied(err)) {
+        this.denied = true; this.data = null; this.offline = false;
+        try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
+        return;
+      }
       if (this.data) this.offline = true; else this.error = true;
     } finally {
       this.loading = false;
@@ -122,6 +130,17 @@ export class MyAttendanceView {
       b.className = 'inline-notice';
       b.textContent = 'অফলাইন — সংরক্ষিত হিসাব দেখানো হচ্ছে';
       root.append(b);
+    }
+
+    // B-30. A refusal outranks the offline banner, the skeleton and the
+    // empty state: nothing is loading, there is nothing to show, and
+    // calling it "offline" is the lie this item exists to remove.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('আমার হাজিরা'),
+        contact: 'প্রধান শিক্ষক',
+      }));
+      return;
     }
 
     if (this.loading && !this.data) { this.skeleton(root); return; }

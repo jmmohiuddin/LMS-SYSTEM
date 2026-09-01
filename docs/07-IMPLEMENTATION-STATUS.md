@@ -4,7 +4,7 @@ Documents 01–06 are the design blueprint. This document is the reconciliation:
 actually in the repository today, where the implementation deliberately diverges from the
 blueprint, how to operate it, and what remains.
 
-**Last reconciled 2026-09-01, after the Pre-P5 Product Closure Pass**, under D17.
+**Last reconciled 2026-09-01, after P5-0**, under D17.
 New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
 
 > **Note on this section's history.** Until 2026-09-01 §1 still described the
@@ -25,8 +25,8 @@ New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
 | **Database (as-built)** | `pgvector/pgvector:pg16` Docker container `shikhon-postgres`, bound to `127.0.0.1:5433`, dedicated — not the shared cluster that holds the sibling apps. **The blueprint says Neon PostgreSQL 18.4 (`ap-southeast-1`); [06-DEPLOYMENT.md](06-DEPLOYMENT.md) documents the Neon pooler and is not what production runs** (`B-27`) |
 | **Deployed commit** | cut by `git archive` from the 2026-08-31 tree (`0b6df00` + `52d1609`). **Nothing from P0–P4 is deployed.** That no deploy has run since is INFERRED from the absence of a later PHASE_LOG entry, not re-observed on the box |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main`, current at `95c34bf` |
-| **Tests** | **1,407 passing, 0 failing** — 2026-09-01, run twice, against a real PostgreSQL 16 (pgvector). offline 50 · server-core 199 · ui-core 160 · academics-svc 141 · identity-svc 20 · ops-svc 82 · platform-svc 26 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 569 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
-| **TypeScript** | **0 errors across all THREE configs** — `tsconfig.json`, `apps/pwa/tsconfig.json`, `apps/pwa/tsconfig.sw.json`. The root config **excludes `apps/pwa`**, so `tsc -p .` alone does not typecheck the application; CI runs all three and so must any local gate (`B-31`) |
+| **Tests** | **1,430 passing, 0 failing** — 2026-09-01, run twice, against a real PostgreSQL 16 (pgvector). offline 50 · server-core 199 · ui-core 160 · academics-svc 141 · identity-svc 20 · ops-svc 82 · platform-svc 26 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 592 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
+| **TypeScript** | **0 errors across all THREE configs** — `tsconfig.json`, `apps/pwa/tsconfig.json`, `apps/pwa/tsconfig.sw.json`. Run them with **`npm run typecheck`**, which parses the CI workflow for its list so local and CI scope cannot drift (`B-31`, closed in P5-0). The root config **excludes `apps/pwa`**, so `tsc -p .` alone typechecks the services and not the application. Coverage: **236 of 297** repo `.ts` files; the other 61 are checked by no config and frozen in `scripts/typecheck-baseline.json` (`B-32`) |
 | **Build** | `app.js` + `sw.js` + 11 API bundles |
 | **Schema** | **49 migrations**, 48 rollback files, 26 SQL assertion suites. Verified on production: **227 RLS policies · 110 RLS-enabled tables · 108 carrying `tenant_id` · 0 tenants visible with no tenant context** |
 | **Login** | R-8 turned the kill switch from three hardcoded constants into environment switches that **default OFF** (`packages/server-core/src/go-live.ts`). Whether login is enabled on production is a property of `/etc/shikhon/shikhon.env` and is **NOT OBSERVED from this repository**. `OTP_SENDING_ENABLED` was off at the R-8 deployment; a pilot is designed to run on activation codes, needing no SMS |

@@ -20,6 +20,8 @@ import type { Auth } from './auth.ts';
 // Latin). Three views define a local `bn` instead; this one does not add a
 // fourth copy of a rule that already has a home and a test suite.
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { refuseUnlessOk, isDenied } from './http-status.ts';
+import { permissionState, permissionMessage } from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -51,6 +53,8 @@ export class SubjectsView {
   private loading = true;
   private offline = false;
   private error = false;
+  /** The server refused. Not an outage; no retry helps; drop the cache. */
+  private denied = false;
 
   constructor(options: SubjectsViewOptions) {
     this.o = options;
@@ -76,13 +80,24 @@ export class SubjectsView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/subjects');
-      if (!res.ok) throw new Error(`http ${res.status}`);
+      refuseUnlessOk(res);
       const body = (await res.json()) as { subjects?: SubjectRow[] };
       this.subjects = body.subjects ?? [];
       this.offline = false;
       this.error = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.subjects)); } catch { /* quota */ }
-    } catch {
+    } catch (err) {
+      if (isDenied(err)) {
+        // A refusal invalidates the cache. It was filled while this person was
+        // allowed to see it, or by somebody else on a shared device, and the
+        // server has now said no — so the screen must stop saying yes. B-30.
+        this.denied = true;
+        this.subjects = [];
+        this.offline = false;
+        this.error = false;
+        try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
+        return;
+      }
       // A cached list plus an offline banner beats an error screen: the
       // student's subject set changes about twice a year.
       if (this.subjects.length > 0) this.offline = true;
@@ -110,6 +125,17 @@ export class SubjectsView {
       : `${bn(this.subjects.length)}টি বিষয়`;
     header.append(h1, sub);
     root.append(header);
+
+    // B-30. A refusal outranks the offline banner, the skeleton and the
+    // empty state: nothing is loading, there is nothing to show, and
+    // calling it "offline" is the lie this item exists to remove.
+    if (this.denied) {
+      root.append(permissionState(d, {
+        message: permissionMessage('আমার বিষয়'),
+        contact: 'প্রধান শিক্ষক',
+      }));
+      return;
+    }
 
     if (this.offline) {
       root.append(this.banner('অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));

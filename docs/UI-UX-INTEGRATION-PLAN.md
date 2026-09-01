@@ -998,3 +998,28 @@ The seven student/guardian screens listed in §24 are unchanged. `B-30` records
 that four of them were **not** audited for the permission message, because they
 403 only in situations not yet reproduced and changing them unverified would be
 worse than leaving them.
+
+## 26. P5-0 — stabilization gate (2026-09-01)
+
+No screen was redesigned. Two quality items, both closed; detail in
+`PHASE_LOG.md` under "P5-0".
+
+**B-30 — one permission pattern.** Nine student-facing views turned a 403 into
+"আনা যায়নি" and kept the refused data on screen from cache. There were five
+wordings for one condition. Now one function, `permissionMessage(subject?)`,
+which `humanError` and the P2 `permissionState` both route through — the
+subject is kept because it tells a person *what* they cannot see; the shape and
+the ending are what got unified. Every affected screen drops its cache on a
+refusal, says nothing about being offline, and offers no retry.
+
+On six of the nine a 403 is not currently reachable: those endpoints are
+RLS-scoped and answer with an empty payload rather than a refusal, so the
+handling is defensive. Stated rather than claimed as a live fix.
+
+**B-31 — the typecheck gate.** `npm run typecheck` now runs exactly what CI
+runs, by parsing the workflow for its config list, and fails when a new `.ts`
+file appears outside every config.
+
+**States touched:** the *permission* state is now reachable on nine screens
+that previously had only loading / empty / error / offline. `permissionState()`
+existed since P2 and no student screen could reach it.

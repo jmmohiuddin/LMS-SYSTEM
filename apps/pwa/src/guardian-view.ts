@@ -35,7 +35,7 @@ import { formatCount, formatIdentifier, formatBdt, formatDayMonth }
   from '../../../packages/ui-core/src/format.ts';
 import {
   el, append, card, statCard, statRow, button, pageHeader, sectionHeading,
-  statusBadge, listSkeleton, emptyState, errorState, humanError,
+  statusBadge, listSkeleton, emptyState, errorState, humanError, permissionState, permissionMessage,
 } from './ui/index.ts';
 import { childSelector, childIdentity, type ChildOption } from './ui/child-selector.ts';
 
@@ -205,6 +205,17 @@ export class GuardianView {
       // The status, not just the connectivity: a guardian who reaches a screen
       // that is not theirs is told so, instead of being offered a retry that
       // cannot work.
+      // B-30. A refusal gets the permission state, NOT the error state: the
+      // error state's whole shape is a sentence plus a retry button, and a
+      // retry after a 403 is a button that cannot work. Found in a browser —
+      // the message was already right and the button was still there.
+      if (this.errStatus === 403) {
+        append(root, permissionState(d, {
+          message: permissionMessage('সন্তানের তথ্য'),
+          contact: 'প্রধান শিক্ষক',
+        }));
+        return;
+      }
       append(root, errorState(d, humanError(
         navigator.onLine ? null : 'offline', this.errStatus), () => {
         this.error = false; this.loading = true; this.render(); void this.load();

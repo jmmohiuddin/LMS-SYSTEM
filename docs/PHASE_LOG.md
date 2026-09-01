@@ -8404,3 +8404,15 @@ its whole scope is:
 | Rollback | `db/rollback/050_*.sql` — and it says out loud that running it gives a former guardian their access back |
 | Browser | dashboard at 1024/1440/1600/390/360 × light+dark × tenant A/B, 0 failures; guardian unlink both paths |
 | `index.html` | SHA `496199bd` — unchanged |
+
+## Commits
+
+| Piece | Commit |
+|---|---|
+| B-7 — guardianship revocation | `865fd31` |
+| Principal dashboard | `ababd7b` |
+
+Recorded by D17's convention: write the entry, commit, append the hash.
+
+**P5 continues** with `B-34` — the IT Admin surface and the Principal's
+remaining screens.

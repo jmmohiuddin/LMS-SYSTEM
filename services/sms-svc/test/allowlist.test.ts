@@ -22,6 +22,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db } from '../../../packages/server-core/src/db.ts';
+import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
 import {
   smsTestRecipients, smsRestrictedToAllowlist,
 } from '../../../packages/server-core/src/go-live.ts';
@@ -70,6 +71,9 @@ describe('R-8 §4 — the dispatcher honours it', { skip }, () => {
     db.withTenant({ tenantId: T, userId: '', role: 'system_ingest' }, fn);
 
   before(async () => {
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await asIngest(async (c) => {
       await c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [T]);
@@ -92,7 +96,7 @@ describe('R-8 §4 — the dispatcher honours it', { skip }, () => {
     await asIngest((c) => c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [T]));
     await db.withTenant({ tenantId: T, userId: MUM, role: 'principal' },
       (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
-    await db.end();
+    await db.end(); await unlockFixtures();
   });
 
   beforeEach(async () => {

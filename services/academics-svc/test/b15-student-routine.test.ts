@@ -31,7 +31,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 import type { StudentSlot } from '../api/myroutine.ts';
 
 /** `call` reports the body as Record<string, unknown>; this names the shape. */
@@ -267,6 +267,9 @@ function ensureSetup(): Promise<void> {
     // installTestKeys() only plants the signing pair in the environment; the
     // tokens are minted afterwards, as in p4-privacy.test.ts.
     await installTestKeys();
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     myroutine = (await import('../api/myroutine.ts')).default;
     await seed();
@@ -383,7 +386,7 @@ describe('B-15 · app.student_day — who may not read it', { skip }, () => {
 
 describe('B-15 · GET /academics/myroutine', { skip }, () => {
   before(ensureSetup);
-  after(async () => { await drop(); await db.end(); });
+  after(async () => { await drop(); await db.end(); await unlockFixtures(); });
 
   test('a student gets their own day with no teacher-only fields', async () => {
     const res = await call(myroutine, {

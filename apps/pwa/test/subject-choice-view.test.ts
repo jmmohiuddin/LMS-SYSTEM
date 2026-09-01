@@ -100,7 +100,8 @@ describe('subject choice §10.3', () => {
     // different class — not something a dropdown on this screen can
     // honestly do. It renders as a value plus an explanation of where it
     // is actually set.
-    assert.equal(root.querySelector('.choice-readonly-value')?.textContent, 'বিজ্ঞান');
+    // P6 put this in a `card()`, whose one prominent value is `.ui-card-lead`.
+    assert.equal(root.querySelector('.ui-card-lead')?.textContent, 'বিজ্ঞান');
     assert.ok((root.textContent ?? '').includes('অন্য শাখায় স্থানান্তর'));
     // Exactly one select on the screen: the student picker. Not the group.
     assert.equal(root.querySelectorAll('select').length, 1);

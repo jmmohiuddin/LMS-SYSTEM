@@ -23,7 +23,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 import { generateVapidKeys } from '../../../packages/server-core/src/web-push.ts';
 import { assertSafePushEndpoint } from '../api/push.ts';
 import { HttpError } from '../../../packages/server-core/src/http.ts';
@@ -83,6 +83,12 @@ describe('R-9 — the push endpoint', { skip }, () => {
     process.env.VAPID_PUBLIC_KEY = vapid.publicKey;
     process.env.VAPID_PRIVATE_KEY = vapid.privateKey;
 
+    // Serialised against other runs of this same suite — the fixtures below
+
+    // live at fixed uuids and two processes would delete each other's.
+
+    await lockFixtures(DATABASE_URL as string);
+
     db = createDb(DATABASE_URL as string);
     await dropFixtures();
     await db.withTenant(asA, async (c) => {
@@ -117,7 +123,7 @@ describe('R-9 — the push endpoint', { skip }, () => {
   });
 
   after(async () => {
-    if (db) { await dropFixtures(); await db.end(); }
+    if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); }
     delete process.env.VAPID_PUBLIC_KEY;
     delete process.env.VAPID_PRIVATE_KEY;
   });

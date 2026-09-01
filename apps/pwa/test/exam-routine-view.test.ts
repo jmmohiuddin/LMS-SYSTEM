@@ -117,9 +117,12 @@ describe('exam routine view (§8.3)', () => {
     });
 
     test('every status carries a word, never colour or a glyph alone (F-812)', () => {
-      const chips = [...root.querySelectorAll('.data-table .status-chip')];
+      // P6 moved these onto `statusBadge`, so a clashing paper tints like
+      // every other overdue thing in the product rather than like exams only.
+      const chips = [...root.querySelectorAll('.data-table .ui-badge')];
       assert.equal(chips.length, 3);
-      assert.ok(chips.every((c) => /সংঘর্ষ|ঠিক আছে/.test(c.textContent ?? '')));
+      assert.ok(chips.every((c) => /সংঘর্ষ|ঠিক আছে/.test(c.textContent ?? '')),
+        chips.map((c) => c.textContent).join(' | '));
     });
 
     test('publish is disabled and says why', () => {
@@ -185,8 +188,14 @@ describe('exam routine view (§8.3)', () => {
       const labels = [...root.querySelectorAll('button')].map((b) => b.textContent);
       assert.ok(!labels.includes('প্রকাশ করুন'));
       assert.ok(!labels.includes('সময় পরিবর্তন করুন'));
-      // And the state is stated, not merely implied by what is missing.
-      assert.match(root.querySelector('.action-row .status-chip')?.textContent ?? '', /প্রকাশিত/);
+      // And the state is stated, not merely implied by what is missing. P6
+      // moved it into the action card's own header, beside the exam it is
+      // about, rather than into a bare `.action-row`.
+      assert.match(root.querySelector('.ui-card-action .ui-badge')?.textContent ?? '',
+        /প্রকাশিত/);
+      // Said in words as well as in a badge: a published routine cannot be
+      // edited, and a reader must not have to infer that from absent buttons.
+      assert.match(root.textContent ?? '', /প্রকাশিত রুটিন আর পরিবর্তন করা যায় না/);
     });
   });
 });

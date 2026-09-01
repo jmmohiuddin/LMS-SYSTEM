@@ -8,7 +8,9 @@
  * with a friendly banner so the page ships before the API key does.
  */
 import type { Auth } from './auth.ts';
+import { pageHeader, statusBadge } from './ui/index.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { levelNameBn } from '../../../packages/ui-core/src/format.ts';
 
 export interface ShikhoViewOptions {
   root: HTMLElement;
@@ -120,17 +122,14 @@ export class ShikhoView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'শিখো টিউটর';
-    const sub = d.createElement('p');
-    sub.className = 'att-sub';
-    // §6.7: the scope is pinned and VISIBLE, so the student understands the
-    // boundary the tutor is answering inside rather than discovering it.
-    sub.textContent = `${formatCount(this.classLevel, 'bn')} শ্রেণির পাঠ্যসূচি · উত্তর বলে দেয় না, বুঝিয়ে দেয়`;
-    header.append(h1, sub);
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'শিখো টিউটর',
+      // §6.7: the scope is pinned and VISIBLE, so the student understands the
+      // boundary the tutor is answering inside rather than discovering it.
+      subtitle: `${levelNameBn(this.classLevel)} শ্রেণির পাঠ্যসূচি · `
+        + 'উত্তর বলে দেয় না, বুঝিয়ে দেয়',
+      badge: statusBadge(d, { state: 'invited', label: 'পাঠ্যক্রমের ভেতরে' }),
+    }));
 
     const chat = d.createElement('div');
     chat.className = 'chat-log';

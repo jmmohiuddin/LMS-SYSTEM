@@ -21,6 +21,10 @@
  *    conditional is the point, and it is why the panel can exist at all.
  */
 import type { Auth } from './auth.ts';
+import {
+  pageHeader, card as uiCard, dataTable, field, statRow, statCard, listSkeleton, el,
+} from './ui/index.ts';
+import { emptyState, errorState } from './view-states.ts';
 import { toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 
 type Choice = { examSubjectId: string; label: string };
@@ -86,30 +90,33 @@ export class ClassPerfView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('div');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'শ্রেণির ফলাফল বিশ্লেষণ';
-    header.append(h1);
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'শ্রেণির ফলাফল বিশ্লেষণ',
+      subtitle: 'কোন অংশে দুর্বলতা, এবং কাদের সহায়তা লাগতে পারে',
+    }));
 
-    if (this.loading) {
-      root.append(this.note('তথ্য আনা হচ্ছে…'));
-      return;
-    }
+    if (this.loading) { root.append(listSkeleton(d, 3)); return; }
     if (this.failed) {
-      root.append(this.notice('বিশ্লেষণ আনা যায়নি। সংযোগ পেলে আবার চেষ্টা করুন।', 'is-danger'));
+      root.append(errorState(d, 'বিশ্লেষণ আনা যায়নি। সংযোগ পেলে আবার চেষ্টা করুন।',
+        () => void this.load()));
       return;
     }
     if (this.choices.length === 0) {
-      root.append(this.note('এখনো কোনো পরীক্ষার নম্বর দেওয়া হয়নি। নম্বর দেওয়া শেষ হলে এখানে শ্রেণির বিশ্লেষণ দেখা যাবে।'));
+      root.append(emptyState(d, {
+        glyph: 'trending-up',
+        message: 'এখনো কোনো পরীক্ষার নম্বর দেওয়া হয়নি। নম্বর দেওয়া শেষ হলে এখানে '
+          + 'শ্রেণির বিশ্লেষণ দেখা যাবে।',
+      }));
       return;
     }
 
     root.append(this.picker());
 
     if (!this.analysis) {
-      root.append(this.note('উপরের তালিকা থেকে শ্রেণি ও পরীক্ষা বেছে নিলে বিশ্লেষণ দেখা যাবে।'));
+      root.append(emptyState(d, {
+        glyph: 'search',
+        message: 'উপরের তালিকা থেকে শ্রেণি ও পরীক্ষা বেছে নিলে বিশ্লেষণ দেখা যাবে।',
+      }));
       return;
     }
     const a = this.analysis;
@@ -120,29 +127,27 @@ export class ClassPerfView {
   }
 
   private picker(): HTMLElement {
-    const d = this.o.doc;
-    const select = d.createElement('select');
-    select.className = 'section-picker';
-    select.setAttribute('aria-label', 'শ্রেণি ও পরীক্ষা');
-
-    const blank = d.createElement('option');
-    blank.value = '';
-    blank.textContent = '— শ্রেণি ও পরীক্ষা বেছে নিন —';
-    select.append(blank);
-
-    for (const c of this.choices) {
-      const opt = d.createElement('option');
-      opt.value = c.examSubjectId;
-      opt.textContent = c.label;
-      if (c.examSubjectId === this.selected) opt.selected = true;
-      select.append(opt);
-    }
-    select.addEventListener('change', () => {
-      this.selected = select.value;
-      localStorage.setItem(LAST_KEY, this.selected);
-      void this.load();
+    // A visible label, not an `aria-label`. The old control announced itself
+    // to a screen reader and told a sighted teacher nothing until they opened
+    // it — which on this screen is the difference between "an exam" and
+    // "which exam am I looking at".
+    const f = field(this.o.doc, {
+      label: 'শ্রেণি ও পরীক্ষা',
+      name: 'examSubject',
+      kind: 'select',
+      value: this.selected,
+      helper: 'বাছাই মনে রাখা হয় — পরের বার এই পাতাতেই ফিরে আসবেন।',
+      options: [
+        { value: '', label: '— শ্রেণি ও পরীক্ষা বেছে নিন —' },
+        ...this.choices.map((c) => ({ value: c.examSubjectId, label: c.label })),
+      ],
+      onChange: (v) => {
+        this.selected = v;
+        localStorage.setItem(LAST_KEY, this.selected);
+        void this.load();
+      },
     });
-    return select;
+    return f.root;
   }
 
   /**
@@ -151,12 +156,23 @@ export class ClassPerfView {
    * half-marked exam from reading as a bad result.
    */
   private coverageLine(c: { marked: number; enrolled: number; absent: number }): HTMLElement {
-    const parts = [`${bn(c.marked)}/${bn(c.enrolled)} জনের নম্বর দেওয়া হয়েছে`];
-    if (c.absent > 0) parts.push(`${bn(c.absent)} জন অনুপস্থিত — হিসাবের বাইরে`);
-    const p = this.note(parts.join(' · '));
-    // Sits outside any card, so it insets itself.
-    p.className = 'page-sub perf-coverage';
-    return p;
+    const d = this.o.doc;
+    // Figures, because the whole screen is qualified by them: an average over
+    // 12 of 40 children is not the class's average, and a teacher must see
+    // that before reading anything below.
+    return statRow(d,
+      statCard(d, {
+        label: 'নম্বর দেওয়া হয়েছে', value: `${bn(c.marked)} / ${bn(c.enrolled)}`,
+        glyph: 'check-square',
+        tone: c.marked >= c.enrolled ? 'success' : 'warn',
+        note: c.marked < c.enrolled ? 'নিচের সব গড় কেবল এদের নিয়ে' : 'সবার নম্বর আছে',
+      }),
+      statCard(d, {
+        label: 'অনুপস্থিত', value: `${bn(c.absent)} জন`, glyph: 'alert-triangle',
+        tone: c.absent > 0 ? 'warn' : 'success',
+        note: c.absent > 0 ? 'হিসাবের বাইরে' : undefined,
+      }),
+    );
   }
 
   /** Exam component averages. Real exam data, so it leads. */
@@ -220,24 +236,24 @@ export class ClassPerfView {
       return card;
     }
 
-    const list = d.createElement('ul');
-    list.className = 'perf-qlist';
-    for (const q of p.questions) {
-      const li = d.createElement('li');
-      li.className = 'perf-q';
-
-      const stem = d.createElement('p');
-      stem.className = 'perf-q-stem';
-      stem.textContent = `প্রশ্ন ${bn(q.questionNo)} — ${q.stemBn}`;
-
-      const meta = d.createElement('p');
-      meta.className = 'perf-q-meta';
-      meta.textContent = `${q.chapterBn} · ${bn(q.wrongPercent)}% ভুল · ${bn(q.attempts)} জন`;
-
-      li.append(stem, meta);
-      list.append(li);
-    }
-    card.append(list);
+    // The wrong-percentage is what this panel is FOR, so it is a sortable
+    // column rather than the third clause of a sentence.
+    card.append(dataTable(d, {
+      caption: 'অনুশীলনে সবচেয়ে বেশি ভুল হওয়া প্রশ্ন',
+      rows: p.questions,
+      rowKey: (q) => String(q.questionNo),
+      columns: [
+        { key: 'q', header: 'প্রশ্ন', mobile: 'title',
+          cell: (q) => `প্রশ্ন ${bn(q.questionNo)} — ${q.stemBn}`,
+          width: 'minmax(0, 3fr)' },
+        { key: 'ch', header: 'অধ্যায়', mobile: 'subtitle', cell: (q) => q.chapterBn,
+          width: 'minmax(0, 1.4fr)' },
+        { key: 'wrong', header: 'ভুল', mobile: 'meta', numeric: true,
+          cell: (q) => `${bn(q.wrongPercent)}%`, width: '110px' },
+        { key: 'n', header: 'কতজন করেছে', mobile: 'meta', numeric: true,
+          cell: (q) => bn(q.attempts), width: '130px' },
+      ],
+    }));
 
     if (p.reteach) {
       const hint = d.createElement('p');
@@ -282,44 +298,35 @@ export class ClassPerfView {
       card.append(wide);
     }
 
-    const list = d.createElement('ul');
-    list.className = 'perf-attention';
-    for (const r of rows) {
-      const li = d.createElement('li');
-      li.className = 'perf-att-row';
-
-      const name = d.createElement('p');
-      name.className = 'perf-att-name';
-      name.textContent = `${bn(r.rollNo)} · ${r.nameBn}`;
-
-      const signals = d.createElement('ul');
-      signals.className = 'perf-att-signals';
-      for (const s of r.signals) {
-        const sig = d.createElement('li');
-        sig.textContent = s;
-        signals.append(sig);
-      }
-      li.append(name, signals);
-      list.append(li);
-    }
-    card.append(list);
+    card.append(dataTable(d, {
+      caption: 'যাদের সহায়তা প্রয়োজন হতে পারে',
+      rows,
+      rowKey: (r) => String(r.rollNo),
+      columns: [
+        { key: 'roll', header: 'রোল', mobile: 'meta', numeric: true,
+          cell: (r) => bn(r.rollNo), width: '90px' },
+        { key: 'name', header: 'নাম', mobile: 'title', cell: (r) => r.nameBn,
+          width: 'minmax(0, 1.6fr)' },
+        // Every signal, in full. A count would turn a list of reasons into a
+        // score, and a score is the ranking this feature deliberately has not
+        // got.
+        { key: 'why', header: 'কেন', mobile: 'subtitle', width: 'minmax(0, 3fr)',
+          cell: (r) => el(d, 'ul', { className: 'perf-att-signals' },
+            ...r.signals.map((sig) => el(d, 'li', { text: sig }))) },
+      ],
+    }));
     return card;
   }
 
   private card(title: string): HTMLElement {
-    const d = this.o.doc;
-    const card = d.createElement('section');
-    card.className = 'card perf-card';
-    const h = d.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = title;
-    card.append(h);
-    return card;
+    return uiCard(this.o.doc, {
+      title, glyph: 'trending-up', headingLevel: 2, className: 'perf-card',
+    });
   }
 
   private note(text: string): HTMLElement {
     const p = this.o.doc.createElement('p');
-    p.className = 'page-sub';
+    p.className = 'ui-card-note';
     p.textContent = text;
     return p;
   }

@@ -90,9 +90,15 @@ describe('generation result screen (§8.2)', () => {
   beforeEach(async () => { root = await mount(REPORT); });
 
   test('both counters are in the header, and they say different things', () => {
-    const text = root.querySelector('.gen-counters')?.textContent ?? '';
-    assert.match(text, /কঠিন শর্ত লঙ্ঘন: ০/);
-    assert.match(text, /নরম শর্ত ছাড় দেওয়া হয়েছে: ৩/);
+    // P6 made these stat cards: three figures a coordinator DECIDES on —
+    // whether to accept this routine and what it cost — and a decision is
+    // made from a comparison, not from three sentences.
+    const cards = [...root.querySelectorAll('.ui-stat')].map((c) => c.textContent ?? '');
+    assert.ok(cards.some((c) => c.includes('কঠিন শর্ত লঙ্ঘন') && c.includes('০')), cards.join(' | '));
+    assert.ok(cards.some((c) => c.includes('নরম শর্তে ছাড়') && c.includes('৩')), cards.join(' | '));
+    // Zero hard violations because the database's exclusion constraints make
+    // one unstorable — the card says WHY, so nobody reads it as luck.
+    assert.ok(cards.some((c) => c.includes('ডাটাবেসেই অসম্ভব')));
   });
 
   test('THE ONE THAT MATTERS — trades render before the accept button', () => {
@@ -219,7 +225,7 @@ describe('accepting and discarding', () => {
   test('a clean routine says so rather than showing an empty list', async () => {
     const clean = { ...REPORT, soft: [], unplaced: [], shortages: [] };
     const root = await mount(clean);
-    assert.match(root.textContent ?? '', /কোনো নরম শর্ত ছাড় দিতে হয়নি/);
+    assert.match(root.textContent ?? '', /কিছু ছাড় দিতে হয়নি/);
     assert.equal(root.querySelector('.gen-trades:not(.gen-unchecked-list):not(.gen-shortage-list)'), null);
     // But the un-run rules are STILL shown: a clean report that hides what
     // it did not check is the failure F-505 is about.

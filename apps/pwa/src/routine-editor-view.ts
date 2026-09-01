@@ -35,6 +35,8 @@
  * a sentence naming the class that already owns the hour.
  */
 import type { Auth } from './auth.ts';
+import { emptyState, errorState } from './view-states.ts';
+import { pageHeader, field, statusBadge, listSkeleton } from './ui/index.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 
 /** রবি–বৃহঃ. The teaching week the wireframe draws; day_of_week 0 = Sunday. */
@@ -82,6 +84,12 @@ export class RoutineEditorView {
   private selected: string | null = null;
   private notice: { text: string; tone: 'warn' | 'ok' } | null = null;
   private loading = true;
+  /**
+   * The load failed. Distinct from `notice`, and the distinction is the
+   * point: a failure means the app does NOT know whether this section has a
+   * routine, so "no routine has been created" must not be rendered under it.
+   */
+  private failed = false;
   private busy = false;
 
   constructor(options: RoutineEditorViewOptions) {
@@ -107,6 +115,7 @@ export class RoutineEditorView {
   }
 
   private async loadGrid(sectionId: string): Promise<void> {
+    this.failed = false;
     this.loading = true;
     this.selected = null;
     this.render();
@@ -118,7 +127,11 @@ export class RoutineEditorView {
       this.notice = null;
     } catch {
       this.grid = null;
-      this.notice = { text: 'রুটিন লোড হয়নি — সংযোগ দেখে আবার চেষ্টা করুন।', tone: 'warn' };
+      // A FAILURE, not a notice. The render used to draw this warning and
+      // then "এই শাখার জন্য কোনো রুটিন তৈরি হয়নি" underneath — but a failed
+      // load does not know whether the section has a routine.
+      this.failed = true;
+      this.notice = null;
     }
     this.loading = false;
     this.render();
@@ -210,43 +223,48 @@ export class RoutineEditorView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'রুটিন সম্পাদনা';
-    header.append(h1);
     const rt = this.grid?.routine;
-    if (rt) {
-      const sub = d.createElement('p');
-      sub.className = 'page-sub';
+    root.append(pageHeader(d, {
+      title: 'রুটিন সম্পাদনা',
       // F-506: the shift is named in the header, because a teacher working
       // both shifts is the most common source of real-world routine failure
       // and the coordinator must always know which one they are editing.
-      sub.textContent = `${rt.sectionLabel} · ${SHIFT_BN[rt.shift] ?? rt.shift} · `
-        + `${STATUS_BN[rt.status] ?? rt.status} v${formatCount(rt.version, 'bn')}`;
-      header.append(sub);
-    }
-    root.append(header);
+      subtitle: rt
+        ? `${rt.sectionLabel} · ${SHIFT_BN[rt.shift] ?? rt.shift}`
+        : 'পিরিয়ড সরান — সংঘর্ষ হলে কারণ জানায়',
+      badge: rt
+        ? statusBadge(d, {
+            state: rt.status === 'published' ? 'published' : 'draft',
+            label: `${STATUS_BN[rt.status] ?? rt.status} · সংস্করণ ${formatCount(rt.version, 'bn')}`,
+          })
+        : undefined,
+    }));
 
     if (this.sections.length > 0) {
-      const picker = d.createElement('select');
-      picker.className = 'section-picker';
-      picker.setAttribute('aria-label', 'শাখা নির্বাচন করুন');
-      for (const s of this.sections) {
-        const opt = d.createElement('option');
-        opt.value = s.id; opt.textContent = s.label;
-        opt.selected = s.id === this.sectionId;
-        picker.append(opt);
-      }
-      picker.addEventListener('change', () => {
-        this.sectionId = picker.value;
-        try { localStorage.setItem('shikhon_last_section', picker.value); } catch { /* quota */ }
-        void this.loadGrid(picker.value);
-      });
-      root.append(picker);
+      root.append(field(d, {
+        label: 'শাখা',
+        name: 'section',
+        kind: 'select',
+        value: this.sectionId ?? '',
+        options: this.sections.map((sec) => ({ value: sec.id, label: sec.label })),
+        onChange: (v) => {
+          this.sectionId = v;
+          try { localStorage.setItem('shikhon_last_section', v); } catch { /* quota */ }
+          void this.loadGrid(v);
+        },
+      }).root);
     }
 
-    if (this.loading && !this.grid) { root.append(this.msg('লোড হচ্ছে…')); return; }
+    // A failure is the whole answer. This used to draw the warning AND then
+    // "এই শাখার জন্য কোনো রুটিন তৈরি হয়নি" underneath it — two contradictory
+    // claims, and the second one is not knowable when the first is true.
+    if (this.failed) {
+      root.append(errorState(d, 'রুটিন আনা যায়নি — সংযোগ দেখে আবার চেষ্টা করুন।',
+        () => { if (this.sectionId) void this.loadGrid(this.sectionId); }));
+      return;
+    }
+
+    if (this.loading && !this.grid) { root.append(listSkeleton(d, 5)); return; }
 
     if (this.notice) {
       const n = d.createElement('p');
@@ -257,7 +275,10 @@ export class RoutineEditorView {
     }
 
     if (!this.grid?.routine) {
-      root.append(this.msg('এই শাখার জন্য কোনো রুটিন তৈরি হয়নি। আগে রুটিন তৈরি করুন।'));
+      root.append(emptyState(d, {
+        glyph: 'clock',
+        message: 'এই শাখার জন্য কোনো রুটিন তৈরি হয়নি। আগে রুটিন তৈরি করুন।',
+      }));
       return;
     }
 

@@ -24,11 +24,13 @@
  * Framework-free manual DOM, same as every other view here.
  */
 import type { Auth } from './auth.ts';
+import { iconSvg } from './icon.ts';
+import { errorState } from './view-states.ts';
 import {
   formatCount, formatIdentifier, formatDayMonth, formatTime,
 } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
-import { serverMessage } from './ui/index.ts';
+import { serverMessage, card, button, buttonRow, statusBadge, tabs, listSkeleton, el,} from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -176,9 +178,18 @@ export class ExamRoutineView {
     root.append(header);
 
     if (this.exams.length > 1) root.append(this.selector());
-    if (this.error) root.append(this.notice(`${this.error}`, 'inline-notice is-danger'));
 
-    if (this.loading) { root.append(this.skeleton()); return; }
+    // An error is the WHOLE answer. This used to render the failure AND then
+    // "এই শিক্ষাবর্ষে কোনো পরীক্ষার সময়সূচি তৈরি হয়নি" underneath it — but a
+    // failed load does not know whether the school has exams, only that it
+    // could not find out. The empty state is a claim about the SCHOOL and is
+    // a lie whenever the error is on screen.
+    if (this.error) {
+      root.append(errorState(d, this.error, () => void this.loadExams()));
+      return;
+    }
+
+    if (this.loading) { root.append(listSkeleton(d, 4)); return; }
     if (!exam) { root.append(this.empty()); return; }
 
     root.append(this.actions(exam));
@@ -189,69 +200,70 @@ export class ExamRoutineView {
   }
 
   private selector(): HTMLElement {
-    const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'seg-bar';
-    bar.setAttribute('role', 'tablist');
-    bar.setAttribute('aria-label', 'পরীক্ষা নির্বাচন');
-    for (const e of this.exams) {
-      const b = d.createElement('button');
-      b.type = 'button';
-      b.className = 'seg-opt';
-      b.setAttribute('role', 'tab');
-      b.setAttribute('aria-selected', String(e.id === this.selected));
-      b.dataset.active = String(e.id === this.selected);
-      b.textContent = e.nameBn;
-      b.addEventListener('click', () => {
-        if (e.id === this.selected) return;
-        this.selected = e.id;
+    // The P2 strip: one keyboard stop with arrow keys, where the hand-rolled
+    // `.seg-bar` gave every exam its own tab stop and no arrow handling.
+    return tabs(this.o.doc, {
+      label: 'পরীক্ষা নির্বাচন',
+      active: this.selected ?? '',
+      items: this.exams.map((e) => ({ id: e.id, label: e.nameBn })),
+      onSelect: (id) => {
+        if (id === this.selected) return;
+        this.selected = id;
         this.data = null;
         this.editing = null;
         void this.loadRoutine();
-      });
-      bar.append(b);
-    }
-    return bar;
+      },
+    });
   }
 
   private actions(exam: ExamSummary): HTMLElement {
     const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'card action-row';
-
-    const state = d.createElement('span');
-    state.className = 'status-chip';
     const published = exam.status === 'published';
-    state.dataset.state = published ? 'success' : 'pending';
-    state.textContent = published ? '✓ প্রকাশিত' : '✎ খসড়া';
-    box.append(state);
+    const blocked = !(this.data?.canPublish ?? false);
 
-    // §8.3's [ যাচাই ]. Re-runs the check against the live roster — a
-    // student's optional subject can change between one look and the next.
-    const verify = d.createElement('button');
-    verify.type = 'button';
-    verify.className = 'btn-secondary';
-    verify.textContent = 'যাচাই';
-    verify.disabled = this.busy;
-    verify.addEventListener('click', () => { void this.loadRoutine(); });
-    box.append(verify);
-
+    const controls: Array<Node | null> = [
+      // §8.3's [ যাচাই ]. Re-runs the check against the live roster — a
+      // student's optional subject can change between one look and the next.
+      button(d, {
+        label: 'যাচাই', variant: 'secondary', glyph: 'refresh', disabled: this.busy,
+        onClick: () => { void this.loadRoutine(); },
+      }),
+    ];
     if (!published) {
-      const pub = d.createElement('button');
-      pub.type = 'button';
-      pub.className = 'btn-primary';
-      pub.textContent = 'প্রকাশ করুন';
-      const blocked = !(this.data?.canPublish ?? false);
-      pub.disabled = this.busy || blocked;
-      if (blocked) {
+      controls.push(button(d, {
+        label: 'প্রকাশ করুন', variant: 'primary',
+        disabled: this.busy || blocked,
         // Disabled with a stated reason, never disabled and silent.
-        pub.title = 'সময় সংঘর্ষ থাকা অবস্থায় রুটিন প্রকাশ করা যাবে না';
-        pub.setAttribute('aria-describedby', 'clash-panel');
-      }
-      pub.addEventListener('click', () => { void this.post({ publish: true }); });
-      box.append(pub);
+        attrs: blocked
+          ? { title: 'সময় সংঘর্ষ থাকা অবস্থায় রুটিন প্রকাশ করা যাবে না',
+              'aria-describedby': 'clash-panel' }
+          : {},
+        onClick: () => { void this.post({ publish: true }); },
+      }));
     }
-    return box;
+
+    return card(d, {
+      title: exam.nameBn,
+      glyph: 'award',
+      headingLevel: 2,
+      tone: published ? 'success' : blocked ? 'warn' : 'primary',
+      action: published
+        ? statusBadge(d, { state: 'published', label: 'প্রকাশিত' })
+        : statusBadge(d, { state: 'draft', label: 'খসড়া' }),
+    },
+      published
+        ? el(d, 'p', {
+            className: 'ui-card-note',
+            text: 'প্রকাশিত রুটিন আর পরিবর্তন করা যায় না।',
+          })
+        : blocked
+          ? el(d, 'p', {
+              className: 'ui-card-note',
+              text: 'সময় সংঘর্ষ আছে — নিচে দেখুন। সংঘর্ষ থাকা অবস্থায় প্রকাশ করা যাবে না।',
+            })
+          : null,
+      buttonRow(d, ...controls),
+    );
   }
 
   private paperTable(papers: PaperRow[]): HTMLElement {
@@ -299,11 +311,9 @@ export class ExamRoutineView {
       // A glyph AND a word. Colour and shape alone fail F-812, and a bare
       // tells a coordinator nothing about what to do.
       const st = d.createElement('td');
-      const chip = d.createElement('span');
-      chip.className = 'status-chip';
-      chip.dataset.state = p.hasClash ? 'warning' : 'success';
-      chip.textContent = p.hasClash ? 'সংঘর্ষ' : '✓ ঠিক আছে';
-      st.append(chip);
+      st.append(p.hasClash
+        ? statusBadge(d, { state: 'overdue', label: 'সময় সংঘর্ষ' })
+        : statusBadge(d, { state: 'published', label: 'ঠিক আছে' }));
       tr.append(st);
 
       tbody.append(tr);
@@ -448,7 +458,9 @@ export class ExamRoutineView {
     box.className = 'empty-state';
     const glyph = d.createElement('div');
     glyph.className = 'empty-glyph';
-    glyph.textContent = '⃝';
+    // P6: `emptyState` draws a real icon now — this stray U+20DD was a
+    // workaround for a primitive that ignored the glyph it was given.
+    glyph.innerHTML = iconSvg('calendar');
     glyph.setAttribute('aria-hidden', 'true');
     const msg = d.createElement('p');
     msg.textContent = 'এই শিক্ষাবর্ষে কোনো পরীক্ষার সময়সূচি তৈরি হয়নি।';

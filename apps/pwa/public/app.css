@@ -1834,7 +1834,9 @@ button.subj-card::after {
 /* ========================================================= my attendance */
 /* F-806. Excused is never folded into the headline figure and never shares
    a colour with an unexcused absence — that distinction is the screen. */
-.att-summary { margin: 0 var(--s-4) var(--s-3); }
+/* P6: the horizontal inset is gone — this is a `card()` now, and the card
+   sits inside the content column that already provides it. */
+.att-summary { margin: 0 0 var(--s-3); }
 .att-headline { display: flex; flex-direction: column; margin-bottom: var(--s-3); }
 .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .att-note { margin: var(--s-3) 0 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
@@ -2964,7 +2966,15 @@ input.ui-sr-only, select.ui-sr-only, textarea.ui-sr-only {
 
 /* -- cards ---------------------------------------------------------------- */
 .ui-card {
-  display: block; width: 100%; text-align: start;
+  /* P6: `width: auto`, not `100%`. A block element with `width: 100%` and any
+     horizontal margin is wider than its container by exactly those margins —
+     `box-sizing` cannot help, because margins are outside the box either way.
+     `my-attendance` inherited `.att-summary { margin: 0 var(--s-4) }` from
+     before it was a card and scrolled a 1024px page sideways. `auto` fills
+     the container MINUS the margins, which is what a card wants and what
+     every legacy class that might be handed to `card({ className })` needs
+     it to do. */
+  display: block; width: auto; text-align: start;
   padding: var(--s-4);
   background: var(--color-bg);
   border: 1px solid var(--c-line);
@@ -2994,6 +3004,33 @@ input.ui-sr-only, select.ui-sr-only, textarea.ui-sr-only {
    column on a phone; the desktop half is in the responsive block at the end. */
 .ui-card-grid { display: grid; grid-template-columns: 1fr; gap: var(--s-3); }
 .ui-card-grid > .ui-card { margin: 0; }
+
+/* P6. The week routine, as a school draws it on a wall.
+   Mobile-first here means the GRID is hidden and the stacked day list shows;
+   the swap is in the responsive block at the end of this file, for the reason
+   recorded there. A 7-column grid at 360px is unreadable, and a stack of
+   seven days at 1440 makes "Wednesday, period 3" a scrolling exercise. */
+.routine-week-scroll { display: none; }
+.routine-grid { width: 100%; border-collapse: collapse; }
+.routine-grid th, .routine-grid td {
+  border: 1px solid var(--c-line); padding: var(--s-2); vertical-align: top;
+  text-align: start; font-size: var(--text-2xs); }
+.routine-grid thead th { background: var(--c-surface-2); font-weight: 700;
+  color: var(--c-ink-2); white-space: nowrap; }
+.routine-grid-period { background: var(--c-surface-2); white-space: nowrap;
+  display: flex; flex-direction: column; gap: 2px; }
+.routine-grid-no { font-weight: 700; color: var(--c-ink-1); }
+.routine-grid-time { color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
+.routine-grid-cell { min-width: 108px; }
+.routine-grid-cell > span { display: block; }
+.routine-grid-subject { font-weight: 600; color: var(--c-ink-1); }
+.routine-grid-meta { color: var(--c-ink-3); }
+.routine-grid-kind { color: var(--c-ink-3); font-style: italic; }
+/* A word, never a tint: the day list says "বদলি" too, and a teacher reading
+   the grid must not have to learn a second vocabulary. */
+.routine-grid-sub { margin-top: 2px; font-weight: 700; color: var(--c-warn); }
+.routine-grid-cell[data-kind='teaching'] { background: var(--c-surface); }
+.routine-grid-cell[data-substitution='true'] { background: var(--c-warn-soft); }
 
 /* P5. A group of related checkboxes with a legend. `fieldset` carries the
    grouping to a screen reader; the browser's default border and padding are
@@ -3878,4 +3915,12 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
    until B-34 measured a two-card row rendering at a quarter width. */
 @media (min-width: 640px) {
   .ui-card-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+}
+
+/* P6. The week routine swaps shape at the desktop breakpoint. Declared here,
+   at the END, because these are single-class overrides and source order is
+   what decides — the rule this whole block exists for. */
+@media (min-width: 1024px) {
+  .routine-week-scroll { display: block; }
+  .routine-week-stack { display: none; }
 }

@@ -25,6 +25,8 @@
  * and the second one restates the consequence.
  */
 import type { Auth } from './auth.ts';
+import { emptyState } from './view-states.ts';
+import { pageHeader, card, field, listSkeleton, el } from './ui/index.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 
 interface Option { subjectId: string; nameBn: string; variant?: string | null }
@@ -165,36 +167,31 @@ export class SubjectChoiceView {
     root.textContent = '';
     root.setAttribute('lang', 'bn');
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'বিভাগ ও বিষয় নির্বাচন';
-    header.append(h1);
-    if (this.data) {
-      const s = this.data.student;
-      const sub = d.createElement('p');
-      sub.className = 'page-sub';
-      sub.textContent = `${s.classBn}-${s.sectionName} · রোল ${formatCount(s.rollNo, 'bn')}`;
-      header.append(sub);
-    }
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'বিভাগ ও বিষয় নির্বাচন',
+      subtitle: this.data
+        ? `${this.data.student.classBn}-${this.data.student.sectionName} · `
+          + `রোল ${formatCount(this.data.student.rollNo, 'bn')}`
+        : 'ধর্ম শিক্ষা ও চতুর্থ বিষয় নির্ধারণ',
+    }));
 
     if (this.students.length > 0) {
-      const picker = d.createElement('select');
-      picker.className = 'section-picker';
-      picker.setAttribute('aria-label', 'শিক্ষার্থী নির্বাচন করুন');
-      for (const st of this.students) {
-        const opt = d.createElement('option');
-        opt.value = st.studentId;
-        opt.textContent = `${formatCount(st.rollNo, 'bn')} · ${st.nameBn}`;
-        opt.selected = st.studentId === this.studentId;
-        picker.append(opt);
-      }
-      picker.addEventListener('change', () => {
-        this.studentId = picker.value;
-        void this.loadChoice(picker.value);
-      });
-      root.append(picker);
+      // A labelled control. It had an `aria-label` only — so a coordinator
+      // working down a class of forty saw a bare dropdown and had to open it
+      // to learn what it chose.
+      root.append(field(d, {
+        label: 'শিক্ষার্থী',
+        name: 'student',
+        kind: 'select',
+        value: this.studentId ?? '',
+        // Roll first: it is the order the register is in and the order a
+        // coordinator works down.
+        options: this.students.map((st) => ({
+          value: st.studentId,
+          label: `${formatCount(st.rollNo, 'bn')} · ${st.nameBn}`,
+        })),
+        onChange: (v) => { this.studentId = v; void this.loadChoice(v); },
+      }).root);
     }
 
     if (this.notice) {
@@ -205,15 +202,23 @@ export class SubjectChoiceView {
       root.append(n);
     }
 
-    if (this.loading) { root.append(this.msg('লোড হচ্ছে…')); return; }
+    if (this.loading) { root.append(listSkeleton(d, 4)); return; }
     if (!this.data) {
       if (this.students.length === 0) {
-        root.append(this.msg('আগে শিক্ষার্থী ট্যাব থেকে একটি সেকশন নির্বাচন করুন।'));
+        root.append(emptyState(d, {
+          glyph: 'users',
+          message: 'আগে শিক্ষার্থী তালিকা থেকে একটি সেকশন নির্বাচন করুন — '
+            + 'তারপর সেই শাখার শিক্ষার্থীদের বিষয় নির্ধারণ করা যাবে।',
+          action: { label: 'শিক্ষার্থী তালিকা', onClick: () => { location.hash = '/roster'; } },
+        }));
       }
       return;
     }
     if (!this.data.hasTemplate) {
-      root.append(this.msg('এই শ্রেণির জন্য বিষয়-টেমপ্লেট তৈরি হয়নি। আগে টেমপ্লেট তৈরি করুন।'));
+      root.append(emptyState(d, {
+        glyph: 'layers',
+        message: 'এই শ্রেণির জন্য বিষয়-টেমপ্লেট তৈরি হয়নি। আগে টেমপ্লেট তৈরি করুন।',
+      }));
       return;
     }
 
@@ -231,55 +236,39 @@ export class SubjectChoiceView {
   /** The group is reported, not offered — see the endpoint's header. */
   private groupBlock(): HTMLElement {
     const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'card choice-block';
-    const h = d.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = 'বিভাগ';
-    const val = d.createElement('p');
-    val.className = 'choice-readonly-value';
-    val.textContent = GROUP_BN[this.data!.student.groupCode] ?? this.data!.student.groupCode;
-    const why = d.createElement('p');
-    why.className = 'choice-note';
-    // Honest about where the control actually lives, rather than showing a
-    // dropdown that would quietly mean "re-enrol this child".
-    why.textContent = 'বিভাগ নির্ধারিত হয় শাখা অনুযায়ী। বিভাগ বদলাতে শিক্ষার্থীকে অন্য শাখায় স্থানান্তর করতে হবে।';
-    box.append(h, val, why);
-    return box;
+    return card(d, { title: 'বিভাগ', glyph: 'layers', headingLevel: 2 },
+      el(d, 'p', {
+        className: 'ui-card-lead',
+        text: GROUP_BN[this.data!.student.groupCode] ?? this.data!.student.groupCode,
+      }),
+      // Honest about where the control actually lives, rather than showing a
+      // dropdown that would quietly mean "re-enrol this child".
+      el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'বিভাগ নির্ধারিত হয় শাখা অনুযায়ী। বিভাগ বদলাতে শিক্ষার্থীকে '
+          + 'অন্য শাখায় স্থানান্তর করতে হবে।',
+      }));
   }
 
   private derivedBlock(): HTMLElement {
     const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'card choice-block';
-    const h = d.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = 'আবশ্যিক (স্বয়ংক্রিয়)';
-    box.append(h);
-    if (this.data!.derived.length === 0) {
-      const p = d.createElement('p');
-      p.className = 'choice-note';
-      p.textContent = 'এখনো নির্ধারিত হয়নি।';
-      box.append(p);
-      return box;
-    }
     // Text, not controls: there is no decision here, so there is nothing to
     // press. §10.3 — "the coordinator never types them".
-    const list = d.createElement('p');
-    list.className = 'choice-derived';
-    list.textContent = this.data!.derived.map((s) => s.nameBn).join(' · ');
-    box.append(list);
-    return box;
+    return card(d, {
+      title: 'আবশ্যিক বিষয়', subtitle: 'টেমপ্লেট থেকে স্বয়ংক্রিয়ভাবে নির্ধারিত',
+      glyph: 'book-open', headingLevel: 2,
+    },
+      this.data!.derived.length === 0
+        ? el(d, 'p', { className: 'ui-card-note', text: 'এখনো নির্ধারিত হয়নি।' })
+        : el(d, 'p', {
+            className: 'choice-derived',
+            text: this.data!.derived.map((sub) => sub.nameBn).join(' · '),
+          }));
   }
 
   private poolBlock(title: string, options: Option[], kind: 'religion' | 'optional'): HTMLElement {
     const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'card choice-block';
-    const h = d.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = title;
-    box.append(h);
+    const box = card(d, { title, glyph: 'layers', headingLevel: 2 });
 
     const group = d.createElement('div');
     group.className = 'choice-options';

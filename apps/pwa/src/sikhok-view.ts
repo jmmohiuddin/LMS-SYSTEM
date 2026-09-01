@@ -11,12 +11,24 @@
  * page stays usable and explains itself instead of erroring.
  */
 import type { Auth } from './auth.ts';
+import { levelNameBn } from '../../../packages/ui-core/src/format.ts';
+import {
+  pageHeader, card, button, buttonRow, field, setFieldError, clearFieldError,
+  statusBadge, el, append, type Field, permissionState, permissionMessage,} from './ui/index.ts';
+
 
 export interface SikhokViewOptions {
   root: HTMLElement;
   doc: Document;
   auth: Auth;
 }
+
+/**
+ * Mirrors `requireStaff` in server-core, which blocks exactly these two.
+ * Advisory only — the endpoint is the gate; this decides whether the form is
+ * offered at all.
+ */
+const NOT_STAFF = ['student', 'guardian'];
 
 const TASKS: [string, string][] = [
   ['generate_cq', 'সৃজনশীল প্রশ্ন (CQ)'],
@@ -82,95 +94,112 @@ export class SikhokView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'শিক্ষক সহায়ক AI';
-    const sub = d.createElement('p');
-    sub.className = 'att-sub';
-    sub.textContent = 'NCTB পাঠ্যক্রম অনুযায়ী প্রশ্ন, রুব্রিক ও পাঠ পরিকল্পনা';
-    header.append(h1, sub);
-    root.append(header);
+    root.append(pageHeader(d, { title: 'শিক্ষক সহায়ক AI' }));
 
-    const form = d.createElement('form');
-    form.className = 'ai-form';
-
-    const taskSel = d.createElement('select');
-    taskSel.className = 'section-picker ai-field';
-    for (const [value, label] of TASKS) {
-      const opt = d.createElement('option');
-      opt.value = value;
-      opt.textContent = label;
-      taskSel.append(opt);
+    // A student typing this URL used to meet the whole generator — task type,
+    // class, subject, and a live "তৈরি করুন". The endpoint refuses them, so
+    // nothing could have been generated; offering it anyway implies a child
+    // may write their own exam questions.
+    if (NOT_STAFF.includes(this.o.auth.role)) {
+      root.append(permissionState(d, {
+        message: permissionMessage('শিক্ষক সহায়ক AI'),
+        contact: 'শিক্ষক ও কর্মকর্তা',
+      }));
+      return;
     }
 
-    const classSel = d.createElement('select');
-    classSel.className = 'section-picker ai-field';
-    for (let c = 6; c <= 12; c += 1) {
-      const opt = d.createElement('option');
-      opt.value = String(c);
-      opt.textContent = `শ্রেণি ${c}`;
-      if (c === 9) opt.selected = true;
-      classSel.append(opt);
-    }
+    root.append(el(d, 'p', {
+      className: 'page-sub',
+      text: 'NCTB পাঠ্যক্রম অনুযায়ী প্রশ্ন, রুব্রিক ও পাঠ পরিকল্পনা',
+    }));
 
-    const subjectIn = d.createElement('input');
-    subjectIn.type = 'text';
-    subjectIn.className = 'login-input ai-field';
-    subjectIn.placeholder = 'বিষয় (যেমন: পদার্থবিজ্ঞান)';
-    subjectIn.required = true;
+    const form = el(d, 'form', { className: 'ui-card ui-card-form' });
 
-    const chapterIn = d.createElement('input');
-    chapterIn.type = 'number';
-    chapterIn.className = 'login-input ai-field';
-    chapterIn.placeholder = 'অধ্যায় নং (ঐচ্ছিক)';
-    chapterIn.min = '1';
+    const task = field(d, {
+      label: 'কী তৈরি করবেন', name: 'taskType', kind: 'select', required: true,
+      options: TASKS.map(([value, label]) => ({ value, label })),
+    });
+    const level = field(d, {
+      label: 'শ্রেণি', name: 'classLevel', kind: 'select', required: true,
+      value: '9',
+      // These read "শ্রেণি 6 … শ্রেণি 12" — Latin digits in a Bangla product,
+      // on the one control that names the class. `levelNameBn` is the table
+      // `structure-forms` has had since R-3; appending "ম" to a numeral gives
+      // "১১ম" where a school says "একাদশ".
+      options: Array.from({ length: 7 }, (_, i) => {
+        const c = i + 6;
+        return { value: String(c), label: `${levelNameBn(c)} শ্রেণি` };
+      }),
+    });
+    const subject = field(d, {
+      label: 'বিষয়', name: 'subjectBn', required: true,
+      placeholder: 'যেমন: পদার্থবিজ্ঞান',
+      helper: 'পাঠ্যবইয়ে যে নামে আছে, সেই নাম লিখুন।',
+    });
+    const chapter = field(d, {
+      label: 'অধ্যায় নম্বর', name: 'chapterNo', kind: 'number',
+      attrs: { min: 1 }, helper: 'ঐচ্ছিক — দিলে ওই অধ্যায়ে সীমাবদ্ধ থাকবে।',
+    });
+    const notes = field(d, {
+      label: 'অতিরিক্ত নির্দেশনা', name: 'instructions', kind: 'textarea',
+      attrs: { rows: 3 }, helper: 'ঐচ্ছিক — যেমন "সহজ ভাষায়" বা "১০ নম্বরের"।',
+    });
+    append(form, task.root, level.root, subject.root, chapter.root, notes.root);
 
-    const notesIn = d.createElement('textarea');
-    notesIn.className = 'login-input ai-field ai-notes';
-    notesIn.placeholder = 'অতিরিক্ত নির্দেশনা (ঐচ্ছিক)';
-    notesIn.rows = 2;
+    append(form, buttonRow(d, button(d, {
+      label: 'তৈরি করুন', variant: 'primary', type: 'submit', busy: this.busy,
+    })));
 
-    const submit = d.createElement('button');
-    submit.type = 'submit';
-    submit.className = 'btn-primary';
-    submit.textContent = this.busy ? 'তৈরি হচ্ছে…' : 'তৈরি করুন';
-    submit.disabled = this.busy;
-
-    form.append(taskSel, classSel, subjectIn, chapterIn, notesIn, submit);
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      if (this.busy || !subjectIn.value.trim()) return;
+      if (this.busy) return;
+      clearFieldError(subject.root);
+      if (!subject.value().trim()) {
+        // Field-level, so the class and the instructions the person already
+        // chose stay in front of them.
+        setFieldError(subject.root, 'কোন বিষয়ের জন্য, সেটি লিখুন।');
+        subject.input.focus();
+        return;
+      }
       void this.generate({
-        taskType: taskSel.value,
-        classLevel: Number(classSel.value),
-        subjectBn: subjectIn.value.trim(),
-        chapterNo: chapterIn.value ? Number(chapterIn.value) : null,
-        instructions: notesIn.value.trim(),
+        taskType: task.value(),
+        classLevel: Number(level.value()),
+        subjectBn: subject.value().trim(),
+        chapterNo: chapter.value() ? Number(chapter.value()) : null,
+        instructions: notes.value().trim(),
       });
     });
-    root.append(form);
+    root.append(card(d, {
+      title: 'কী চান', glyph: 'edit', headingLevel: 2,
+    }, form));
 
     if (this.error) {
-      const err = d.createElement('p');
-      err.className = 'login-error';
-      err.setAttribute('role', 'alert');
-      err.hidden = false;
-      err.textContent = this.error;
-      root.append(err);
+      root.append(el(d, 'p', {
+        className: 'login-error', attrs: { role: 'alert' }, text: this.error,
+      }));
     }
 
     if (this.output) {
-      if (this.grounded === false) {
-        const note = d.createElement('p');
-        note.className = 'att-sub';
-        note.textContent = 'পাঠ্যবই কর্পাস এখনো যুক্ত হয়নি — সাধারণ পাঠ্যক্রম-জ্ঞান থেকে তৈরি; ব্যবহারের আগে যাচাই করুন।';
-        root.append(note);
-      }
-      const out = d.createElement('pre');
-      out.className = 'ai-output';
-      out.textContent = this.output;
-      root.append(out);
+      root.append(card(d, {
+        title: 'তৈরি হয়েছে', glyph: 'book-open', headingLevel: 2,
+        tone: this.grounded === false ? 'warn' : 'success',
+        // Whether this came from the textbook corpus is a fact about how far
+        // to trust it, so it sits beside the output rather than under it.
+        action: this.grounded === false
+          ? statusBadge(d, { state: 'pending', label: 'যাচাই করে নিন' })
+          : statusBadge(d, { state: 'published', label: 'পাঠ্যক্রম-ভিত্তিক' }),
+      },
+        this.grounded === false
+          ? el(d, 'p', {
+              className: 'ui-card-note',
+              text: 'পাঠ্যবই কর্পাস এখনো যুক্ত হয়নি — সাধারণ পাঠ্যক্রম-জ্ঞান থেকে তৈরি; ' +
+                    'ব্যবহারের আগে যাচাই করুন।',
+            })
+          : null,
+        // Preformatted text, not a Markdown engine: 04-UIUX's device budget
+        // does not carry a parser for structure that reads fine as plain text.
+        el(d, 'pre', { className: 'ai-output', text: this.output }),
+      ));
     }
   }
 }

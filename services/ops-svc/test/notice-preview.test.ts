@@ -25,7 +25,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 import { SMS_CONFIRM_THRESHOLD } from '../api/notices.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -51,6 +51,9 @@ const asHead: TenantContext = { tenantId: T, userId: HEAD, role: 'principal' };
 describe('R-8 §4 — the audience preview', { skip }, () => {
   before(async () => {
     await installTestKeys();
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await db.withTenant(asHead, async (c) => {
       await c.query('DELETE FROM tenants WHERE id = $1', [T]);
@@ -99,7 +102,7 @@ describe('R-8 §4 — the audience preview', { skip }, () => {
   after(async () => {
     if (!db) return;
     await db.withTenant(asHead, (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
-    await db.end();
+    await db.end(); await unlockFixtures();
   });
 
   const preview = (body: Record<string, unknown>, token = headToken) =>

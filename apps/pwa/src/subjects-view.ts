@@ -16,12 +16,13 @@
  * modal that stops work.
  */
 import type { Auth } from './auth.ts';
+import { emptyState } from './view-states.ts';
 // ui-core owns the numeral policy (counts in Bangla, identifiers always
 // Latin). Three views define a local `bn` instead; this one does not add a
 // fourth copy of a rule that already has a home and a test suite.
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage } from './ui/index.ts';
+import { permissionState, permissionMessage, pageHeader, statusBadge,} from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -114,17 +115,13 @@ export class SubjectsView {
     root.textContent = '';
     root.setAttribute('lang', 'bn');
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'আমার বিষয়';
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.loading
-      ? 'লোড হচ্ছে…'
-      : `${bn(this.subjects.length)}টি বিষয়`;
-    header.append(h1, sub);
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'আমার বিষয়',
+      subtitle: this.loading ? 'লোড হচ্ছে…' : `${bn(this.subjects.length)}টি বিষয়`,
+      badge: this.offline
+        ? statusBadge(d, { state: 'pending', label: 'অফলাইন — সংরক্ষিত' })
+        : undefined,
+    }));
 
     // B-30. A refusal outranks the offline banner, the skeleton and the
     // empty state: nothing is loading, there is nothing to show, and
@@ -137,17 +134,17 @@ export class SubjectsView {
       return;
     }
 
-    if (this.offline) {
-      root.append(this.banner('অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));
-    }
-
     if (this.loading) { this.renderSkeleton(root); return; }
     if (this.error)   { this.renderError(root);    return; }
     if (this.subjects.length === 0) { this.renderEmpty(root); return; }
 
+    // A grid, not a column. Nine subjects down a 1110px page is nine trips
+    // across the width; three across is one glance. `ui-card-grid` is the
+    // primitive for exactly this — rows that are a CHOICE, each with a
+    // sentence, rather than records with fields.
     const ul = d.createElement('ul');
-    ul.className = 'subj-list';
-    for (const s of this.subjects) ul.append(this.card(s));
+    ul.className = 'subj-list ui-card-grid';
+    for (const sub of this.subjects) ul.append(this.card(sub));
     root.append(ul);
   }
 
@@ -171,19 +168,12 @@ export class SubjectsView {
   }
 
   private renderEmpty(root: HTMLElement): void {
-    const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'empty-state';
-    const glyph = d.createElement('div');
-    glyph.className = 'empty-glyph';
-    glyph.textContent = '⃝';
-    glyph.setAttribute('aria-hidden', 'true');
-    const msg = d.createElement('p');
     // One sentence, and it says what to DO — a student seeing this has not
     // had their subject set derived yet (F-304), which is a school action.
-    msg.textContent = 'এখনো কোনো বিষয় নির্ধারণ হয়নি। আপনার শ্রেণিশিক্ষকের সাথে কথা বলুন।';
-    box.append(glyph, msg);
-    root.append(box);
+    root.append(emptyState(this.o.doc, {
+      glyph: 'layers',
+      message: 'এখনো কোনো বিষয় নির্ধারণ হয়নি। আপনার শ্রেণিশিক্ষকের সাথে কথা বলুন।',
+    }));
   }
 
   private renderError(root: HTMLElement): void {

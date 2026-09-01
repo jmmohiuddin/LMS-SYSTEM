@@ -8,6 +8,7 @@
  * reference data, not durable writes, so a synchronous cache is enough.
  */
 import type { Auth } from './auth.ts';
+import { bnNum } from './view-states.ts';
 import { formatDayMonth, formatTime } from '../../../packages/ui-core/src/format.ts';
 import {
   el, append, icon, pageHeader, sectionHeading, tabs, listSkeleton,
@@ -165,11 +166,103 @@ export class RoutineView {
         }));
         return;
       }
+      // The grid for a desk, the stack for a phone. See the module header.
+      append(root, this.weekGrid(days));
+      const stack = el(d, 'div', { className: 'routine-week-stack' });
       for (const day of days) {
-        append(root, sectionHeading(d, { title: formatDayMonth(day.date, 'bn') }));
-        this.renderDay(root, day.slots);
+        append(stack, sectionHeading(d, { title: formatDayMonth(day.date, 'bn') }));
+        this.renderDay(stack, day.slots);
+      }
+      append(root, stack);
+    }
+  }
+
+  /**
+   * The week as a school draws it: periods down the side, days across the top.
+   *
+   * A real `<table>` with `<th scope>` on BOTH axes, which is what lets a
+   * screen reader say "বুধবার, ৩য় পিরিয়ড, গণিত" instead of reading forty
+   * cells in a row. Same reasoning as the calendar's month grid.
+   *
+   * The period rows come from the union of every day's `periodNo`, because a
+   * Thursday can be short and a grid built from one day's periods would drop
+   * the rest of the week's last class.
+   */
+  private weekGrid(days: Array<{ date: string; slots: RoutineSlot[] }>): HTMLElement {
+    const d = this.o.doc;
+    const periods = [...new Set(days.flatMap((day) => day.slots.map((sl) => sl.periodNo)))]
+      .sort((a, b) => a - b);
+
+    // The time a period starts is the same all week, so it labels the row.
+    const startOf = new Map<number, string>();
+    for (const day of days) {
+      for (const sl of day.slots) {
+        if (!startOf.has(sl.periodNo)) startOf.set(sl.periodNo, sl.startsAt.slice(0, 5));
       }
     }
+
+    const scroll = el(d, 'div', { className: 'table-scroll routine-week-scroll' });
+    const table = el(d, 'table', { className: 'data-table routine-grid' });
+    append(table, el(d, 'caption', {
+      className: 'ui-sr-only', text: 'এই সপ্তাহের রুটিন — সারি পিরিয়ড, কলাম দিন',
+    }));
+
+    const thead = el(d, 'thead');
+    const hrow = el(d, 'tr');
+    append(hrow, el(d, 'th', { text: 'পিরিয়ড', attrs: { scope: 'col' } }));
+    for (const day of days) {
+      append(hrow, el(d, 'th', {
+        text: formatDayMonth(day.date, 'bn'), attrs: { scope: 'col' },
+      }));
+    }
+    append(thead, hrow);
+    append(table, thead);
+
+    const tbody = el(d, 'tbody');
+    for (const periodNo of periods) {
+      const tr = el(d, 'tr');
+      const start = startOf.get(periodNo);
+      append(tr, el(d, 'th', { className: 'routine-grid-period', attrs: { scope: 'row' } },
+        el(d, 'span', { className: 'routine-grid-no', text: `${bnNum(periodNo)}` }),
+        start
+          ? el(d, 'span', { className: 'routine-grid-time', text: formatTime(start, 'bn') })
+          : null));
+
+      for (const day of days) {
+        const sl = day.slots.find((x) => x.periodNo === periodNo);
+        const td = el(d, 'td', {
+          className: 'routine-grid-cell',
+          data: {
+            kind: sl?.slotKind,
+            substitution: sl?.isSubstitution ? 'true' : undefined,
+          },
+        });
+        if (!sl) {
+          // An empty cell is a free period, and saying so beats a blank a
+          // reader has to interpret.
+          append(td, el(d, 'span', { className: 'ui-sr-only', text: 'ক্লাস নেই' }));
+        } else if (sl.slotKind !== 'teaching') {
+          append(td, el(d, 'span', { className: 'routine-grid-kind', text: slotKindBn(sl.slotKind) }));
+        } else {
+          append(td,
+            el(d, 'span', { className: 'routine-grid-subject', text: sl.subjectBn ?? '—' }),
+            sl.sectionLabel
+              ? el(d, 'span', { className: 'routine-grid-meta', text: sl.sectionLabel })
+              : null,
+            // The substitution mark carries the same word it does in the day
+            // list, not a colour: a teacher reading the grid must not have to
+            // learn a second vocabulary.
+            sl.isSubstitution
+              ? el(d, 'span', { className: 'routine-grid-sub', text: 'বদলি' })
+              : null);
+        }
+        append(tr, td);
+      }
+      append(tbody, tr);
+    }
+    append(table, tbody);
+    append(scroll, table);
+    return scroll;
   }
 
   private renderDay(root: HTMLElement, slots: RoutineSlot[]): void {

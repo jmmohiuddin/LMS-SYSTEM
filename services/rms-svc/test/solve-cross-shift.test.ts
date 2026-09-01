@@ -20,6 +20,7 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
+import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
 import { RmsSolver } from '../src/solve.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -135,7 +136,7 @@ async function fillMorning(): Promise<void> {
 
 describe('routine solver across shifts (F-506)', { skip }, () => {
   before(async () => { db = createDb(DATABASE_URL as string); await seed(); });
-  after(async () => { if (db) { await dropFixtures(); await db.end(); } });
+  after(async () => { if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); } });
 
   beforeEach(async () => {
     await db.withTenant(asCoord, async (c) => {

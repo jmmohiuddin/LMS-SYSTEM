@@ -8869,3 +8869,222 @@ established**. Recorded rather than smoothed over.
 system, or is a recorded exception with a reason.
 
 **Commit:** `fabf4f1`.
+
+---
+
+# P6 — the functional screens with no design reference   (2026-09-01) · **COMPLETE**
+
+Nineteen screens across four families, **fourteen defects**, and the P5 flake
+found, reproduced on demand and fenced.
+
+---
+
+## P6-0 — the inventory, before any code
+
+All 41 routes rendered as five roles at 1440 and measured, rather than read off
+the old P6 list. The classification that came back:
+
+| Class | Count | Which |
+|---|---|---|
+| already final | 20 | everything P3/P4/P5 owned |
+| partially migrated | 5 | `marks` · `routine` · `my-attendance` · `scripts` · `results` |
+| **missing design** | 14 | the rest of the More-menu satellites, the coordinator's planning tools, the student's learning surfaces, `institution` |
+| legacy but acceptable | 1 | `login-view` — outside the shell, its own visual contract |
+| not a route | 2 | `attendance-view` · `practice-view` are child components |
+| out of scope | 1 | the platform console is not a tenant screen |
+
+Two classification calls worth naming:
+
+- **`institution` is a near-DUPLICATE, not a missing design.** It reads the
+  same endpoint as the Principal dashboard P5 rebuilt and shows substantially
+  the same figures, in R-3 markup. Whether a school wants two dashboards is an
+  **owner decision and is not taken here**. What P6 did is stop them competing:
+  `home` answers *what needs me now*, `institution` answers *what this school
+  is* — the standing shape first, then today measured against it. Same data,
+  opposite order, and every heading names its question.
+- **`roles` is an explainer**, not an operational screen, and is classified as
+  such. It got the canonical shell and a table; nothing more.
+
+## Fourteen defects
+
+### Security — found by driving the matrix as a student, not by reading code
+
+**1. The teacher's AI generator was offered to a student.** `#/sikhok` handed a
+child the complete form — task type, class, subject, chapter, instructions and
+a live "তৈরি করুন". `requireStaff` refuses the endpoint, so nothing could have
+been generated; offering it anyway implies a student may write their own exam
+questions.
+
+**2. Answer-script upload was offered to a student.** Three pickers and a
+camera trigger for uploading another child's script.
+
+Both now mirror `requireStaff`'s blocklist exactly. Re-driven as student AND
+guardian: refused, 0 rows, 0 live controls, canonical sentence.
+
+### Contradictory states — two screens claiming two things at once
+
+**3. `examroutine`** rendered *"পরীক্ষার তালিকা লোড হয়নি।"* **and**
+*"এই শিক্ষাবর্ষে কোনো পরীক্ষার সময়সূচি তৈরি হয়নি।"*
+**4. `routineeditor`** rendered *"রুটিন লোড হয়নি"* **and**
+*"এই শাখার জন্য কোনো রুটিন তৈরি হয়নি।"*
+
+The second claim is not knowable when the first is true: a failed load does not
+know whether the school has exams, only that it could not find out. "There is
+nothing here" is a fact about the SCHOOL; "it did not load" is a fact about the
+connection. An error is now the whole answer, with a retry.
+
+### A primitive that never did what it said
+
+**5. `emptyState`'s `glyph` was ignored.** It took an icon name and rendered a
+literal `·`, with a comment blaming an import cycle with `icon.ts` — which
+imports nothing, from a module that imports nothing. **Five screens** worked
+around it by hand-rolling `.empty-glyph` with a literal `⃝` (U+20DD COMBINING
+ENCLOSING CIRCLE), a combining mark with nothing to combine with, which renders
+as a stray ring on most Android fonts. Five copies of one workaround is how a
+workaround becomes the house style. The primitive draws the icon now; all five
+rings are gone.
+
+**6. `.ui-card` used `width: 100%`.** A block element with `width: 100%` and any
+horizontal margin is wider than its container by exactly those margins, and
+`box-sizing` cannot help — margins are outside the box either way.
+`my-attendance` inherited `.att-summary { margin: 0 var(--s-4) }` from before it
+was a card and scrolled a 1024px page sideways. Found by my OWN sweep after my
+OWN change. `width: auto` fills the container minus margins, which is what a
+card wants and what any legacy class handed to `card({ className })` needs.
+
+### Language and content
+
+**7. "শ্রেণি 6 … শ্রেণি 12"** — Latin digits on the one control that names a
+class. My first fix was also wrong: `${bn(c)}ম শ্রেণি` gives "১১ম" where a
+Bangladeshi school says **একাদশ**. That is P4's "২ম পিরিয়ড" bug for the second
+time. The correct table has been in `structure-forms.ts` since R-3; it moved to
+`ui-core` as `levelNameBn` so there is one.
+
+**8. An English `aria-label` on every chapter card.** `learn-view` announced
+`"…, 2 of 4 topics done"` in the middle of a Bangla page, to the one reader who
+has nothing but the announcement.
+
+**9. Page sizes in Latin digits** on the script uploader, where every other
+count in the product is Bangla.
+
+**10. A raw ISO date** printed on `substitute`'s candidate stage.
+
+### Controls with no name
+
+**11–13.** `substitute`'s date input had **no label of any kind** — not even an
+`aria-label` — on the screen whose entire question is which day. `marks`,
+`classperf`, `routineeditor` and `subjectchoice` each had a bare `<select>` with
+an `aria-label` only: announced to a screen reader, invisible to everyone else
+until they opened it.
+
+**14. Three screens had no page header at all**: `more`, `sikhok`, `shikho`. On
+`more` that is the one screen every role reaches.
+
+---
+
+## The P5 flake: reproduced, diagnosed, fenced
+
+P5 recorded one non-reproducible `pass 12, fail 1` on `b6`+`b7` and said the
+cause was **INFERRED, not established**. P6 established it.
+
+Every DB suite here builds fixtures at FIXED uuids and drops them in `after`.
+That is deliberate and readable — `SEC_A = '7b06d000-…-e1'` can be reasoned
+about — and safe while one process owns those rows. Two runs of the SAME suite
+overlapping do not fail loudly: they delete each other's fixtures halfway
+through and report a scatter of assertions with no common cause.
+
+Running `b6`+`b7` **three times concurrently reproduced it on demand**, with
+P5's exact `pass 12` signature.
+
+Different suites are safe from each other — disjoint id prefixes — which is why
+`npm test` has never shown it: `test-all.mjs` runs workspaces sequentially.
+What is not safe is a suite overlapping itself, which is easy to do by hand and
+invisible when it happens.
+
+**The fix, in one place:** a session-scoped `pg_advisory_lock` taken for the
+life of a test process, wired into all **26** DB-backed suites. Two overlapping
+runs queue instead of corrupting each other — a race becomes a wait. Session
+scope beats a lock table because a killed test process cannot leave the next
+one waiting forever.
+
+**Proof:** the reproduction that failed 16 tests now returns 28/28 from all
+three concurrent workers.
+
+Rewriting 26 suites onto per-run fixture ids would be the deeper fix and was
+not attempted — it is a large change across a dozen files late in a phase, and
+the lock removes the failure mode entirely.
+
+---
+
+## Migrated
+
+| Family | Screens |
+|---|---|
+| **A — teacher satellites** | `assignments` (dataTable, two audiences from one column definition) · `marks` · `scripts` · `classperf` · `routine` · `sikhok` |
+| **B — coordinator planning** | `substitute` (table + candidate drawer) · `examroutine` · `routineeditor` · `generation` · `subjectchoice` |
+| **C — student learning** | `subjects` · `learn` · `shikho` · `my-attendance` |
+| **D — cross-role shell** | `more` · `notifications` · `roles` · `institution` |
+
+### The one screen that earned a different desktop shape
+
+**`routine`'s week view is now a real grid** — periods down, days across, a
+`<table>` with `<th scope>` on both axes. It was the day list seven times over,
+stacked, each row 1120px wide, so "what do I teach Wednesday period 3" meant
+scrolling past two days and counting. Mobile keeps the stacked list: a 7×8 grid
+at 360px is unusable. Both are in the DOM and CSS picks one, the same decision
+`dataTable` makes and for the same reason.
+
+### Deliberate exceptions, each with a reason
+
+- **`marks`' entry grid stays.** A spreadsheet with per-cell dirty state and
+  per-cell offline queueing; `dataTable` has neither. Replacing it would trade
+  a working offline mark sheet for a consistent-looking one.
+- **`exam-routine`'s table stays.** It inserts an inline reschedule row with a
+  `colSpan` under a clashing paper.
+- **`routineeditor`'s period×day grid stays** — already a correct table.
+- **`class-perf`'s component bars stay.** ~20 lines of CSS width on a token,
+  not a charting library; 04-UIUX §6 forbids the library, not the bar.
+- **`my-attendance`'s month bars stay**, same reasoning. Its REGISTER became a
+  table, because "which days, and was it late or excused" is four facts a row.
+
+---
+
+## Browser acceptance
+
+Both themes, seven widths, tenant A and B, transitions frozen.
+
+| Persona | Widths | Routes | Element checks |
+|---|---|---|---|
+| Teacher, tenant A | 360 · 375 · 390 · 1024 · 1280 · 1440 · 1600 | 14 | 9,340 |
+| Student, tenant B | same seven | 12 | 8,196 |
+| Coordinator, tenant A | 360 · 1024 · 1440 · 1600 | 17 | 6,618 |
+| **P5 regression** — Principal, tenant B | 360 · 1024 · 1440 | 17 | 5,788 |
+
+**0 contrast failures · 0 horizontal overflow · 0 unnamed controls ·
+0 `undefined` · 0 uuids · 0 ISO dates as values.**
+
+The P5 sweep was re-run in full because `.ui-card`'s width change touches every
+card in the product. Unregressed.
+
+Two accepted exceptions, unchanged from P5 and both desktop-only `pointer:
+fine`, above WCAG 2.2 AA's 24×24: `d-rail-toggle` at 32×32, and a
+collapsed-rail `dnav` at 41×44 at 1024.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,521 passing**, 0 failing, 12 workspaces — run **twice** |
+| Key DB suites | **b6+b7 ×11**, academics ×8, all clean · **the concurrency reproduction now passes 3/3** |
+| TypeScript — all three CI configs | 0 errors |
+| Typecheck drift guard | passed; baseline 64 → **65** (the new test file) |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | **50/50**, fully migrated |
+| `index.html` | git hash `496199bd` — unchanged |
+
+## Open, and recorded rather than decided
+
+**`home` and `institution` overlap.** P6 gave them different questions and
+orders so they no longer read as two versions of one screen, but a school may
+still not want two. That is a product decision for the owner, not a design one,
+and it is written here rather than taken.

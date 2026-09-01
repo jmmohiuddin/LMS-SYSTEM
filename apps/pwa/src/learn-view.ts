@@ -14,11 +14,13 @@
  * no signal still records what they read.
  */
 import type { Auth } from './auth.ts';
+import { emptyState } from './view-states.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { PracticeView, type PracticeQuestion } from './practice-view.ts';
-import { pageHeader } from './ui/page-header.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage } from './ui/index.ts';
+import {
+  permissionState, permissionMessage, pageHeader, sectionHeading, listSkeleton,
+} from './ui/index.ts';
 
 export interface Chapter {
   id: string;
@@ -299,7 +301,10 @@ export class LearnView {
       return;
     }
     if (this.chapters.length === 0) {
-      root.append(this.msg('এখনো কোনো অধ্যায় যুক্ত হয়নি।'));
+      root.append(emptyState(d, {
+        glyph: 'book-open',
+        message: 'এখনো কোনো অধ্যায় যুক্ত হয়নি। শিক্ষক পাঠ যোগ করলে এখানে দেখা যাবে।',
+      }));
       return;
     }
 
@@ -312,19 +317,24 @@ export class LearnView {
     }
 
     for (const [subjectBn, list] of bySubject) {
-      const h2 = d.createElement('h2');
-      h2.className = 'section-heading';
-      h2.textContent = subjectBn;
-      root.append(h2);
+      root.append(sectionHeading(d, { title: subjectBn }));
 
+      // A grid at desktop. A syllabus is a set of choices, each with a
+      // progress ring — cards, not a table, and not one full-width strip per
+      // chapter down a 1110px page.
       const ul = d.createElement('ul');
-      ul.className = 'chapter-list';
+      ul.className = 'chapter-list ui-card-grid';
       for (const c of list) {
         const li = d.createElement('li');
         const btn = d.createElement('button');
         btn.type = 'button';
         btn.className = 'card chapter-card';
-        btn.setAttribute('aria-label', `${c.name.bn}, ${c.completedCount} of ${c.topicCount} topics done`);
+        // Bangla. This announced "…, 2 of 4 topics done" in the middle of a
+        // Bangla page, to the one reader who has nothing but the announcement.
+        btn.setAttribute('aria-label',
+          `${c.name.bn} — ${c.topicCount === 0 ? 'কোনো পাঠ নেই'
+            : `${formatCount(c.topicCount, 'bn')} পাঠের মধ্যে `
+              + `${formatCount(c.completedCount, 'bn')}টি শেষ`}`);
 
         const ring = d.createElement('span');
         ring.className = 'chapter-ring';
@@ -378,22 +388,19 @@ export class LearnView {
 
     root.append(this.backBar('সব অধ্যায়', () => { this.mode = { kind: 'list' }; this.render(); }));
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = chapter.name.bn;
-    header.append(h1);
-    if (chapter.summaryBn) {
-      const sub = d.createElement('p');
-      sub.className = 'page-sub';
-      sub.textContent = chapter.summaryBn;
-      header.append(sub);
-    }
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: chapter.name.bn,
+      subtitle: chapter.summaryBn || undefined,
+    }));
 
     if (this.offline) root.append(this.offlineBanner());
-    if (this.loading) { root.append(this.msg('লোড হচ্ছে…')); return; }
-    if (this.topics.length === 0) { root.append(this.msg('এই অধ্যায়ে এখনো পাঠ যুক্ত হয়নি।')); return; }
+    if (this.loading) { root.append(listSkeleton(d, 4)); return; }
+    if (this.topics.length === 0) {
+      root.append(emptyState(d, {
+        glyph: 'book-open', message: 'এই অধ্যায়ে এখনো পাঠ যুক্ত হয়নি।',
+      }));
+      return;
+    }
 
     const ul = d.createElement('ul');
     ul.className = 'topic-list';
@@ -441,15 +448,10 @@ export class LearnView {
       void this.openChapter(chapter);
     }));
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = this.topicTitle || 'পাঠ';
-    header.append(h1);
-    root.append(header);
+    root.append(pageHeader(d, { title: this.topicTitle || 'পাঠ' }));
 
     if (this.offline) root.append(this.offlineBanner());
-    if (this.loading && this.blocks.length === 0) { root.append(this.msg('লোড হচ্ছে…')); return; }
+    if (this.loading && this.blocks.length === 0) { root.append(listSkeleton(d, 4)); return; }
 
     // Was 'topic-reader', but the stylesheet only ever styled '.lesson-reader'
     // — so the reading measure (68ch, 1.85 leading, the reader type size) had

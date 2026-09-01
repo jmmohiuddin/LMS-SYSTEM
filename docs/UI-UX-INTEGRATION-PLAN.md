@@ -1181,3 +1181,66 @@ sideways at 1280.
 **0 failures.** 0 contrast · 0 overflow · 0 unnamed controls · 0 `undefined` ·
 0 uuids · 0 ISO dates as values. 1280 is where the `fileUpload` overflow was
 found; B-34 never drove it.
+
+## 30. P6 — the functional screens with no design reference (2026-09-01) · **COMPLETE**
+
+Detail in `PHASE_LOG.md`. Nineteen screens, four families, fourteen defects.
+
+### The inventory came first, and changed two answers
+
+All 41 routes rendered as five roles at 1440 and measured. Two of the results
+were not what the old P6 list assumed:
+
+- **`institution` is a near-duplicate of the P5 dashboard**, not a missing
+  design — same endpoint, same figures, older markup. Whether a school wants
+  two is an **owner decision, recorded not taken**. P6 gave them different
+  questions instead: `home` = what needs me now, `institution` = what this
+  school is.
+- **`roles` is an explainer**, not an operational screen, and is classified so.
+
+### Migrated
+
+| Family | Screens |
+|---|---|
+| A — teacher satellites | assignments · marks · scripts · classperf · routine · sikhok |
+| B — coordinator planning | substitute · examroutine · routineeditor · generation · subjectchoice |
+| C — student learning | subjects · learn · shikho · my-attendance |
+| D — cross-role shell | more · notifications · roles · institution |
+
+**`routine`'s week view is the one screen that earned a genuinely different
+desktop shape** — a real period×day grid with `<th scope>` on both axes, where
+it had been the day list stacked seven times at 1120px. Mobile keeps the list:
+a 7×8 grid at 360 is unusable.
+
+### Exceptions, each with a reason
+
+`marks`' entry grid (per-cell dirty state and offline queueing) · exam-routine's
+table (inline `colSpan` reschedule row) · routineeditor's grid (already correct)
+· class-perf and my-attendance bars (CSS width on a token, not a library).
+
+### Defects worth carrying forward
+
+- **`emptyState` ignored its `glyph`** and drew a literal `·`, blaming an
+  import cycle that does not exist. Five screens had worked around it with a
+  stray `⃝`. Fixed at the primitive; all five workarounds removed.
+- **`.ui-card` used `width: 100%`**, so any horizontal margin overflowed the
+  container. Now `width: auto`.
+- **Two screens offered a student a staff job** — the AI generator and the
+  answer-script upload. Both now mirror `requireStaff`.
+- **Two screens rendered an error AND an empty state together**, which are
+  contradictory claims.
+- **`levelNameBn` moved to `ui-core`** after a second screen nearly grew its
+  own — and my first draft of that copy was wrong ("১১ম" for একাদশ), which is
+  P4's "২ম পিরিয়ড" bug a second time.
+
+### Acceptance
+
+| Persona | Widths | Routes | Checks |
+|---|---|---|---|
+| Teacher, tenant A | 360 · 375 · 390 · 1024 · **1280** · 1440 · 1600 | 14 | 9,340 |
+| Student, tenant B | same seven | 12 | 8,196 |
+| Coordinator, tenant A | 360 · 1024 · 1440 · 1600 | 17 | 6,618 |
+| P5 regression, Principal tenant B | 360 · 1024 · 1440 | 17 | 5,788 |
+
+**0 failures.** The P5 sweep was re-run in full because the `.ui-card` change
+touches every card in the product.

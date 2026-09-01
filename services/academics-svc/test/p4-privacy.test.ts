@@ -26,7 +26,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -179,6 +179,9 @@ let ready: Promise<void> | null = null;
 function ensureSetup(): Promise<void> {
   ready ??= (async () => {
     await installTestKeys();
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await seed();
     const { signAccessToken } = await import('../../../packages/server-core/src/jwt.ts');
@@ -319,7 +322,7 @@ describe('P4 §21 — a guardian sees only their own children', { skip }, () => 
 describe('P4 §21 — tenant isolation holds for both personas', { skip }, () => {
   before(ensureSetup);
   // Last suite in the file, so this is where the pool closes.
-  after(async () => { if (db) { await drop(); await db.end(); } });
+  after(async () => { if (db) { await drop(); await db.end(); await unlockFixtures(); } });
   test('THE ONE THAT MATTERS — tenant A cannot reach a tenant B student', async () => {
     // The id is real and the token is valid. Only the tenant differs, which
     // is the whole of multi-tenancy.

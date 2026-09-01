@@ -22,7 +22,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -171,7 +171,7 @@ before(async () => {
 after(async () => {
   if (skip || !db) return;
   await dropFixtures();
-  await db.end();
+  await db.end(); await unlockFixtures();
   const { sharedDb } = await import('../../../packages/server-core/src/db.ts');
   await (await sharedDb()).end();
 });

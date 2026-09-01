@@ -70,7 +70,9 @@ async function mount() {
   });
   await settle();
   // choose the one exam-subject so the sheet loads
-  const picker = root.querySelector('select.section-picker') as HTMLSelectElement;
+  // P6 moved this onto `field()`, which gives the control a visible label.
+  // Addressed by `name`, which is what it is actually called.
+  const picker = root.querySelector('[name="examSubject"]') as HTMLSelectElement;
   picker.value = 'es-1';
   picker.dispatchEvent(new dom.window.Event('change'));
   await settle();

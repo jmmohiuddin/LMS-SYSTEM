@@ -21,6 +21,7 @@
  *   this view could not show an unpublished result if it tried.
  */
 import type { Auth } from './auth.ts';
+import { iconSvg } from './icon.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
 import { permissionState, permissionMessage, pageHeader, field, statusBadge,} from './ui/index.ts';
@@ -385,7 +386,12 @@ export class ResultsView {
     const box = d.createElement('div');
     box.className = 'empty-state';
     const g = d.createElement('div');
-    g.className = 'empty-glyph'; g.textContent = '⃝'; g.setAttribute('aria-hidden', 'true');
+    g.className = 'empty-glyph'; g.setAttribute('aria-hidden', 'true');
+    // P6: a real icon. The stray U+20DD COMBINING ENCLOSING CIRCLE here
+    // was a workaround for `emptyState` ignoring the glyph it was
+    // handed — a combining mark with nothing to combine with renders
+    // as a stray ring, a dotted circle, or nothing at all.
+    g.innerHTML = iconSvg('award');
     const p = d.createElement('p');
     // Honest about WHY it is empty: a result exists but is not published
     // yet, and the family cannot see it until the school says so.

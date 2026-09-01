@@ -14,6 +14,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, assertRlsEnforced, type Db, type TenantContext } from '../src/db.ts';
+import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
 import { SyncPushHandler } from '../src/push.ts';
 import type { OutboxOp, PushRequest } from '../../../packages/offline/src/types.ts';
 
@@ -57,6 +58,9 @@ const push = (ops: OutboxOp[], ctx = ctxA): Promise<ReturnType<SyncPushHandler['
 
 before(async () => {
   if (skip) return;
+  // Serialised against other runs of this same suite — the fixtures below
+  // live at fixed uuids and two processes would delete each other's.
+  await lockFixtures(DATABASE_URL as string);
   db = createDb(DATABASE_URL!);
   handler = new SyncPushHandler(db);
 
@@ -119,7 +123,7 @@ before(async () => {
 after(async () => {
   if (skip) return;
   await cleanup();
-  await db.end();
+  await db.end(); await unlockFixtures();
 });
 
 async function cleanup() {

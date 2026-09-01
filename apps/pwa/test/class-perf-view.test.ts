@@ -91,7 +91,10 @@ async function mount(over?: Partial<ReturnType<typeof analysis>>) {
 describe('class performance §7.5', () => {
   test('F-1502: the attention list stays in roll order, not severity order', async () => {
     const { root } = await mount();
-    const names = [...root.querySelectorAll('.perf-att-name')].map((n) => n.textContent ?? '');
+    // The attention table is the last one on the screen.
+    const attTable = [...root.querySelectorAll('table.ui-table')].pop() as HTMLElement;
+    const names = [...attTable.querySelectorAll('tbody tr')]
+      .map((tr) => [...tr.children].slice(0, 2).map((c) => c.textContent ?? '').join(' · '));
     assert.equal(names.length, 3);
     // Roll 4 first because it is roll 4, not because it has two signals.
     // Roll 21 last with one signal is the assertion that matters: a
@@ -104,17 +107,18 @@ describe('class performance §7.5', () => {
 
   test('F-1502: every signal is shown, and no row carries a score or badge', async () => {
     const { root } = await mount();
-    const rows = [...root.querySelectorAll('.perf-att-row')];
+    const attTable = [...root.querySelectorAll('table.ui-table')].pop() as HTMLElement;
+    const rows = [...attTable.querySelectorAll('tbody tr')];
 
     // Two signals in, two signals out. No truncation, no "+১ আরও".
     assert.equal(rows[0]?.querySelectorAll('.perf-att-signals li').length, 2);
     assert.equal(rows[1]?.querySelectorAll('.perf-att-signals li').length, 1);
 
-    // No severity tone anywhere in the panel. The bars may carry
-    // data-tone; children may not.
-    const panel = rows[0]?.closest('.card') as HTMLElement;
-    assert.equal(panel.querySelectorAll('.perf-att-row [data-tone]').length, 0);
-    assert.equal(panel.querySelectorAll('.perf-att-row .badge').length, 0);
+    // No severity tone and no badge anywhere in this table. The component
+    // bars may carry `data-tone`; a child may not — a tone would be the
+    // ranking this feature deliberately has not got.
+    assert.equal(attTable.querySelectorAll('tbody [data-tone]').length, 0);
+    assert.equal(attTable.querySelectorAll('tbody .ui-badge, tbody .badge').length, 0);
   });
 
   test('F-1502: the method is printed so a teacher can disagree with it', async () => {
@@ -162,8 +166,14 @@ describe('class performance §7.5', () => {
 
   test('coverage is stated up front so a half-marked exam is not read as a bad one', async () => {
     const { root } = await mount();
-    const text = root.textContent ?? '';
-    assert.ok(text.includes('৩২/৩৫ জনের নম্বর দেওয়া হয়েছে'), text.slice(0, 200));
-    assert.ok(text.includes('২ জন অনুপস্থিত'), 'absentees excluded from the averages');
+    // P6 made the coverage two stat cards rather than one run-on sentence:
+    // an average over 32 of 35 children is not the class's average, and the
+    // reader must meet that as a FIGURE before reading anything below it.
+    const text = (root.textContent ?? '').replace(/\s+/g, ' ');
+    assert.ok(text.includes('নম্বর দেওয়া হয়েছে'), text.slice(0, 200));
+    assert.ok(text.includes('৩২ / ৩৫'), text.slice(0, 200));
+    assert.ok(text.includes('২ জন'), 'absentees excluded from the averages');
+    assert.ok(text.includes('অনুপস্থিত'));
+    assert.ok(text.includes('হিসাবের বাইরে'), 'and said to be excluded, not just counted');
   });
 });

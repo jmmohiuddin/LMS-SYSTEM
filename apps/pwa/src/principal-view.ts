@@ -1,7 +1,21 @@
 /**
- * প্রতিষ্ঠান — the principal's dashboard  (R-3, Part A)
+ * প্রতিষ্ঠান — what this school IS  (R-3 Part A · rebuilt in P6)
  *
- * What a head teacher opens at 8am on a phone, standing in a corridor.
+ * ── P6: this screen and `home` were competing ─────────────────────────────
+ *
+ * P5 rebuilt the principal's `home` on the design system and left this one —
+ * reading the SAME endpoint, showing the SAME figures — in the principal's
+ * navigation in R-3 markup. Two dashboards, one of them worse.
+ *
+ * Whether a school wants two at all is an owner decision and is recorded in
+ * PHASE_LOG rather than taken here. What P6 does is stop them competing, by
+ * giving each a different QUESTION and ordering it accordingly:
+ *
+ *   `home`        what needs me now — attention, then what changed today
+ *   `institution` what this school is — the standing shape, then today
+ *                 measured against it, then the calendar and the record
+ *
+ * Same data, opposite order, and every heading names its question.
  *
  * ── Ordered by what changes today ──────────────────────────────────────
  * Attendance first, because it is the only number on the screen that is
@@ -27,8 +41,11 @@
  */
 import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
-import { iconSvg } from './icon.ts';
-import { skeleton, errorState, emptyState, bnNum } from './view-states.ts';
+import { errorState, emptyState, bnNum, bnDate } from './view-states.ts';
+import {
+  pageHeader, sectionHeading, card, statRow, statCard, dataTable, statusBadge,
+  listSkeleton, el, append,
+} from './ui/index.ts';
 
 export interface PrincipalDashboard {
   year: { id: string; label: string } | null;
@@ -113,18 +130,14 @@ export class PrincipalView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'page-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'প্রতিষ্ঠান';
-    header.append(h1);
-    const sub = d.createElement('p');
-    sub.className = 'page-sub';
-    sub.textContent = this.data?.year ? `শিক্ষাবর্ষ ${this.data.year.label}` : 'আজকের অবস্থা';
-    header.append(sub);
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'প্রতিষ্ঠান',
+      subtitle: this.data?.year
+        ? `শিক্ষাবর্ষ ${this.data.year.label} — প্রতিষ্ঠানের সামগ্রিক চিত্র`
+        : 'প্রতিষ্ঠানের সামগ্রিক চিত্র',
+    }));
 
-    if (this.loading) { root.append(skeleton(d, 4)); return; }
+    if (this.loading) { root.append(listSkeleton(d, 4)); return; }
     if (this.error) {
       root.append(errorState(d, this.error,
         this.error.includes('অনুমতি') ? undefined : () => void this.load()));
@@ -143,20 +156,20 @@ export class PrincipalView {
       return;
     }
 
-    this.renderAttendance(root);
-    this.renderPending(root);
+    // The standing shape FIRST. `home` puts these last on purpose — they are
+    // the same as yesterday — and that is exactly why they lead here: this
+    // screen answers "what is this school", not "what needs me".
     this.renderCounts(root);
+    this.renderAttendance(root);
     if (this.data.finance) this.renderFinance(root, this.data.finance);
     this.renderExams(root);
     this.renderNotices(root);
+    this.renderPending(root);
     this.renderActions(root);
   }
 
   private heading(parent: HTMLElement, text: string): void {
-    const h = this.o.doc.createElement('h2');
-    h.className = 'section-heading';
-    h.textContent = text;
-    parent.append(h);
+    parent.append(sectionHeading(this.o.doc, { title: text }));
   }
 
   private renderAttendance(root: HTMLElement): void {
@@ -165,59 +178,64 @@ export class PrincipalView {
     if (!a) return;
     this.heading(root, 'আজকের হাজিরা');
 
-    const card = d.createElement('div');
-    card.className = 'card';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
-
+    // `percent: null` is "nobody has taken attendance yet", NOT 0%. A
+    // dashboard reading ০% at 8:05 puts a head teacher on the phone to a
+    // class teacher who has done nothing wrong.
     if (a.percent === null) {
-      // The distinction that matters most on this screen.
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'আজ এখনো কোনো শ্রেণিতে হাজিরা নেওয়া হয়নি।';
-      card.append(p);
-    } else {
-      const big = d.createElement('p');
-      big.className = 'result-gpa';
-      big.textContent = `${bnNum(a.percent)}%`;
-      const meta = d.createElement('p');
-      meta.className = 'att-sub';
-      meta.textContent =
-        `${bnNum(a.present)} / ${bnNum(a.marked)} উপস্থিত · ` +
-        `${bnNum(a.sessionsTaken)} টি ক্লাসে নেওয়া হয়েছে`;
-      card.append(big, meta);
+      root.append(card(d, { title: 'এখনো নেওয়া হয়নি', glyph: 'clock', tone: 'info' },
+        el(d, 'p', {
+          className: 'ui-card-note',
+          text: `আজ কোনো শ্রেণিতে হাজিরা নেওয়া হয়নি। ${bnNum(a.sectionsExpected)} টি সেকশনের নেওয়ার কথা।`,
+        })));
+      return;
+    }
 
-      const absent = this.data?.absentToday;
-      if (absent && absent.total > 0) {
-        const list = d.createElement('ul');
-        list.className = 'roster-list';
-        for (const s of absent.shown) {
-          const li = d.createElement('li');
-          li.className = 'roster-row';
-          const roll = d.createElement('span');
-          roll.className = 'roster-roll';
-          roll.textContent = bnNum(s.rollNo ?? '—');
-          const name = d.createElement('span');
-          name.className = 'roster-name';
-          name.textContent = `${s.nameBn} · ${s.classBn} ${s.section}`;
-          li.append(roll, name);
-          list.append(li);
-        }
-        card.append(list);
-        if (absent.total > absent.shown.length) {
-          // Never imply the list is the whole list.
-          const more = d.createElement('p');
-          more.className = 'att-sub';
-          more.textContent = `আরও ${bnNum(absent.total - absent.shown.length)} জন অনুপস্থিত`;
-          card.append(more);
-        }
-      } else {
-        const none = d.createElement('p');
-        none.className = 'att-sub';
-        none.textContent = 'কেউ অনুপস্থিত নেই।';
-        card.append(none);
+    const absent = this.data?.absentToday;
+    root.append(statRow(d,
+      statCard(d, {
+        label: 'উপস্থিতি', value: `${bnNum(a.percent)}%`, glyph: 'check-square',
+        note: `${bnNum(a.present)} / ${bnNum(a.marked)} জন`,
+        tone: a.percent >= 90 ? 'success' : a.percent >= 75 ? 'warn' : 'accent2',
+      }),
+      statCard(d, {
+        label: 'হাজিরা নেওয়া হয়েছে', value: `${bnNum(a.sessionsTaken)} / ${bnNum(a.sectionsExpected)}`,
+        glyph: 'users', note: 'সেকশন',
+        tone: a.sessionsTaken >= a.sectionsExpected ? 'success' : 'warn',
+      }),
+      statCard(d, {
+        label: 'আজ অনুপস্থিত', value: `${bnNum(absent?.total ?? 0)} জন`,
+        glyph: 'alert-triangle',
+        tone: (absent?.total ?? 0) === 0 ? 'success' : 'warn',
+      }),
+    ));
+
+    // The absentee list as a TABLE. It was `.roster-row` strips at 1077px,
+    // where an office comparing roll numbers read one name per line across
+    // the whole width.
+    if (absent && absent.shown.length > 0) {
+      root.append(dataTable(d, {
+        caption: 'আজ অনুপস্থিত শিক্ষার্থী',
+        rows: absent.shown,
+        rowKey: (st) => st.studentId,
+        columns: [
+          { key: 'roll', header: 'রোল', mobile: 'meta', numeric: true,
+            cell: (st) => bnNum(st.rollNo ?? '—'), width: '90px' },
+          { key: 'name', header: 'নাম', mobile: 'title', cell: (st) => st.nameBn,
+            width: 'minmax(0, 2fr)' },
+          { key: 'class', header: 'শ্রেণি', mobile: 'subtitle',
+            cell: (st) => st.classBn, width: 'minmax(0, 1.2fr)' },
+          { key: 'section', header: 'সেকশন', mobile: 'meta',
+            cell: (st) => st.section, width: '110px' },
+        ],
+      }));
+      if (absent.total > absent.shown.length) {
+        // Never imply the list is the whole list.
+        root.append(el(d, 'p', {
+          className: 'ui-card-note',
+          text: `আরও ${bnNum(absent.total - absent.shown.length)} জন অনুপস্থিত — সম্পূর্ণ তালিকা শ্রেণিভিত্তিক হাজিরায়।`,
+        }));
       }
     }
-    root.append(card);
   }
 
   private renderPending(root: HTMLElement): void {
@@ -232,79 +250,69 @@ export class PrincipalView {
       { n: p.studentsWithoutSection,      labelBn: 'শিক্ষার্থীর সেকশন নেই',     path: 'academic' },
     ].filter((i) => i.n > 0);
 
-    this.heading(root, 'আপনার সিদ্ধান্তের অপেক্ষায়');
+    this.heading(root, 'কাঠামোয় যা অসম্পূর্ণ');
+    // Only the non-zero rows, and one calm line when there are none. A row of
+    // ০s is a wall a person reads to learn nothing.
     if (items.length === 0) {
-      const ok = d.createElement('p');
-      ok.className = 'att-sub';
-      ok.style.padding = '0 var(--s-4) var(--s-3)';
-      ok.textContent = 'কিছু বাকি নেই।';
-      root.append(ok);
+      root.append(card(d, { title: 'কাঠামো সম্পূর্ণ', glyph: 'check-square', tone: 'success' },
+        el(d, 'p', {
+          className: 'ui-card-note',
+          text: 'প্রতিটি সেকশনে শ্রেণি শিক্ষক আছে, প্রতিটি বিষয়ে শিক্ষক আছে, ' +
+                'এবং সব শিক্ষার্থীর সেকশন নির্ধারিত।',
+        })));
       return;
     }
 
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const i of items) {
-      const row = d.createElement('button');
-      row.type = 'button';
-      row.className = 'system-row';
-      const title = d.createElement('span');
-      title.className = 'system-title';
-      title.textContent = `${bnNum(i.n)} — ${i.labelBn}`;
-      row.append(title);
-      row.addEventListener('click', () => this.o.onNavigate(i.path));
-      list.append(row);
-    }
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'কাঠামোয় যা অসম্পূর্ণ',
+      rows: items,
+      rowKey: (i) => i.labelBn,
+      onRowClick: (i) => this.o.onNavigate(i.path),
+      columns: [
+        { key: 'what', header: 'কী বাকি', mobile: 'title', cell: (i) => i.labelBn,
+          width: 'minmax(0, 3fr)' },
+        { key: 'n', header: 'সংখ্যা', mobile: 'status', numeric: true,
+          cell: (i) => statusBadge(d, { state: 'pending', label: `${bnNum(i.n)} টি` }),
+          width: '130px' },
+      ],
+    }));
   }
 
   private renderCounts(root: HTMLElement): void {
     const d = this.o.doc;
     const c = this.data?.counts;
     if (!c) return;
-    this.heading(root, 'প্রতিষ্ঠান');
+    this.heading(root, 'এই প্রতিষ্ঠান');
 
-    const grid = d.createElement('div');
-    grid.className = 'card-grid secondary-grid';
-    for (const [labelBn, n] of [
-      ['শিক্ষার্থী', c.students], ['শিক্ষক', c.teachers],
-      ['সেকশন', c.sections], ['শ্রেণি', c.classes],
-    ] as [string, number][]) {
-      const tile = d.createElement('div');
-      tile.className = 'card';
-      const v = d.createElement('p');
-      v.className = 'result-stat-value';
-      v.textContent = bnNum(n);
-      const l = d.createElement('p');
-      l.className = 'result-stat-label';
-      l.textContent = labelBn;
-      tile.append(v, l);
-      grid.append(tile);
-    }
-    root.append(grid);
+    root.append(statRow(d,
+      statCard(d, { label: 'শিক্ষার্থী', value: bnNum(c.students), glyph: 'users' }),
+      statCard(d, { label: 'শিক্ষক ও কর্মী', value: bnNum(c.teachers), glyph: 'user', tone: 'info' }),
+      statCard(d, { label: 'সেকশন', value: bnNum(c.sections), glyph: 'layers', tone: 'accent2' }),
+      statCard(d, { label: 'শ্রেণি', value: bnNum(c.classes), glyph: 'book-open', tone: 'accent2' }),
+    ));
   }
 
   private renderFinance(root: HTMLElement, f: NonNullable<PrincipalDashboard['finance']>): void {
     const d = this.o.doc;
-    this.heading(root, 'ফি');
-    const card = d.createElement('div');
-    card.className = 'card';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
-    for (const [labelBn, v] of [
-      ['বকেয়া', f.outstanding], ['আদায়', f.collected], ['মোট বিল', f.invoiced],
-    ] as [string, string][]) {
-      const row = d.createElement('p');
-      row.className = 'fees-row';
-      // Amounts stay as the server's decimal strings — never parsed into a
-      // JS number on the way to a screen a school reconciles against.
-      row.textContent = `${labelBn}: ${formatBdt(v)}`;
-      card.append(row);
-    }
-    const n = d.createElement('p');
-    n.className = 'att-sub';
-    n.textContent = `${bnNum(f.unpaidCount)} টি ইনভয়েস অপরিশোধিত`;
-    card.append(n);
-    root.append(card);
+    // Named for the PERIOD it covers. The figures are the academic year's,
+    // not the month's, and a label that does not say so is a wrong number
+    // dressed as a right one — the exact defect P5 found on `home`.
+    this.heading(root, 'এই শিক্ষাবর্ষের ফি');
+    // Amounts stay as the server's decimal strings — never parsed into a JS
+    // number on the way to a screen a school reconciles against.
+    root.append(statRow(d,
+      statCard(d, {
+        label: 'মোট বিল', value: formatBdt(f.invoiced), glyph: 'wallet',
+      }),
+      statCard(d, {
+        label: 'আদায়', value: formatBdt(f.collected), glyph: 'check-square', tone: 'success',
+      }),
+      statCard(d, {
+        label: 'বকেয়া', value: formatBdt(f.outstanding), glyph: 'alert-triangle',
+        tone: Number(f.outstanding) > 0 ? 'warn' : 'success',
+        note: `${bnNum(f.unpaidCount)} টি ইনভয়েস অপরিশোধিত`,
+      }),
+    ));
   }
 
   private renderExams(root: HTMLElement): void {
@@ -312,22 +320,22 @@ export class PrincipalView {
     const exams = this.data?.upcomingExams ?? [];
     if (exams.length === 0) return;
     this.heading(root, 'পরীক্ষা');
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const e of exams) {
-      const row = d.createElement('div');
-      row.className = 'system-row';
-      const t = d.createElement('span');
-      t.className = 'system-title';
-      t.textContent = e.nameBn;
-      const s = d.createElement('span');
-      s.className = 'status-chip';
-      if (e.status === 'published') s.setAttribute('data-state', 'success');
-      s.textContent = e.status === 'published' ? 'প্রকাশিত' : 'চলমান';
-      row.append(t, s);
-      list.append(row);
-    }
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'আসন্ন ও চলমান পরীক্ষা',
+      rows: exams,
+      rowKey: (e) => e.id,
+      columns: [
+        { key: 'name', header: 'পরীক্ষা', mobile: 'title', cell: (e) => e.nameBn,
+          width: 'minmax(0, 2.4fr)' },
+        { key: 'starts', header: 'শুরু', mobile: 'subtitle', cell: (e) => bnDate(e.startsOn),
+          width: 'minmax(0, 1.4fr)' },
+        { key: 'status', header: 'অবস্থা', mobile: 'status', width: '140px',
+          cell: (e) => statusBadge(d, {
+            state: e.status === 'published' ? 'published' : 'pending',
+            label: e.status === 'published' ? 'প্রকাশিত' : 'চলমান',
+          }) },
+      ],
+    }));
   }
 
   private renderNotices(root: HTMLElement): void {
@@ -341,44 +349,33 @@ export class PrincipalView {
       }));
       return;
     }
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const n of notices) {
-      const row = d.createElement('button');
-      row.type = 'button';
-      row.className = 'system-row';
-      const t = d.createElement('span');
-      t.className = 'system-title';
-      t.textContent = n.title;
-      const c = d.createElement('span');
-      c.className = 'system-desc';
-      c.textContent = `${bnNum(n.recipientCount)} জনের কাছে`;
-      row.append(t, c);
-      row.addEventListener('click', () => this.o.onNavigate('inbox'));
-      list.append(row);
-    }
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'সাম্প্রতিক নোটিশ',
+      rows: notices,
+      rowKey: (n) => n.id,
+      onRowClick: () => this.o.onNavigate('inbox'),
+      columns: [
+        { key: 'title', header: 'নোটিশ', mobile: 'title', cell: (n) => n.title,
+          width: 'minmax(0, 2.6fr)' },
+        { key: 'when', header: 'প্রকাশ', mobile: 'subtitle',
+          cell: (n) => bnDate(n.publishedAt), width: 'minmax(0, 1.4fr)' },
+        // The reach is the number the author remembers, so it is a column
+        // rather than a clause.
+        { key: 'reach', header: 'কতজনের কাছে', mobile: 'meta', numeric: true,
+          cell: (n) => `${bnNum(n.recipientCount)} জন`, width: 'minmax(0, 1.2fr)' },
+      ],
+    }));
   }
 
   private renderActions(root: HTMLElement): void {
     const d = this.o.doc;
     this.heading(root, 'দ্রুত কাজ');
-    const grid = d.createElement('div');
-    grid.className = 'card-grid secondary-grid';
+    const grid = el(d, 'div', { className: 'ui-card-grid' });
     for (const a of ACTIONS) {
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'home-card';
-      const g = d.createElement('span');
-      g.className = 'home-glyph';
-      g.setAttribute('aria-hidden', 'true');
-      g.innerHTML = iconSvg(a.glyph);
-      const t = d.createElement('span');
-      t.className = 'home-title';
-      t.textContent = a.labelBn;
-      btn.append(g, t);
-      btn.addEventListener('click', () => this.o.onNavigate(a.path));
-      grid.append(btn);
+      append(grid, card(d, {
+        title: a.labelBn, glyph: a.glyph, variant: 'interactive', headingLevel: 3,
+        onClick: () => this.o.onNavigate(a.path),
+      }));
     }
     root.append(grid);
   }

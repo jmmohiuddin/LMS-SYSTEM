@@ -27,7 +27,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -153,6 +153,9 @@ let ready: Promise<void> | null = null;
 function ensureSetup(): Promise<void> {
   ready ??= (async () => {
     await installTestKeys();
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     guardians = (await import('../api/guardians.ts')).default;
     await seed();
@@ -290,7 +293,7 @@ describe('B-7 — the relationship ends', { skip }, () => {
 
 describe('B-7 — what it refuses', { skip }, () => {
   before(ensureSetup);
-  after(async () => { await drop(); await db.end(); });
+  after(async () => { await drop(); await db.end(); await unlockFixtures(); });
 
   test('a child is never left with no contactable adult', async () => {
     // Tahiya has no phone and no email of her own. Migration 031 refuses to

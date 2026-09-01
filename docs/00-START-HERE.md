@@ -6,7 +6,7 @@ the repository; where the honest answer is "not built" or "not observed", it
 says so, because a document that rounds those up to "done" is the specific
 failure D17 exists to prevent.
 
-Last reconciled **2026-09-01**, at the end of P5.
+Last reconciled **2026-09-01**, at the end of P6.
 
 ## Read in this order
 
@@ -145,17 +145,20 @@ afternoon), and the frontend is *never* the enforcement layer.
 ### 10. What has been completed?
 
 Functional roadmap R-0 … R-7 complete (R-5 and R-6 **PARTIAL** — see the
-board). UI/UX roadmap **P0 … P5 complete**, plus a **Pre-P5 Product Closure
+board). UI/UX roadmap **P0 … P6 complete**, plus a **Pre-P5 Product Closure
 Pass** that closed `B-6` (class/section rename), `B-8` (logout and cache
 privacy) and `B-15` (the student routine, migration 049). P5 closed `B-7`
 (guardian unlink, migration 050) and `B-34` (every Principal and IT Admin
-screen on the design system). Full table with the exact qualifications:
+screen on the design system). P6 took the nineteen functional screens that
+had no design reference and found fourteen defects doing it — including two
+that offered a student a staff job, and a `emptyState` primitive that ignored
+the icon it was given. Full table with the exact qualifications:
 `11-MASTER-PLAN.md` **§5a**.
 
 ### 11. What is currently being built?
 
-Nothing is in progress. P5 closed on 2026-09-01; the next approved phase is
-**P6**, not started. R-8 remains open in external-dependency mode.
+Nothing is in progress. P6 closed on 2026-09-01; the next approved phase is
+**P7**, not started. R-8 remains open in external-dependency mode.
 
 ### 12. What is not built?
 
@@ -181,16 +184,25 @@ Three different reasons, and they are not interchangeable:
 
 ### 14. What is the next phase?
 
-**P6.** P5 is complete: `B-7` (guardian unlink, migration 050), the Principal
-dashboard, and `B-34` — every Principal and IT Admin screen on the canonical
-design system, with `results` and `inbox` recorded as deliberate exceptions
-rather than omissions. P5's own audit found eleven defects, five of them
-security or privacy; the worst was a ledger screen that answered a 403 by
-rendering a fabricated chart of accounts. All are fixed and described in
-PHASE_LOG under "P5 — the remaining IT Admin and Principal screens".
+**P7 (+D16 commercial controls, which no earlier phase may implement).**
 
-After P6: P7 (+D16 commercial controls, which no earlier phase may implement),
-P8, production hardening, the final audit.
+P6 is complete: the nineteen functional screens that had no design reference
+are on the canonical system, with `marks`' entry grid, `exam-routine`'s inline
+reschedule row and two CSS bar charts recorded as deliberate exceptions. Its
+audit found fourteen defects — two security (the teacher's AI generator and
+the answer-script upload were offered to a student), two screens claiming an
+error and an empty state at the same time, and an `emptyState` primitive that
+ignored the icon it was handed, which five screens had worked around with a
+stray combining character. It also reproduced, diagnosed and fenced P5's one
+non-reproducible test failure: DB fixtures live at fixed uuids, so two runs of
+one suite delete each other's rows. All described in PHASE_LOG under "P6".
+
+**One thing P6 recorded rather than decided:** `home` and `institution` are two
+principal dashboards over one endpoint. P6 gave them different questions so
+they no longer read as two versions of one screen, but whether a school wants
+two at all is an owner decision (`BACKLOG.md`).
+
+After P7: P8, production hardening, the final audit.
 
 ### 15. What production blockers exist?
 

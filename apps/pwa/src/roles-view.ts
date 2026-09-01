@@ -6,8 +6,7 @@
  * when authenticated (this makes it useful for real principals) and falls
  * back to descriptive counts in demo mode.
  */
-import { iconSvg } from './icon.ts';
-import { pageHeader } from './ui/page-header.ts';
+import { pageHeader, card, dataTable, sectionHeading, statusBadge, el } from './ui/index.ts';
 
 export interface RolesViewOptions {
   root: HTMLElement;
@@ -27,6 +26,12 @@ const ROLES: { code: string; nameBn: string; scope: string; canDo: string; tier:
   { code: 'guardian',             nameBn: 'অভিভাবক',               scope: 'self',     canDo: 'নিজ সন্তানের হাজিরা, ফলাফল, ফি, রসিদ',              tier: 'people' },
 ];
 
+/** `platform` and `tenant` are different KINDS of reach, not jargon. */
+const SCOPE_BN: Record<string, string> = {
+  platform: 'পুরো প্ল্যাটফর্ম',
+  tenant: 'নিজের প্রতিষ্ঠান',
+};
+
 const TIER_LABEL: Record<string, string> = {
   system: 'সিস্টেম', management: 'ব্যবস্থাপনা', academic: 'একাডেমিক', finance: 'অর্থ', people: 'ব্যবহারকারী',
 };
@@ -36,61 +41,61 @@ export class RolesView {
     const d = o.doc;
     o.root.textContent = '';
 
-    const header = pageHeader(d, {
+    o.root.append(pageHeader(d, {
       title: 'ভূমিকা ও অ্যাক্সেস',
-      subtitle: 'PostgreSQL Row-Level Security দ্বারা প্রতিষ্ঠান-ভিত্তিক আলাদা',
-    });
-    o.root.append(header);
+      subtitle: 'কে কী দেখতে ও করতে পারেন — এবং কেন অন্য প্রতিষ্ঠানের তথ্য কখনো দেখা যায় না',
+    }));
 
-    // Isolation banner — visually confirms the tenant isolation invariant.
-    const banner = d.createElement('div');
-    banner.className = 'card iso-banner';
-    // The padlock this banner used to carry was an emoji; there is no decent
-    // text padlock to swap in, and this is a real semantic icon in a card —
-    // exactly what the drawn set exists for. It takes the ink like the rest.
-    const bIcon = d.createElement('span'); bIcon.className = 'iso-icon';
-    bIcon.setAttribute('aria-hidden', 'true');
-    bIcon.innerHTML = iconSvg('lock');
-    const bBody = d.createElement('div');
-    const bTitle = d.createElement('span'); bTitle.className = 'iso-title'; bTitle.textContent = 'বিচ্ছিন্নতা সক্রিয়';
-    const bDesc = d.createElement('span'); bDesc.className = 'iso-desc';
-    bDesc.textContent = 'প্রতিটি ব্যবহারকারীর অনুরোধ SET LOCAL app.tenant_id দিয়ে বন্ধ — অন্য বিদ্যালয়ের সারি কখনো দৃশ্যমান হয় না।';
-    bBody.append(bTitle, bDesc);
-    banner.append(bIcon, bBody);
-    o.root.append(banner);
+    // The isolation statement. A `card` rather than a bespoke `.iso-banner`:
+    // it is one fact with a title, which is what a card is.
+    o.root.append(card(d, {
+      title: 'বিচ্ছিন্নতা সক্রিয়',
+      glyph: 'lock',
+      tone: 'success',
+      headingLevel: 2,
+      action: statusBadge(d, { state: 'published', label: 'সবসময় চালু' }),
+    },
+      el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'প্রতিটি ব্যবহারকারীর অনুরোধ ডাটাবেস স্তরে নিজের প্রতিষ্ঠানে সীমাবদ্ধ করা হয় — ' +
+              'অন্য বিদ্যালয়ের কোনো সারি কখনো দৃশ্যমান হয় না। এটি কোনো সেটিং নয়; ' +
+              'বন্ধ করার উপায় নেই।',
+      }),
+    ));
 
-    // Group by tier.
+    // Grouped by tier, and each tier is a TABLE. A role matrix is the
+    // original tabular data: ten roles compared on the same three questions.
+    // What was here — 11 full-width `.role-card` strips at 1110px — made a
+    // reader hold one role in their head to compare it with the next.
     const tiers = ['system', 'management', 'academic', 'finance', 'people'] as const;
     for (const tier of tiers) {
       const inTier = ROLES.filter((r) => r.tier === tier);
       if (inTier.length === 0) continue;
 
-      const h2 = d.createElement('h2');
-      h2.className = 'section-heading';
-      h2.textContent = TIER_LABEL[tier];
-      o.root.append(h2);
-
-      const list = d.createElement('ul');
-      list.className = 'roles-list';
-      for (const r of inTier) {
-        const li = d.createElement('li');
-        li.className = 'card role-card';
-        const name = d.createElement('span');
-        name.className = 'role-name';
-        name.textContent = r.nameBn;
-        const code = d.createElement('span');
-        code.className = 'role-code';
-        code.textContent = r.code;
-        const can = d.createElement('span');
-        can.className = 'role-can';
-        can.textContent = r.canDo;
-        const scope = d.createElement('span');
-        scope.className = 'role-scope';
-        scope.textContent = `স্কোপ: ${r.scope}`;
-        li.append(name, code, can, scope);
-        list.append(li);
-      }
-      o.root.append(list);
+      o.root.append(sectionHeading(d, { title: TIER_LABEL[tier] }));
+      o.root.append(dataTable(d, {
+        caption: `${TIER_LABEL[tier]} ভূমিকা`,
+        rows: inTier,
+        rowKey: (r) => r.code,
+        columns: [
+          { key: 'name', header: 'ভূমিকা', mobile: 'title', cell: (r) => r.nameBn,
+            width: 'minmax(0, 1.4fr)' },
+          { key: 'can', header: 'কী করতে পারেন', mobile: 'subtitle', cell: (r) => r.canDo,
+            width: 'minmax(0, 2.4fr)' },
+          { key: 'scope', header: 'পরিসর', mobile: 'status', width: '150px',
+            cell: (r) => statusBadge(d, {
+              // A platform role and a school role are different KINDS of
+              // access, and that difference is the point of this page.
+              state: r.scope === 'platform' ? 'overdue' : 'invited',
+              label: SCOPE_BN[r.scope] ?? r.scope,
+            }) },
+          // The code is what appears in an audit entry and in a JWT, so an IT
+          // admin genuinely needs it — at a desk, not on a phone.
+          { key: 'code', header: 'কোড', mobile: 'hidden',
+            cell: (r) => el(d, 'code', { className: 'role-code', text: r.code }),
+            width: 'minmax(0, 1.4fr)' },
+        ],
+      }));
     }
   }
 }

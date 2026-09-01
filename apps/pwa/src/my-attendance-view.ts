@@ -17,10 +17,11 @@
  * numeric label for the monthly bars, and the six universal states of §4.
  */
 import type { Auth } from './auth.ts';
+import { iconSvg } from './icon.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage } from './ui/index.ts';
+import { permissionState, permissionMessage, card as uiCard, sectionHeading, dataTable, statusBadge,} from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -155,24 +156,24 @@ export class MyAttendanceView {
 
   private summary(p: Payload): HTMLElement {
     const d = this.o.doc;
-    const card = d.createElement('section');
-    card.className = 'card att-summary';
+    const card = uiCard(d, {
+      title: 'সারসংক্ষেপ',
+      // A rate a guardian may quote to the school — Latin, like the mark
+      // sheet they cross-check it against.
+      subtitle: `${bn(p.totals.counted)} কর্মদিবসের হিসাব`,
+      glyph: 'percent',
+      headingLevel: 2,
+      className: 'att-summary',
+      action: statusBadge(d, {
+        state: (p.totals.attendedPercent ?? 100) >= 75 ? 'published' : 'overdue',
+        label: p.totals.attendedPercent === null
+          ? '—' : `${formatIdentifier(p.totals.attendedPercent)}%`,
+      }),
+    });
 
-    const pct = d.createElement('div');
-    pct.className = 'att-headline';
-    const v = d.createElement('span');
-    v.className = 'result-stat-value';
-    // A rate a guardian may quote to the school — Latin, like the mark sheet.
-    v.textContent = p.totals.attendedPercent === null
-      ? '—' : `${formatIdentifier(p.totals.attendedPercent)}%`;
-    const l = d.createElement('span');
-    l.className = 'result-stat-label';
-    l.textContent = `${bn(p.totals.counted)} কর্মদিবসে উপস্থিতি`;
-    pct.append(v, l);
-    card.append(pct);
-
-    // Counts, not a single number. Excused sits beside the others rather
-    // than inside them, which is the whole requirement.
+    // Counts, not a single number. Excused sits BESIDE the others rather
+    // than inside them, which is the whole requirement — a guardian opened
+    // this to find out whether approved leave counted against their child.
     const chips = d.createElement('div');
     chips.className = 'att-chips';
     const counts: [string, number][] = [
@@ -205,9 +206,7 @@ export class MyAttendanceView {
     const d = this.o.doc;
     const sec = d.createElement('section');
     sec.className = 'att-section';
-    const h = d.createElement('h2');
-    h.textContent = 'মাস অনুযায়ী';
-    sec.append(h);
+    sec.append(sectionHeading(d, { title: 'মাস অনুযায়ী' }));
 
     const ul = d.createElement('ul');
     ul.className = 'att-month-list';
@@ -292,57 +291,40 @@ export class MyAttendanceView {
     const d = this.o.doc;
     const sec = d.createElement('section');
     sec.className = 'att-section';
-    const h = d.createElement('h2');
-    h.textContent = 'অনুপস্থিতির তালিকা';
-    sec.append(h);
+    sec.append(sectionHeading(d, { title: 'অনুপস্থিতির তালিকা' }));
 
-    const ul = d.createElement('ul');
-    ul.className = 'att-register';
-    for (const r of rows) {
-      const meta = STATUS[r.status] ?? { bn: r.status, glyph: '•', chip: 'pending' };
-      const li = d.createElement('li');
-      li.className = 'att-entry';
-
-      const date = d.createElement('span');
-      date.className = 'att-entry-date';
-      const dt = new Date(r.takenOn);
-      date.textContent = dt.toLocaleDateString('bn-BD', {
-        day: 'numeric', month: 'short', weekday: 'short',
-      });
-
-      const body = d.createElement('span');
-      body.className = 'att-entry-body';
-      const chip = d.createElement('span');
-      chip.className = 'status-chip';
-      chip.dataset.state = meta.chip;
-      chip.textContent = `${meta.glyph} ${meta.bn}`;
-      body.append(chip);
-
-      if (r.status === 'late' && r.minutesLate) {
-        const m = d.createElement('span');
-        m.className = 'att-entry-note';
-        m.textContent = `${bn(r.minutesLate)} মিনিট`;
-        body.append(m);
-      }
-      if (r.subjectBn) {
-        const s = d.createElement('span');
-        s.className = 'att-entry-note';
-        s.textContent = r.subjectBn;
-        body.append(s);
-      }
-      if (r.remark) {
-        const rem = d.createElement('span');
-        rem.className = 'att-entry-note';
-        rem.textContent = r.remark;
-        body.append(rem);
-      }
-      li.append(date, body);
-      ul.append(li);
-    }
-    sec.append(ul);
+    // A table. "Which days, and was it late or excused" is four facts per
+    // row, and this rendered as `.att-entry` strips 1110px wide — so a
+    // guardian comparing seven dates read one date per full screen width.
+    sec.append(dataTable(d, {
+      caption: 'দিন অনুযায়ী হাজিরার রেকর্ড',
+      rows,
+      rowKey: (r) => `${r.takenOn}-${r.subjectBn ?? ''}`,
+      columns: [
+        { key: 'day', header: 'তারিখ', mobile: 'title', width: 'minmax(0, 1.6fr)',
+          cell: (r) => new Date(r.takenOn).toLocaleDateString('bn-BD', {
+            day: 'numeric', month: 'short', weekday: 'short',
+          }) },
+        { key: 'state', header: 'অবস্থা', mobile: 'status', width: '150px',
+          cell: (r) => {
+            const meta = STATUS[r.status] ?? { bn: r.status, glyph: '•', chip: 'pending' };
+            const chip = d.createElement('span');
+            chip.className = 'status-chip';
+            chip.dataset.state = meta.chip;
+            // Glyph AND word: a guardian who cannot see colour must still be
+            // able to tell late from absent.
+            chip.textContent = `${meta.glyph} ${meta.bn}`;
+            return chip;
+          } },
+        { key: 'late', header: 'দেরি', mobile: 'meta', numeric: true, width: '120px',
+          cell: (r) => (r.status === 'late' && r.minutesLate
+            ? `${bn(r.minutesLate)} মিনিট` : '—') },
+        { key: 'subject', header: 'বিষয়', mobile: 'subtitle', width: 'minmax(0, 1.4fr)',
+          cell: (r) => r.subjectBn || '—' },
+      ],
+    }));
     return sec;
   }
-
   private skeleton(root: HTMLElement): void {
     const d = this.o.doc;
     const card = d.createElement('div');
@@ -359,7 +341,12 @@ export class MyAttendanceView {
     const box = d.createElement('div');
     box.className = 'empty-state';
     const g = d.createElement('div');
-    g.className = 'empty-glyph'; g.textContent = '⃝'; g.setAttribute('aria-hidden', 'true');
+    g.className = 'empty-glyph'; g.setAttribute('aria-hidden', 'true');
+    // P6: a real icon. The stray U+20DD COMBINING ENCLOSING CIRCLE here
+    // was a workaround for `emptyState` ignoring the glyph it was
+    // handed — a combining mark with nothing to combine with renders
+    // as a stray ring, a dotted circle, or nothing at all.
+    g.innerHTML = iconSvg('percent');
     const p = d.createElement('p');
     p.textContent = 'এখনো কোনো হাজিরা নেওয়া হয়নি।';
     box.append(g, p);

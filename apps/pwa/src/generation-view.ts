@@ -25,9 +25,10 @@
  * nobody requested is how a screen becomes unreadable.
  */
 import type { Auth } from './auth.ts';
+import { errorState } from './view-states.ts';
 import { formatCount, formatTime } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
-import { serverMessage } from './ui/index.ts';
+import { serverMessage, statRow, statCard, listSkeleton,} from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -180,15 +181,14 @@ export class GenerationView {
     });
     root.append(header);
 
+    // An error is the whole answer: with no report loaded there is nothing
+    // to render underneath it but a blank.
     if (this.error) {
-      const p = d.createElement('p');
-      p.className = 'inline-notice is-danger';
-      p.setAttribute('role', 'alert');
-      p.textContent = `${this.error}`;
-      root.append(p);
+      root.append(errorState(d, this.error, () => void this.load()));
+      return;
     }
 
-    if (this.loading) { root.append(this.skeleton()); return; }
+    if (this.loading) { root.append(listSkeleton(d, 4)); return; }
     if (!this.data) return;
 
     root.append(this.counters(this.data));
@@ -205,30 +205,30 @@ export class GenerationView {
 
   private counters(r: Report): HTMLElement {
     const d = this.o.doc;
-    const box = d.createElement('section');
-    box.className = 'card gen-counters';
-
-    const hard = d.createElement('p');
-    hard.className = 'gen-counter is-ok';
-    // Zero because the exclusion constraints make a hard violation
-    // unstorable — the line states that the guarantee exists.
-    hard.textContent = `✓ কঠিন শর্ত লঙ্ঘন: ${bn(r.hardViolations)}`;
-    box.append(hard);
-
-    const soft = d.createElement('p');
-    soft.className = r.soft.length > 0 ? 'gen-counter is-warn' : 'gen-counter is-ok';
-    soft.textContent = r.soft.length > 0
-      ? `নরম শর্ত ছাড় দেওয়া হয়েছে: ${bn(r.soft.length)}`
-      : '✓ কোনো নরম শর্ত ছাড় দিতে হয়নি';
-    box.append(soft);
-
-    if (r.routine.objectiveScore !== null) {
-      const score = d.createElement('p');
-      score.className = 'gen-meta';
-      score.textContent = `চাহিদার ${bn(Math.round(r.routine.objectiveScore))}% পূরণ হয়েছে`;
-      box.append(score);
-    }
-    return box;
+    // Figures, not three sentences. These are the three numbers a
+    // coordinator decides on — whether to accept this routine, and what it
+    // cost — and a decision is made from a comparison.
+    return statRow(d,
+      statCard(d, {
+        label: 'কঠিন শর্ত লঙ্ঘন', value: bn(r.hardViolations), glyph: 'lock',
+        // Zero because the database's exclusion constraints make a hard
+        // violation unstorable — the figure states that the guarantee exists
+        // rather than that the run happened to be lucky.
+        tone: r.hardViolations === 0 ? 'success' : 'warn',
+        note: r.hardViolations === 0 ? 'ডাটাবেসেই অসম্ভব' : undefined,
+      }),
+      statCard(d, {
+        label: 'নরম শর্তে ছাড়', value: bn(r.soft.length), glyph: 'alert-triangle',
+        tone: r.soft.length > 0 ? 'warn' : 'success',
+        note: r.soft.length > 0 ? 'নিচে কোনগুলো দেখুন' : 'কিছু ছাড় দিতে হয়নি',
+      }),
+      ...(r.routine.objectiveScore !== null
+        ? [statCard(d, {
+            label: 'চাহিদা পূরণ', value: `${bn(Math.round(r.routine.objectiveScore))}%`,
+            glyph: 'trending-up', tone: 'info',
+          })]
+        : []),
+    );
   }
 
   /**

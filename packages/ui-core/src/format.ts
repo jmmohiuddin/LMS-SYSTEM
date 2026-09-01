@@ -148,3 +148,20 @@ export function smsSegments(body: string): { encoding: 'gsm7' | 'unicode'; segme
   const segments = chars === 0 ? 0 : chars <= single ? 1 : Math.ceil(chars / multi);
   return { encoding, segments, chars };
 }
+
+/**
+ * A class level as a Bangladeshi school says it: `9` → "নবম".
+ *
+ * Ordinals in Bangla are per-number, not a suffix. Building them by appending
+ * "ম" gives "১১ম" where a school says "একাদশ", and P4 shipped exactly that
+ * mistake once already as "২ম পিরিয়ড". This table has been correct in
+ * `structure-forms.ts` since R-3; it lives here so there is only one.
+ */
+const LEVEL_BN = [
+  '', 'প্রথম', 'দ্বিতীয়', 'তৃতীয়', 'চতুর্থ', 'পঞ্চম', 'ষষ্ঠ',
+  'সপ্তম', 'অষ্টম', 'নবম', 'দশম', 'একাদশ', 'দ্বাদশ',
+] as const;
+
+export function levelNameBn(level: number): string {
+  return LEVEL_BN[level] ?? String(level);
+}

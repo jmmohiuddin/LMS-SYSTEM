@@ -9,7 +9,8 @@
  * every Android browser without the MediaDevices permission dance.
  */
 import type { Auth } from './auth.ts';
-import { pageHeader, field } from './ui/index.ts';
+import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { pageHeader, field, card, sectionHeading, dataTable, statusBadge, button, fileUpload, el, append, permissionState, permissionMessage,} from './ui/index.ts';
 
 const TARGET_LONG_EDGE = 1600;
 const JPEG_QUALITY = 0.7;
@@ -76,6 +77,15 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
+
+/**
+ * Mirrors `requireStaff` in server-core, which blocks exactly these two.
+ * Advisory only — the endpoint is the gate; this decides whether the form is
+ * offered at all.
+ */
+const NOT_STAFF = ['student', 'guardian'];
+
+const bn = (n: number): string => formatCount(n, 'bn');
 
 export class ScriptsView {
   private readonly o: ScriptsViewOptions;
@@ -219,14 +229,23 @@ export class ScriptsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = pageHeader(d, {
+    root.append(pageHeader(d, {
       title: 'উত্তরপত্র আপলোড',
       subtitle: 'হাতে-লেখা উত্তরপত্রের ছবি — অন-ডিভাইস কম্প্রেশন সহ',
-    });
-    root.append(header);
+    }));
 
-    const card = d.createElement('div');
-    card.className = 'card card-form';
+    // Mirrors `requireStaff` on the endpoint. Uploading a child's answer
+    // script is a teacher's job, and a student meeting three pickers and a
+    // camera trigger here is being offered somebody else's work.
+    if (NOT_STAFF.includes(this.o.auth.role)) {
+      root.append(permissionState(d, {
+        message: permissionMessage('উত্তরপত্র আপলোড'),
+        contact: 'বিষয় শিক্ষক বা প্রধান শিক্ষক',
+      }));
+      return;
+    }
+
+    const form = el(d, 'div', { className: 'ui-card-form' });
 
     // Three pickers where there were two uuid boxes. The uuid still travels
     // in the request — it is the identifier the API takes — but it is chosen
@@ -263,94 +282,83 @@ export class ScriptsView {
       onChange: (v) => { this.studentId = v; this.render(); },
     }).root;
 
-    const captureLabel = d.createElement('label');
-    captureLabel.className = 'btn-primary btn-capture';
-    captureLabel.textContent = this.busy ? 'প্রস্তুত হচ্ছে…' : 'পৃষ্ঠা তুলুন';
-    const fileInput = d.createElement('input');
-    fileInput.type = 'file';
-    fileInput.accept = 'image/*';
-    fileInput.setAttribute('capture', 'environment');
-    fileInput.hidden = true;
-    fileInput.addEventListener('change', () => {
-      const f = fileInput.files?.[0];
-      if (f) void this.onFile(f);
-      fileInput.value = '';
-    });
-    captureLabel.append(fileInput);
+    // `capture: 'environment'` opens the rear camera directly on a phone,
+    // which is the whole interaction: a teacher points at a page on a desk.
+    // The primitive keeps that and stops this screen hand-rolling a label
+    // that hides its own input.
+    const capture = fileUpload(d, {
+      label: this.busy ? 'প্রস্তুত হচ্ছে…' : 'পৃষ্ঠা তুলুন',
+      name: 'page',
+      accept: 'image/*',
+      capture: 'environment',
+      helper: 'ছবি এই যন্ত্রেই ছোট করা হয় — ২জি সংযোগেও যায়।',
+      onFiles: (files) => { if (files[0]) void this.onFile(files[0]); },
+    }).root;
 
-    card.append(esLabel, stLabel, stuLabel, captureLabel);
-    root.append(card);
+    append(form, esLabel, stLabel, stuLabel, capture);
+    root.append(card(d, {
+      title: 'কোন উত্তরপত্র', glyph: 'camera', headingLevel: 2,
+    }, form));
 
     if (this.notice) {
-      const n = d.createElement('p');
-      n.className = 'inline-notice';
-      n.setAttribute('role', 'alert');
-      n.textContent = this.notice;
-      root.append(n);
+      root.append(el(d, 'p', {
+        className: 'inline-notice', attrs: { role: 'alert' }, text: this.notice,
+      }));
     }
 
-    if (this.pages.length === 0) {
-      const empty = d.createElement('p');
-      empty.className = 'page-sub empty';
-      empty.textContent = 'এখনো কোনো পৃষ্ঠা তোলা হয়নি।';
-      root.append(empty);
-      return;
-    }
+    root.append(sectionHeading(d, {
+      title: `তোলা পৃষ্ঠা · ${bn(this.pages.length)}`,
+    }));
 
-    const list = d.createElement('ul');
-    list.className = 'script-pages';
-    for (const p of this.pages) {
-      const li = d.createElement('li');
-      li.className = 'script-page card';
-      li.dataset.status = p.status;
-
-      const img = d.createElement('img');
-      img.className = 'script-thumb';
-      img.src = p.dataUrl;
-      img.alt = `পৃষ্ঠা ${p.pageNo}`;
-
-      const info = d.createElement('div');
-      info.className = 'script-info';
-      const title = d.createElement('span');
-      title.className = 'script-title';
-      title.textContent = `পৃষ্ঠা ${p.pageNo}`;
-      const meta = d.createElement('span');
-      meta.className = 'script-meta';
-      const compressed = Math.round(p.compressedBytes / 1024);
-      const ratio = Math.max(1, Math.round(p.originalBytes / p.compressedBytes));
-      meta.textContent = `${compressed} KB · ${ratio}× ছোট`;
-      const status = d.createElement('span');
-      status.className = 'script-status';
-      status.textContent =
-        p.status === 'saved' ? '✓ সংরক্ষিত'
-        : p.status === 'uploading' ? 'আপলোড হচ্ছে…'
-        : p.status === 'error' ? `${p.error ?? 'সমস্যা'}`
-        : 'প্রস্তুত';
-      info.append(title, meta, status);
-
-      const actions = d.createElement('div');
-      actions.className = 'script-actions';
-      if (p.status !== 'saved') {
-        const upload = d.createElement('button');
-        upload.type = 'button';
-        upload.className = 'btn-primary btn-small';
-        upload.textContent = p.status === 'uploading' ? '…' : 'আপলোড';
-        upload.disabled = p.status === 'uploading';
-        upload.addEventListener('click', () => { void this.upload(p); });
-        actions.append(upload);
-      }
-      const remove = d.createElement('button');
-      remove.type = 'button';
-      remove.className = 'btn-ghost btn-small';
-      remove.textContent = '×';
-      remove.setAttribute('aria-label', 'সরান');
-      remove.addEventListener('click', () => { this.removePage(p.id); });
-      actions.append(remove);
-
-      li.append(img, info, actions);
-      list.append(li);
-    }
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'তোলা পৃষ্ঠার তালিকা',
+      rows: this.pages,
+      rowKey: (pg) => pg.id,
+      empty: {
+        glyph: 'camera',
+        message: 'এখনো কোনো পৃষ্ঠা তোলা হয়নি। উপরের বোতাম দিয়ে উত্তরপত্রের ছবি তুলুন।',
+      },
+      columns: [
+        { key: 'thumb', header: 'ছবি', mobile: 'hidden', width: '90px',
+          cell: (pg) => el(d, 'img', {
+            className: 'script-thumb',
+            attrs: { src: pg.dataUrl, alt: `পৃষ্ঠা ${bn(pg.pageNo)}-এর ছবি`, loading: 'lazy' },
+          }) },
+        { key: 'page', header: 'পৃষ্ঠা', mobile: 'title',
+          cell: (pg) => `পৃষ্ঠা ${bn(pg.pageNo)}`, width: 'minmax(0, 1fr)' },
+        // Bangla digits: a kilobyte count is a count, and every other count
+        // in this product is Bangla.
+        { key: 'size', header: 'আকার', mobile: 'subtitle', width: 'minmax(0, 1.4fr)',
+          cell: (pg) => {
+            const kb = Math.round(pg.compressedBytes / 1024);
+            const ratio = Math.max(1, Math.round(pg.originalBytes / pg.compressedBytes));
+            return `${bn(kb)} KB · ${bn(ratio)}× ছোট`;
+          } },
+        { key: 'state', header: 'অবস্থা', mobile: 'status', width: '150px',
+          cell: (pg) => (
+            pg.status === 'saved'     ? statusBadge(d, { state: 'synced', label: 'সংরক্ষিত' })
+            : pg.status === 'uploading' ? statusBadge(d, { state: 'queued', label: 'আপলোড হচ্ছে' })
+            : pg.status === 'error'     ? statusBadge(d, { state: 'failed', label: pg.error ?? 'সমস্যা' })
+            : statusBadge(d, { state: 'pending', label: 'প্রস্তুত' })) },
+        { key: 'actions', header: 'ব্যবস্থা', width: '190px',
+          cell: (pg) => el(d, 'div', { className: 'ui-row-actions' },
+            pg.status !== 'saved'
+              ? button(d, {
+                  label: 'আপলোড', variant: 'primary', size: 'sm',
+                  // Per-page: six buttons called "আপলোড" are six identical
+                  // announcements, and the pages differ only by number.
+                  ariaLabel: `পৃষ্ঠা ${bn(pg.pageNo)} আপলোড করুন`,
+                  busy: pg.status === 'uploading',
+                  onClick: () => { void this.upload(pg); },
+                })
+              : null,
+            button(d, {
+              label: 'সরান', variant: 'ghost', size: 'sm',
+              ariaLabel: `পৃষ্ঠা ${bn(pg.pageNo)} সরান`,
+              onClick: () => { this.removePage(pg.id); },
+            })) },
+      ],
+    }));
   }
 
   private textNode(text: string): Text {

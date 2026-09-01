@@ -119,6 +119,8 @@ describe('ShikhoAI answer states (F-1302, §6.7)', () => {
   test('the pinned scope is visible in the header', async () => {
     const root = mount({ ok: true, reply: 'x', grounded: true });
     await settle();
-    assert.match(root.querySelector('.att-sub')?.textContent ?? '', /শ্রেণির পাঠ্যসূচি/);
+    // P6 gave this screen the page header it never had; the pinned scope is
+    // now the header's own subtitle rather than a stray `.att-sub`.
+    assert.match(root.querySelector('.page-sub')?.textContent ?? '', /শ্রেণির পাঠ্যসূচি/);
   });
 });

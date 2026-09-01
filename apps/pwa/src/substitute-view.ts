@@ -11,6 +11,11 @@
 import type { Auth } from './auth.ts';
 import type { RoutineSlot } from './routine-view.ts';
 import { formatTime } from '../../../packages/ui-core/src/format.ts';
+import {
+  pageHeader, field, dataTable, statusBadge, button, listSkeleton, openDrawer,
+  setOverlayBody, el, append, type OverlayHandle,
+} from './ui/index.ts';
+import { bnDate, bnNum, successNote } from './view-states.ts';
 
 interface Candidate {
   teacherId: string;
@@ -38,6 +43,10 @@ export class SubstituteView {
   private candidates: Candidate[] = [];
   private busy = false;
   private notice = '';
+  /** The open candidate drawer, so a result can fill it without a repaint. */
+  private drawer: OverlayHandle | null = null;
+  /** Which periods already have a substitute, so the table says so. */
+  private readonly assignedSlots = new Set<string>();
   private assignedTo: string | null = null;
 
   constructor(options: SubstituteViewOptions) {
@@ -47,6 +56,10 @@ export class SubstituteView {
 
   private async loadSlots(): Promise<void> {
     this.busy = true;
+    // A new day is a new set of periods: a drawer left open over it would be
+    // staffing a period that is no longer on screen.
+    this.drawer?.close();
+    this.drawer = null;
     this.selectedSlot = null;
     this.candidates = [];
     this.assignedTo = null;
@@ -111,6 +124,9 @@ export class SubstituteView {
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (res.ok && body.ok) {
         this.assignedTo = candidate.fullName.bn || candidate.fullName.en || candidate.teacherId;
+        // The table behind the drawer says so too, so a coordinator staffing
+        // six periods can see which are done without closing anything.
+        this.assignedSlots.add(slot.slotId);
         this.notice = '';
       } else if (body.error === 'substitute_conflict') {
         this.notice = 'এই শিক্ষক ইতিমধ্যে ব্যস্ত হয়ে গেছেন — অন্য কাউকে বেছে নিন।';
@@ -133,127 +149,125 @@ export class SubstituteView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'বদলি শিক্ষক';
-    const sub = d.createElement('p');
-    sub.className = 'att-sub';
-    sub.textContent = 'অনুপস্থিতির দিনে ফাঁকা ও বিষয়-মিল শিক্ষক খুঁজুন';
-    header.append(h1, sub);
-    root.append(header);
+    root.append(pageHeader(d, {
+      title: 'বদলি শিক্ষক',
+      subtitle: 'অনুপস্থিতির দিনে ফাঁকা ও বিষয়-মিল শিক্ষক খুঁজুন',
+    }));
 
-    const dateIn = d.createElement('input');
-    dateIn.type = 'date';
-    dateIn.className = 'section-picker';
-    dateIn.value = this.date;
-    dateIn.addEventListener('change', () => {
-      if (!dateIn.value) return;
-      this.date = dateIn.value;
-      void this.loadSlots();
-    });
-    root.append(dateIn);
+    // A labelled field. This was a bare `<input type=date>` with no name of
+    // any kind, on the screen whose entire question is which day.
+    root.append(field(d, {
+      label: 'কোন দিনের জন্য',
+      name: 'day',
+      kind: 'date',
+      value: this.date,
+      helper: 'ওই দিনের রুটিন থেকে পিরিয়ডগুলো আসবে।',
+      onChange: (v) => {
+        if (!v) return;
+        this.date = v;
+        void this.loadSlots();
+      },
+    }).root);
 
     if (this.notice) {
-      const n = d.createElement('p');
-      n.className = 'login-error';
-      n.setAttribute('role', 'alert');
-      n.hidden = false;
-      n.textContent = this.notice;
-      root.append(n);
+      root.append(el(d, 'p', {
+        className: 'login-error', attrs: { role: 'alert' }, text: this.notice,
+      }));
     }
 
-    if (this.busy && this.slots.length === 0 && !this.selectedSlot) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
-      return;
-    }
+    if (this.busy && this.slots.length === 0) { root.append(listSkeleton(d, 4)); return; }
 
-    if (!this.selectedSlot) {
-      if (this.slots.length === 0 && !this.busy && !this.notice) {
-        const p = d.createElement('p');
-        p.className = 'att-sub';
-        p.textContent = 'এই দিনে আপনার কোনো ক্লাস নেই।';
-        root.append(p);
-        return;
-      }
-      const list = d.createElement('ul');
-      list.className = 'routine-list';
-      for (const s of this.slots) {
-        const li = d.createElement('li');
-        li.className = 'routine-row sub-slot';
-        const time = d.createElement('span');
-        time.className = 'routine-time';
-        time.textContent = formatTime(s.startsAt.slice(0, 5), 'bn');
-        const body = d.createElement('button');
-        body.type = 'button';
-        body.className = 'sub-slot-btn';
-        body.textContent = `${s.subjectBn ?? '—'} · ${s.sectionLabel ?? ''}`;
-        body.addEventListener('click', () => { void this.findCandidates(s); });
-        li.append(time, body);
-        list.append(li);
-      }
-      root.append(list);
-      return;
-    }
+    root.append(dataTable(d, {
+      caption: `${bnDate(this.date)} — এই দিনের পিরিয়ড`,
+      rows: this.slots,
+      rowKey: (sl) => sl.slotId,
+      onRowClick: (sl) => { void this.findCandidates(sl); },
+      empty: {
+        glyph: 'clock',
+        message: 'এই দিনে আপনার কোনো ক্লাস নেই। অন্য তারিখ বেছে নিন।',
+      },
+      columns: [
+        { key: 'time', header: 'সময়', mobile: 'meta',
+          cell: (sl) => formatTime(sl.startsAt.slice(0, 5), 'bn'), width: '120px' },
+        { key: 'subject', header: 'বিষয়', mobile: 'title',
+          cell: (sl) => sl.subjectBn ?? '—', width: 'minmax(0, 2fr)' },
+        { key: 'section', header: 'শাখা', mobile: 'subtitle',
+          cell: (sl) => sl.sectionLabel ?? '—', width: 'minmax(0, 1.4fr)' },
+        { key: 'state', header: 'অবস্থা', mobile: 'status', width: '160px',
+          cell: (sl) => (this.assignedSlots.has(sl.slotId)
+            ? statusBadge(d, { state: 'published', label: 'বদলি নির্ধারিত' })
+            : statusBadge(d, { state: 'pending', label: 'বদলি লাগবে' })) },
+      ],
+    }));
 
-    // candidate stage
-    const slotLine = d.createElement('p');
-    slotLine.className = 'att-sub';
-    slotLine.textContent =
-      `${this.date} · ${formatTime(this.selectedSlot.startsAt.slice(0, 5), 'bn')} · ` +
-      `${this.selectedSlot.subjectBn ?? ''} ${this.selectedSlot.sectionLabel ?? ''}`;
-    root.append(slotLine);
+    // The drawer is filled from the same render pass that draws the table,
+    // so a result landing mid-search reaches it without a second code path.
+    if (this.selectedSlot) this.renderCandidates();
+  }
 
-    const back = d.createElement('button');
-    back.type = 'button';
-    back.className = 'btn-secondary';
-    back.textContent = '← অন্য পিরিয়ড';
-    back.addEventListener('click', () => { this.selectedSlot = null; this.notice = ''; this.render(); });
-    root.append(back);
+  /**
+   * Candidates for ONE period, in a drawer.
+   *
+   * A drawer rather than a second full screen: the coordinator is staffing a
+   * day, and replacing the day with a candidate list makes them remember
+   * which period they were on. Everything that was on the old candidate
+   * screen is here, plus the period itself as the drawer's own subtitle.
+   */
+  private renderCandidates(): void {
+    const d = this.o.doc;
+    const sl = this.selectedSlot;
+    if (!sl) return;
+
+    const body = el(d, 'div', { className: 'ui-card-form' });
 
     if (this.assignedTo) {
-      const okMsg = d.createElement('p');
-      okMsg.className = 'routine-chip sub-assigned';
-      okMsg.textContent = `✓ ${this.assignedTo} কে বদলি নির্ধারণ করা হয়েছে`;
-      root.append(okMsg);
-      return;
+      append(body, successNote(d, `${this.assignedTo} কে বদলি নির্ধারণ করা হয়েছে।`));
+    } else if (this.busy) {
+      append(body, listSkeleton(d, 3));
+    } else {
+      append(body, dataTable(d, {
+        caption: 'সম্ভাব্য বদলি শিক্ষক',
+        rows: this.candidates,
+        rowKey: (c) => String(c.rank),
+        empty: {
+          glyph: 'users',
+          message: 'এই সময়ে কোনো শিক্ষক ফাঁকা নেই। অন্য পিরিয়ড দেখুন বা রুটিন বদলান।',
+        },
+        columns: [
+          { key: 'rank', header: 'ক্রম', mobile: 'meta', numeric: true,
+            cell: (c) => bnNum(c.rank), width: '80px' },
+          { key: 'name', header: 'শিক্ষক', mobile: 'title',
+            cell: (c) => c.fullName.bn || c.fullName.en || '—', width: 'minmax(0, 2fr)' },
+          // WHY this teacher is suggested. A ranked list with no stated
+          // reason is a ranking a coordinator cannot disagree with.
+          { key: 'why', header: 'কেন', mobile: 'subtitle', width: 'minmax(0, 1.8fr)',
+            cell: (c) => (c.matchReasons.includes('subject_expertise')
+              ? 'এই বিষয়ে দক্ষ · এই সময়ে ফাঁকা'
+              : 'এই সময়ে ফাঁকা') },
+          { key: 'act', header: 'ব্যবস্থা', width: '150px',
+            cell: (c) => el(d, 'div', { className: 'ui-row-actions' }, button(d, {
+              label: 'নির্ধারণ', variant: 'primary', size: 'sm',
+              ariaLabel: `${c.fullName.bn || c.fullName.en || 'এই শিক্ষক'}-কে বদলি নির্ধারণ করুন`,
+              disabled: this.busy,
+              onClick: () => { void this.assign(c); },
+            })) },
+        ],
+      }));
     }
 
-    if (this.busy) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'খোঁজা হচ্ছে…';
-      root.append(p);
-      return;
+    if (this.drawer) setOverlayBody(this.drawer, body);
+    else {
+      this.drawer = openDrawer(d, {
+        title: `${sl.subjectBn ?? '—'} · ${sl.sectionLabel ?? ''}`,
+        body,
+        onClose: () => {
+          this.drawer = null;
+          this.selectedSlot = null;
+          this.assignedTo = '';
+          this.notice = '';
+          this.render();
+        },
+      });
     }
-
-    const list = d.createElement('ul');
-    list.className = 'sub-candidates';
-    for (const c of this.candidates) {
-      const li = d.createElement('li');
-      li.className = 'sub-candidate';
-      const body = d.createElement('span');
-      body.className = 'more-body';
-      const name = d.createElement('span');
-      name.className = 'more-title';
-      name.textContent = `${c.rank}. ${c.fullName.bn || c.fullName.en || '—'}`;
-      const why = d.createElement('span');
-      why.className = 'more-sub';
-      why.textContent = c.matchReasons.includes('subject_expertise')
-        ? 'বিষয়-মিল আছে · ফাঁকা'
-        : 'ফাঁকা';
-      body.append(name, why);
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-primary sub-assign';
-      btn.textContent = 'নির্ধারণ';
-      btn.addEventListener('click', () => { void this.assign(c); });
-      li.append(body, btn);
-      list.append(li);
-    }
-    root.append(list);
   }
 }

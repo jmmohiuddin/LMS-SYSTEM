@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -51,6 +51,9 @@ describe('fallback activation (F-202)', { skip }, () => {
   before(async () => {
     await installTestKeys();
     process.env.ACTIVATION_PEPPER = 'test-pepper-32-bytes-of-entropy!';
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await dropFixtures();
     await db.withTenant(asHead, async (c) => {
@@ -100,7 +103,7 @@ describe('fallback activation (F-202)', { skip }, () => {
       sub: ANIKA, tid: T, role: 'student', roles: ['student'] });
     activate = (await import('../api/activate.ts')).default;
   });
-  after(async () => { if (db) { await dropFixtures(); await db.end(); } });
+  after(async () => { if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); } });
 
   const post = (body: Record<string, unknown>, token?: string) =>
     call(activate, { method: 'POST', url: '/api/v1/auth/activate', token, body });

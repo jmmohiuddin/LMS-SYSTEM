@@ -20,8 +20,9 @@ import {
   type MediaDraft,
 } from '../../../packages/ui-core/src/media.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { emptyState } from './view-states.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage } from './ui/index.ts';
+import { permissionState, permissionMessage, dataTable, statusBadge, tabs, listSkeleton, el,} from './ui/index.ts';
 
 /**
  * F-902 kill switch. Mirrors SUBMISSION_MEDIA_ENABLED in the sync applier
@@ -496,67 +497,90 @@ export class AssignmentsView {
       return;
     }
 
-    if (this.offline) root.append(this.banner('অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে', 'inline-notice'));
-    if (this.loading && this.list.length === 0) { root.append(this.msg('লোড হচ্ছে…')); return; }
+    // Offline is a statement about the DATA, not a failure: yesterday's
+    // homework list is exactly as useful as today's for knowing what is due.
+    if (this.offline) {
+      root.append(el(d, 'p', {
+        className: 'inline-notice', attrs: { role: 'status' },
+        text: 'অফলাইন — সংরক্ষিত তালিকা দেখানো হচ্ছে',
+      }));
+    }
+    if (this.loading && this.list.length === 0) { root.append(listSkeleton(d, 4)); return; }
     if (this.list.length === 0) {
-      root.append(this.msg(this.isStaff ? 'এখনো কোনো কাজ দেওয়া হয়নি।' : 'এখন কোনো বাড়ির কাজ নেই।'));
+      root.append(emptyState(d, {
+        glyph: 'clipboard',
+        message: this.isStaff
+          ? 'এখনো কোনো কাজ দেওয়া হয়নি। কাজ দিলে জমা ও মূল্যায়ন এখানে দেখা যাবে।'
+          : 'এখন কোনো বাড়ির কাজ নেই। শিক্ষক কাজ দিলে এখানে দেখা যাবে।',
+      }));
       return;
     }
 
     root.append(this.filterBar());
 
     const shown = this.list.filter((a) => this.matchesFilter(a));
-    if (shown.length === 0) {
-      root.append(this.emptyForFilter());
-      return;
+
+    // ONE column definition, two audiences. A student compares due dates; a
+    // teacher compares how many submissions are still unmarked. Rendering
+    // both from one call is what keeps the two from drifting apart.
+    root.append(dataTable(d, {
+      caption: this.isStaff ? 'দেওয়া কাজের তালিকা' : 'বাড়ির কাজের তালিকা',
+      rows: shown,
+      rowKey: (a) => a.id,
+      onRowClick: (a) => { void this.openDetail(a.id); },
+      empty: this.emptyForFilter(),
+      columns: [
+        { key: 'title', header: 'কাজ', mobile: 'title', cell: (a) => a.titleBn,
+          width: 'minmax(0, 2.4fr)' },
+        { key: 'subject', header: 'বিষয়', mobile: 'subtitle', cell: (a) => a.subjectBn,
+          width: 'minmax(0, 1.4fr)' },
+        ...(this.isStaff
+          ? [
+              { key: 'section', header: 'শাখা', mobile: 'meta' as const,
+                cell: (a: Assignment) => a.sectionName, width: 'minmax(0, 1fr)' },
+              { key: 'subs', header: 'জমা', mobile: 'meta' as const, numeric: true,
+                cell: (a: Assignment) => bn(a.submissionCount), width: '100px' },
+            ]
+          : []),
+        { key: 'due', header: 'শেষ তারিখ', mobile: 'meta',
+          cell: (a) => dueLabel(a.dueAt).text, width: 'minmax(0, 1.3fr)' },
+        { key: 'state', header: 'অবস্থা', mobile: 'status', width: '150px',
+          cell: (a) => this.stateBadge(a) },
+      ],
+    }));
+  }
+
+  /**
+   * What this row's state IS, in the reader's own terms.
+   *
+   * A teacher's "state" is marking progress; a student's is debt. The old
+   * chip mixed both into one element with a `data-state` and let CSS decide
+   * what it meant.
+   */
+  private stateBadge(a: Assignment): HTMLElement {
+    const d = this.o.doc;
+    if (this.isStaff) {
+      return a.ungradedCount > 0
+        ? statusBadge(d, { state: 'pending', label: `${bn(a.ungradedCount)} বাকি` })
+        : statusBadge(d, { state: 'published', label: 'সব দেখা' });
     }
-
-    const ul = d.createElement('ul');
-    ul.className = 'assign-list';
-    for (const a of shown) {
-      const li = d.createElement('li');
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'card assign-card';
-
-      const due = dueLabel(a.dueAt);
+    const sub = a.mySubmission;
+    if (sub) {
       // A submitted assignment is no longer urgent, whatever the clock says.
-      const done = !this.isStaff && a.mySubmission !== null;
-      btn.dataset.state = done ? 'done' : due.state;
-
-      const body = d.createElement('span');
-      body.className = 'assign-body';
-      const title = d.createElement('span');
-      title.className = 'assign-title';
-      title.textContent = a.titleBn;
-      const meta = d.createElement('span');
-      meta.className = 'assign-meta';
-      meta.textContent = this.isStaff
-        ? `${a.subjectBn} · ${a.sectionName} · ${bn(a.submissionCount)} জমা`
-        : a.subjectBn;
-      body.append(title, meta);
-
-      const chip = d.createElement('span');
-      chip.className = 'assign-chip';
-      if (this.isStaff) {
-        chip.dataset.state = a.ungradedCount > 0 ? 'soon' : 'done';
-        chip.textContent = a.ungradedCount > 0 ? `${bn(a.ungradedCount)} বাকি` : 'সব দেখা';
-      } else if (done) {
-        chip.dataset.state = 'done';
-        chip.textContent = a.mySubmission?.gradedAt
-          ? `${bn(a.mySubmission.marksAwarded)}${a.maxMarks ? `/${bn(a.maxMarks)}` : ''}`
-          : 'জমা হয়েছে';
-      } else {
-        chip.dataset.state = due.state;
-        chip.textContent = due.text;
-      }
-
-      btn.append(body, chip);
-      btn.addEventListener('click', () => { void this.openDetail(a.id); });
-      li.append(btn);
-      ul.append(li);
+      return sub.gradedAt
+        ? statusBadge(d, {
+            state: 'published',
+            label: `${bn(sub.marksAwarded)}${a.maxMarks ? `/${bn(a.maxMarks)}` : ''}`,
+          })
+        : statusBadge(d, { state: 'invited', label: 'জমা হয়েছে' });
     }
-    root.append(ul);
+    const due = dueLabel(a.dueAt);
+    // Mapped onto the SHARED status vocabulary, so an overdue assignment
+    // tints like an overdue invoice rather than like homework only.
+    const STATE: Record<typeof due.state, string> = {
+      overdue: 'overdue', today: 'due', soon: 'due', later: 'pending',
+    };
+    return statusBadge(d, { state: STATE[due.state], label: due.text });
   }
 
   private renderDetail(): void {
@@ -577,7 +601,7 @@ export class AssignmentsView {
     bar.append(back);
     root.append(bar);
 
-    if (this.loading || !this.detail) { root.append(this.msg('লোড হচ্ছে…')); return; }
+    if (this.loading || !this.detail) { root.append(listSkeleton(this.o.doc, 3)); return; }
     // Above everything else: an unresolved conflict is the only thing on
     // this screen that is waiting on the teacher.
     this.renderConflict(root);
@@ -739,7 +763,13 @@ export class AssignmentsView {
   private renderSubmissionList(root: HTMLElement): void {
     const d = this.o.doc;
     const subs = this.detail?.submissions ?? [];
-    if (subs.length === 0) { root.append(this.msg('এখনো কেউ জমা দেয়নি।')); return; }
+    if (subs.length === 0) {
+      root.append(emptyState(d, {
+        glyph: 'clipboard',
+        message: 'এখনো কেউ জমা দেয়নি। কেউ জমা দিলে এখানে নাম ও উত্তর দেখা যাবে।',
+      }));
+      return;
+    }
 
     const ul = d.createElement('ul');
     ul.className = 'sub-list';
@@ -838,57 +868,45 @@ export class AssignmentsView {
    * student knows there is nothing under a tab before opening it.
    */
   private filterBar(): HTMLElement {
-    const d = this.o.doc;
-    const bar = d.createElement('div');
-    bar.className = 'seg-bar';
-    bar.setAttribute('role', 'tablist');
-    bar.setAttribute('aria-label', 'বাড়ির কাজের অবস্থা');
-
-    const tabs: [typeof this.filter, string][] = this.isStaff
+    const items: Array<[typeof this.filter, string]> = this.isStaff
       ? [['pending', 'দেখা বাকি'], ['submitted', 'জমা হয়েছে'], ['graded', 'সব দেখা']]
       : [['pending', 'বাকি'], ['submitted', 'জমা'], ['graded', 'মূল্যায়িত']];
 
-    for (const [key, label] of tabs) {
-      const b = d.createElement('button');
-      b.type = 'button';
-      b.className = 'seg-opt';
-      b.setAttribute('role', 'tab');
-      const active = this.filter === key;
-      b.setAttribute('aria-selected', String(active));
-      if (active) b.dataset.active = 'true';
-      const n = this.countFor(key);
-      b.textContent = n > 0 ? `${label} ${bn(n)}` : label;
-      b.setAttribute('aria-label', `${label}, ${bn(n)}টি`);
-      b.addEventListener('click', () => { this.filter = key; this.render(); });
-      bar.append(b);
-    }
-    return bar;
+    // The P2 tab strip, which carries a roving tabindex and arrow keys. The
+    // hand-rolled `.seg-bar` had `role=tab` and neither, so a keyboard user
+    // met three stops that behaved like buttons wearing tab clothing.
+    // Each tab keeps its count: knowing a tab is empty before opening it is
+    // the whole reason the count is there.
+    return tabs(this.o.doc, {
+      label: 'বাড়ির কাজের অবস্থা',
+      active: this.filter,
+      items: items.map(([id, label]) => ({ id, label, count: this.countFor(id) })),
+      onSelect: (id) => {
+        if (id === this.filter) return;
+        this.filter = id as typeof this.filter;
+        this.render();
+      },
+    });
   }
 
-  private emptyForFilter(): HTMLElement {
-    const d = this.o.doc;
-    const box = d.createElement('div');
-    box.className = 'empty-state';
-    const g = d.createElement('div');
-    g.className = 'empty-glyph';
-    g.setAttribute('aria-hidden', 'true');
-    // "Nothing pending" is good news and should not look like an error.
-    g.textContent = this.filter === 'pending' ? '✓' : '⃝';
-    const p = d.createElement('p');
-    p.textContent = this.isStaff
+  /**
+   * The empty state for the CURRENT filter, as `emptyState`'s options.
+   *
+   * Handed to `dataTable`, which renders it inside the table and keeps the
+   * header — because "nothing is pending" and "this class has no homework"
+   * look identical once the column headings are gone.
+   *
+   * The glyph was a literal `⃝` (U+20DD COMBINING ENCLOSING CIRCLE) typed as
+   * text, which renders as a stray ring on most Android fonts. "Nothing
+   * pending" is good news and gets the tick; the rest get a real icon.
+   */
+  private emptyForFilter(): { glyph: string; message: string } {
+    const message = this.isStaff
       ? { pending: 'সব খাতা দেখা হয়েছে।', submitted: 'এখনো কেউ জমা দেয়নি।',
           graded: 'এখনো কিছু মূল্যায়ন করা হয়নি।' }[this.filter]
       : { pending: 'কোনো কাজ বাকি নেই।', submitted: 'জমা দেওয়া কোনো কাজ নেই।',
           graded: 'এখনো কোনো কাজ মূল্যায়িত হয়নি।' }[this.filter];
-    box.append(g, p);
-    return box;
-  }
-
-  private msg(text: string): HTMLElement {
-    const p = this.o.doc.createElement('p');
-    p.className = 'page-sub empty';
-    p.textContent = text;
-    return p;
+    return { glyph: this.filter === 'pending' ? 'check-square' : 'clipboard', message };
   }
 }
 

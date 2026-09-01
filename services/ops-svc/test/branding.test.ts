@@ -19,7 +19,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db, type TenantContext } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 import { buildManifest } from '../api/manifest.ts';
 import { parseBranding, DEFAULT_BRANDING } from '../../../packages/ui-core/src/branding.ts';
 
@@ -146,6 +146,9 @@ async function dropFixtures(): Promise<void> {
 describe('tenant branding endpoint (R-1)', { skip }, () => {
   before(async () => {
     await installTestKeys();
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await dropFixtures();
 
@@ -180,7 +183,7 @@ describe('tenant branding endpoint (R-1)', { skip }, () => {
     brand = (await import('../api/brand.ts')).default;
   });
 
-  after(async () => { if (db) { await dropFixtures(); await db.end(); } });
+  after(async () => { if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); } });
 
   const get = (token: string) =>
     call(branding, { method: 'GET', url: '/api/v1/ops/branding', token });

@@ -24,6 +24,7 @@
  * office they set something.
  */
 import { emptyState, successNote, bnNum } from './view-states.ts';
+import { levelNameBn } from '../../../packages/ui-core/src/format.ts';
 
 export interface StructureOptions {
   defaultStream: string;
@@ -67,12 +68,6 @@ const STREAM_BN: Record<string, string> = {
 const SHIFT_BN: Record<string, string> = {
   morning: 'সকাল', day: 'দিবা', evening: 'সন্ধ্যা', single: 'একক',
 };
-
-/** Bangla ordinal class names, so the office is not asked to type them. */
-const LEVEL_BN = [
-  '', 'প্রথম', 'দ্বিতীয়', 'তৃতীয়', 'চতুর্থ', 'পঞ্চম', 'ষষ্ঠ',
-  'সপ্তম', 'অষ্টম', 'নবম', 'দশম', 'একাদশ', 'দ্বাদশ',
-];
 
 export function structureForm(o: StructureFormOptions): HTMLElement {
   const d = o.doc;
@@ -161,7 +156,7 @@ export function structureForm(o: StructureFormOptions): HTMLElement {
     const level = select(
       Array.from({ length: 12 }, (_, i) => ({
         value: String(i + 1),
-        label: `${bnNum(i + 1)} — ${LEVEL_BN[i + 1]} শ্রেণি`,
+        label: `${bnNum(i + 1)} — ${levelNameBn(i + 1)} শ্রেণি`,
         selected: i + 1 === 9,
       })));
     const nameBn = input('text', 'নবম শ্রেণি');
@@ -179,7 +174,7 @@ export function structureForm(o: StructureFormOptions): HTMLElement {
     let nameTouched = false;
     nameBn.addEventListener('input', () => { nameTouched = true; });
     level.addEventListener('change', () => {
-      if (!nameTouched) nameBn.value = `${LEVEL_BN[Number(level.value)]} শ্রেণি`;
+      if (!nameTouched) nameBn.value = `${levelNameBn(Number(level.value))} শ্রেণি`;
     });
 
     field('শ্রেণি', level);

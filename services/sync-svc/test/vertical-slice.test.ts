@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { createDb, type Db, type TenantContext } from '../src/db.ts';
+import { lockFixtures, unlockFixtures } from '../../../packages/server-core/test/harness.ts';
 import { SyncPushHandler } from '../src/push.ts';
 import { SyncEngine } from '../../../packages/offline/src/sync-engine.ts';
 import { MemoryOutboxStore } from '../../../packages/offline/src/store.ts';
@@ -62,6 +63,12 @@ before(async () => {
   doc = dom.window.document;
   (globalThis as Record<string, unknown>).HTMLElement = dom.window.HTMLElement;
   (globalThis as Record<string, unknown>).KeyboardEvent = dom.window.KeyboardEvent;
+
+  // Serialised against other runs of this same suite — the fixtures below
+
+  // live at fixed uuids and two processes would delete each other's.
+
+  await lockFixtures(DATABASE_URL as string);
 
   db = createDb(DATABASE_URL!);
   ctx = { tenantId: TENANT, userId: TEACHER, role: 'principal' };
@@ -115,7 +122,7 @@ before(async () => {
 after(async () => {
   if (skip) return;
   await cleanup();
-  await db.end();
+  await db.end(); await unlockFixtures();
 });
 
 async function cleanup() {

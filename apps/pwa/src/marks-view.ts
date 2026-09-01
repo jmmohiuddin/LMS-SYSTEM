@@ -16,8 +16,7 @@
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import {
-  el, append, icon, pageHeader, badge, emptyState, toast, humanError,
-} from './ui/index.ts';
+  el, append, icon, pageHeader, badge, emptyState, toast, humanError, field, listSkeleton,} from './ui/index.ts';
 
 export interface ExamSubjectOption {
   examSubjectId: string;
@@ -373,50 +372,48 @@ export class MarksView {
       return;
     }
 
-    // exam-subject picker: one option per (exam, subject) pair
-    const picker = d.createElement('select');
-    picker.className = 'section-picker';
-    picker.setAttribute('aria-label', 'পরীক্ষা ও বিষয় নির্বাচন করুন');
-    const placeholder = d.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'পরীক্ষা ও বিষয় নির্বাচন করুন';
-    placeholder.disabled = true;
-    placeholder.selected = !this.selected;
-    picker.append(placeholder);
-    for (const exam of this.exams) {
-      for (const subject of exam.subjects) {
-        const opt = d.createElement('option');
-        opt.value = subject.examSubjectId;
-        opt.textContent = `${exam.nameBn} — ${subject.subject.bn}`;
-        opt.selected = this.selected?.subject.examSubjectId === subject.examSubjectId;
-        picker.append(opt);
-      }
-    }
-    picker.addEventListener('change', () => {
-      for (const exam of this.exams) {
-        const subject = exam.subjects.find((s) => s.examSubjectId === picker.value);
-        if (subject) {
-          this.selected = { exam, subject };
-          void this.loadSheet(subject.examSubjectId);
-          return;
+    // One option per (exam, subject) pair, on the P2 field — so the control
+    // carries a VISIBLE label. It had an `aria-label` only, which told a
+    // screen reader what it was and a teacher nothing until they opened it.
+    const options = this.exams.flatMap((exam) =>
+      exam.subjects.map((subject) => ({
+        value: subject.examSubjectId,
+        label: `${exam.nameBn} — ${subject.subject.bn}`,
+      })));
+    const picker = field(d, {
+      label: 'পরীক্ষা ও বিষয়',
+      name: 'examSubject',
+      kind: 'select',
+      value: this.selected?.subject.examSubjectId ?? '',
+      helper: 'নম্বর দেওয়া অফলাইনেও কাজ করে — সংযোগ পেলে নিজেই জমা হবে।',
+      options: [
+        { value: '', label: 'পরীক্ষা ও বিষয় নির্বাচন করুন' },
+        ...options,
+      ],
+      onChange: (v) => {
+        for (const exam of this.exams) {
+          const subject = exam.subjects.find((sub) => sub.examSubjectId === v);
+          if (subject) {
+            this.selected = { exam, subject };
+            void this.loadSheet(subject.examSubjectId);
+            return;
+          }
         }
-      }
+      },
     });
-    root.append(picker);
+    root.append(picker.root);
 
     if (this.exams.length === 0 && !this.loading) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'এই সেকশনের জন্য কোনো পরীক্ষা পাওয়া যায়নি।';
-      root.append(p);
+      root.append(emptyState(d, {
+        glyph: 'award',
+        message: 'এই সেকশনের জন্য কোনো পরীক্ষা পাওয়া যায়নি। পরীক্ষা তৈরি হলে '
+          + 'এখানে নম্বর দেওয়া যাবে।',
+      }));
       return;
     }
     if (!this.selected) return;
     if (this.loading && !this.sheet) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
+      root.append(listSkeleton(d, 5));
       return;
     }
     const sheet = this.sheet;

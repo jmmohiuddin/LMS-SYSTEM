@@ -1,3 +1,5 @@
+import { iconSvg, hasIcon } from './icon.ts';
+
 /**
  * The four states every screen owes its user.  (R-3, D13)
  *
@@ -63,9 +65,13 @@ export function emptyState(doc: Document, o: EmptyOptions): HTMLElement {
     const g = doc.createElement('span');
     g.className = 'empty-glyph';
     g.setAttribute('aria-hidden', 'true');
-    // Imported lazily by the caller when it wants an icon; a plain dot keeps
-    // this module free of an import cycle with icon.ts.
-    g.textContent = '·';
+    // P6: actually draw it. This rendered a literal `·` and said the reason
+    // was an import cycle with `icon.ts` — which imports nothing, from a
+    // module that imports nothing. `hasIcon` keeps the dot as the fallback
+    // for a name the set does not carry, so a typo degrades rather than
+    // renders an empty box.
+    if (hasIcon(o.glyph)) g.innerHTML = iconSvg(o.glyph);
+    else g.textContent = '·';
     wrap.append(g);
   }
   const p = doc.createElement('p');

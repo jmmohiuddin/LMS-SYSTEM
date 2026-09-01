@@ -254,7 +254,15 @@ describe('principal dashboard', () => {
       onNavigate: () => {},
     });
     await settle();
-    assert.match(text(), /কিছু বাকি নেই/);
+    // P6 replaced the bare "কিছু বাকি নেই" with a card that SAYS what is
+    // complete. A row of zeroes is a wall a person reads to learn nothing,
+    // and so is a two-word line that names nothing.
+    assert.match(text(), /কাঠামো সম্পূর্ণ/);
+    assert.match(text(), /প্রতিটি সেকশনে শ্রেণি শিক্ষক আছে/);
+    // And the pending table is absent, not empty: an empty table under a
+    // heading reads as "the query returned nothing", which is a different
+    // claim from "there is nothing outstanding".
+    assert.doesNotMatch(text(), /কী বাকি/);
   });
 });
 

@@ -89,7 +89,7 @@ describe('homework draft autosave (F-902, §6.6)', () => {
     localStorage.clear();
     const first = mountWithDetail('hw-1');
     await settle();
-    (first.root.querySelector('.assign-card') as HTMLElement).click();
+    (first.root.querySelector('table.ui-table tbody .ui-row-open') as HTMLElement).click();
     await settle();
 
     const ta = first.root.querySelector('.assign-answer') as HTMLTextAreaElement;
@@ -103,7 +103,7 @@ describe('homework draft autosave (F-902, §6.6)', () => {
     // A brand-new view instance is a page reload: the answer must come back.
     const again = mountWithDetail('hw-1');
     await settle();
-    (again.root.querySelector('.assign-card') as HTMLElement).click();
+    (again.root.querySelector('table.ui-table tbody .ui-row-open') as HTMLElement).click();
     await settle();
     assert.equal((again.root.querySelector('.assign-answer') as HTMLTextAreaElement).value,
       'আমার উত্তর ১', 'the draft is restored after reload');
@@ -113,7 +113,7 @@ describe('homework draft autosave (F-902, §6.6)', () => {
     localStorage.clear();
     const { root, ops } = mountWithDetail('hw-2');
     await settle();
-    (root.querySelector('.assign-card') as HTMLElement).click();
+    (root.querySelector('table.ui-table tbody .ui-row-open') as HTMLElement).click();
     await settle();
     const ta = root.querySelector('.assign-answer') as HTMLTextAreaElement;
     ta.value = 'জমা দেওয়ার উত্তর';
@@ -130,7 +130,7 @@ describe('homework draft autosave (F-902, §6.6)', () => {
     localStorage.clear();
     const { root } = mountWithDetail('hw-3');
     await settle();
-    (root.querySelector('.assign-card') as HTMLElement).click();
+    (root.querySelector('table.ui-table tbody .ui-row-open') as HTMLElement).click();
     await settle();
     const ta = root.querySelector('.assign-answer') as HTMLTextAreaElement;
     ta.value = 'কিছু';
@@ -155,11 +155,12 @@ describe('homework inbox filter', () => {
     const { root } = mount(list);
     await new Promise((r) => setTimeout(r, 0));
 
-    const counts = [...root.querySelectorAll('.seg-opt')]
-      .map((b) => b.getAttribute('aria-label') ?? '');
-    assert.equal(counts.length, 3, 'three buckets, always visible');
+    // P6 moved this onto the P2 tab strip, which renders each count in its
+    // own `.ui-tab-count` rather than folding it into an `aria-label`.
+    const tabsFound = [...root.querySelectorAll('.ui-tab')];
+    assert.equal(tabsFound.length, 3, 'three buckets, always visible');
 
-    const nums = counts.map((c) => (c.match(/[০-৯]+/)?.[0] ?? ''));
+    const nums = tabsFound.map((b) => b.querySelector('.ui-tab-count')?.textContent ?? '০');
     const toLatin = (s: string) => s.replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d)));
     const [pending, submitted, graded] = nums.map((n) => Number(toLatin(n)));
     assert.equal(pending, 2, 'two never submitted');
@@ -171,17 +172,21 @@ describe('homework inbox filter', () => {
   test('pending is the default — the question the screen exists to answer', async () => {
     const { root } = mount([assignment('a', null)]);
     await new Promise((r) => setTimeout(r, 0));
-    const active = root.querySelector('.seg-opt[data-active="true"]');
+    const active = root.querySelector('.ui-tab[aria-selected="true"]');
     assert.ok(active, 'one bucket is selected on open');
-    assert.ok(active!.getAttribute('aria-label')!.startsWith('বাকি'), 'and it is the pending one');
+    assert.ok((active!.textContent ?? '').startsWith('বাকি'), 'and it is the pending one');
   });
 
   test('selection is announced, not just coloured', async () => {
     const { root } = mount([assignment('a', null)]);
     await new Promise((r) => setTimeout(r, 0));
-    const opts = [...root.querySelectorAll('.seg-opt')];
+    const opts = [...root.querySelectorAll('.ui-tab')];
     assert.equal(opts.filter((o) => o.getAttribute('aria-selected') === 'true').length, 1);
-    assert.equal(root.querySelector('.seg-bar')!.getAttribute('role'), 'tablist');
+    assert.equal(root.querySelector('[role="tablist"]')?.getAttribute('role'), 'tablist');
+    // Stronger than P6 found it: the P2 strip carries a roving tabindex, so
+    // the whole group is ONE keyboard stop. The hand-rolled `.seg-bar` had
+    // `role=tab` on three buttons and no tabindex management at all.
+    assert.equal(opts.filter((o) => o.getAttribute('tabindex') === '0').length, 1);
   });
 
   test('an empty pending bucket reads as good news, not as an error', async () => {
@@ -189,7 +194,14 @@ describe('homework inbox filter', () => {
     // glyph — the empty-state glyph is the only signal a hurried reader gets.
     const { root } = mount([assignment('graded', { gradedAt: new Date().toISOString() })]);
     await new Promise((r) => setTimeout(r, 0));
-    assert.equal(root.querySelector('.empty-glyph')?.textContent, '✓');
+    // P6 fixed `emptyState` so the glyph it is GIVEN is the glyph it draws —
+    // it used to render a literal `·` whatever the caller asked for, which is
+    // why this screen hand-rolled its own ✓. "Nothing due" now gets the tick
+    // icon from the real set.
+    const glyph = root.querySelector('.empty-glyph');
+    assert.ok(glyph, 'a hurried reader gets one signal, and it is this');
+    assert.ok(glyph!.querySelector('svg'), 'a drawn icon, not a stray character');
+    assert.notEqual(glyph!.textContent, '·', 'and not the placeholder dot');
     assert.match(root.querySelector('.empty-state p')?.textContent ?? '', /বাকি নেই/);
   });
 });

@@ -39,6 +39,7 @@
     "apps/pwa/test/notice-safety.test.ts",
     "apps/pwa/test/notices-ui.test.ts",
     "apps/pwa/test/p5-screens.test.ts",
+    "apps/pwa/test/p6-screens.test.ts",
     "apps/pwa/test/permission-ux.test.ts",
     "apps/pwa/test/platform-console-dom.test.ts",
     "apps/pwa/test/platform-console.test.ts",

@@ -344,8 +344,18 @@ describe('R-9 — the notification screen renders every state', () => {
           lastSuccessAt: null, fingerprint: 'def456def456' },
       ],
     }), fakeWin());
-    assert.equal(root.querySelectorAll('[data-device-id]').length, 2);
+    // P6 made this a `dataTable`, which keys its rows by `data-key`. The
+    // assertion is stronger than the row count it replaces: each device must
+    // have its OWN remove control, named for the device — two buttons both
+    // called "সরান" are two identical announcements.
+    assert.equal(root.querySelectorAll('table.ui-table tbody tr').length, 2);
     assert.match(root.textContent ?? '', /মোবাইল/);
+    const removes = [...root.querySelectorAll('table.ui-table button[aria-label]')]
+      .map((b) => b.getAttribute('aria-label') ?? '')
+      .filter((l) => l.includes('সরান'));
+    assert.equal(removes.length, 2);
+    assert.equal(new Set(removes).size, 2, 'each names the device it removes');
+    assert.ok(removes.some((l) => l.includes('মোবাইল')));
     // A device that has never received anything says so, rather than showing
     // a blank where a date would be.
     assert.match(root.textContent ?? '', /এখনো কোনো বার্তা যায়নি/);

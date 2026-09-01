@@ -24,7 +24,10 @@ import {
   type PushState, type PushDevice, type PushStatusResponse,
 } from './push-client.ts';
 import { skeleton, errorState, successNote, emptyState, bnDate } from './view-states.ts';
-import { pageHeader } from './ui/page-header.ts';
+import {
+  pageHeader, card, dataTable, sectionHeading, statusBadge, button, buttonRow,
+  listSkeleton, el,
+} from './ui/index.ts';
 
 export interface NotificationsViewOptions {
   root: HTMLElement;
@@ -129,131 +132,132 @@ export class NotificationsView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = pageHeader(d, {
+    root.append(pageHeader(d, {
       title: 'নোটিফিকেশন',
-      subtitle: 'এই যন্ত্রে বিদ্যালয়ের বার্তা পান',
-    });
-    root.append(header);
+      subtitle: 'এই যন্ত্রে বিদ্যালয়ের বার্তা পান — এসএমএসের বদলে নয়, তার আগে',
+    }));
 
     if (this.notice) root.append(successNote(d, this.notice));
     if (this.error) root.append(errorState(d, this.error, () => void this.load()));
-    if (this.loading) { root.append(skeleton(d, 2)); return; }
-
-    const card = d.createElement('div');
-    card.className = 'card card-form';
-    card.style.margin = '0 var(--s-4) var(--s-3)';
+    if (this.loading) { root.append(listSkeleton(d, 2)); return; }
 
     const state = this.state();
-    card.dataset.pushState = state;
+    root.append(this.stateCard(state));
 
-    const why = d.createElement('p');
-    why.className = 'att-sub';
-    why.textContent =
-      'নোটিফিকেশন চালু থাকলে বিদ্যালয়ের বার্তা সঙ্গে সঙ্গে এই যন্ত্রে আসবে — '
-      + 'ইন্টারনেট খরচ প্রায় শূন্য, আর বিদ্যালয়ের এসএমএস খরচ কমে।';
-    card.append(why);
+    // ── The other devices this person has registered ──────────────────
+    // A table: each device is the same three facts, and a person deciding
+    // which old phone to remove is comparing "last message" down a column.
+    const devices = this.status?.devices ?? [];
+    root.append(sectionHeading(d, { title: 'আপনার যন্ত্রসমূহ' }));
+    root.append(dataTable(d, {
+      caption: 'নোটিফিকেশন চালু আছে যেসব যন্ত্রে',
+      rows: devices,
+      rowKey: (dev) => dev.id,
+      empty: {
+        message: 'কোনো যন্ত্র যুক্ত নেই — যে যন্ত্রে নোটিফিকেশন চালু করবেন, '
+          + 'সেটি এখানে দেখা যাবে।',
+      },
+      columns: [
+        { key: 'label', header: 'যন্ত্র', mobile: 'title',
+          cell: (dev) => dev.label || deviceLabelFor(''), width: 'minmax(0, 2fr)' },
+        { key: 'when', header: 'সর্বশেষ বার্তা', mobile: 'subtitle',
+          cell: (dev) => (dev.lastSuccessAt
+            ? bnDate(dev.lastSuccessAt)
+            : 'এখনো কোনো বার্তা যায়নি'),
+          width: 'minmax(0, 1.4fr)' },
+        { key: 'added', header: 'যুক্ত হয়েছে', mobile: 'meta',
+          cell: (dev) => bnDate(dev.createdAt), width: 'minmax(0, 1.4fr)' },
+        { key: 'actions', header: 'ব্যবস্থা', width: '150px',
+          cell: (dev) => el(d, 'div', { className: 'ui-row-actions' }, button(d, {
+            label: 'সরান', variant: 'secondary', size: 'sm',
+            // Per-device: three buttons all called "সরান" are three
+            // identical announcements.
+            ariaLabel: `${dev.label || deviceLabelFor('')} থেকে নোটিফিকেশন সরান`,
+            disabled: this.busy,
+            onClick: () => void this.forget(dev),
+          })) },
+      ],
+    }));
+  }
 
-    const status = d.createElement('p');
-    status.className = 'inline-notice';
-    card.append(status);
+  /**
+   * What this device's notification state is, and the one thing to do about
+   * it. Five states, and only two of them have an action — the other three
+   * are fixed somewhere this app cannot reach, so they say where.
+   */
+  private stateCard(state: string): HTMLElement {
+    const d = this.o.doc;
 
-    const row = d.createElement('div');
-    row.className = 'action-row';
+    const BADGE: Record<string, { state: string; label: string }> = {
+      on:           { state: 'published', label: 'চালু আছে' },
+      off:          { state: 'draft',     label: 'বন্ধ আছে' },
+      denied:       { state: 'overdue',   label: 'ব্রাউজারে বন্ধ' },
+      unsupported:  { state: 'draft',     label: 'সমর্থিত নয়' },
+      unconfigured: { state: 'draft',     label: 'সার্ভারে চালু নেই' },
+    };
+    const b = BADGE[state] ?? BADGE.off;
+
+    const body: Array<Node | null> = [
+      el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'নোটিফিকেশন চালু থাকলে বিদ্যালয়ের বার্তা সঙ্গে সঙ্গে এই যন্ত্রে আসবে — '
+          + 'ইন্টারনেট খরচ প্রায় শূন্য, আর বিদ্যালয়ের এসএমএস খরচ কমে।',
+      }),
+    ];
 
     if (state === 'unsupported') {
-      status.textContent = 'এই ব্রাউজারে নোটিফিকেশন সমর্থিত নয়।';
-      const hint = d.createElement('p');
-      hint.className = 'att-sub';
+      body.push(el(d, 'p', {
+        className: 'ui-card-lead', text: 'এই ব্রাউজারে নোটিফিকেশন সমর্থিত নয়।',
+      }));
       // Not a dead end: the SMS path is unaffected, and saying so stops
       // somebody concluding they will now miss their child's absence.
-      hint.textContent =
-        'বিদ্যালয়ের বার্তা আগের মতোই এসএমএসে ও অ্যাপের নোটিশ অংশে পাবেন।';
-      card.append(hint);
+      body.push(el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'বিদ্যালয়ের বার্তা আগের মতোই এসএমএসে ও অ্যাপের নোটিশ অংশে পাবেন।',
+      }));
     } else if (state === 'unconfigured') {
-      status.textContent = 'এই সার্ভারে এখনো নোটিফিকেশন চালু করা হয়নি।';
-      const hint = d.createElement('p');
-      hint.className = 'att-sub';
-      hint.textContent = 'বিদ্যালয়ের আইটি অ্যাডমিনকে জানাতে পারেন।';
-      card.append(hint);
+      body.push(el(d, 'p', {
+        className: 'ui-card-lead', text: 'এই সার্ভারে এখনো নোটিফিকেশন চালু করা হয়নি।',
+      }));
+      body.push(el(d, 'p', {
+        className: 'ui-card-note', text: 'বিদ্যালয়ের আইটি অ্যাডমিনকে জানাতে পারেন।',
+      }));
     } else if (state === 'denied') {
-      status.textContent = 'ব্রাউজারে নোটিফিকেশন বন্ধ করা আছে।';
-      const hint = d.createElement('p');
-      hint.className = 'att-sub';
+      body.push(el(d, 'p', {
+        className: 'ui-card-lead', text: 'ব্রাউজারে নোটিফিকেশন বন্ধ করা আছে।',
+      }));
       // The one state where the fix is entirely outside the app. A button
       // here would call requestPermission(), which returns 'denied'
       // immediately without showing anything, and look like a broken app.
-      hint.textContent =
-        'ঠিকানার পাশের তালা 🔒 চিহ্নে চাপ দিয়ে "নোটিফিকেশন" চালু করুন, '
-        + 'তারপর এই পাতা আবার খুলুন।';
-      card.append(hint);
-    } else if (state === 'on') {
-      status.textContent = 'এই যন্ত্রে নোটিফিকেশন চালু আছে।';
-      const off = d.createElement('button');
-      off.type = 'button';
-      off.className = 'btn-secondary';
-      off.textContent = this.busy ? 'অপেক্ষা করুন…' : 'এই যন্ত্রে বন্ধ করুন';
-      off.disabled = this.busy;
-      off.addEventListener('click', () => void this.disable());
-      row.append(off);
-    } else {
-      status.textContent = 'এই যন্ত্রে নোটিফিকেশন বন্ধ আছে।';
-      const on = d.createElement('button');
-      on.type = 'button';
-      on.className = 'btn-primary';
-      on.textContent = this.busy ? 'চালু হচ্ছে…' : 'নোটিফিকেশন চালু করুন';
-      on.disabled = this.busy;
-      on.addEventListener('click', () => void this.enable());
-      row.append(on);
-    }
-
-    if (row.childElementCount > 0) card.append(row);
-    root.append(card);
-
-    // ── The other devices this person has registered ──────────────────
-    const devices = this.status?.devices ?? [];
-    const h2 = d.createElement('h2');
-    h2.className = 'section-heading';
-    h2.textContent = 'আপনার যন্ত্রসমূহ';
-    root.append(h2);
-
-    if (devices.length === 0) {
-      root.append(emptyState(d, {
-        message: 'কোনো যন্ত্র যুক্ত নেই — যে যন্ত্রে নোটিফিকেশন চালু করবেন, '
-          + 'সেটি এখানে দেখা যাবে।',
+      body.push(el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'ঠিকানার পাশের তালা চিহ্নে চাপ দিয়ে "নোটিফিকেশন" চালু করুন, '
+          + 'তারপর এই পাতা আবার খুলুন।',
       }));
-      return;
+    } else if (state === 'on') {
+      body.push(el(d, 'p', {
+        className: 'ui-card-lead', text: 'এই যন্ত্রে নোটিফিকেশন চালু আছে।',
+      }));
+      body.push(buttonRow(d, button(d, {
+        label: 'এই যন্ত্রে বন্ধ করুন', variant: 'secondary', busy: this.busy,
+        onClick: () => void this.disable(),
+      })));
+    } else {
+      body.push(el(d, 'p', {
+        className: 'ui-card-lead', text: 'এই যন্ত্রে নোটিফিকেশন বন্ধ আছে।',
+      }));
+      body.push(buttonRow(d, button(d, {
+        label: 'নোটিফিকেশন চালু করুন', variant: 'primary', busy: this.busy,
+        onClick: () => void this.enable(),
+      })));
     }
 
-    const list = d.createElement('ul');
-    list.className = 'system-list';
-    list.style.margin = '0 var(--s-4) var(--s-3)';
-    for (const dev of devices) {
-      const li = d.createElement('li');
-      li.className = 'card system-row';
-      li.dataset.deviceId = dev.id;
-
-      const text = d.createElement('div');
-      text.className = 'system-body';
-      const name = d.createElement('p');
-      name.className = 'system-title';
-      name.textContent = dev.label || deviceLabelFor('');
-      const meta = d.createElement('p');
-      meta.className = 'system-desc';
-      meta.textContent = dev.lastSuccessAt
-        ? `সর্বশেষ বার্তা ${bnDate(dev.lastSuccessAt)}`
-        : `যুক্ত হয়েছে ${bnDate(dev.createdAt)} — এখনো কোনো বার্তা যায়নি`;
-      text.append(name, meta);
-
-      const drop = d.createElement('button');
-      drop.type = 'button';
-      drop.className = 'btn-secondary';
-      drop.textContent = 'সরান';
-      drop.disabled = this.busy;
-      drop.addEventListener('click', () => void this.forget(dev));
-
-      li.append(text, drop);
-      list.append(li);
-    }
-    root.append(list);
+    const host = card(d, {
+      title: 'এই যন্ত্র', glyph: 'bell', headingLevel: 2,
+      tone: state === 'on' ? 'success' : 'info',
+      action: statusBadge(d, b),
+    }, ...body);
+    host.dataset.pushState = state;
+    return host;
   }
 }

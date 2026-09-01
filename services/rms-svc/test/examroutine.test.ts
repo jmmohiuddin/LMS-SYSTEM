@@ -17,7 +17,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDb, type Db } from '../../../packages/server-core/src/db.ts';
-import { installTestKeys, call } from '../../../packages/server-core/test/harness.ts';
+import { installTestKeys, call, lockFixtures, unlockFixtures} from '../../../packages/server-core/test/harness.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL ? 'DATABASE_URL not set' : false;
@@ -120,6 +120,9 @@ async function seed(): Promise<void> {
 describe('exam routine endpoint (§8.3, F-510)', { skip }, () => {
   before(async () => {
     await installTestKeys();
+    // Serialised against other runs of this same suite — the fixtures below
+    // live at fixed uuids and two processes would delete each other's.
+    await lockFixtures(DATABASE_URL as string);
     db = createDb(DATABASE_URL as string);
     await seed();
     const { signAccessToken } = await import('../../../packages/server-core/src/jwt.ts');
@@ -133,7 +136,7 @@ describe('exam routine endpoint (§8.3, F-510)', { skip }, () => {
   });
 
   after(async () => {
-    if (db) { await dropFixtures(); await db.end(); }
+    if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); }
   });
 
   test('the clash is reported for Anika only, and named', async () => {

@@ -2,8 +2,26 @@
  * আরও (More) — the menu page behind the fifth tab. The bar stays at five
  * tabs (04-UIUX: 360 px reference width); every additional feature page
  * lives here as a hash link, so deep links like #/fees keep working too.
+ *
+ * ── P6 ────────────────────────────────────────────────────────────────────
+ *
+ * This screen had **no page header at all** and rendered thirty-six
+ * full-width `.more-item` strips down a 1110px column at desktop — the
+ * longest stretched phone layout in the product, on the one screen every
+ * role reaches.
+ *
+ * It is now `pageHeader` + `ui-card-grid`, which is the right primitive for
+ * exactly this: the rows are a CHOICE with a sentence each, not records with
+ * fields, so cards rather than a table. Three across at 1440, one on a phone.
+ *
+ * The theme control keeps its own card. It lives on this screen rather than
+ * in a settings screen because a tenant's settings screen is about the
+ * SCHOOL's decisions — SMS length, push policy — and this is about the person
+ * holding the phone. The storage rule and the three options stay in
+ * `./ui/theme.ts`, shared with the shell's profile menu, so only one of them
+ * owns how it is stored.
  */
-import { iconSvg } from './icon.ts';
+import { pageHeader, card, el, append } from './ui/index.ts';
 import { readTheme, setTheme, THEME_OPTIONS, type ThemePref } from './ui/theme.ts';
 
 export interface MoreItem {
@@ -24,39 +42,24 @@ export class MoreView {
     const d = o.doc;
     o.root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'আরও';
-    header.append(h1);
-    o.root.append(header);
+    o.root.append(pageHeader(d, {
+      title: 'আরও',
+      subtitle: 'এই ভূমিকার জন্য যেসব পাতা আছে',
+    }));
 
-    const list = d.createElement('ul');
-    list.className = 'more-list';
+    const grid = el(d, 'div', { className: 'ui-card-grid' });
     for (const item of o.items) {
-      const li = d.createElement('li');
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'more-item';
-      const glyph = d.createElement('span');
-      glyph.className = 'more-glyph';
-      glyph.setAttribute('aria-hidden', 'true');
-      glyph.innerHTML = iconSvg(item.glyph);
-      const body = d.createElement('span');
-      body.className = 'more-body';
-      const title = d.createElement('span');
-      title.className = 'more-title';
-      title.textContent = item.titleBn;
-      const sub = d.createElement('span');
-      sub.className = 'more-sub';
-      sub.textContent = item.subtitleBn;
-      body.append(title, sub);
-      btn.append(glyph, body);
-      btn.addEventListener('click', () => { location.hash = `/${item.path}`; });
-      li.append(btn);
-      list.append(li);
+      append(grid, card(d, {
+        title: item.titleBn,
+        subtitle: item.subtitleBn,
+        glyph: item.glyph,
+        variant: 'interactive',
+        headingLevel: 3,
+        onClick: () => { location.hash = `/${item.path}`; },
+      }));
     }
-    o.root.append(list);
+    o.root.append(grid);
+
     o.root.append(themePicker(d));
   }
 }
@@ -64,38 +67,24 @@ export class MoreView {
 /**
  * F-1607. Theme choice: follow the phone, or pin light or dark.
  *
- * Lives here rather than in a settings screen because this product has no
- * settings screen, and inventing one for a single control would bury it.
- *
- * The storage rule and the three options live in ./ui/theme.ts, shared with
- * the shell's profile menu — the same control is offered in both places, so
- * only one of them may own how it is stored.
+ * A `radiogroup` of three, not a select: three options that are all visible
+ * is one glance, and the choice is about what the person is looking at.
  */
 function themePicker(d: Document): HTMLElement {
-  const wrap = d.createElement('section');
-  wrap.className = 'card theme-picker';
-
-  const h = d.createElement('h2');
-  h.className = 'section-heading';
-  h.textContent = 'রঙের ধরন';
-  wrap.append(h);
-
-  const group = d.createElement('div');
-  group.className = 'theme-options';
-  group.setAttribute('role', 'radiogroup');
-  group.setAttribute('aria-label', 'রঙের ধরন');
+  const group = el(d, 'div', {
+    className: 'theme-options',
+    attrs: { role: 'radiogroup', 'aria-label': 'রঙের ধরন' },
+  });
 
   const current: ThemePref = readTheme();
 
   for (const opt of THEME_OPTIONS) {
-    const btn = d.createElement('button');
-    btn.type = 'button';
-    btn.className = 'theme-option';
-    btn.setAttribute('role', 'radio');
+    const btn = el(d, 'button', {
+      className: 'theme-option', text: opt.labelBn, attrs: { type: 'button', role: 'radio' },
+    });
     const chosen = current === opt.value;
     btn.setAttribute('aria-checked', String(chosen));
     btn.dataset.chosen = String(chosen);
-    btn.textContent = opt.labelBn;
     btn.addEventListener('click', () => {
       setTheme(opt.value);
       for (const other of group.querySelectorAll('.theme-option')) {
@@ -104,10 +93,13 @@ function themePicker(d: Document): HTMLElement {
         (other as HTMLElement).dataset.chosen = String(isThis);
       }
     });
-    group.append(btn);
+    append(group, btn);
   }
 
-  wrap.append(group);
-  return wrap;
+  return card(d, {
+    title: 'রঙের ধরন',
+    subtitle: 'এই যন্ত্রে সংরক্ষিত হবে — প্রতিষ্ঠানের কারও জন্য বদলাবে না।',
+    glyph: 'star',
+    headingLevel: 2,
+  }, group);
 }
-

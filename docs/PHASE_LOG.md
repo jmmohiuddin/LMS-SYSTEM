@@ -9088,3 +9088,5 @@ collapsed-rail `dnav` at 41×44 at 1024.
 orders so they no longer read as two versions of one screen, but a school may
 still not want two. That is a product decision for the owner, not a design one,
 and it is written here rather than taken.
+
+**Commit:** `5b8540d`.

@@ -9,6 +9,10 @@
  */
 import type { Auth } from './auth.ts';
 import { formatDayMonth, formatTime } from '../../../packages/ui-core/src/format.ts';
+import {
+  el, append, icon, pageHeader, sectionHeading, tabs, listSkeleton,
+  emptyState, statusBadge, badge, announce,
+} from './ui/index.ts';
 
 export interface RoutineSlot {
   slotId: string;
@@ -116,43 +120,38 @@ export class RoutineView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'রুটিন';
-    header.append(h1);
+    append(root, pageHeader(d, {
+      title: 'রুটিন',
+      subtitle: this.mode === 'day'
+        ? 'আজকের ক্লাস ও সময়সূচি — বদলি ক্লাস চিহ্নিত করা আছে।'
+        : 'এই সপ্তাহের সব ক্লাস, দিন অনুযায়ী।',
+    }));
 
-    const toggle = d.createElement('div');
-    toggle.className = 'routine-toggle';
-    for (const [mode, label] of [['day', 'আজ'], ['week', 'সপ্তাহ']] as const) {
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-secondary';
-      btn.classList.toggle('active', this.mode === mode);
-      btn.textContent = label;
-      btn.addEventListener('click', () => {
-        if (this.mode === mode) return;
-        this.mode = mode;
+    // A real tab strip: roving tabindex and arrow keys, instead of two
+    // buttons wearing an `.active` class.
+    append(root, tabs(d, {
+      label: 'রুটিনের সময়সীমা',
+      active: this.mode,
+      items: [{ id: 'day', label: 'আজ' }, { id: 'week', label: 'সপ্তাহ' }],
+      onSelect: (id) => {
+        if (this.mode === id) return;
+        this.mode = id as Mode;
+        announce(d, id === 'day' ? 'আজকের রুটিন' : 'সাপ্তাহিক রুটিন');
         void this.load();
-      });
-      toggle.append(btn);
-    }
-    header.append(toggle);
+      },
+    }));
 
+    // Offline is a statement about the data, not a failure: a cached routine
+    // is exactly as useful as a fresh one for knowing where to stand at 10am.
     if (this.offline) {
-      const banner = d.createElement('p');
-      banner.className = 'offline-banner';
-      banner.textContent = 'অফলাইন — সর্বশেষ সংরক্ষিত রুটিন দেখানো হচ্ছে';
-      header.append(banner);
+      append(root, el(d, 'p', { className: 'att-offline-note' },
+        el(d, 'span', {
+          text: 'অফলাইন — সর্বশেষ সংরক্ষিত রুটিন দেখানো হচ্ছে। সংযোগ পেলে নিজেই হালনাগাদ হবে।',
+        })));
     }
-
-    root.append(header);
 
     if (this.loading && !this.day && !this.week) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
+      append(root, listSkeleton(d, 5));
       return;
     }
 
@@ -160,11 +159,14 @@ export class RoutineView {
       this.renderDay(root, this.day?.slots ?? []);
     } else {
       const days = this.week?.days ?? [];
+      if (!days.length) {
+        append(root, emptyState(d, {
+          message: 'এই সপ্তাহের কোনো রুটিন এখনো তৈরি হয়নি।',
+        }));
+        return;
+      }
       for (const day of days) {
-        const dayHeading = d.createElement('h2');
-        dayHeading.className = 'routine-day-heading';
-        dayHeading.textContent = formatDayMonth(day.date, 'bn');
-        root.append(dayHeading);
+        append(root, sectionHeading(d, { title: formatDayMonth(day.date, 'bn') }));
         this.renderDay(root, day.slots);
       }
     }
@@ -173,55 +175,83 @@ export class RoutineView {
   private renderDay(root: HTMLElement, slots: RoutineSlot[]): void {
     const d = this.o.doc;
     if (slots.length === 0) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'এই দিনে কোনো ক্লাস নেই।';
-      root.append(p);
+      append(root, emptyState(d, {
+        message: 'এই দিনে আপনার কোনো ক্লাস নেই।',
+      }));
       return;
     }
 
-    const list = d.createElement('ul');
-    list.className = 'routine-list';
+    const ul = el(d, 'ul', {
+      className: 'routine-list', attrs: { 'aria-label': 'ক্লাসের তালিকা' },
+    });
     for (const s of slots) {
-      const li = d.createElement('li');
-      li.className = 'routine-row';
-      li.dataset.kind = s.slotKind;
-      if (s.isSubstitution) li.dataset.substitution = 'true';
+      const li = el(d, 'li', {
+        className: 'routine-row',
+        data: { kind: s.slotKind, substitution: s.isSubstitution ? 'true' : undefined },
+      });
 
-      const time = d.createElement('span');
-      time.className = 'routine-time';
-      time.textContent = `${formatTime(s.startsAt.slice(0, 5), 'bn')}`;
+      append(li, el(d, 'span', {
+        className: 'routine-time', text: formatTime(s.startsAt.slice(0, 5), 'bn'),
+      }));
 
-      const body = d.createElement('span');
-      body.className = 'routine-body';
-      const title = d.createElement('span');
-      title.className = 'routine-subject';
-      title.textContent = s.subjectBn ?? (s.slotKind === 'teaching' ? '—' : s.slotKind);
-      body.append(title);
+      const body = el(d, 'span', { className: 'routine-body' });
+      append(body, el(d, 'span', {
+        className: 'routine-subject',
+        text: s.subjectBn ?? (s.slotKind === 'teaching' ? '—' : slotKindBn(s.slotKind)),
+      }));
       if (s.sectionLabel) {
-        const meta = d.createElement('span');
-        meta.className = 'routine-meta';
-        meta.textContent = [s.sectionLabel, s.roomCode].filter(Boolean).join(' · ');
-        body.append(meta);
+        append(body, el(d, 'span', {
+          className: 'routine-meta',
+          text: [s.sectionLabel, s.roomCode ? `কক্ষ ${s.roomCode}` : null]
+            .filter(Boolean).join(' · '),
+        }));
       }
       if (s.isSubstitution) {
-        const sub = d.createElement('span');
-        sub.className = 'routine-sub-tag';
-        sub.textContent = s.coveringForBn ? `পরিবর্তে: ${s.coveringForBn}` : 'পরিবর্তী ক্লাস';
-        body.append(sub);
+        // §"If a substitution exists, clearly explain why and what changed."
+        // The old tag said "পরিবর্তী ক্লাস" — which names the fact and
+        // answers none of the question a teacher standing in an unfamiliar
+        // corridor is actually asking.
+        append(body, el(d, 'span', { className: 'routine-sub-note' },
+          icon(d, 'repeat', 'routine-sub-glyph'),
+          el(d, 'span', {
+            text: s.coveringForBn
+              ? `${s.coveringForBn}-এর বদলি হিসেবে আপনি এই ক্লাসটি নিচ্ছেন।`
+              : 'এটি আপনার নিজের ক্লাস নয় — বদলি হিসেবে নিচ্ছেন।',
+          })));
+      }
+      append(li, body);
+
+      // Never colour alone: the register's state is a word on every teaching
+      // row, present or absent from the day.
+      if (s.slotKind === 'teaching' && s.sectionLabel) {
+        append(li, s.attendanceTaken
+          ? statusBadge(d, { state: 'present', label: 'হাজিরা জমা' })
+          : statusBadge(d, { state: 'pending', label: 'হাজিরা বাকি' }));
+      } else if (s.slotKind !== 'teaching') {
+        append(li, badge(d, { label: slotKindBn(s.slotKind) }));
       }
 
-      li.append(time, body);
-
-      if (s.slotKind === 'teaching' && s.attendanceTaken) {
-        const chip = d.createElement('span');
-        chip.className = 'routine-chip';
-        chip.textContent = 'হাজিরা নেওয়া হয়েছে';
-        li.append(chip);
-      }
-
-      list.append(li);
+      append(ul, li);
     }
-    root.append(list);
+    append(root, ul);
+  }
+}
+
+/**
+ * Slot kinds, in Bangla.
+ *
+ * The old renderer printed `s.slotKind` straight into the subject line when
+ * there was no subject — so a break rendered as the literal string "break" on
+ * a Bangla screen.
+ */
+function slotKindBn(kind: string): string {
+  switch (kind) {
+    case 'break':     return 'বিরতি';
+    case 'assembly':  return 'সমাবেশ';
+    case 'prayer':    return 'নামাজ';
+    case 'lunch':     return 'দুপুরের বিরতি';
+    case 'free':      return 'ফাঁকা সময়';
+    case 'teaching':  return 'ক্লাস';
+    default:          return kind;
   }
 }

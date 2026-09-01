@@ -833,3 +833,43 @@ recorded above: `--c-on-primary` (P1) and the four status tints (P2).
   usage, exactly as this plan states — not before.
 - Only `pageHeader` is adopted. The rest of the system ships nothing until a
   screen imports it, which is why `app.js` grew 0.4 KB.
+
+
+---
+
+## 23. P3 — delivered (2026-09-01)
+
+The teacher role. Commits `5959975` and the documentation commit after it.
+
+### Screens
+
+| Screen | State | Notes |
+|---|---|---|
+| Dashboard | **new** | Derived from `/rms/routine?scope=day`; one dominant action |
+| Attendance | **rebuilt around the grid** | 13 states; save path untouched |
+| Roster | **migrated** | shared DataTable → MobileList |
+| Routine | **migrated** | tab strip; substitutions explain themselves |
+| Marks | **hardened** | double-submit guard; read-only explained |
+| Scripts | **made usable** | named pickers replace UUID text boxes |
+
+### Acceptance
+
+| Area | 360 | 375 | 390 | 1024 | 1280 | 1440 | Light | Dark | Tenant A | Tenant B |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Contrast | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| Overflow | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Nameless controls | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ 0 | ✅ | ✅ | ✅ | ✅ |
+| Attendance layout | list | list | list | grid | grid | grid | ✅ | ✅ | ✅ | ✅ |
+| Roster layout | cards | cards | cards | table | table | table | ✅ | ✅ | ✅ | ✅ |
+
+### Known teacher limitations
+
+- The full offline round trip to a real server is unproven — demo mode answers
+  locally and the CI database has no tenant. Steps 7–11 of the offline
+  acceptance need a seeded school.
+- `assignments`, `substitute` and `classperf` keep legacy markup: reached from
+  More, not from the teaching day.
+- The teacher dashboard shows an unread count but not the notices themselves —
+  the inbox is one tap away and P6 designs the notice surface.
+- Attendance is one section and one date at a time. Backdating and
+  period-wise entry exist in the API and have no picker yet.

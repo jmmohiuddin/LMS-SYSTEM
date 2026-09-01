@@ -14,6 +14,10 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import {
+  el, append, pageHeader, field, button, dataTable,
+  listSkeleton, emptyState, errorState, announce, type Column,
+} from './ui/index.ts';
 
 export interface SectionSummary {
   id: string;
@@ -149,102 +153,122 @@ export class RosterView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'শিক্ষার্থী তালিকা';
-    header.append(h1);
+    const picked = this.sections.find((x) => x.id === this.selectedId);
+    append(root, pageHeader(d, {
+      title: 'শিক্ষার্থী তালিকা',
+      subtitle: picked
+        ? `${picked.className.bn} — ${picked.name} শাখার ভর্তি হওয়া শিক্ষার্থীরা।`
+        : 'সেকশন বেছে নিলে সেই শাখার শিক্ষার্থীদের তালিকা দেখা যাবে।',
+      actions: [this.sectionPicker()],
+    }));
 
+    // Offline is a statement about the data on screen, not a failure: the
+    // cached roster is exactly as usable as a fresh one for taking a register.
     if (this.offline) {
-      const banner = d.createElement('p');
-      banner.className = 'offline-banner';
-      banner.textContent = 'অফলাইন — সর্বশেষ সংরক্ষিত তথ্য দেখানো হচ্ছে';
-      header.append(banner);
+      append(root, el(d, 'p', { className: 'att-offline-note' },
+        el(d, 'span', {
+          text: 'অফলাইন — সর্বশেষ সংরক্ষিত তালিকা দেখানো হচ্ছে। সংযোগ পেলে নিজেই হালনাগাদ হবে।',
+        })));
     }
-    // Rendered whenever set — an issue-code failure has a section list on
-    // screen, and an error only visible on an empty screen is an error
-    // nobody sees.
+
+    // Rendered wherever it is set, not only on an empty screen: an
+    // issue-code failure happens WITH a roster on screen, and an error only
+    // visible on an empty page is an error nobody sees.
     if (this.errorMsg) {
-      const err = d.createElement('p');
-      err.className = 'login-error';
-      err.setAttribute('role', 'alert');
-      err.textContent = this.errorMsg;
-      header.append(err);
+      append(root, errorState(d, this.errorMsg));
     }
 
-    const picker = d.createElement('select');
-    picker.className = 'section-picker';
-    picker.setAttribute('aria-label', 'সেকশন নির্বাচন করুন');
-    const placeholder = d.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'সেকশন নির্বাচন করুন';
-    placeholder.disabled = true;
-    placeholder.selected = !this.selectedId;
-    picker.append(placeholder);
-    for (const s of this.sections) {
-      const opt = d.createElement('option');
-      opt.value = s.id;
-      opt.textContent = `${s.className.bn} — ${s.name}`;
-      opt.selected = s.id === this.selectedId;
-      picker.append(opt);
-    }
-    picker.addEventListener('change', () => {
-      this.selectedId = picker.value || null;
-      this.roster = [];
-      if (this.selectedId) void this.loadRoster(this.selectedId);
-      else this.render();
-    });
+    if (this.issued) append(root, this.issuedCard());
 
-    root.append(header, picker);
+    if (this.loading) { append(root, listSkeleton(d, 6)); return; }
 
-    if (this.loading) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'লোড হচ্ছে…';
-      root.append(p);
+    if (!this.selectedId) {
+      append(root, emptyState(d, {
+        message: 'উপরে একটি সেকশন বেছে নিন — তারপর সেই শাখার শিক্ষার্থীদের তালিকা দেখা যাবে।',
+      }));
       return;
     }
-
-    if (!this.selectedId) return;
 
     if (this.roster.length === 0) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'কোনো শিক্ষার্থী পাওয়া যায়নি।';
-      root.append(p);
+      append(root, emptyState(d, {
+        message: picked
+          ? `${picked.className.bn} — ${picked.name} শাখায় এখনো কোনো শিক্ষার্থী ভর্তি হয়নি।`
+          : 'এই শাখায় এখনো কোনো শিক্ষার্থী ভর্তি হয়নি।',
+      }));
       return;
     }
 
-    if (this.issued) root.append(this.issuedCard());
+    // One declaration, two renderings: a table on a laptop, a list of cards on
+    // a phone. §7 — a six-column table squeezed into 360px is where a teacher
+    // reads a student's name two characters at a time.
+    const columns: Array<Column<RosterStudent>> = [
+      {
+        key: 'roll', header: 'রোল', numeric: true, width: '88px', mobile: 'meta',
+        cell: (r) => formatCount(r.rollNo, 'bn'),
+      },
+      {
+        key: 'name', header: 'নাম', mobile: 'title',
+        cell: (r) => r.fullName.bn || r.fullName.en || '—',
+      },
+      {
+        key: 'phone', header: 'অভিভাবকের ফোন', mobile: 'meta',
+        // LTR: a Bangladeshi number inside a Bangla run renders its digits in
+        // the wrong order often enough to matter.
+        cell: (r) => r.phone
+          ? el(d, 'span', { text: r.phone, attrs: { dir: 'ltr' } })
+          : el(d, 'span', { className: 'roster-nophone', text: 'নেই' }),
+      },
+      {
+        key: 'code', header: 'সক্রিয়ন কোড', mobile: 'status',
+        cell: (r) => button(d, {
+          label: this.issuing === r.studentId ? 'তৈরি হচ্ছে…' : 'কোড',
+          variant: 'secondary', size: 'sm',
+          // Kept as a placement hook: `activation-ui.test.ts` selects it, and
+          // F-202's "every issue button waits" property is asserted through
+          // it. `className` exists for exactly this — placement, not restyling.
+          className: 'roster-issue',
+          disabled: this.issuing !== null,
+          busy: this.issuing === r.studentId,
+          // F-202. The teacher-mediated activation lives where the teacher
+          // already is — beside the child's name. WHO may issue for WHOM is
+          // the server's RLS policy; this button only asks.
+          ariaLabel: `${r.fullName.bn ?? ''} এর জন্য সক্রিয়ন কোড তৈরি করুন`,
+          onClick: () => { void this.issueCode(r); },
+        }),
+      },
+    ];
 
-    const list = d.createElement('ul');
-    list.className = 'roster-list';
-    for (const s of this.roster) {
-      const li = d.createElement('li');
-      li.className = 'roster-row';
-      const roll = d.createElement('span');
-      roll.className = 'roster-roll';
-      roll.textContent = formatCount(s.rollNo, 'bn');
-      const name = d.createElement('span');
-      name.className = 'roster-name';
-      name.textContent = s.fullName.bn || s.fullName.en || '—';
-      li.append(roll, name);
+    append(root, dataTable(d, {
+      columns,
+      rows: this.roster,
+      rowKey: (r) => r.studentId,
+      caption: picked
+        ? `${picked.className.bn} — ${picked.name} শাখার শিক্ষার্থী তালিকা`
+        : 'শিক্ষার্থী তালিকা',
+    }));
+  }
 
-      // F-202. The teacher-mediated activation lives where the teacher
-      // already is: next to the child's name on the roster. WHO may issue
-      // for WHOM is the server's RLS policy — this button merely asks.
-      const issueBtn = d.createElement('button');
-      issueBtn.type = 'button';
-      issueBtn.className = 'btn-secondary btn-small roster-issue';
-      issueBtn.textContent = this.issuing === s.studentId ? '…' : 'কোড';
-      issueBtn.disabled = this.issuing !== null;
-      issueBtn.setAttribute('aria-label',
-        `${s.fullName.bn ?? ''} এর জন্য সক্রিয়ন কোড তৈরি করুন`);
-      issueBtn.addEventListener('click', () => { void this.issueCode(s); });
-      li.append(issueBtn);
-      list.append(li);
-    }
-    root.append(list);
+  private sectionPicker(): HTMLElement {
+    const f = field(this.o.doc, {
+      label: 'সেকশন',
+      name: 'section',
+      kind: 'select',
+      value: this.selectedId ?? '',
+      options: [
+        { value: '', label: 'সেকশন নির্বাচন করুন' },
+        ...this.sections.map((x) => ({
+          value: x.id, label: `${x.className.bn} — ${x.name}`,
+        })),
+      ],
+      onChange: (v) => {
+        this.selectedId = v || null;
+        this.roster = [];
+        if (this.selectedId) void this.loadRoster(this.selectedId);
+        else this.render();
+      },
+      className: 'att-section-picker',
+    });
+    return f.root;
   }
 
   private async issueCode(s: RosterStudent): Promise<void> {
@@ -287,32 +311,28 @@ export class RosterView {
    */
   private issuedCard(): HTMLElement {
     const d = this.o.doc;
-    const card = d.createElement('section');
-    card.className = 'card issued-code-card';
-    card.setAttribute('role', 'status');
     const issued = this.issued as NonNullable<typeof this.issued>;
-
-    const who = d.createElement('p');
-    who.className = 'issued-code-who';
-    who.textContent = `${issued.nameBn} এর সক্রিয়ন কোড`;
-
-    const code = d.createElement('p');
-    code.className = 'issued-code-value';
-    // Split for reading aloud; the server strips separators on redeem.
-    code.textContent = `${issued.code.slice(0, 4)}-${issued.code.slice(4)}`;
-
-    const note = d.createElement('p');
-    note.className = 'issued-code-note';
-    note.textContent = 'কোডটি লিখে শিক্ষার্থীকে দিন — এটি আর দেখা যাবে না। '
-      + 'মেয়াদ ৭২ ঘণ্টা; নতুন কোড তৈরি করলে এটি বাতিল হয়ে যাবে।';
-
-    const done = d.createElement('button');
-    done.type = 'button';
-    done.className = 'btn-primary';
-    done.textContent = 'বুঝেছি';
-    done.addEventListener('click', () => { this.issued = null; this.render(); });
-
-    card.append(who, code, note, done);
-    return card;
+    const wrap = el(d, 'section', {
+      className: 'card issued-code-card', attrs: { role: 'status' },
+    });
+    append(wrap,
+      el(d, 'p', { className: 'issued-code-who', text: `${issued.nameBn} এর সক্রিয়ন কোড` }),
+      // Split for reading aloud across a desk; the server strips separators
+      // on redeem. `dir=ltr` because the code is Latin and must not reorder.
+      el(d, 'p', {
+        className: 'issued-code-value', attrs: { dir: 'ltr' },
+        text: `${issued.code.slice(0, 4)}-${issued.code.slice(4)}`,
+      }),
+      el(d, 'p', {
+        className: 'issued-code-note',
+        text: 'কোডটি লিখে শিক্ষার্থীকে দিন — এটি আর দেখা যাবে না। '
+          + 'মেয়াদ ৭২ ঘণ্টা; নতুন কোড তৈরি করলে এটি বাতিল হয়ে যাবে।',
+      }),
+      button(d, {
+        label: 'বুঝেছি', variant: 'primary',
+        onClick: () => { this.issued = null; this.render(); },
+      }));
+    announce(d, `${issued.nameBn} এর সক্রিয়ন কোড তৈরি হয়েছে`);
+    return wrap;
   }
 }

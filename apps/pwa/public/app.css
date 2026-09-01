@@ -3451,6 +3451,17 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
 .att-host { display: block; }
 
 
+/* ── routine: a substitution explains itself (P3) ───────────────────────── */
+/* The old `.routine-sub-tag` said "পরিবর্তী ক্লাস" — it named the fact and
+   answered none of the question a teacher standing in an unfamiliar corridor
+   is actually asking. */
+.routine-sub-note { display: flex; align-items: flex-start; gap: var(--s-2);
+                    margin-top: var(--s-1); font-size: var(--text-3xs);
+                    color: var(--c-warn); line-height: 1.45; }
+.routine-sub-glyph { display: flex; width: 13px; height: 13px; flex: none; margin-top: 2px; }
+.routine-sub-glyph svg { width: 100%; height: 100%; }
+
+
 /* ==========================================================================
    RESPONSIVE — the desktop layouts, deliberately LAST in this file  (P1)
 

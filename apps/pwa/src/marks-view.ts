@@ -15,6 +15,9 @@
  */
 import type { Auth } from './auth.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import {
+  el, append, icon, pageHeader, badge, emptyState, toast,
+} from './ui/index.ts';
 
 export interface ExamSubjectOption {
   examSubjectId: string;
@@ -162,11 +165,25 @@ export class MarksView {
   }
 
   /** One outbox op per changed student; UI acknowledges locally, always. */
+  /**
+   * True while a save is in flight.
+   *
+   * `dirty.size === 0` was the only guard, and it is cleared AFTER the
+   * enqueue loop finishes — so two taps on a slow phone both passed it and
+   * enqueued the same marks twice, with two different op ids. The outbox
+   * de-duplicates by opId and these had none, so both would have posted.
+   */
+  private saving = false;
+
   private async save(): Promise<void> {
+    if (this.saving) return;
     const sel = this.selected;
     const sheet = this.sheet;
     if (!sel || !sheet || this.dirty.size === 0) return;
 
+    this.saving = true;
+    this.paintSaveBar();
+    try {
     for (const [studentId, change] of this.dirty) {
       const row = sheet.marks.find((m) => m.studentId === studentId);
       if (!row) continue;
@@ -192,6 +209,25 @@ export class MarksView {
     this.cacheSet(MARKS_CACHE_PREFIX + sel.subject.examSubjectId, sheet);
     // Fire-and-forget: offline failure is the normal case, not an error.
     void Promise.resolve(this.o.outbox.flush()).catch(() => {});
+    toast(this.o.doc, {
+      message: navigator.onLine
+        ? 'নম্বর সংরক্ষিত — জমা হচ্ছে'
+        : 'নম্বর এই যন্ত্রে সংরক্ষিত — সংযোগ পেলে নিজেই জমা হবে',
+      tone: 'success',
+    });
+    } catch (err) {
+      // The typed marks are still in `this.dirty` and still on screen: §13's
+      // rule is that a recoverable failure never costs the user their input,
+      // and re-rendering from `sheet` would discard exactly the numbers the
+      // teacher just keyed in.
+      toast(this.o.doc, {
+        message: 'নম্বর সংরক্ষণ করা যায়নি। ঘরের নম্বরগুলো ঠিক আছে — আবার চেষ্টা করুন।',
+        tone: 'error',
+      });
+      console.error('[marks] enqueue failed', err);
+    } finally {
+      this.saving = false;
+    }
     this.render();
   }
 
@@ -268,33 +304,43 @@ export class MarksView {
     const root = this.o.root;
     root.textContent = '';
 
-    const header = d.createElement('header');
-    header.className = 'att-header';
-    const h1 = d.createElement('h1');
-    h1.textContent = 'নম্বর এন্ট্রি';
-    header.append(h1);
-    // Once a sheet is chosen, name what is being marked in the header — the
-    // wireframe's "১ম সাময়িক · নবম–ক · পদার্থবিজ্ঞান". Answers "which paper am
-    // I in?" without scrolling back to the picker.
-    if (this.selected) {
-      const sub = d.createElement('p');
-      sub.className = 'att-sub';
-      sub.textContent = `${this.selected.exam.nameBn} · ${this.selected.subject.subject.bn}`;
-      header.append(sub);
+    // Once a sheet is chosen, name what is being marked — the wireframe's
+    // "১ম সাময়িক · নবম–ক · পদার্থবিজ্ঞান". Answers "which paper am I in?"
+    // without scrolling back to the picker.
+    append(root, pageHeader(d, {
+      title: 'নম্বর এন্ট্রি',
+      subtitle: this.selected
+        ? `${this.selected.exam.nameBn} · ${this.selected.subject.subject.bn}`
+        : 'পরীক্ষা ও বিষয় বেছে নিয়ে নম্বর দিন — অফলাইনেও কাজ করে।',
+      badge: this.readOnly
+        ? badge(d, { label: 'প্রকাশিত — পরিবর্তন করা যাবে না', tone: 'info', glyph: 'lock' })
+        : undefined,
+    }));
+
+    // §"published marks immutability". The gate existed; nothing said WHY the
+    // inputs were dead, so a teacher trying to fix a typo met a form that
+    // simply would not accept keystrokes.
+    if (this.readOnly) {
+      append(root, el(d, 'p', { className: 'att-offline-note' },
+        icon(d, 'lock', 'att-offline-glyph'),
+        el(d, 'span', {
+          text: 'এই পরীক্ষার ফলাফল প্রকাশিত হয়ে গেছে, তাই নম্বর আর পরিবর্তন করা যাবে না। '
+            + 'সংশোধন প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন।',
+        })));
     }
+
     if (this.offline) {
-      const banner = d.createElement('p');
-      banner.className = 'offline-banner';
-      banner.textContent = 'অফলাইন — সর্বশেষ সংরক্ষিত তথ্য দেখানো হচ্ছে';
-      header.append(banner);
+      append(root, el(d, 'p', { className: 'att-offline-note' },
+        el(d, 'span', {
+          text: 'অফলাইন — সর্বশেষ সংরক্ষিত নম্বর দেখানো হচ্ছে। নতুন নম্বর এই যন্ত্রে জমা থাকবে।',
+        })));
     }
-    root.append(header);
 
     if (!this.sectionId) {
-      const p = d.createElement('p');
-      p.className = 'att-sub';
-      p.textContent = 'আগে শিক্ষার্থী ট্যাব থেকে একটি সেকশন নির্বাচন করুন।';
-      root.append(p);
+      append(root, emptyState(d, {
+        message: 'আগে শিক্ষার্থী তালিকা থেকে একটি সেকশন বেছে নিন — তারপর সেই শাখার নম্বর দেওয়া যাবে।',
+        action: { label: 'শিক্ষার্থী তালিকা', onClick: () => { location.hash = '/roster'; } },
+      }));
       return;
     }
 
@@ -455,8 +501,9 @@ export class MarksView {
       const save = d.createElement('button');
       save.type = 'button';
       save.className = 'btn-primary';
-      save.textContent = 'সংরক্ষণ করুন';
-      save.disabled = this.dirty.size === 0;
+      save.textContent = this.saving ? 'সংরক্ষণ হচ্ছে…' : 'সংরক্ষণ করুন';
+      save.disabled = this.dirty.size === 0 || this.saving;
+      if (this.saving) save.setAttribute('aria-busy', 'true');
       save.addEventListener('click', () => { void this.save(); });
       bar.append(chip, save);
       root.append(bar);

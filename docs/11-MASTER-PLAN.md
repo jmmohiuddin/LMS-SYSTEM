@@ -1375,3 +1375,15 @@ intrinsic-width primary button.
 Next: **P3** teacher screens · P4 student + guardian · P5 principal + IT admin ·
 P6 the screens that need designing · **P7** platform console **and D16's
 commercial controls** · P8 retire `--c-*`.
+
+
+### UI integration — P3 complete (2026-09-01)
+
+The teacher surface is on the canonical system: dashboard, attendance, roster,
+routine, marks, scripts. Before any P3 code, the ten commits carrying D14–D16
+and P0–P2 were pushed to `origin/main`, which had been ten behind — the largest
+risk the pre-P3 audit found.
+
+Next: **P4** student + guardian · P5 principal + IT admin · P6 the screens that
+need designing · P7 platform console **and D16's commercial controls** · P8
+retire `--c-*`.

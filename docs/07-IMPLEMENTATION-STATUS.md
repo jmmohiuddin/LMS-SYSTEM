@@ -1717,3 +1717,23 @@ Not built: DatePicker (native `<input type="date">` is better), charts
 (server-rendered SVG per 04-UIUX §6), any component taking a colour.
 
 Backend, APIs, RLS, auth and every workflow: unchanged.
+
+
+## P3 — teacher experience (2026-09-01)
+
+Teacher dashboard (new, data-driven from `/rms/routine?scope=day`), attendance
+(section + roster loaded from the server, 13 states, retry, double-submit
+guard), roster (shared DataTable → MobileList), routine (tab strip,
+self-explaining substitutions), marks (save guard, read-only explained),
+scripts (named pickers instead of UUID text boxes).
+
+Removed: a fabricated `{ id: 'demo-section', labelBn: '৯-ক', academicYearId:
+'yr-2026' }` fallback, 60 placeholder students, and two dead loader helpers.
+
+Unchanged: the outbox/save/sync path, the RMS solver, script compression and
+storage, every API, RLS, and authorization.
+
+**Offline:** queue durability is proved in `packages/offline` (46 tests); the
+UI for its states is proved by 19 new tests. The full browser→server→database
+round trip is **not** proved — it needs a seeded tenant, and is the same gate
+the pilot closes.

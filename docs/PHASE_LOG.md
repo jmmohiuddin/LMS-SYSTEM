@@ -6910,3 +6910,145 @@ here can become the reason one gets installed.
 token. A component that accepts a colour will be given one outside the palette.
 
 **The screens.** P2 is the system; P3–P6 are the screens.
+
+
+---
+
+# P3 — the teacher experience   (2026-09-01)
+
+**Commits:** `5959975` (A/B), and the commit this entry lands with.
+**Scope:** the six teacher screens, on the P0–P2 foundation.
+
+## Step 0, first: the work was on one machine
+
+The audit that preceded this phase found the ten commits carrying D14, D15,
+P0, P1, D16 and P2 existed **only in this working tree** — `origin/main` was
+still at `e7df9c2`. They were pushed before any P3 code was written:
+fast-forward, no history rewritten, `origin/main` now at the same commit as
+HEAD. That risk is closed and is recorded here because it was the largest one
+the audit found and it had nothing to do with code quality.
+
+## The dashboard
+
+Every role landed on the same grid of feature tiles — a screen that answers
+*what CAN I do* for a person who arrived asking *what do I do NOW*. A teacher
+opening the app at 8:20 wants the class about to start and whether its register
+is in.
+
+Built entirely from `GET /rms/routine?scope=day`, which already returned every
+field needed: period, time, subject, section, room, `isSubstitution`,
+`coveringForBn`, `studentCount` and — decisively — **`attendanceTaken`**. It
+wraps `app.teacher_day()`, so substitutions are already merged and the
+authorization is the routine screen's. No endpoint, no migration, no
+permission.
+
+The urgent card is **derived on every render** — the period happening now whose
+register is missing, else the next — never stored. A stored "next action" goes
+stale the moment a register is taken on another device, and a shared staffroom
+phone is the normal case.
+
+**Exactly one dominant action**, and when every register is in there is none at
+all: the card is replaced by a sentence saying so. A dashboard that always has
+a big button teaches people to ignore it.
+
+## Attendance
+
+`AttendanceView` and its save path are untouched — that path is the product's
+one durable write. What P3 added is the eleven moments around it, and the
+removal of a fabrication.
+
+The route used to build the screen from a cache written by a **different**
+screen, falling back to:
+
+    section: { id: 'demo-section', labelBn: '৯-ক', academicYearId: 'yr-2026' }
+
+A teacher who opened হাজিরা before ever visiting the roster saw a real-looking
+class that does not exist, and any save was rejected by sync because
+`yr-2026` is not a uuid — the screen could only say "১টি পাঠানো যায়নি". The
+screen asks the server now. With the fallback gone, **60 fabricated placeholder
+students** and two loader helpers became dead code and were deleted.
+
+Three states that did not exist:
+
+- **Empty** — a section with no students, named, with a way out. A school's
+  first day is all-empty and nothing has gone wrong.
+- **Loading** — a list skeleton instead of a blank grid.
+- **Retry** — the chip has said "৩টি পাঠানো যায়নি" since R-0 with nothing to do
+  about it. There is now a line saying the data is safe on the device and a
+  button that flushes.
+
+Plus a double-submit guard (three taps enqueued three registers), a busy save
+button, and seven facts in words: section · date · subject · period · students
+· hand-marked · sync state.
+
+**"Marked" counts `touched`, not tiles with a status.** `AttendanceGrid` starts
+every student at `present`, so the naive count is the class size from the first
+frame — a reassuring lie. The label reads "হাতে চিহ্নিত" for the same reason,
+and the authoritative tally stays the grid's own present/absent/late counters.
+
+## Roster, routine, marks, scripts
+
+- **Roster** moved onto the shared `dataTable`: a table on a laptop, cards on a
+  phone, one column declaration. The activation-code path is untouched.
+- **Routine** got a real tab strip (roving tabindex, arrow keys) and a
+  substitution that **explains itself** — the old tag said "পরিবর্তী ক্লাস",
+  which names the fact and answers none of the question a teacher standing in
+  an unfamiliar corridor is asking. Non-teaching slots also stopped rendering
+  the raw enum: a break used to print the literal string `break` on a Bangla
+  screen.
+- **Marks** gained the guard it lacked. `dirty.size === 0` was the only one and
+  it is cleared *after* the enqueue loop, so two taps on a slow phone enqueued
+  the same marks twice with two different op ids and no de-duplication. A
+  failed enqueue now keeps the typed numbers on screen. Published marks were
+  already read-only; nothing said **why**, so a teacher fixing a typo met a
+  form that silently refused keystrokes.
+- **Scripts** stopped asking a teacher to type UUIDs. Two free-text boxes
+  labelled `exam_subject uuid` and `student uuid` — §15's rule broken, and a
+  screen nobody could use, because there is nowhere in the product to see a
+  uuid. Three named pickers now, from the same three endpoints the marks and
+  roster screens already call. The compression and upload architecture is
+  unchanged.
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| Rendered sweep | **3,010 element-checks** — 6 widths × light/dark × 2 tenants × 6 screens |
+| Contrast | **0 failures** at 360 / 375 / 390 / 1024 / 1280 / 1440, both themes |
+| Horizontal overflow | **none**, including 360 |
+| Accessible names | 0 nameless controls |
+| Tenant A / B | `#156a3f` and `#1b3e7a` — 0 failures each |
+| Teacher scoping | 70 DB tests, incl. "a class teacher searches their own section, not the school" and "a teacher naming another section's student by code still gets nothing" |
+| Tests | **1,038** without a database (1,019 before) — 19 new |
+| TypeScript ×3 | 0 / 0 / 0 |
+| `index.html` | byte-identical — verified by diff |
+
+## Offline: what is proven, and what is not
+
+The **durability** of the queue is proved in `packages/offline` — 46 tests
+including *60 students marked offline and synced when the tower comes back*, *a
+duplicate ack removes the op so a reinstall cannot double-post*, *exhausting
+the retry budget parks the op rather than deleting it*, and *a user-triggered
+retry re-arms a failed op*. P3 did not touch that path and does not repeat
+those tests.
+
+The **UI for those states** is what P3 built, and it is proved by 19 new tests
+driving `AttendanceScreen` with a controllable outbox: queued renders, failed
+renders with a working retry, offline says the data is on the device rather
+than sent, a cached roster survives the network being gone, three taps enqueue
+one register.
+
+**Not proven: the full browser → server → database round trip.** Demo mode
+answers locally, so its queue drains and cannot exercise the offline path; the
+CI database has 0 tenants, so there is no seeded school to sync against. This
+is recorded as unproven rather than claimed — the steps §"OFFLINE ACCEPTANCE"
+lists as 7–11 (reconnect, sync, verify server result, retry a failed sync,
+verify no duplicate records) need a seeded tenant and are the same gate the
+pilot closes.
+
+## What P3 did not do
+
+Student, guardian, principal and IT-admin screens (P4/P5). The teacher's
+`assignments`, `substitute` and `classperf` screens keep their legacy markup —
+they are reached from More, not from the teaching day, and they belong to the
+phase that redesigns their role's surface.

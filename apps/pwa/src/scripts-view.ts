@@ -9,7 +9,7 @@
  * every Android browser without the MediaDevices permission dance.
  */
 import type { Auth } from './auth.ts';
-import { pageHeader } from './ui/page-header.ts';
+import { pageHeader, field } from './ui/index.ts';
 
 const TARGET_LONG_EDGE = 1600;
 const JPEG_QUALITY = 0.7;
@@ -24,6 +24,19 @@ interface Page {
   dataUrl: string;
   status: 'ready' | 'uploading' | 'saved' | 'error';
   error?: string;
+}
+
+/** The three lists this screen picks from. Same shapes the marks and roster
+ *  screens already read — named here because `typeof this.x` inside a method
+ *  does not resolve (TS2683) and an inline shape would drift from theirs. */
+interface SectionOpt { id: string; name: string; className: { bn: string } }
+interface ExamOpt {
+  examId: string; nameBn: string;
+  subjects: Array<{ examSubjectId: string; subject: { bn: string } }>;
+}
+interface RosterOpt {
+  studentId: string; rollNo: number;
+  fullName: { bn: string | null; en: string | null };
 }
 
 export interface ScriptsViewOptions {
@@ -66,6 +79,11 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
 
 export class ScriptsView {
   private readonly o: ScriptsViewOptions;
+  private sections: SectionOpt[] = [];
+  private sectionId = '';
+  private exams: ExamOpt[] = [];
+  private roster: RosterOpt[] = [];
+  private loadingCtx = true;
   private examSubjectId = '';
   private studentId = '';
   private pages: Page[] = [];
@@ -76,6 +94,7 @@ export class ScriptsView {
   constructor(options: ScriptsViewOptions) {
     this.o = options;
     this.render();
+    void this.loadContext();
   }
 
   private async onFile(file: File): Promise<void> {
@@ -106,6 +125,48 @@ export class ScriptsView {
       this.notice = `ছবি প্রস্তুত করা যায়নি: ${String((err as Error).message ?? err)}`;
     }
     this.busy = false;
+    this.render();
+  }
+
+  /**
+   * Sections, then that section's exams and roster.
+   *
+   * Exactly the three reads marks-view and roster-view already perform, so a
+   * teacher who can mark a paper can also file its scan — the authorization
+   * is the one they already have, not a new one.
+   */
+  private async loadContext(): Promise<void> {
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/academics/sections');
+      if (res.ok) {
+        const body = (await res.json()) as { sections: SectionOpt[] };
+        this.sections = body.sections ?? [];
+        const remembered = (() => {
+          try { return localStorage.getItem('shikhon_last_section') ?? ''; }
+          catch { return ''; }
+        })();
+        this.sectionId = this.sections.some((x) => x.id === remembered)
+          ? remembered : (this.sections[0]?.id ?? '');
+      }
+    } catch { /* offline: the pickers stay empty and say so */ }
+    this.loadingCtx = false;
+    this.render();
+    if (this.sectionId) await this.loadSection(this.sectionId);
+  }
+
+  private async loadSection(sectionId: string): Promise<void> {
+    this.sectionId = sectionId;
+    this.examSubjectId = '';
+    this.studentId = '';
+    const q = encodeURIComponent(sectionId);
+    try {
+      const [ex, ro] = await Promise.all([
+        this.o.auth.authedFetch(`/api/v1/academics/exams?sectionId=${q}`),
+        this.o.auth.authedFetch(`/api/v1/academics/roster?sectionId=${q}`),
+      ]);
+      if (ex.ok) this.exams = ((await ex.json()) as { exams: ExamOpt[] }).exams ?? [];
+      if (ro.ok) this.roster = ((await ro.json()) as { roster: RosterOpt[] }).roster ?? [];
+    } catch { /* offline */ }
     this.render();
   }
 
@@ -167,27 +228,40 @@ export class ScriptsView {
     const card = d.createElement('div');
     card.className = 'card card-form';
 
-    const esLabel = d.createElement('label');
-    esLabel.className = 'field';
-    esLabel.append(this.textNode('পরীক্ষা-বিষয় আইডি (examSubjectId)'));
-    const esInput = d.createElement('input');
-    esInput.type = 'text';
-    esInput.className = 'field-input';
-    esInput.value = this.examSubjectId;
-    esInput.placeholder = 'exam_subject uuid';
-    esInput.addEventListener('input', () => { this.examSubjectId = esInput.value.trim(); });
-    esLabel.append(esInput);
+    // Three pickers where there were two uuid boxes. The uuid still travels
+    // in the request — it is the identifier the API takes — but it is chosen
+    // by name and never typed, seen or spelled out (§15).
+    const esLabel = field(d, {
+      label: 'সেকশন', name: 'section', kind: 'select', value: this.sectionId,
+      options: this.sections.length
+        ? this.sections.map((x) => ({ value: x.id, label: `${x.className.bn} — ${x.name}` }))
+        : [{ value: '', label: 'কোনো সেকশন পাওয়া যায়নি' }],
+      onChange: (v) => { void this.loadSection(v); },
+    }).root;
 
-    const stLabel = d.createElement('label');
-    stLabel.className = 'field';
-    stLabel.append(this.textNode('শিক্ষার্থী আইডি'));
-    const stInput = d.createElement('input');
-    stInput.type = 'text';
-    stInput.className = 'field-input';
-    stInput.value = this.studentId;
-    stInput.placeholder = 'student uuid';
-    stInput.addEventListener('input', () => { this.studentId = stInput.value.trim(); });
-    stLabel.append(stInput);
+    const examOptions = this.exams.flatMap((ex) =>
+      ex.subjects.map((sub) => ({
+        value: sub.examSubjectId, label: `${ex.nameBn} — ${sub.subject.bn}`,
+      })));
+    const stLabel = field(d, {
+      label: 'পরীক্ষা ও বিষয়', name: 'examSubject', kind: 'select',
+      value: this.examSubjectId,
+      options: [{ value: '', label: examOptions.length ? 'বেছে নিন' : 'এই সেকশনে কোনো পরীক্ষা নেই' },
+                ...examOptions],
+      onChange: (v) => { this.examSubjectId = v; this.render(); },
+    }).root;
+
+    const stuLabel = field(d, {
+      label: 'শিক্ষার্থী', name: 'student', kind: 'select', value: this.studentId,
+      options: [{ value: '', label: this.roster.length ? 'বেছে নিন' : 'এই সেকশনে কোনো শিক্ষার্থী নেই' },
+                ...this.roster.map((r) => ({
+                  value: r.studentId,
+                  // Roll first: it is how a teacher identifies a script, and
+                  // how the scripts are stacked on the desk.
+                  label: `${r.rollNo} · ${r.fullName.bn || r.fullName.en || '—'}`,
+                }))],
+      onChange: (v) => { this.studentId = v; this.render(); },
+    }).root;
 
     const captureLabel = d.createElement('label');
     captureLabel.className = 'btn-primary btn-capture';
@@ -204,7 +278,7 @@ export class ScriptsView {
     });
     captureLabel.append(fileInput);
 
-    card.append(esLabel, stLabel, captureLabel);
+    card.append(esLabel, stLabel, stuLabel, captureLabel);
     root.append(card);
 
     if (this.notice) {

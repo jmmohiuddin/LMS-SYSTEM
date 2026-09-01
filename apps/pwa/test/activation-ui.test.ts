@@ -201,11 +201,22 @@ describe('the roster issue button (F-202 counter)', () => {
     // Swap in a slow fetch for this assertion.
     const view = r; void gate; void release; void view;
     const buttons = [...r.querySelectorAll('.roster-issue')] as HTMLButtonElement[];
-    assert.equal(buttons.length, 2);
+    // Two students, and from P3 TWO renderings of each row: the roster uses
+    // the shared DataTable, which emits a desktop table and a mobile list
+    // together and lets a media query hide one. jsdom has no CSS, so both are
+    // present here. The count is asserted per STUDENT rather than as a magic
+    // number, because the number is now a fact about the layout and the
+    // property being guarded is not.
+    const students = 2;
+    assert.equal(buttons.length % students, 0, 'one control per student per rendering');
+    assert.ok(buttons.length >= students);
     buttons[0].click();
-    // Synchronously after the click, the second button is disabled — two
-    // codes issued at once is two slips of paper and one confused teacher.
+    // Synchronously after the click, EVERY issue button is disabled — in both
+    // renderings. Two codes issued at once is two slips of paper and one
+    // confused teacher, and a control that is live in the hidden rendering is
+    // still live for a keyboard.
     const after = [...r.querySelectorAll('.roster-issue')] as HTMLButtonElement[];
-    assert.ok(after.every((b) => b.disabled));
+    assert.equal(after.length, buttons.length);
+    assert.ok(after.every((b) => b.disabled), 'a button stayed clickable');
   });
 });

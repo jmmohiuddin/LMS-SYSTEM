@@ -66,7 +66,10 @@ export type AuditAction =
   // level, stream, group, parent class or year — none of those are editable,
   // because changing them silently re-bases every enrolment beneath them.
   | 'academic.class.update'
-  | 'academic.section.update';
+  | 'academic.section.update'
+  // B-7. A guardianship ENDED. Never a delete — the row and every record that
+  // references the period it covered stay exactly where they are.
+  | 'ops.guardian.revoke';
 
 export interface AuditEntry {
   action: AuditAction;
@@ -86,12 +89,40 @@ export interface AuditClient {
  *
  * Pass the client the mutation itself ran on, so the row shares its
  * transaction and its tenant context.
+ *
+ * ── Why the SAVEPOINT, which looks like ceremony and is not ────────────────
+ * "Never throws" was implemented as a bare `catch`, and inside a transaction
+ * that is a trap rather than a safety net: PostgreSQL aborts the whole
+ * transaction on ANY statement error, so swallowing the exception leaves the
+ * caller running in a poisoned transaction whose COMMIT silently becomes a
+ * ROLLBACK. The caller loses its own write and reports success.
+ *
+ * That is not hypothetical. B-7's revocation endpoint passed a composite
+ * string as `entityId`, `entity_id` is a `uuid` column, and the result was a
+ * 200 response carrying a real timestamp for a revocation that had not
+ * happened — no error anywhere, and the row untouched. Every other call site
+ * in this repo has always had the same exposure.
+ *
+ * A SAVEPOINT scopes the damage to the audit INSERT: if it fails, only it is
+ * rolled back and the caller's transaction is still good. The audit row is
+ * lost, which is the documented trade-off; the operation is not, which was
+ * always the intent.
  */
 export async function writeAudit(
   client: AuditClient | PoolClient,
   actor: { tenantId: string; userId: string; role: string },
   entry: AuditEntry,
 ): Promise<void> {
+  // A name, not a literal: nested audit writes inside one transaction must
+  // not release each other's savepoints.
+  const sp = `audit_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await client.query(`SAVEPOINT ${sp}`);
+  } catch {
+    // No transaction to save-point inside (a bare pool client). The INSERT
+    // below then stands alone and can only fail on its own.
+  }
+
   try {
     await client.query(
       `INSERT INTO audit.activity_log
@@ -109,7 +140,11 @@ export async function writeAudit(
         entry.after === undefined ? null : JSON.stringify(entry.after),
       ],
     );
+    try { await client.query(`RELEASE SAVEPOINT ${sp}`); } catch { /* see above */ }
   } catch {
     // See the header: the operation is what matters, the narration is not.
+    // The rollback is what keeps that true — without it the caller's own
+    // work is discarded at COMMIT and nobody is told.
+    try { await client.query(`ROLLBACK TO SAVEPOINT ${sp}`); } catch { /* nothing to undo */ }
   }
 }

@@ -2599,6 +2599,16 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 .notice-confirm-line { margin: 0; font-size: var(--text-sm); font-weight: 600;
                        color: var(--c-ink); flex: 1; min-width: 0; }
 
+/* B-7. `.notice-confirm` is a ROW — label, one line, two buttons — and that is
+   right for a yes/no. Ending a guardianship asks for a reason in the same
+   step, because the reason is required and a yes/no followed by a 400 is an
+   obstacle rather than a confirmation. Six children in a row layout produced
+   a squeezed strip of vertical text; this stacks them. */
+.notice-confirm.is-stacked { flex-direction: column; align-items: stretch;
+                             gap: var(--s-3); }
+.notice-confirm.is-stacked .notice-confirm-line { flex: none; }
+.notice-confirm.is-stacked .action-row { justify-content: flex-end; }
+
 /* ── Academic calendar (R-4) ───────────────────────────────────────────
    A month grid is tabular data, so it is a <table> and inherits
    .data-table's scroll container and header rules. Only the cell itself

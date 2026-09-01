@@ -2578,6 +2578,11 @@ async function handler8(req, res) {
 
 // packages/server-core/src/audit.ts
 async function writeAudit(client, actor, entry) {
+  const sp = `audit_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await client.query(`SAVEPOINT ${sp}`);
+  } catch {
+  }
   try {
     await client.query(
       `INSERT INTO audit.activity_log
@@ -2595,7 +2600,15 @@ async function writeAudit(client, actor, entry) {
         entry.after === void 0 ? null : JSON.stringify(entry.after)
       ]
     );
+    try {
+      await client.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch {
+    }
   } catch {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+    } catch {
+    }
   }
 }
 
@@ -3798,6 +3811,7 @@ async function createYear(db, ctx, b) {
 
 // services/ops-svc/api/guardians.ts
 var GUARDIAN_ADMIN = ["principal", "school_owner", "it_admin"];
+var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var RELATIONS = /* @__PURE__ */ new Set([
   "father",
   "mother",
@@ -3854,6 +3868,11 @@ async function handler15(req, res) {
       json(res, 200, await permissions(db, ctx, req), cors);
       return;
     }
+    if (req.method === "DELETE") {
+      requireRole(claims, GUARDIAN_ADMIN);
+      json(res, 200, await revoke(db, ctx, req), cors);
+      return;
+    }
     json(res, 405, { error: "method_not_allowed" }, cors);
   } catch (err) {
     if (err instanceof HttpError) {
@@ -3862,6 +3881,95 @@ async function handler15(req, res) {
     }
     json(res, 500, { error: "internal_error" }, cors);
   }
+}
+async function revoke(db, ctx, req) {
+  const body = await readJson(req);
+  const studentId = (body.studentId ?? "").trim();
+  const guardianId = (body.guardianId ?? "").trim();
+  const reason = (body.reason ?? "").trim();
+  if (!UUID_RE5.test(studentId)) {
+    throw new HttpError(400, "studentId \u09A6\u09B0\u0995\u09BE\u09B0", "bad_student", { field: "studentId" });
+  }
+  if (!UUID_RE5.test(guardianId)) {
+    throw new HttpError(400, "guardianId \u09A6\u09B0\u0995\u09BE\u09B0", "bad_guardian", { field: "guardianId" });
+  }
+  if (!reason) {
+    throw new HttpError(
+      400,
+      "\u0995\u09C7\u09A8 \u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995 \u09B6\u09C7\u09B7 \u09B9\u099A\u09CD\u099B\u09C7 \u09A4\u09BE \u09B2\u09BF\u0996\u09C1\u09A8",
+      "reason_required",
+      { field: "reason" }
+    );
+  }
+  if (reason.length > 200) {
+    throw new HttpError(
+      400,
+      "\u0995\u09BE\u09B0\u09A3 \u09E8\u09E6\u09E6 \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B2\u09BF\u0996\u09C1\u09A8",
+      "reason_too_long",
+      { field: "reason" }
+    );
+  }
+  return db.withTenant(ctx, async (c) => {
+    const { rows: before } = await c.query(
+      `SELECT gs.id AS link_id, gs.relation, gs.is_primary,
+              g.full_name_bn AS guardian_name, s.full_name_bn AS student_name
+         FROM guardianships gs
+         JOIN users g ON g.id = gs.guardian_id
+         JOIN users s ON s.id = gs.student_id
+        WHERE gs.student_id = $1 AND gs.guardian_id = $2 AND gs.revoked_at IS NULL`,
+      [studentId, guardianId]
+    );
+    if (before.length === 0) {
+      throw new HttpError(404, "\u098F\u0987 \u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "guardianship_not_found");
+    }
+    let revokedAt;
+    try {
+      const { rows } = await c.query(
+        `SELECT revoked_at FROM app.revoke_guardianship($1::uuid, $2::uuid, $3)`,
+        [studentId, guardianId, reason]
+      );
+      revokedAt = rows[0].revoked_at;
+    } catch (err) {
+      const message2 = err.message ?? "";
+      if (message2.includes("last_contactable_guardian")) {
+        throw new HttpError(
+          409,
+          "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09A8\u09BF\u099C\u09C7\u09B0 \u09AB\u09CB\u09A8 \u09AC\u09BE \u0987\u09AE\u09C7\u0987\u09B2 \u09A8\u09C7\u0987, \u0986\u09B0 \u0987\u09A8\u09BF\u0987 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u09AF\u09CB\u0997\u09BE\u09AF\u09CB\u0997\u09AF\u09CB\u0997\u09CD\u09AF \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995\u0964 \u0986\u0997\u09C7 \u0985\u09A8\u09CD\u09AF \u098F\u0995\u099C\u09A8 \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995 \u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u09B0\u09C1\u09A8, \u09A4\u09BE\u09B0\u09AA\u09B0 \u098F\u0987 \u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995\u099F\u09BF \u09B6\u09C7\u09B7 \u0995\u09B0\u09C1\u09A8\u0964",
+          "last_contactable_guardian"
+        );
+      }
+      if (message2.includes("guardianship_not_found")) {
+        throw new HttpError(404, "\u098F\u0987 \u09B8\u09AE\u09CD\u09AA\u09B0\u09CD\u0995\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "guardianship_not_found");
+      }
+      throw err;
+    }
+    await writeAudit(c, ctx, {
+      action: "ops.guardian.revoke",
+      entityType: "guardianship",
+      // The link's own id. `entity_id` is a uuid column, and the first draft
+      // passed `${studentId}:${guardianId}` — which the audit insert rejected,
+      // poisoning the transaction and silently discarding the revocation.
+      entityId: before[0].link_id,
+      // Names, not ids: this is the entry somebody reads six months later
+      // asking why a parent stopped receiving messages.
+      before: {
+        student: before[0].student_name,
+        guardian: before[0].guardian_name,
+        relation: before[0].relation,
+        isPrimary: before[0].is_primary
+      },
+      after: { revokedAt, reason }
+    });
+    return {
+      studentId,
+      guardianId,
+      revokedAt,
+      wasPrimary: before[0].is_primary,
+      // Said back so the screen can warn without a second request: a student
+      // whose primary guardian has just ended needs another one named.
+      needsNewPrimary: before[0].is_primary
+    };
+  });
 }
 async function forStudent(db, ctx, studentId, mayEdit) {
   return db.withTenant(ctx, async (c) => {

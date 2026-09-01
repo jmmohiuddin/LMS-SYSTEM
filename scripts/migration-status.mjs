@@ -112,6 +112,11 @@ const SENTINELS = [
   // home loses the card it was built around — the same absence P4 shipped
   // deliberately, which is why it needs probing rather than noticing.
   ['049_student_day',                  'function',   'app.student_day'],
+  // 050's function. Absent, a guardian who has been unlinked keeps reading a
+  // child's attendance, results and fees — and keeps receiving the absence
+  // SMS. The column would be the more direct probe; the function is the one
+  // whose absence a school would FEEL.
+  ['050_guardianship_revocation',      'function',   'app.revoke_guardianship'],
 ];
 
 /**
@@ -168,6 +173,7 @@ const MEANING = {
   '047_web_push':                    'R-9 — a notice can reach a parent over the internet instead of over SMS',
   '048_higher_secondary_subjects':   'R-7 — a College and the upper half of a School & College get subjects at all',
   '049_student_day':                 'B-15 — a student can be told what class is next, section-scoped and parallel-block filtered',
+  '050_guardianship_revocation':     'B-7 — a guardianship can end without being deleted, and a former guardian stops reading the child',
 };
 
 const QUERIES = {

@@ -45,6 +45,9 @@ import { writeAudit } from '../../../packages/server-core/src/audit.ts';
 /** Mirrors guardianship_insert_scope / _update_scope in migration 042. */
 const GUARDIAN_ADMIN = ['principal', 'school_owner', 'it_admin'];
 
+/** An id from a URL or a body is a string until it is checked. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const RELATIONS = new Set([
   'father', 'mother', 'brother', 'sister', 'uncle', 'aunt',
   'grandparent', 'legal_guardian', 'other',
@@ -112,6 +115,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     if (req.method === 'POST')  { requireRole(claims, GUARDIAN_ADMIN); json(res, 200, await link(db, ctx, req), cors); return; }
     if (req.method === 'PATCH') { requireRole(claims, GUARDIAN_ADMIN); json(res, 200, await permissions(db, ctx, req), cors); return; }
+    // B-7. DELETE is the verb the office means; the database does an UPDATE.
+    if (req.method === 'DELETE') { requireRole(claims, GUARDIAN_ADMIN); json(res, 200, await revoke(db, ctx, req), cors); return; }
 
     json(res, 405, { error: 'method_not_allowed' }, cors);
   } catch (err) {
@@ -125,6 +130,119 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
 type Db = Awaited<ReturnType<typeof sharedDb>>;
 type Ctx = { tenantId: string; userId: string; role: string };
+
+/**
+ * End a guardianship.  (B-7)
+ *
+ * ── What this is NOT ───────────────────────────────────────────────────────
+ * Not a delete. Migration 042 refuses DELETE on `guardianships` for every
+ * role and gives the reason — a family relationship is a record, and the
+ * receipts, attendance rows and audit entries that reference this period must
+ * stay readable. Migration 050 added the end date this endpoint stamps.
+ *
+ * ── Why the work is in the database ────────────────────────────────────────
+ * `app.revoke_guardianship()` is SECURITY INVOKER, so RLS decides whether this
+ * caller may write; the refusal to strand a child with no contactable adult is
+ * enforced there too, in the same statement, rather than as a check this
+ * handler could forget. What is left here is the HTTP shape: validate, call,
+ * translate the two named errors into sentences, and write the audit entry.
+ */
+async function revoke(db: Db, ctx: Ctx, req: IncomingMessage) {
+  const body = await readJson<{
+    studentId?: string; guardianId?: string; reason?: string;
+  }>(req);
+  const studentId = (body.studentId ?? '').trim();
+  const guardianId = (body.guardianId ?? '').trim();
+  const reason = (body.reason ?? '').trim();
+
+  if (!UUID_RE.test(studentId)) {
+    throw new HttpError(400, 'studentId দরকার', 'bad_student', { field: 'studentId' });
+  }
+  if (!UUID_RE.test(guardianId)) {
+    throw new HttpError(400, 'guardianId দরকার', 'bad_guardian', { field: 'guardianId' });
+  }
+  // A reason is required by the database too. Asked for here as well so the
+  // person gets a field-level message instead of a constraint violation.
+  if (!reason) {
+    throw new HttpError(400, 'কেন সম্পর্ক শেষ হচ্ছে তা লিখুন', 'reason_required',
+      { field: 'reason' });
+  }
+  if (reason.length > 200) {
+    throw new HttpError(400, 'কারণ ২০০ অক্ষরের মধ্যে লিখুন', 'reason_too_long',
+      { field: 'reason' });
+  }
+
+  return db.withTenant(ctx, async (c) => {
+    // Read the names first: after the revocation the row is still visible to
+    // this role, but the audit entry reads better written from the state that
+    // was, and a 404 here is the honest answer for an id that is not ours.
+    const { rows: before } = await c.query<{
+      link_id: string;
+      relation: string; is_primary: boolean; guardian_name: string; student_name: string;
+    }>(
+      `SELECT gs.id AS link_id, gs.relation, gs.is_primary,
+              g.full_name_bn AS guardian_name, s.full_name_bn AS student_name
+         FROM guardianships gs
+         JOIN users g ON g.id = gs.guardian_id
+         JOIN users s ON s.id = gs.student_id
+        WHERE gs.student_id = $1 AND gs.guardian_id = $2 AND gs.revoked_at IS NULL`,
+      [studentId, guardianId],
+    );
+    if (before.length === 0) {
+      throw new HttpError(404, 'এই সম্পর্কটি পাওয়া যায়নি', 'guardianship_not_found');
+    }
+
+    let revokedAt: string;
+    try {
+      const { rows } = await c.query<{ revoked_at: string }>(
+        `SELECT revoked_at FROM app.revoke_guardianship($1::uuid, $2::uuid, $3)`,
+        [studentId, guardianId, reason],
+      );
+      revokedAt = rows[0].revoked_at;
+    } catch (err) {
+      const message = (err as { message?: string }).message ?? '';
+      // The one refusal a person can act on, so it says what to do about it.
+      if (message.includes('last_contactable_guardian')) {
+        throw new HttpError(409,
+          'এই শিক্ষার্থীর নিজের ফোন বা ইমেইল নেই, আর ইনিই একমাত্র যোগাযোগযোগ্য অভিভাবক। '
+          + 'আগে অন্য একজন অভিভাবক যুক্ত করুন, তারপর এই সম্পর্কটি শেষ করুন।',
+          'last_contactable_guardian');
+      }
+      if (message.includes('guardianship_not_found')) {
+        throw new HttpError(404, 'এই সম্পর্কটি পাওয়া যায়নি', 'guardianship_not_found');
+      }
+      throw err;
+    }
+
+    await writeAudit(c, ctx, {
+      action: 'ops.guardian.revoke',
+      entityType: 'guardianship',
+      // The link's own id. `entity_id` is a uuid column, and the first draft
+      // passed `${studentId}:${guardianId}` — which the audit insert rejected,
+      // poisoning the transaction and silently discarding the revocation.
+      entityId: before[0].link_id,
+      // Names, not ids: this is the entry somebody reads six months later
+      // asking why a parent stopped receiving messages.
+      before: {
+        student: before[0].student_name,
+        guardian: before[0].guardian_name,
+        relation: before[0].relation,
+        isPrimary: before[0].is_primary,
+      },
+      after: { revokedAt, reason },
+    });
+
+    return {
+      studentId,
+      guardianId,
+      revokedAt,
+      wasPrimary: before[0].is_primary,
+      // Said back so the screen can warn without a second request: a student
+      // whose primary guardian has just ended needs another one named.
+      needsNewPrimary: before[0].is_primary,
+    };
+  });
+}
 
 async function forStudent(db: Db, ctx: Ctx, studentId: string, mayEdit: boolean) {
   return db.withTenant(ctx, async (c) => {

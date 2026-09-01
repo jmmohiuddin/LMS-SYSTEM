@@ -1711,6 +1711,29 @@ export class DemoAuth extends Auth {
       }
 
       case '/api/v1/ops/guardians': {
+        // B-7. Ending a relationship. The demo answers the refusal too — the
+        // last contactable guardian of a student with no phone of their own —
+        // because a preview that only shows the happy path teaches an office
+        // that the button always works.
+        if (init.method === 'DELETE') {
+          const req = JSON.parse(String(init.body ?? '{}')) as
+            { guardianId?: string; reason?: string };
+          if (!(req.reason ?? '').trim()) {
+            return new Response(JSON.stringify({
+              error: 'reason_required', message: 'কেন সম্পর্ক শেষ হচ্ছে তা লিখুন',
+            }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+          }
+          if (req.guardianId === 'demo-g1') {
+            return new Response(JSON.stringify({
+              error: 'last_contactable_guardian',
+              message: 'এই শিক্ষার্থীর নিজের ফোন বা ইমেইল নেই, আর ইনিই একমাত্র যোগাযোগযোগ্য '
+                + 'অভিভাবক। আগে অন্য একজন অভিভাবক যুক্ত করুন, তারপর এই সম্পর্কটি শেষ করুন।',
+            }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+          }
+          return ok({ studentId: 'demo-stu-1', guardianId: req.guardianId,
+                      revokedAt: new Date().toISOString(),
+                      wasPrimary: false, needsNewPrimary: false });
+        }
         if (init.method === 'POST') {
           const req = JSON.parse(String(init.body ?? '{}')) as { guardianId?: string; phone?: string };
           // The duplicate-guardian case, reproduced: this number is already

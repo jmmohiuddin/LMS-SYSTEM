@@ -24,6 +24,7 @@
  * invisible is one nobody trusts and everybody works around.
  */
 import type { Auth } from './auth.ts';
+import { humanError } from './ui/index.ts';
 import { skeleton, errorState, emptyState, successNote, confirmDialog, bnNum } from './view-states.ts';
 
 export interface GuardianLink {
@@ -70,6 +71,8 @@ export class GuardianPanel {
   private error = '';
   private notice = '';
   private busy = false;
+  /** The guardian whose "end this relationship" form is open, if any. */
+  private ending: string | null = null;
   private mode: 'list' | 'add' = 'list';
   private searched = false;
 
@@ -279,7 +282,135 @@ export class GuardianPanel {
       });
       card.append(mk);
     }
+
+    // B-7. Ending a relationship. Offered last, and visually last, because it
+    // is the one action on this card that another screen cannot undo.
+    const end = d.createElement('button');
+    end.type = 'button';
+    end.className = 'btn-ghost btn-small';
+    end.disabled = this.busy;
+    // NOT "মুছে ফেলুন". Nothing is deleted — the link keeps its row and its
+    // history, and every receipt and attendance record that references this
+    // period stays readable. A delete label would promise otherwise.
+    end.textContent = 'সম্পর্ক শেষ করুন';
+    end.addEventListener('click', () => { this.ending = g.guardianId; this.render(); });
+    card.append(end);
+
+    if (this.ending === g.guardianId) card.append(this.endForm(g));
     return card;
+  }
+
+  /**
+   * The confirmation, with the reason field inside it.
+   *
+   * A plain confirm dialog is not enough here: the reason is required by the
+   * database, so a yes/no dialog would be followed by a 400 the person cannot
+   * act on. Asking for it in the same step is the difference between a
+   * confirmation and an obstacle.
+   */
+  private endForm(g: GuardianLink): HTMLElement {
+    const d = this.o.doc;
+    const box = d.createElement('div');
+    // `is-stacked`: the base confirm bar is a row built for a yes/no, and this
+    // one carries a required reason field as well.
+    box.className = 'card notice-confirm is-stacked';
+    box.setAttribute('role', 'alertdialog');
+    box.setAttribute('aria-modal', 'false');
+    box.setAttribute('aria-label', `${g.nameBn}-এর সাথে সম্পর্ক শেষ করা`);
+    box.style.margin = 'var(--s-3) 0 0';
+
+    const h = d.createElement('p');
+    h.className = 'notice-confirm-label';
+    h.textContent = `${g.nameBn}-এর সাথে সম্পর্ক শেষ করবেন?`;
+
+    const what = d.createElement('p');
+    what.className = 'notice-confirm-line';
+    // The consequences, in the order they will be noticed, and the reassurance
+    // last — because the office's first fear is that they are deleting a
+    // record and their second is whether the person stops getting messages.
+    what.textContent =
+      'এর পরে ইনি এই শিক্ষার্থীর হাজিরা, ফলাফল বা ফি আর দেখতে পাবেন না, '
+      + 'এবং কোনো এসএমএস বা নোটিশ পাবেন না। '
+      + 'আগের রসিদ, হাজিরা ও ফলাফলের কোনো তথ্য মুছে যাবে না — সম্পর্কটি কেবল শেষ '
+      + 'হিসেবে চিহ্নিত থাকবে, কে ও কবে শেষ করেছেন তা-সহ।';
+
+    const label = d.createElement('label');
+    label.className = 'ui-field-label';
+    label.setAttribute('for', 'gp-end-reason');
+    label.textContent = 'কেন শেষ হচ্ছে?';
+
+    const input = d.createElement('input');
+    input.id = 'gp-end-reason';
+    input.type = 'text';
+    input.className = 'ui-input';
+    input.maxLength = 200;
+    input.placeholder = 'যেমন: ভুল করে যুক্ত হয়েছিল';
+
+    const err = d.createElement('p');
+    err.className = 'ui-field-error';
+    err.setAttribute('role', 'alert');
+    err.hidden = true;
+
+    const row = d.createElement('div');
+    row.className = 'action-row';
+    const cancel = d.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn-secondary btn-small';
+    cancel.textContent = 'বাতিল';
+    cancel.addEventListener('click', () => { this.ending = null; this.render(); });
+    const go = d.createElement('button');
+    go.type = 'button';
+    go.className = 'btn-danger btn-small';
+    go.textContent = 'সম্পর্ক শেষ করুন';
+    go.addEventListener('click', () => {
+      const reason = input.value.trim();
+      if (!reason) {
+        err.textContent = 'কারণ লিখুন।';
+        err.hidden = false;
+        input.focus();
+        return;
+      }
+      err.hidden = true;
+      void this.endLink(g, reason, err);
+    });
+    row.append(cancel, go);
+
+    box.append(h, what, label, input, err, row);
+    return box;
+  }
+
+  private async endLink(g: GuardianLink, reason: string, err: HTMLElement): Promise<void> {
+    this.busy = true;
+    this.render();
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/ops/guardians', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: this.o.studentId, guardianId: g.guardianId, reason }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as
+          { message?: string; error?: string };
+        this.busy = false;
+        this.render();
+        // Re-find the freshly rendered error line: `render()` replaced the DOM.
+        const live = this.o.root.querySelector('.ui-field-error');
+        const target = (live as HTMLElement | null) ?? err;
+        // The server's own sentence where it has one — for the last-contactable
+        // guardian it names what to do first, which nothing here could know.
+        target.textContent = body.message ?? humanError(body.error ?? null, res.status);
+        target.hidden = false;
+        return;
+      }
+      this.ending = null;
+      this.notice = `${g.nameBn}-এর সাথে সম্পর্ক শেষ হয়েছে।`;
+      await this.load();
+    } catch {
+      this.busy = false;
+      this.render();
+    } finally {
+      this.busy = false;
+    }
   }
 
   /**

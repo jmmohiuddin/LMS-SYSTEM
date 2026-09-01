@@ -322,6 +322,10 @@ export function brandingCssVars(
   // cannot read the stylesheet; design-tokens.test.ts asserts they still match.
   const LIGHT_GROUNDS = [softLight, LIGHT_SURFACE] as const;
   const DARK_GROUNDS = [softDark, DARK_SURFACE] as const;
+  // The same pair for a different hue — `--c-info` is derived from the ACCENT
+  // colour, so it needs its own soft tint as one of its grounds.
+  const LIGHT_GROUNDS_FOR = (soft: string) => [soft, LIGHT_SURFACE] as const;
+  const DARK_GROUNDS_FOR = (soft: string) => [soft, DARK_SURFACE] as const;
   return {
     light: {
       // The label for anything filled with --c-primary. Seventeen rules in
@@ -336,7 +340,15 @@ export function brandingCssVars(
       '--c-primary-ink': shade(p, -0.45),
       '--c-primary-soft': softLight,
       '--c-link': readableBrandText(p, LIGHT_GROUNDS, -0.28, -0.05),
-      '--c-info': a,
+      // `--c-info` is TEXT, not a fill. Every usage in app.css is a
+      // `color:` — the tinted backgrounds all read `--c-info-soft` — so
+      // assigning the raw accent here is the same mistake `--c-primary-text`
+      // had until P4: a school whose accent is pale gets unreadable type. It
+      // cost the ledger screen 4.38:1 on tenant B, whose accent is #a76a47,
+      // which is the exact colour the avatar palette had to darken for the
+      // same reason. Derived against both grounds it lands on.
+      '--c-info': readableBrandText(a, LIGHT_GROUNDS_FOR(mixWithWhite(a, 0.88)),
+                                    -0.28, -0.05),
       '--c-info-soft': mixWithWhite(a, 0.88),
       // Raw palette names, for public/design/styles.css.
       '--color-primary': p,
@@ -355,7 +367,8 @@ export function brandingCssVars(
       '--c-primary-ink': shade(p, 0.58),
       '--c-primary-soft': softDark,
       '--c-link': readableBrandText(p, DARK_GROUNDS, 0.42, 0.05),
-      '--c-info': shade(a, 0.38),
+      // Same in dark, against the dark tint and the dark card surface.
+      '--c-info': readableBrandText(a, DARK_GROUNDS_FOR(shade(a, -0.6)), 0.42, 0.05),
       '--c-info-soft': shade(a, -0.6),
       '--color-primary': p,
       '--color-primary-hover': shade(p, 0.12),

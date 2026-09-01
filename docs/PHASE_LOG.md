@@ -8416,3 +8416,184 @@ Recorded by D17's convention: write the entry, commit, append the hash.
 
 **P5 continues** with `B-34` — the IT Admin surface and the Principal's
 remaining screens.
+
+---
+
+# P5 / B-34 — the IT Admin and Principal surfaces   (2026-09-01) · **PARTIAL**
+
+Continues P5. Three real defects found and fixed, two structural migrations
+done, and a meaningful part of B-34 deliberately not attempted — see the end.
+
+---
+
+## The audit that changed the plan
+
+The obvious reading of B-34 was "rewrite ~7,000 lines of legacy view code onto
+P2". Measuring first said otherwise, twice.
+
+**The look was already canonical.** `.card` and `.ui-card` differ only in a
+padding declaration and a token alias — P0 converged them when it re-pointed
+the palette. So a "migration" that rewrote fourteen files to change nothing
+visible would have been fourteen chances to break working screens.
+
+**The real gap was shape, not style.** Rendered at 1440, `users-view` was six
+`.system-row` stacked rows across a 1142px content column, and at 375 the same
+rows with no overflow. The MOBILE shape was already right; the DESKTOP one was
+a phone layout stretched, which is exactly what §4 forbids. That is what P2's
+`dataTable` fixes — one column definition, a table for a desktop and a
+MobileList for a phone — and no amount of CSS convergence would have.
+
+So the work went where the gap was.
+
+## Migrated to `dataTable`
+
+| Screen | Before | After |
+|---|---|---|
+| `users-view` | stacked rows at every width | table at desktop · list on a phone |
+| `students-view` | stacked rows at every width | table at desktop · list on a phone |
+
+Both keep every rule they had. `canManage` still gates the actions and the
+action column simply does not exist without it; an activation code is still
+offered only to an account that can still sign in; the deactivation
+confirmation keeps its wording. Both show the school's own code — `T-101`,
+the permanent student id — and never a uuid.
+
+**`audit-view` was deliberately NOT migrated to `dataTable`**, and that is an
+exception with a reason rather than an omission: the value of an audit row IS
+its before/after diff, and a table cell cannot hold a two-column diff. It keeps
+its disclosure list and gains a desktop column rhythm (`au-rows`) so a 1440px
+screen scans like a table while each row still opens beneath.
+
+## Three defects, all found by rendering the thing
+
+### 1. A raw uuid on every expanded audit entry
+
+`শনাক্তকারী: 7b06d000-0000-4000-8000-…`. §14 forbids a uuid in visible or
+accessible text, and it was never usable: a school office cannot read one down
+a phone, cannot search by it, and cannot do anything with it. Removed, and
+nothing replaced it — "which record" is answered by the entity type on the row
+and by the diff itself.
+
+### 2. `--c-info` was a raw tenant accent used as TYPE
+
+The ledger's debit amounts measured **4.38:1** in light mode on tenant B.
+`brandingCssVars` assigned `'--c-info': accentColor` unchanged, and every
+`--c-info` usage in `app.css` is a `color:` — the tinted grounds all read
+`--c-info-soft`. So a school's accent, chosen as a fill, was being used as text
+with no readability derivation.
+
+This is the same bug P4 fixed for `--c-primary-text` and did not generalise.
+Tenant B's accent is `#a76a47` — the exact colour the avatar palette had to
+darken in P4 for the same reason, arriving by a second route. It now goes
+through `readableBrandText` against both grounds it lands on, in both themes,
+with a test over eight brands.
+
+### 3. Branding offered a class teacher twelve live fields and a dead save
+
+`readOnly` was set only when `GET /ops/branding` returned 403 — and that GET is
+**public**: branding is what the login screen draws before anybody signs in. So
+a teacher got 200, twelve editable inputs, no explanation, and a save that
+could only ever fail. The exact "invitation to a 403" this codebase avoids
+everywhere else.
+
+Now derived from the role, mirroring `BRANDING_WRITERS` in the endpoint.
+Proven both ways in a browser: a class teacher gets **0 of 12** fields editable
+and the sentence "আপনি শুধু দেখতে পারবেন — পরিবর্তনের অনুমতি প্রধান শিক্ষক বা
+আইটি প্রশাসকের।"; an IT admin gets **12 of 12**.
+
+## One more permission wording folded in
+
+`audit-view` had a bespoke refusal predating B-30, plus
+`this.error.includes('কেবল')` deciding whether to draw a retry — control flow
+reading a substring of a sentence, which breaks the day somebody rewords it.
+Now a `denied` flag and `permissionState`, with the roles that CAN read the log
+kept in the detail line: a generic sentence would have lost information the
+bespoke one carried, and "these three can see it" is more useful to a refused
+coordinator than "ask the head teacher".
+
+## A measurement artifact, recorded as a non-defect
+
+The sweep reported `INPUT:13` — a 13px-tall checkbox — as a tap-target failure
+across several screens. Measured directly: the enclosing `<label>` is
+**48 × 1077** and clicking it toggles the box, so the target is compliant and
+the probe was measuring the wrong element. The probe now measures the enclosing
+label when there is one. Same class as P4's transition artifacts: worth writing
+down so the next sweep does not rediscover it.
+
+## Browser acceptance
+
+Transitions frozen. `d-rail-toggle` at 32×32 is a desktop-only `pointer: fine`
+control, above WCAG 2.2 AA's 24px and below the probe's 44px, and is left as it
+is — the mobile surfaces have no sub-44px target.
+
+| Persona | Widths | Routes | Checks | Failures |
+|---|---|---|---|---|
+| IT Admin, tenant A | 375 · 1024 · 1440 | 10 | 1,223 | **0** |
+| Principal, tenant B | 360 · 768 · 1440 · 1600 | 17 / 7 | 2,738 | **0** |
+
+Both themes at every width. **0 contrast failures, 0 horizontal overflow,
+0 unnamed controls, 0 `undefined`, 0 uuids on screen** — the last one being the
+audit fix, verified as an absence across every route rather than on the one
+screen that had it.
+
+## Security, proven as a pair
+
+Driving the demo as a **class teacher** and typing management URLs:
+
+| Route | Result |
+|---|---|
+| `users` | refused, canonical sentence |
+| `institution` | refused |
+| `rollover` | refused |
+| `audit` | refused, and names the three roles that may read it |
+| `branding` | renders **read-only**, 0/12 fields editable, and says why |
+| `settings`, `imports` | not registered for this role — the teacher home renders |
+| `system` | renders: it probes public endpoints and holds no tenant data |
+
+And the legitimate half: an IT admin gets 12/12 branding fields and the full
+user table with both actions.
+
+**Not evidence, and not claimed as such:** `/api/v1/platform/tenants` answers
+503 from the static preview because the preview mounts no API. The platform
+boundary is proven by `services/platform-svc`'s own suite (26 tests) and by
+R-7's three-credential design, not by that 503.
+
+## B-7 regression, after the surrounding UI moved
+
+Re-run twice with the rest of the DB suites: 16/16 both times. The guardian
+unlink still ends future visibility, still leaves the row and its history, and
+still stops the absence SMS — asserted by running the dispatcher's own query
+under the dispatcher's own role.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,476 passing**, 12 workspaces |
+| Key DB suites ×2 | 57/57, 57/57 (b6 · b7 · p4-privacy · b15) |
+| TypeScript — all three CI configs | 0 errors |
+| Build | app.js + sw.js + 11 API bundles |
+| Migrations | 50/50, fully migrated |
+| `index.html` | SHA `496199bd` — unchanged |
+
+## What B-34 still does NOT cover
+
+P5 stays **PARTIAL**. Named precisely, because the completion gate is a list
+and this is the part of it that is not ticked:
+
+- **Academic structure** keeps its own markup. The hierarchy renders and works
+  — year → class → group → section → teacher → students, with the P5 rename
+  drawer on it — but it was not rebuilt on `dataTable`/P2 primitives, and the
+  brief asks for that explicitly.
+- **Imports** were not touched: no dry-run/validation/retry states reviewed,
+  and "do not lose user input on a recoverable error" is unverified.
+- **Settings** hierarchy was not restructured.
+- **Guardians, teachers** have no dedicated list screens; they are reached
+  through the student drawer and the user list.
+- **Publish/results, calendar, documents, fees, invoices, ledger, compose,
+  inbox** render and sweep clean, but were not migrated to P2 primitives.
+- **System health** keeps its own four-state vocabulary (`on` · `dark` ·
+  `invisible` · `unknown`) rather than the brief's healthy/warning/blocked/
+  unavailable. It probes real endpoints and fakes nothing; the mapping is
+  recorded rather than churned, because "invisible by design" is a state the
+  brief's four words cannot express and an operator needs.

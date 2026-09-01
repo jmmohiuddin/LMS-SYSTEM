@@ -124,7 +124,7 @@ it ended.
 
 | ID | Item | Why it matters | Phase | Priority | Blocker | Status | Source |
 |---|---|---|---|---|---|---|---|
-| **B-34** | The Principal's other screens and **all** IT Admin screens keep pre-P2 markup | P5 delivered B-7 and the Principal dashboard. `academic`, `students`, `publish`, `calendar`, `documents`, `audit`, settings, users, imports and branding are unchanged, and the audit viewer's UX (actor names, filters, changed fields, permission-aware redaction) is still what R-3 shipped. | **P5, continuing** | HIGH | No | **OPEN** | P5 |
+| **B-34** | The Principal's other screens and the IT Admin screens | P5 delivered B-7 and the Principal dashboard first. The audit that followed found the LOOK was already canonical (P0 converged `.card` and `.ui-card`) and the gap was SHAPE: at 1440 the list screens were phone layouts stretched. | **P5, continuing** | HIGH | No | **PARTIAL.** Done: `users` and `students` on `dataTable` (table at desktop, MobileList on a phone); the audit viewer's raw uuid removed, its refusal made canonical, and a desktop column rhythm added; branding's read-only state derived from role instead of from a 403 on a public GET; `--c-info` derived for readability. **Not done:** academic structure on P2 primitives · imports (dry-run/validation/retry, input preservation) · settings hierarchy · dedicated teacher and guardian list screens · publish/calendar/documents/fees/ledger/compose migrations · system health's state vocabulary. | P5 |
 
 ## 7. DOCUMENTATION DEBT
 

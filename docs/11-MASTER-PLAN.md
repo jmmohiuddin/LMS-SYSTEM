@@ -1357,7 +1357,7 @@ Last reconciled **2026-09-01**, after the Pre-P5 Product Closure Pass.
 | P4 | Student + guardian experience | **COMPLETE** 2026-09-01 | `95c34bf` |
 | — | **Pre-P5 Product Closure Pass** | **COMPLETE** 2026-09-01 | B-8 logout/cache privacy · B-15 student routine (migration 049) · B-6 class/section rename · permission-message polish. B-7 deferred with its design written |
 | P5-0 | Stabilization gate before any UI work | **COMPLETE** 2026-09-01 | B-31 typecheck scope == CI, with a drift guard · B-30 one permission pattern across nine student views. Opened B-32, B-33 |
-| P5 | Principal + IT admin final UI **+ B-7** | **IN PROGRESS — PARTIAL** | P5-0 done · **B-7 RESOLVED** (migration 050) · Principal **dashboard** rebuilt on the design system. **Not started:** every IT Admin screen, the Principal's other screens, the audit viewer's UX (`B-34`) |
+| P5 | Principal + IT admin final UI **+ B-7** | **IN PROGRESS — PARTIAL** | P5-0 done · **B-7 RESOLVED** (migration 050) · Principal dashboard rebuilt · **B-34 partial**: `users` and `students` on `dataTable`, audit viewer's uuid removed and refusal made canonical, branding read-only derived from role, `--c-info` made readable. **Still open in B-34:** academic structure on P2, imports, settings hierarchy, teacher/guardian list screens, the remaining Principal screens |
 | P6 | Screens that still need designing | **NOT STARTED** | — |
 | P7 | Platform Console restyle **+ D16 commercial controls** | **NOT STARTED** | D16 is recorded and explicitly reserved for P7 |
 | P8 | Retire the legacy `--c-*` alias layer | **NOT STARTED** | — |

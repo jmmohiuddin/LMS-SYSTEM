@@ -22,6 +22,7 @@ import { JSDOM } from 'jsdom';
 import { structureForm, type StructureOptions } from '../src/structure-forms.ts';
 import { GuardianPanel, type GuardianLink } from '../src/guardian-panel.ts';
 import { AuditView } from '../src/audit-view.ts';
+import { permissionMessage } from '../src/ui/feedback.ts';
 
 let dom: JSDOM;
 
@@ -384,7 +385,12 @@ describe('audit viewer', () => {
   test('a refusal names who may read it, and shows no list underneath', async () => {
     mount(AUDIT([]), { status: 403 });
     await settle();
-    assert.match(text(), /কেবল প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও আইটি অ্যাডমিন/);
+    // B-30 made the SENTENCE canonical; the roles that may read the log moved
+    // to the detail line, where `permissionState` puts "who to ask". Same two
+    // claims — you may not see this, and here is who can — asserted against
+    // the shared component rather than a bespoke string.
+    assert.match(text(), new RegExp(permissionMessage('কার্যবিবরণী')));
+    assert.match(text(), /প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও আইটি অ্যাডমিন/);
     assert.doesNotMatch(text(), /এখনো কোনো পরিবর্তন রেকর্ড হয়নি/);
     assert.equal(root().querySelectorAll('.card-form').length, 0,
       'filters for a list you may not see are noise');

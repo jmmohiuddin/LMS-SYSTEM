@@ -25,6 +25,7 @@ import {
 } from './view-states.ts';
 import { ROLE_BN } from './ui/roles.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { el, append, button, dataTable, statusBadge } from './ui/index.ts';
 
 interface UserRow {
   id: string; nameBn: string; nameEn: string | null; phone: string | null;
@@ -183,10 +184,46 @@ export class UsersView {
       return;
     }
 
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const u of this.users) list.append(this.userRow(u));
-    root.append(list);
+    root.append(dataTable(d, {
+      caption: 'ব্যবহারকারীর তালিকা',
+      rows: this.users,
+      rowKey: (u) => u.id,
+      columns: [
+        {
+          key: 'name', header: 'নাম', mobile: 'title',
+          cell: (u) => u.nameBn,
+          width: 'minmax(0, 2fr)',
+        },
+        {
+          key: 'roles', header: 'ভূমিকা', mobile: 'subtitle',
+          cell: (u) => u.roles.map((r) => ROLE_BN[r] ?? r).join(' · ') || 'ভূমিকা নেই',
+        },
+        {
+          key: 'code', header: 'আইডি', mobile: 'meta',
+          // The staff or student CODE, never the uuid. A uuid on screen is a
+          // string nobody can read down a phone and nobody should have to.
+          cell: (u) => u.employeeCode ?? u.studentCode ?? '—',
+        },
+        {
+          key: 'status', header: 'অবস্থা', mobile: 'status',
+          cell: (u) => statusBadge(d, {
+            state: u.status === 'active' ? 'published'
+              : u.status === 'invited' ? 'pending' : 'overdue',
+            // A word, never the tint alone: "সক্রিয়" and "নিষ্ক্রিয়" differ by
+            // more than a colour to somebody who cannot see the colour.
+            label: STATUS_BN[u.status] ?? u.status,
+          }),
+        },
+        // The action column has no MobileRole: `dataTable` renders a column
+        // with no `mobile` as `meta`, and two buttons in a detail line is not
+        // what a phone wants. Left to the default so the pair lands in the
+        // row's own content, where a thumb can reach it.
+        ...(this.o.canManage ? [{
+          key: 'actions', header: 'ব্যবস্থা',
+          cell: (u: UserRow) => this.rowActions(u),
+        }] : []),
+      ],
+    }));
 
     if (this.truncated) {
       const note = d.createElement('p');
@@ -327,54 +364,39 @@ export class UsersView {
     return form;
   }
 
-  private userRow(u: UserRow): HTMLElement {
+  /**
+   * The two things an IT admin can do to an account, as a pair of controls.
+   *
+   * Both were on the old row and both keep their behaviour exactly: an
+   * activation code is offered only to an account that can still sign in — a
+   * deactivated one is not handed a way back in — and deactivation asks first.
+   */
+  private rowActions(u: UserRow): HTMLElement {
     const d = this.o.doc;
-    const row = d.createElement('div');
-    row.className = 'system-row';
+    const wrap = el(d, 'div', { className: 'ui-row-actions' });
+    const isActive = u.status === 'active' || u.status === 'invited';
 
-    const t = d.createElement('span');
-    t.className = 'system-title';
-    t.textContent = u.nameBn;
+    if (isActive) {
+      const codeBtn = button(d, {
+        label: this.issuing === u.id ? '…' : 'কোড',
+        variant: 'secondary', size: 'sm',
+        disabled: this.issuing !== null || this.busy,
+        onClick: () => { void this.issueCode(u); },
+      });
+      // Per-person, because forty buttons all called "কোড" are forty
+      // identical announcements.
+      codeBtn.setAttribute('aria-label', `${u.nameBn} এর জন্য সক্রিয়ন কোড তৈরি করুন`);
+      codeBtn.dataset.action = 'issue-code';
+      append(wrap, codeBtn);
+    }
 
-    const desc = d.createElement('span');
-    desc.className = 'system-desc';
-    const roles = u.roles.map((r) => ROLE_BN[r] ?? r).join(' · ') || 'ভূমিকা নেই';
-    const code = u.employeeCode ?? u.studentCode;
-    desc.textContent = code ? `${roles} · ${code}` : roles;
-
-    const chip = d.createElement('span');
-    chip.className = 'status-chip';
-    if (u.status === 'active') chip.setAttribute('data-state', 'success');
-    else if (u.status === 'left' || u.status === 'suspended') chip.setAttribute('data-state', 'warning');
-    chip.textContent = STATUS_BN[u.status] ?? u.status;
-
-    row.append(t, desc, chip);
-
-    if (this.o.canManage) {
-      // First login for a staff account is an activation code, exactly as it
-      // is for a student. Offered for anyone who can still sign in; a
-      // deactivated account is not given a way back in.
-      if (u.status === 'active' || u.status === 'invited') {
-        const codeBtn = d.createElement('button');
-        codeBtn.type = 'button';
-        codeBtn.className = 'btn-secondary btn-small';
-        codeBtn.dataset.action = 'issue-code';
-        codeBtn.textContent = this.issuing === u.id ? '…' : 'কোড';
-        codeBtn.disabled = this.issuing !== null || this.busy;
-        codeBtn.setAttribute('aria-label', `${u.nameBn} এর জন্য সক্রিয়ন কোড তৈরি করুন`);
-        codeBtn.addEventListener('click', () => { void this.issueCode(u); });
-        row.append(codeBtn);
-      }
-
-      const btn = d.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-ghost btn-small';
-      const isActive = u.status === 'active' || u.status === 'invited';
-      btn.textContent = isActive ? 'নিষ্ক্রিয় করুন' : 'আবার সক্রিয় করুন';
-      btn.disabled = this.busy;
-      btn.addEventListener('click', () => {
+    const btn = button(d, {
+      label: isActive ? 'নিষ্ক্রিয় করুন' : 'আবার সক্রিয় করুন',
+      variant: 'ghost', size: 'sm',
+      disabled: this.busy,
+      onClick: () => {
         if (!isActive) { void this.setActive(u, true); return; }
-        row.append(confirmDialog({
+        wrap.append(confirmDialog({
           doc: d,
           title: 'নিষ্ক্রিয় করা নিশ্চিত করুন',
           body:
@@ -384,10 +406,12 @@ export class UsersView {
           danger: true,
           onConfirm: () => void this.setActive(u, false),
         }));
-      });
-      row.append(btn);
-    }
-    return row;
+      },
+    });
+    btn.setAttribute('aria-label',
+      `${u.nameBn}-কে ${isActive ? 'নিষ্ক্রিয়' : 'আবার সক্রিয়'} করুন`);
+    append(wrap, btn);
+    return wrap;
   }
 
   private async issueCode(u: UserRow): Promise<void> {

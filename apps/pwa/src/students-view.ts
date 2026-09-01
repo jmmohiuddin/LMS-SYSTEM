@@ -31,6 +31,7 @@
  */
 import type { Auth } from './auth.ts';
 import { skeleton, errorState, emptyState, bnNum, bnDate } from './view-states.ts';
+import { dataTable, statusBadge } from './ui/index.ts';
 
 export interface StudentsViewOptions {
   root: HTMLElement;
@@ -329,10 +330,30 @@ export class StudentsView {
         : '');
     this.o.root.append(count);
 
-    const list = d.createElement('div');
-    list.className = 'system-list';
-    for (const s of p.students) list.append(this.resultRow(s));
-    this.o.root.append(list);
+    const table = dataTable(d, {
+      caption: 'শিক্ষার্থী অনুসন্ধানের ফলাফল',
+      rows: p.students,
+      rowKey: (r) => r.id,
+      onRowClick: (r) => { void this.open(r.id); },
+      columns: [
+        { key: 'name', header: 'নাম', mobile: 'title',
+          cell: (r) => r.name.bn, width: 'minmax(0, 2fr)' },
+        { key: 'code', header: 'স্থায়ী আইডি', mobile: 'subtitle',
+          // The school's own permanent code, never the uuid — this is the
+          // string an office reads down a phone.
+          cell: (r) => r.studentCode },
+        { key: 'where', header: 'শ্রেণি ও শাখা', mobile: 'meta',
+          cell: (r) => whereOf(r), width: 'minmax(0, 2fr)' },
+        { key: 'status', header: 'অবস্থা', mobile: 'status',
+          cell: (r) => statusBadge(d, {
+            state: r.lifecycleStatus === 'active' ? 'published'
+              : r.lifecycleStatus === 'passed_out' || r.lifecycleStatus === 'alumni'
+                ? 'pending' : 'overdue',
+            label: STATUS_BN[r.lifecycleStatus] ?? r.lifecycleStatus,
+          }) },
+      ],
+    });
+    this.o.root.append(table);
 
     if (p.total > p.offset + p.students.length || p.offset > 0) {
       this.o.root.append(this.pager(p));
@@ -347,46 +368,10 @@ export class StudentsView {
    * group, no fee balance: the server does not send them to a list, so there
    * is nothing to hide in the markup.
    */
-  private resultRow(s: SearchResult): HTMLElement {
-    const d = this.doc;
-    const btn = d.createElement('button');
-    btn.type = 'button';
-    btn.className = 'system-row';
-    btn.addEventListener('click', () => void this.open(s.id));
-
-    const main = d.createElement('span');
-    main.className = 'system-body';
-
-    const name = d.createElement('span');
-    name.className = 'system-title';
-    name.textContent = s.name.bn;
-    main.append(name);
-
-    const code = d.createElement('span');
-    code.className = 'system-path';
-    code.textContent = s.studentCode;
-    main.append(code);
-
-    const where = d.createElement('span');
-    where.className = 'system-desc';
-    if (s.latest) {
-      const parts = [s.latest.classBn, s.latest.groupBn, s.latest.section ? `শাখা ${s.latest.section}` : null,
-                     s.latest.rollNo != null ? `রোল ${bnNum(s.latest.rollNo)}` : null]
-        .filter(Boolean);
-      where.textContent = (s.latest.isCurrent ? '' : `${bnNum(s.latest.yearLabel)} · `) + parts.join(' · ');
-    } else {
-      where.textContent = 'কোনো ভর্তির তথ্য নেই';
-    }
-    main.append(where);
-    btn.append(main);
-
-    const chip = d.createElement('span');
-    chip.className = 'system-chip';
-    chip.textContent = STATUS_BN[s.lifecycleStatus] ?? s.lifecycleStatus;
-    btn.append(chip);
-
-    return btn;
-  }
+  // `resultRow` is gone: the search result is a desktop TABLE and a phone
+  // list now, from one column definition (P2 `dataTable`). At 1440 the old
+  // markup was a single stacked column — a phone layout on an office screen,
+  // which §4 forbids.
 
   private pager(p: SearchPayload): HTMLElement {
     const d = this.doc;
@@ -722,4 +707,20 @@ export class StudentsView {
     wrap.append(t);
     return wrap;
   }
+}
+
+/** Where a student is, in words. Shared by the table and the list. */
+function whereOf(s: SearchResult): string {
+  if (!s.latest) return 'কোনো ভর্তির তথ্য নেই';
+  const parts = [
+    s.latest.classBn,
+    s.latest.groupBn,
+    s.latest.section ? `শাখা ${s.latest.section}` : null,
+    // A roll is an identifier read down a phone, so it stays Latin — the one
+    // number on this row that is not localised.
+    s.latest.rollNo != null ? `রোল ${s.latest.rollNo}` : null,
+  ].filter(Boolean);
+  // A past year is named; the current one is not, because "this year" is the
+  // default a reader already assumes.
+  return (s.latest.isCurrent ? '' : `${bnNum(s.latest.yearLabel)} · `) + parts.join(' · ');
 }

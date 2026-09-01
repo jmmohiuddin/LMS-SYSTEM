@@ -939,7 +939,16 @@ async function main() {
         glyph: 'star',
         hidden: true,
         mount: (container) => {
-          new BrandingView({ root: container, doc: document, auth, tenantKey: brandingKey });
+          // P5/B-34. `readOnly` used to be set only when GET /ops/branding
+          // answered 403 — and that GET is PUBLIC (branding is what the login
+          // screen draws before anybody signs in), so a class teacher got 200,
+          // twelve live inputs and a save that would 403. Derived from the
+          // role now, mirroring BRANDING_WRITERS in the endpoint. Orientation,
+          // not enforcement: the server is still the thing that refuses.
+          new BrandingView({
+            root: container, doc: document, auth, tenantKey: brandingKey,
+            canManage: MANAGE_SETTINGS.has(auth.role),
+          });
         },
       },
     ];

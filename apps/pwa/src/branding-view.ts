@@ -47,6 +47,15 @@ export interface BrandingViewOptions {
   auth: Auth;
   /** Tenant key used for the branding cache; defaults to auth.tenantId. */
   tenantKey?: string;
+  /**
+   * Whether this person may SAVE. Mirrors BRANDING_WRITERS in the endpoint.
+   *
+   * Not discovered from a 403: the branding GET is public — it is what the
+   * login screen draws before anybody signs in — so a reader who may not write
+   * still gets 200, and a screen that waited for a refusal offered a teacher
+   * twelve editable fields and a save that could only fail.
+   */
+  canManage?: boolean;
 }
 
 type AssetField = 'logoUrl' | 'faviconUrl' | 'watermarkUrl' | 'signatureUrl';
@@ -91,6 +100,7 @@ export class BrandingView {
 
   constructor(options: BrandingViewOptions) {
     this.o = options;
+    this.readOnly = options.canManage === false;
     const key = this.tenantKey();
     this.saved = cachedBranding(key);
     this.draft = { ...this.saved };

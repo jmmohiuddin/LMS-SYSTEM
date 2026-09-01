@@ -1084,3 +1084,47 @@ guardians, imports, branding, settings, audit, system health) and every other
 Principal screen keep their pre-P2 markup. The audit viewer's UX — actor names,
 filters, changed fields, permission-aware redaction — is still what R-3
 shipped. P5 continues from here.
+
+## 28. P5 / B-34 — IT Admin + Principal surfaces (2026-09-01) · **PARTIAL**
+
+Detail in `PHASE_LOG.md` under "P5 / B-34". The short version: the audit
+changed the plan, because the LOOK was already canonical (P0 converged `.card`
+and `.ui-card`) and the gap was SHAPE — at 1440 the list screens were phone
+layouts stretched across a 1142px column.
+
+### Migrated
+
+| Screen | Change |
+|---|---|
+| `users` | P2 `dataTable` — real table at desktop, MobileList on a phone |
+| `students` | same |
+| `audit` | raw uuid removed · canonical refusal naming who CAN read it · desktop column rhythm (`au-rows`) |
+| `branding` | read-only derived from ROLE, not from a 403 on a public GET |
+
+**`audit` was deliberately not made a `dataTable`** — the value of the row is
+its before/after diff and a table cell cannot hold one. Recorded as an
+exception with a reason, not an omission.
+
+### Defects fixed
+
+- a raw uuid on every expanded audit entry (§14)
+- `--c-info` was the raw tenant accent used as TYPE — 4.38:1 on tenant B's
+  ledger. The generalisation of P4's `--c-primary-text` fix that P4 did not make
+- branding gave a class teacher twelve live fields and a permanently dead save
+
+### Acceptance
+
+| Persona | Widths | Routes | Checks | Failures |
+|---|---|---|---|---|
+| IT Admin, tenant A | 375 · 1024 · 1440 | 10 | 1,223 | 0 |
+| Principal, tenant B | 360 · 768 · 1440 · 1600 | 17 / 7 | 2,738 | 0 |
+
+Both themes throughout. 0 contrast · 0 overflow · 0 unnamed controls ·
+0 `undefined` · **0 uuids on screen**.
+
+### Still legacy after this pass
+
+Academic structure, imports, settings hierarchy, dedicated teacher/guardian
+list screens, publish · calendar · documents · fees · invoices · ledger ·
+compose · inbox, and system health's state vocabulary. All render and sweep
+clean; none is on P2 primitives. **P5 remains PARTIAL.**

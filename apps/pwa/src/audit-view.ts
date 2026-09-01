@@ -30,6 +30,7 @@ import type { Auth } from './auth.ts';
 import { skeleton, errorState, emptyState, bnNum, bnDate } from './view-states.ts';
 import { ROLE_BN } from './ui/roles.ts';
 import { pageHeader } from './ui/page-header.ts';
+import { permissionMessage, permissionState } from './ui/index.ts';
 
 interface Entry {
   id: string;
@@ -107,6 +108,8 @@ export class AuditView {
   private offset = 0;
   private loading = true;
   private error = '';
+  /** The server refused. Distinct from `error`: no retry can help. */
+  private denied = false;
   private expanded = new Set<string>();
 
   private f = { action: '', entityType: '', actorId: '', from: '', to: '' };
@@ -118,7 +121,7 @@ export class AuditView {
   }
 
   private async load(): Promise<void> {
-    this.loading = true; this.error = ''; this.render();
+    this.loading = true; this.error = ''; this.denied = false; this.render();
     try {
       const qs = new URLSearchParams();
       for (const [k, v] of Object.entries(this.f)) if (v) qs.set(k, v);
@@ -127,7 +130,11 @@ export class AuditView {
       if (res.status === 403) {
         // The one screen where a refusal is the correct outcome for most of
         // the school, so it says who it is for rather than only "no".
-        this.error = 'কার্যবিবরণী কেবল প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও আইটি অ্যাডমিন দেখতে পারেন।';
+        // B-30's canonical pattern, and a FLAG rather than a sentence: the
+        // old code decided whether to draw a retry by sniffing the error
+        // string for 'কেবল', which breaks the day somebody rewords it.
+        this.denied = true;
+        this.error = permissionMessage('কার্যবিবরণী');
         return;
       }
       if (!res.ok) throw new Error(String(res.status));
@@ -155,13 +162,21 @@ export class AuditView {
     });
     root.append(header);
 
-    if (this.error) {
-      root.append(errorState(d, this.error,
-        this.error.includes('অনুমতি') || this.error.includes('কেবল')
-          ? undefined : () => void this.load()));
+    if (this.denied) {
+      // The canonical sentence, and underneath it the thing the old bespoke
+      // wording carried that a generic one loses: WHICH roles may read this.
+      // Somebody refused here is usually a coordinator or a teacher, and
+      // "ask the head teacher" is less useful than "these three can see it".
+      root.append(permissionState(d, {
+        message: permissionMessage('কার্যবিবরণী'),
+        contact: 'প্রধান শিক্ষক, প্রতিষ্ঠান মালিক ও আইটি অ্যাডমিন',
+      }));
       // A refusal is the whole answer; an empty list underneath it would say
       // "there is nothing here", which is a different and untrue claim.
-      if (this.error.includes('কেবল')) return;
+      return;
+    }
+    if (this.error) {
+      root.append(errorState(d, this.error, () => void this.load()));
     }
 
     root.append(this.filters());
@@ -186,7 +201,11 @@ export class AuditView {
     }
 
     const list = d.createElement('div');
-    list.className = 'system-list';
+    // `au-rows` gives the disclosure list a column rhythm at desktop widths —
+    // when · who · what — so a 1440px screen scans like a table while each
+    // row still opens its own diff underneath. See the header for why this is
+    // not a `dataTable`.
+    list.className = 'system-list au-rows';
     for (const e of this.entries) list.append(this.entryRow(e));
     root.append(list);
 
@@ -350,12 +369,11 @@ export class AuditView {
       wrap.append(scroll);
     }
 
-    if (e.entityId) {
-      const id = d.createElement('p');
-      id.className = 'att-sub';
-      id.textContent = `শনাক্তকারী: ${e.entityId}`;
-      wrap.append(id);
-    }
+    // The raw `entityId` used to be printed here as
+    // "শনাক্তকারী: 7b06d000-0000-…". It is gone, and nothing replaced it: §14
+    // forbids a uuid in visible or accessible text, and it was never usable —
+    // an office cannot read it down a phone or search by it. "Which record"
+    // is answered by the entity type on the row above and by the diff itself.
     return wrap;
   }
 

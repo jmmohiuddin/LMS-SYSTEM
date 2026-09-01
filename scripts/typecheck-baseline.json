@@ -16,6 +16,7 @@
     "apps/pwa/public/design/components/table/Table.d.ts",
     "apps/pwa/public/design/components/tabs/Tabs.d.ts",
     "apps/pwa/test/activation-ui.test.ts",
+    "apps/pwa/test/admin-p5.test.ts",
     "apps/pwa/test/admin-ui.test.ts",
     "apps/pwa/test/attendance-screen.test.ts",
     "apps/pwa/test/attendance-view.test.ts",

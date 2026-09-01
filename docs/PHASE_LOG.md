@@ -8597,3 +8597,5 @@ and this is the part of it that is not ticked:
   unavailable. It probes real endpoints and fakes nothing; the mapping is
   recorded rather than churned, because "invisible by design" is a state the
   brief's four words cannot express and an operator needs.
+
+**Commit:** `5800906`.

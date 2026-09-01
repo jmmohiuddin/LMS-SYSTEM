@@ -8867,3 +8867,5 @@ established**. Recorded rather than smoothed over.
 
 **B-34 → RESOLVED.** Every screen the completion gate names is on the design
 system, or is a recorded exception with a reason.
+
+**Commit:** `fabf4f1`.

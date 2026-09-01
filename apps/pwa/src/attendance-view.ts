@@ -46,6 +46,17 @@ export interface AttendanceViewOptions {
   outbox: OutboxLike;
   newId: () => string;
   now?: () => number;
+  /**
+   * Suppress this view's own `<h1>হাজিরা</h1>` and subtitle.
+   *
+   * P3 wraps this view in `attendance-screen.ts`, which renders the page
+   * header and a status strip carrying the section, the date and the subject.
+   * Without this the screen said "হাজিরা" twice and printed the date twice —
+   * exactly the duplication the brief forbids between a page header and its
+   * content. The sync chip STAYS either way: it belongs to the grid's own
+   * state, not to the page.
+   */
+  embedded?: boolean;
 }
 
 // Text status marks, not icons: they live inside the dense grid and take the
@@ -105,7 +116,13 @@ export class AttendanceView {
     this.chipEl = d.createElement('span');
     this.chipEl.className = 'sync-chip';
     this.chipEl.setAttribute('aria-live', 'polite');
-    header.append(h1, sub, this.chipEl);
+    if (this.o.embedded) {
+      // The wrapper owns the title, the section and the date. Only the chip
+      // is this view's to render.
+      header.append(this.chipEl);
+    } else {
+      header.append(h1, sub, this.chipEl);
+    }
 
     // Live counters — aria-live so a screen-reader user hears the tally change
     this.countsEl = d.createElement('div');

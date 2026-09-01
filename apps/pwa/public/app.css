@@ -3358,6 +3358,100 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
 
 
 /* ==========================================================================
+   TEACHER HOME  (P3)
+
+   One dominant action and a day, not a wall of statistics. Everything below
+   is built from the P2 components; these rules only place them.
+   ========================================================================== */
+
+/* The urgent block. Accent GROUND rather than an accent button on white —
+   there is exactly one of these on the screen, so it can afford to be the
+   thing the eye lands on, and when every register is in it is replaced by a
+   plain card rather than a quieter version of itself. */
+.th-urgent {
+  padding: var(--s-4); margin-bottom: var(--s-4);
+  background: var(--c-primary-soft);
+  border: 1px solid transparent; border-radius: var(--radius-lg);
+}
+/* Happening now: a left rule, because the tint is already spent on "urgent"
+   and a second tint would say "more urgent" without meaning it. */
+.th-urgent[data-now='true'] { border-inline-start: 3px solid var(--c-primary); }
+.th-urgent-kicker { margin: 0; font-size: var(--text-3xs); font-weight: 700;
+                    letter-spacing: .05em; text-transform: uppercase;
+                    color: var(--c-primary-text); }
+.th-urgent-title { margin: var(--s-1) 0 0; font-size: var(--text-h2);
+                   font-weight: var(--text-h2-weight); line-height: var(--text-h2-line);
+                   color: var(--c-ink); overflow-wrap: anywhere; }
+.th-urgent-meta { margin: var(--s-1) 0 0; font-size: var(--text-2xs);
+                  color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
+.th-urgent-go { margin-top: var(--s-4); }
+
+/* A substitution is explained, never just badged: "why am I in this room"
+   is the question, and a chip reading "বদলি" does not answer it. */
+.th-sub-note { display: flex; align-items: flex-start; gap: var(--s-2);
+               margin: var(--s-3) 0 0; padding: var(--s-2) var(--s-3);
+               background: var(--color-bg); border-radius: var(--radius-md);
+               font-size: var(--text-2xs); color: var(--c-ink-2); }
+.th-sub-glyph { display: flex; width: 16px; height: 16px; flex: none;
+                margin-top: 2px; color: var(--c-warn); }
+.th-sub-glyph svg { width: 100%; height: 100%; }
+
+.th-note { margin: 0 0 var(--s-3); font-size: var(--text-2xs);
+           color: var(--c-ink-2); line-height: var(--text-body-line); }
+
+.th-quick { display: grid; grid-template-columns: 1fr; gap: var(--s-2); }
+
+/* The period happening now, in the day list. A left rule and a weight — not
+   a background, which would compete with the urgent block above it. */
+.ui-list-item.is-now .ui-list-hit { border-inline-start: 3px solid var(--c-primary); }
+.ui-list-item.is-now .ui-list-title { font-weight: 700; }
+
+
+/* ==========================================================================
+   ATTENDANCE — the status a teacher must always be able to read  (P3)
+
+   §"The teacher must always know: what section, what date, what
+   subject/period, how many students, how many marked, whether changes are
+   saved, whether changes are only queued locally." Every one of those is a
+   WORD below. Colour echoes; it never carries.
+   ========================================================================== */
+
+.att-status { padding: 0 var(--s-4) var(--s-3); }
+.att-facts { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-4); }
+.att-fact { display: flex; flex-direction: column; min-width: 0; }
+.att-fact-label { font-size: var(--text-3xs); color: var(--c-ink-3); }
+.att-fact-value { font-size: var(--text-2xs); font-weight: 600; color: var(--c-ink);
+                  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* Offline is stated on this screen as well as in the shell banner. The shell
+   says "you are offline"; this says what that means for the register in front
+   of you, which is the only question a teacher actually has. */
+.att-offline-note {
+  display: flex; align-items: flex-start; gap: var(--s-2);
+  margin: var(--s-3) 0 0; padding: var(--s-2) var(--s-3);
+  background: var(--c-warn-soft); border-radius: var(--radius-md);
+  font-size: var(--text-2xs); color: var(--color-warning-ink);
+  line-height: var(--text-body-line);
+}
+.att-offline-glyph { display: flex; width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.att-offline-glyph svg { width: 100%; height: 100%; }
+
+/* The queued/failed line, with the retry that did not exist before P3: the
+   chip has said "৩টি পাঠানো যায়নি" since R-0 with no way to act on it. */
+.att-sync-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2);
+  margin: var(--s-3) 0 0; padding: var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+.att-sync-line[data-state='failed'] { border-color: var(--color-danger); }
+.att-sync-text { flex: 1; min-width: 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+.att-section-picker { margin-bottom: 0; }
+.att-host { display: block; }
+
+
+/* ==========================================================================
    RESPONSIVE — the desktop layouts, deliberately LAST in this file  (P1)
 
    Placement is load-bearing, not tidiness. Custom properties cascade by
@@ -3484,6 +3578,43 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
 
   .ui-toast-host { inset-inline: auto var(--s-5); bottom: var(--s-5);
                    max-width: 420px; }
+
+
+  /* ── teacher home (P3) ────────────────────────────────────────────────── */
+  /* The urgent block becomes a band: the action sits beside its context
+     rather than under it, because on a laptop a full-width button under a
+     two-line heading is a hundred pixels of nothing. */
+  .th-urgent { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+               grid-template-areas: 'kicker action' 'title action' 'meta action' 'note action';
+               align-items: center; column-gap: var(--s-5); padding: var(--s-5); }
+  .th-urgent-kicker { grid-area: kicker; }
+  .th-urgent-title  { grid-area: title; }
+  .th-urgent-meta   { grid-area: meta; }
+  .th-sub-note      { grid-area: note; }
+  .th-urgent-go { grid-area: action; margin-top: 0; width: auto;
+                  min-width: 180px; align-self: center; }
+
+  .th-quick { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); }
+
+
+  /* ── attendance (P3) ─────────────────────────────────────────────────── */
+  /* A real desktop grid, not a stretched phone one. 56px tiles at auto-fill
+     across a 1200px column give ~18 per row, which is a wall; capping the
+     tile at 84px and the grid at a readable width keeps a class of sixty to
+     four scannable rows. The sticky footer becomes a normal one — there is no
+     thumb to reach on a laptop and 96px of reserved space is 96px wasted. */
+  .att-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 84px));
+              padding-bottom: var(--s-5); justify-content: start; }
+  .att-footer { position: static; padding: var(--s-4) 0; }
+  .att-footer .btn-primary,
+  .att-footer .ui-btn { width: auto; min-width: 220px; }
+
+  /* The facts read as a row of labelled columns rather than a wrapped list. */
+  .att-status { padding-inline: 0; }
+  .att-facts { gap: var(--s-6); }
+  .att-fact-value { font-size: var(--text-xs); }
+
+  .att-header { padding-inline: 0; }
 
 }
 

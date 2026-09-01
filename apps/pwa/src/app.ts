@@ -10,7 +10,7 @@
  */
 import { openDb, IndexedDbOutboxStore } from '../../../packages/offline/src/store.ts';
 import { SyncEngine } from '../../../packages/offline/src/sync-engine.ts';
-import { AttendanceView } from './attendance-view.ts';
+import { AttendanceScreen } from './attendance-screen.ts';
 import { FetchTransport } from './transport.ts';
 import { Auth } from './auth.ts';
 import { DemoAuth } from './demo.ts';
@@ -57,6 +57,7 @@ import {
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
 import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
+import { TeacherHomeView } from './teacher-home-view.ts';
 import { ScriptsView } from './scripts-view.ts';
 import { RolesView } from './roles-view.ts';
 import { LedgerView } from './ledger-view.ts';
@@ -66,8 +67,6 @@ import { SubjectsView } from './subjects-view.ts';
 import { MyAttendanceView } from './my-attendance-view.ts';
 import { ResultsView } from './results-view.ts';
 import { AssignmentsView } from './assignments-view.ts';
-import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
-import type { RosterStudent } from './roster-view.ts';
 
 const params  = new URLSearchParams(location.search);
 const apiBase = location.origin;
@@ -93,15 +92,6 @@ const tenantId = tenantIdFromUrl
   || localStorage.getItem('shikhon_tid')
   || tenantKeyFromSubdomain
   || '';
-
-// 60 placeholder students — used only until a real roster has been picked
-// in the roster view (see roster-view.ts's shikhon_last_roster cache).
-const placeholderStudents: Student[] = Array.from({ length: 60 }, (_, i) => ({
-  studentId: `demo-${i + 1}`,
-  rollNo:    i + 1,
-  nameBn:    `শিক্ষার্থী ${i + 1}`,
-  nameEn:    `Student ${i + 1}`,
-}));
 
 /**
  * Is this the demo surface?
@@ -190,6 +180,17 @@ const DOCS_FOR: Record<string, DocKind[]> = {
 };
 /** Mirrors finance-svc's BILLING_ROLES. */
 const GENERATE_INVOICES = new Set(['principal', 'school_owner', 'accountant']);
+
+/**
+ * The roles whose home screen is the teaching day (P3).
+ *
+ * These are the accounts `app.teacher_day()` returns a timetable for. A
+ * coordinator or a principal also teaches in many schools, but their home
+ * screen answers a different question and belongs to P5 — adding them here
+ * would give an administrator a screen about five periods when their day is
+ * about an institution.
+ */
+const TEACHING_ROLES = new Set(['class_teacher', 'subject_teacher', 'dept_head']);
 
 // glyph is an icon name from ./icon.ts (rendered as inline SVG), never an
 // emoji: one drawn set, one stroke weight, tintable with currentColor.
@@ -308,52 +309,6 @@ function dashboardFor(role: string): DashCards {
   }
 }
 
-/**
- * The section the teacher last opened, as the roster cached it.
- *
- * Returns null when nothing has been picked yet — which is the state a fresh
- * install is in, and the reason the attendance screen must not pretend to know
- * a section. See `attendanceSection` below.
- */
-function loadSectionMeta(): { id: string; labelBn: string; academicYearId: string } | null {
-  try {
-    const raw = localStorage.getItem('shikhon_last_section_meta');
-    if (!raw) return null;
-    const m = JSON.parse(raw) as {
-      id?: string; name?: string; className?: { bn?: string }; academicYearId?: string;
-    };
-    if (!m.id || !m.academicYearId) return null;
-    return {
-      id: m.id,
-      labelBn: `${m.className?.bn ?? ''}${m.name ? ` — ${m.name}` : ''}`.trim() || m.name || '',
-      academicYearId: m.academicYearId,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function loadRosterStudents(): { students: Student[]; sectionId: string | null } {
-  try {
-    const raw = localStorage.getItem('shikhon_last_roster');
-    const sectionId = localStorage.getItem('shikhon_last_section');
-    if (!raw || !sectionId) return { students: placeholderStudents, sectionId: null };
-    const roster = JSON.parse(raw) as RosterStudent[];
-    if (!Array.isArray(roster) || roster.length === 0) return { students: placeholderStudents, sectionId: null };
-    return {
-      sectionId,
-      students: roster.map((r) => ({
-        studentId: r.studentId,
-        rollNo: r.rollNo,
-        nameBn: r.fullName.bn ?? r.fullName.en ?? `রোল ${r.rollNo}`,
-        nameEn: r.fullName.en ?? r.fullName.bn ?? `Roll ${r.rollNo}`,
-      })),
-    };
-  } catch {
-    return { students: placeholderStudents, sectionId: null };
-  }
-}
-
 async function main() {
   const rootEl = document.getElementById('root');
   if (!rootEl) return;
@@ -435,8 +390,6 @@ async function main() {
     : fetchPublicBranding(brandingKey);
 
   function startShell(): Shell {
-    const { students, sectionId } = loadRosterStudents();
-
     const transport = new FetchTransport({ auth });
     const engine = new SyncEngine({
       deviceId: deviceId('d'),
@@ -455,6 +408,18 @@ async function main() {
         labelBn: 'হোম',
         glyph: 'home',
         mount: (container) => {
+          // P3. A teacher's home is a different screen, not a different set
+          // of tiles: it answers "what do I do now" from today's routine,
+          // where the generic grid answers "what can I do". Every other role
+          // keeps the grid until its own phase (P4/P5).
+          if (TEACHING_ROLES.has(auth.role)) {
+            new TeacherHomeView({
+              root: container, doc: document, auth,
+              displayName: auth.displayName,
+              go: (path) => { location.hash = `/${path}`; },
+            });
+            return;
+          }
           const { primary, secondary } = dashboardFor(auth.role);
           const learner = ['student', 'guardian'].includes(auth.role);
           new HomeView({
@@ -514,32 +479,28 @@ async function main() {
         path: 'attendance',
         labelBn: 'হাজিরা',
         glyph: 'check-square',
+        unmount: () => { attendanceScreen?.destroy(); attendanceScreen = null; },
         mount: (container) => {
-          // The section, the class label and the ACADEMIC YEAR all come from
-          // what the roster cached when the teacher picked a section.
+          // P3. The screen now asks the SERVER which sections this teacher
+          // has and loads the roster itself, instead of reading a cache that
+          // a different screen happened to write.
           //
-          // `academicYearId` used to be the literal string 'yr-2026', left
-          // over from before there was a roster to ask. It is not a uuid, so
-          // every attendance a real teacher saved was rejected by sync with
-          // `invalid input syntax for type uuid` — and the screen could only
-          // show "১টি পাঠানো যায়নি", because the push returns 200 and puts
-          // the rejection in the body. Nobody had taken attendance as a real
-          // user in a real school until R-7's acceptance walked it.
-          const meta = loadSectionMeta();
-          new AttendanceView({
+          // What that replaces: `academicYearId` was once the literal string
+          // 'yr-2026', left over from before there was a roster to ask. It is
+          // not a uuid, so every attendance a real teacher saved was rejected
+          // by sync with `invalid input syntax for type uuid` — and the screen
+          // could only show "১টি পাঠানো যায়নি", because the push returns 200
+          // and puts the rejection in the body. R-7's acceptance found it.
+          // The fallback that survived that fix was still fabricating a
+          // section — `id: 'demo-section', labelBn: '৯-ক'` — so a teacher who
+          // opened হাজিরা before ever visiting the roster saw a real-looking
+          // class that does not exist. Neither is reachable now: no sections
+          // means the empty state says so.
+          attendanceScreen = new AttendanceScreen({
             root: container,
             doc: document,
-            students,
-            section: meta ?? {
-              // No section chosen yet. Demo mode has its own fixtures; a real
-              // session with no pick lands here, and the view shows the empty
-              // state rather than inventing a year.
-              id: sectionId ?? 'demo-section',
-              labelBn: '৯-ক',
-              academicYearId: 'yr-2026',
-            },
+            auth,
             takenOn: todayIso(),
-            subjectBn: 'পদার্থবিজ্ঞান',
             outbox: engine,
             newId: () => crypto.randomUUID(),
           });
@@ -994,6 +955,10 @@ async function main() {
   }
 
   let shell: Shell | null = null;
+  // Held so the route's `unmount` can drop the screen's connectivity
+  // listeners. Without it, navigating away and back stacks one pair of
+  // online/offline handlers per visit.
+  let attendanceScreen: AttendanceScreen | null = null;
 
   /**
    * Pull the unread count and paint the badge.

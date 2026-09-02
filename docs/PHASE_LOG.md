@@ -10845,3 +10845,123 @@ whole-file failure. **Not proven, and B-58 stays OPEN** — see `B-66`.
 Stated plainly: **the full suite is not reliably green on this machine.** Every
 individual workspace is, and every A1 assertion in this phase was verified by
 running its own suite directly. That is the honest state.
+
+# P0 checkpoint 6 — A4 routine authoring
+
+`c9bfa70` migration 069 · `2e90d1b` the server writer · `2109141` the UI
+
+## What A4 was
+
+The last missing writer, and the least missing of the four. The routine domain
+is the richest in the product — five lifecycle states, three GiST exclusion
+constraints, a period template per shift, parallel blocks, double periods, a
+solver, a cross-shift guard — and **`routines` and `routine_slots` held 0 rows
+in every tenant**, while 10 period templates and 100 period definitions sat
+provisioned and unused.
+
+`INSERT INTO routines` appeared nowhere outside test fixtures.
+`api/solve.ts` says so in its own header: *"routine setup has no admin UI
+yet"*. So the editor opened on a grid it could not fill, the solver filled a
+routine that could not exist, and the publish button published it.
+
+`editor.ts` gains **create-routine, place, assign, remove** beside the existing
+move and publish. Nothing was rebuilt: the three exclusion constraints remain
+the arbiter, `explainConflict` remains the sentence, and no second timetable
+system was introduced.
+
+## Three findings from writing the endpoint's first-ever test
+
+**`explainConflict` had never once run.** It queries *after* the failed write
+to find who owns the hour — but a failed statement aborts the transaction, so
+that query died with 25P02 and the informative 409 became a 500. §8.1's whole
+"never just 'invalid'" requirement was structurally unreachable, on the `move`
+path that has existed since the routine editor shipped. Fixed with a savepoint,
+the device `writeAudit` already uses for the same reason.
+
+**The three constraints do not say the same thing.** Section is keyed on
+`routine_id` and fires at every status; teacher and room are keyed on
+`academic_year_id` and only `WHERE routine_status = 'active'`. A draft may
+therefore hold one teacher in two places with no complaint until publish, when
+`propagate_routine_status` flips every slot at once. Coherent, but a coordinator
+would place forty lessons and be told at publish that the third was wrong — so
+the two year-scoped dimensions are checked in the API at placement time. The
+database is still the final gate.
+
+**`explainConflict` filtered by `routine_id` for all three dimensions**, so a
+teacher or room clash — which can live in a *different* routine — found nothing
+and fell back to the generic sentence. Scoped per dimension now.
+
+## What migration 069 closed
+
+`routines` and `routine_slots` carried a RESTRICTIVE policy written
+`FOR ALL … USING (true)`. That gates INSERT and an UPDATE's new row through the
+WITH CHECK and gates DELETE not at all. Proved live as `student`:
+
+```
+INSERT routine_slots -> refused    (the WITH CHECK works)
+DELETE routine_slots -> 1 row
+DELETE routines      -> 1 row      (cascading to every slot)
+```
+
+`routine_substitutions` has the identical policy. `period_templates`,
+`period_definitions` and `routine_slot_sections` had no write scope at all.
+
+And on the same axis, `tenants` had one policy with no role predicate:
+
+```
+UPDATE tenants SET weekend_days = '{0,1,2,3,4,5,6}'         -> 1 row
+UPDATE tenants SET plan_code='complete', student_cap=999999 -> 1 row
+```
+
+The second is a **self-serve upgrade to every paid service** — `app.tenant_access()`
+reads `plan_code`, so the whole D16 commercial layer was bypassable by any
+account in a school. Closed by a trigger, because RLS cannot say "these columns,
+not those". The A2 fee fixture was buying its plan that way and now buys it at
+creation.
+
+## The hard-coded school week
+
+`routine-editor-view.ts` drew five fixed columns from a constant. The teaching
+week is `tenants.weekend_days`, and the live data already varies: **137 tenants
+on `{5,6}`, one on `{5}`** — for that school Saturday is a teaching day the grid
+had no column for. Days now come from the server.
+
+## Gate at checkpoint 6
+
+| Check | Result |
+|---|---|
+| Full suite | **1,692 passing**, 13 workspaces |
+| SQL suites | **26/26** |
+| TypeScript — all three CI configs | 0 errors, baseline 71 |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Browser — create routine → place → edit → remove → publish | done through the real UI |
+| Browser — teacher clash | `রফিক ইসলাম তখন নবম-ক-এ বাংলা পড়াচ্ছেন।` |
+| Browser — room clash | `কক্ষ ২০১ তখন নবম-ক-এর বাংলা ক্লাসে ব্যবহৃত হচ্ছে।` |
+| Direct-API section clash (bypassing the UI) | 409, named |
+| Roles | 5 unauthorized roles → 403; cross-tenant place/publish → 404; forged tenantId ignored |
+| **A1 lifecycle** | routine `active`, **exam `planned`, `published_at` NULL** — untouched |
+| Audit | all five `rms.*` actions recorded |
+| Responsive | 375 (grid scrolls in its own box, sticky period column), 768, desktop — no body overflow |
+| `index.html` | `496199bd` |
+
+## Recorded honestly
+
+**A suspicion I raised and then disproved.** Switching tenants by hand showed
+the previous school's sections, which looked like a cache-privacy leak. It is
+not: `doLogout()` calls `purgeLocalData('logout')`, which deletes the service
+worker's caches (`local-data.ts:149`). B-8's fix is real; the effect was an
+artifact of editing `localStorage` instead of logging out, which no user can do.
+
+**`section_subject_teachers` is empty across the whole CI database.** Not a gap
+— assignment has a writer (`app.assign_subject_teacher`, `POST /ops/assign`)
+and a UI (`academic-view`). It is unseeded fixture data, and A4's teacher picker
+depends on a school having done that step first.
+
+**The routine domain is not an entitleable service.** The catalogue has no
+`routine` or `timetable` entry, so rms handlers omitting `service:` is an
+absence, not the B-70(b) bypass. Adding one is a commercial decision.
+
+## Still to do in P0
+
+B production scheduling · C alerting and the deadman · D entitlement bypasses ·
+E fresh-tenant E2E. **All four writers (A1–A4) are now complete.**

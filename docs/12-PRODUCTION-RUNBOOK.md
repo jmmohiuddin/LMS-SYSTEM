@@ -725,7 +725,7 @@ in development.
 
 | | Repository | Production |
 |---|---|---|
-| Migration | **068** | **048** (unverified from outside — see below) |
+| Migration | **069** | **048** (unverified from outside — see below) |
 | Landing page | `496199bd` | `496199bd` — **byte-identical, confirmed today** |
 | `ops/staff-attendance` | present | **404** |
 
@@ -774,7 +774,23 @@ Every row that returns is an exam a school can no longer mark. 068 moves them
 back to `planned` and records the routine announcement instead — that is a
 repair, not a loss, but the count is worth recording before and after.
 
-Each has a rollback in `db/rollback/`. Rolling back 065–068 **re-opens the
+**069 changes no data and adds no column.** It replaces two `FOR ALL /
+USING (true)` policies with per-command ones, adds write scopes to four tables
+that had none, and adds a BEFORE UPDATE trigger on `tenants` refusing the
+platform-owned columns from the application role. Before applying it, confirm
+nothing school-side updates those columns in your deployment:
+
+```bash
+docker exec -i shikhon-r5 psql -U shikhon_owner -d shikhon_lms -tAc "SELECT count(*) FROM audit.activity_log WHERE action LIKE 'platform.%' AND occurred_at > now() - interval '30 days'"
+```
+
+The trigger is transparent to `app.create_tenant`, `set_tenant_status` and
+`set_student_cap` (SECURITY DEFINER, so they run as the owner) and to the
+platform console (its own database role). It WILL refuse
+`UPDATE tenants SET plan_code` issued as the application role — which is the
+point, and which required one test fixture to buy its plan at creation instead.
+
+Each has a rollback in `db/rollback/`. Rolling back 065–069 **re-opens the
 write hole** rather than restoring a safe state; the rollback headers say so.
 068's rollback additionally drops `routine_published_at` and re-points the two
 routine guards at `status`, so `services/rms-svc/api/examroutine.ts` must be

@@ -56,61 +56,32 @@ jobs:
       - name: Schema lint
         run: psql -v ON_ERROR_STOP=1 -q -f db/tests/schema_lint.sql
 
-      # ── 3. Tenant isolation, clash prevention, NCTB grading ───────────
-      - name: Invariants
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
-
-      # ── 3b. R-1: one school's identity is not readable or writable by
-      #        another, and the pre-auth read cannot widen past the
-      #        signboard fields.
-      - name: Tenant branding isolation
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
-
-      # ── 3c. R-2: a notice reaches exactly who it was addressed to, and
-      #        a re-published notice costs nothing.
-      - name: Notice audience and isolation
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
-
-      # ── 3d. R-3: replacing a teacher preserves the one before them, and
-      #        no school can read or write another's structure.
-      - name: Assignment history, isolation and audit
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/assignment_history.sql
-
-      # ── 3e. R-3 completion: who may create structure and set fee
-      #        permissions, and that can_pay_fees reaches R-2's audience.
-      - name: Structure write scope and guardian links
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/guardian_links.sql
-
-      # ── 3f. R-4: who may declare a holiday (one row silences the day's
-      #        SMS), per-tenant weekends, and exams not duplicated.
-      - name: Calendar scope, isolation and weekend config
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
-
-      # ── 3g. R-5: a document carries one school's letterhead and one
-      #        family's data. Also pins the reason the document endpoint is
-      #        tighter than `users_scope` — see the file's test 5.
-      - name: Branded documents — tenant, family and section isolation
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
-
-      # ── 3h. R-6: an old code finds the child, four years stay four
-      #        years, and no school ever sees another school.
-      - name: Student search, history and role scope
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
-
-      # ── 3i. R-7: only the platform creates a school, the platform role is
-      #        still bound by RLS, and student_cap is finally enforced.
-      - name: Platform console, provisioning and the student cap
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
-
-      # ── 3j. R-8: an SMS aggregator can report an outcome and change
-      #        nothing else, and the AI budget is reserved before it is spent.
-      - name: Go-live unlocks — delivery reports and the AI budget
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/go_live.sql
-
-      # ── 3k. R-9: a push endpoint reaches one person. Not the other school,
-      #        and not the principal — it is a capability, not a record.
-      - name: Web push — one browser, one owner
-        run: psql -v ON_ERROR_STOP=1 -q -f db/tests/web_push.sql
+      # ── 3. Every SQL suite in db/tests, by directory not by list ─────
+      #
+      # These were named one by one until P-pilot-hardening, and the list
+      # stopped being maintained: 13 of the 26 files had NEVER run here.
+      # Among the ones that did, three had been failing since migration 050
+      # broke app.set_guardian_permissions — which is how that shipped through
+      # four phases and a full audit before migration 064 fixed it.
+      #
+      # A directory loop cannot drift. What each suite proves is documented
+      # in its own header, which is where it stays current.
+      #
+      # schema_lint runs first, above: a structural failure makes every
+      # behavioural failure below it noise.
+      - name: SQL suites (db/tests)
+        run: |
+          set -euo pipefail
+          n=0
+          for f in db/tests/*.sql; do
+            psql -v ON_ERROR_STOP=1 -q -f "$f"
+            echo "ok  $(basename "$f")"
+            n=$((n+1))
+          done
+          echo "$n SQL suites passed"
+          if [ "$n" -lt 26 ]; then
+            echo "::error::expected at least 26 suites, ran $n"; exit 1
+          fi
 
       # ── 4. Provision → enrol → examine → grade → GPA ───────────────────
       - name: End-to-end academic cycle
@@ -120,18 +91,7 @@ jobs:
       - name: Re-run suites (idempotency)
         run: |
           set -euo pipefail
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/invariants.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/e2e_academic_cycle.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/tenant_branding.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/notices.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/assignment_history.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/guardian_links.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/calendar.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/documents.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/student_search.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/platform.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/go_live.sql
-          psql -v ON_ERROR_STOP=1 -q -f db/tests/web_push.sql
+          for f in db/tests/*.sql; do psql -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null; done
           left=$(psql -v ON_ERROR_STOP=1 -q -tAc "SELECT (SELECT count(*) FROM tenants)
                                  + (SELECT count(*) FROM users)
                                  + (SELECT count(*) FROM mfs_webhook_events);")
@@ -143,7 +103,7 @@ jobs:
       - name: Rollback (down, descending)
         run: |
           set -euo pipefail
-          for f in $(ls -r db/rollback/*.down.sql); do
+          for f in $(ls -r db/rollback/*.sql); do
             psql -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null
             echo "ok  $(basename "$f")"
           done

@@ -133,6 +133,70 @@ for (const group of [...GROUPS, ...EXTRA]) {
   }
 }
 
+// ── The SQL suites ─────────────────────────────────────────────────────
+//
+// This script's opening line is "fail loudly if a workspace has tests that
+// nothing runs", and for twenty-six files it was doing exactly what it was
+// written to prevent. db/tests/*.sql is not a workspace, has no package.json,
+// and so was never in the loop above. It ran only in
+// .github/workflows/database.yml.
+//
+// The cost was measured. `app.set_guardian_permissions` broke when migration
+// 050 replaced the unique index it upserts through. Three of these suites
+// caught it immediately and correctly. Nobody heard them: P5, P6, P7, P8 and
+// a full project audit each declared the test suite green on the strength of
+// this script, and every one of those statements was true about the Node
+// tests and silent about the SQL. The fix landed as migration 064, four
+// phases late. See docs/PHASE_LOG.md.
+//
+// These need the OWNER role on a direct connection — each file opens with
+// `GRANT shikhon_app TO CURRENT_USER; SET ROLE shikhon_app`, which the
+// runtime role cannot do. That is the same credential migrate.sh wants, so
+// it reads the same variable.
+const sqlDir = join(ROOT, 'db', 'tests');
+const sqlFiles = existsSync(sqlDir)
+  ? readdirSync(sqlDir).filter((f) => f.endsWith('.sql')).sort()
+  : [];
+
+if (sqlFiles.length) {
+  const url = process.env.DATABASE_MIGRATION_URL;
+  process.stdout.write(`${'db/tests (sql)'.padEnd(28)} `);
+
+  let psqlOk = false;
+  if (url) {
+    try { execSync('psql --version', { stdio: 'ignore' }); psqlOk = true; } catch { /* below */ }
+  }
+
+  if (!url) {
+    // Not a failure: most local runs have no owner credential. But it says
+    // NOTHING RAN, in the same words the workspace loop uses, because a tick
+    // beside twenty-six unrun files is what caused this in the first place.
+    console.log(`0 of ${sqlFiles.length} — NOTHING RAN (set DATABASE_MIGRATION_URL to the owner role)`);
+  } else if (!psqlOk) {
+    console.log(`0 of ${sqlFiles.length} — NOTHING RAN (psql is not on PATH; these files use \\set and :variables)`);
+  } else {
+    let sqlPass = 0;
+    const sqlFailed = [];
+    for (const f of sqlFiles) {
+      try {
+        execSync(`psql "${url}" -v ON_ERROR_STOP=1 -q -f "${join(sqlDir, f)}"`,
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        sqlPass++;
+      } catch (err) {
+        const msg = /^ERROR:.*$/m.exec(String(err.stderr ?? err.stdout ?? ''))?.[0] ?? 'failed';
+        sqlFailed.push(`${f}: ${msg}`);
+      }
+    }
+    if (sqlFailed.length) {
+      failed += sqlFailed.length;
+      console.log(`FAIL  ${sqlPass}/${sqlFiles.length} passed`);
+      for (const line of sqlFailed) console.log(`    ${line}`);
+    } else {
+      console.log(`ok  ${sqlPass} suites`);
+    }
+  }
+}
+
 if (orphaned.length) {
   console.error(`\nERROR: workspaces with test files and no "test" script:\n  ${orphaned.join('\n  ')}`);
   console.error('Add: "test": "node --test \'test/*.test.ts\'"');

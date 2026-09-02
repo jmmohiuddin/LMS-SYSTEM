@@ -135,7 +135,14 @@ async function loadGrid(c: Client, sectionId: string) {
     `SELECT s.id, s.day_of_week, s.period_no,
             sub.name_bn AS subject_bn,
             u.full_name_bn AS teacher_name,
-            rm.name AS room_name,
+            -- rooms has code (NOT NULL) and name_bn (nullable). It has no
+            -- column called name, and asking for one made both of this file's
+            -- slot queries fail at parse time, so the routine editor has never
+            -- opened a grid and the clash sentence below has never been shown.
+            -- COALESCE rather than code alone because the value lands inside a
+            -- Bangla sentence, where ROOM-204 reads worse than a room's own
+            -- name when the school has bothered to give it one.
+            COALESCE(rm.name_bn, rm.code) AS room_name,
             s.is_double, s.double_group_id, s.parallel_pool, s.is_pinned, s.row_version
        FROM routine_slots s
        LEFT JOIN subjects sub ON sub.id = s.subject_id
@@ -272,7 +279,8 @@ async function explainConflict(
     subject_bn: string | null; teacher_name: string | null;
     room_name: string | null; section_label: string | null;
   }>(
-    `SELECT sub.name_bn AS subject_bn, u.full_name_bn AS teacher_name, rm.name AS room_name,
+    `SELECT sub.name_bn AS subject_bn, u.full_name_bn AS teacher_name,
+            COALESCE(rm.name_bn, rm.code) AS room_name,
             cl.name_bn || '-' || sec.name AS section_label
        FROM routine_slots s
        LEFT JOIN subjects sub ON sub.id = s.subject_id

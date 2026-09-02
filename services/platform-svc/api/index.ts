@@ -1010,6 +1010,12 @@ async function setStatus(db: Db, op: Operator, req: IncomingMessage) {
   // that locks a whole school out has to say why, the same as every other
   // one in this console.
   const reason = requireReason(b.reason);
+  // `app.set_tenant_status` does raise on a missing school (P0002), so this
+  // path never wrote a phantom row the way the four operations endpoints did.
+  // It surfaced as a 500 instead of a 404, though, which tells an operator
+  // "we are broken" when the truth is "that school is not here". Checked up
+  // front so the answer is the same from every endpoint in this console.
+  await requireExistingTenant(db, tenantId);
 
   if (b.status === 'active') {
     const { rows } = await db.pool.query<Record<string, string>>(
@@ -1133,6 +1139,41 @@ function requireTenantId(raw: unknown): string {
     throw new HttpError(400, 'tenantId must be a valid uuid', 'invalid_tenant');
   }
   return id;
+}
+
+/**
+ * The school has to exist before we act on it.
+ *
+ * `requireTenantId` above proves the string is a uuid. It does not prove the
+ * uuid is a school, and four operations endpoints took that for granted:
+ * `/opsstate`, `/service`, `/portal` and `/grace` each ran
+ * `UPDATE … WHERE tenant_id = $1` with no rowCount check, wrote an audit row,
+ * and returned 200. Against a mistyped id the operator saw a green success,
+ * the trail recorded an act, and nothing had happened.
+ *
+ * Verified before this fix: POST /opsstate for a uuid with zero rows in
+ * `tenants` returned 200, and left `ops_state=suspended` in
+ * `audit.platform_access` for a school that does not exist.
+ *
+ * This is the same bug migration 053 fixed for `set_student_cap`, whose own
+ * header says: "`UPDATE tenants SET student_cap` as the platform role matched
+ * no row, reported success, and changed nothing." That fix went into one SQL
+ * function; these four endpoints write through `db.pool` directly, so the
+ * check belongs here — before the mutation, so no audit row is written for an
+ * act that cannot occur.
+ *
+ * `app.platform_operations` is the right probe: SECURITY DEFINER (so the
+ * platform role, which no policy on `tenants` admits, can call it), and it
+ * already excludes `deleted_at IS NOT NULL`. A suspended or archived school
+ * still returns a row — those exist, and must stay operable or they could
+ * never be reactivated.
+ */
+async function requireExistingTenant(db: Db, id: string): Promise<void> {
+  const { rows } = await db.pool.query(
+    `SELECT 1 FROM app.platform_operations($1)`, [id]);
+  if (rows.length === 0) {
+    throw new HttpError(404, 'no such tenant', 'not_found');
+  }
 }
 
 /**
@@ -1275,6 +1316,7 @@ async function getOperations(db: Db, req: IncomingMessage) {
 async function setOpsState(db: Db, op: { id: string }, req: IncomingMessage) {
   const body = await readJson<Record<string, unknown>>(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const state = String(body.state ?? '');
   if (!OPS_STATES.includes(state)) {
@@ -1301,6 +1343,7 @@ async function setOpsState(db: Db, op: { id: string }, req: IncomingMessage) {
 async function setService(db: Db, op: { id: string }, req: IncomingMessage) {
   const body = await readJson<Record<string, unknown>>(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const code = String(body.service ?? '');
   const state = String(body.state ?? '');
@@ -1359,6 +1402,7 @@ async function setService(db: Db, op: { id: string }, req: IncomingMessage) {
 async function setPortal(db: Db, op: { id: string }, req: IncomingMessage) {
   const body = await readJson<Record<string, unknown>>(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const portal = String(body.portal ?? '');
   const open = body.open === true;
@@ -1467,6 +1511,7 @@ async function recordPayment(db: Db, op: { id: string }, req: IncomingMessage) {
 async function extendGrace(db: Db, op: { id: string }, req: IncomingMessage) {
   const body = await readJson<Record<string, unknown>>(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const until = String(body.until ?? '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
@@ -1625,7 +1670,12 @@ async function setCap(db: Db, op: { id: string }, req: IncomingMessage) {
         `এই প্রতিষ্ঠানে এখন ${bn(enrolled)} জন শিক্ষার্থী আছে — সীমা তার কম করা যাবে না।`,
         'cap_below_enrolled', { enrolled });
     }
-    if (code === '02000') throw new HttpError(404, 'no such tenant', 'not_found');
+    // 02000 from set_student_cap, P0002 from set_tenant_status. Both mean the
+    // same thing and only the first was mapped, so /status answered 500 for a
+    // mistyped id where /cap answered 404.
+    if (code === '02000' || code === 'P0002') {
+      throw new HttpError(404, 'no such tenant', 'not_found');
+    }
     throw err;
   }
   return afterChange(db, id);
@@ -1643,7 +1693,12 @@ async function afterChange(db: Db, id: string) {
     `SELECT access, ops_state, billing_state, reason_bn, until,
             portals, services, next_due_on, grace_until, student_cap
        FROM app.platform_operations($1)`, [id]);
-  const r = (rows[0] ?? {}) as Record<string, unknown>;
+  // No row means no school. Reached only if a caller skipped
+  // requireExistingTenant — which is exactly why it is here: the check above
+  // can be forgotten by the next endpoint somebody adds, and this one cannot,
+  // because every operations endpoint returns through here.
+  if (rows.length === 0) throw new HttpError(404, 'no such tenant', 'not_found');
+  const r = rows[0] as Record<string, unknown>;
   return {
     ok: true,
     state: {

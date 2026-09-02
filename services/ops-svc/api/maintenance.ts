@@ -23,6 +23,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import pg from 'pg';
+import { recordJobRun } from '../../../packages/server-core/src/job-runs.ts';
 import { corsHeaders, json, header } from '../../../packages/server-core/src/http.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 import {
@@ -156,6 +157,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         WHERE relname LIKE '%_default' AND n_live_tup > 0`,
     ).catch(() => ({ rows: [] as { relname: string; n: string }[] }));
     const allOk = Object.values(results).every((r) => r.ok);
+    // The heartbeat, recorded with the run's real outcome. A partial run is a
+    // failure here as well as in the response: consecutive_failures is what
+    // separates "the schedule stopped" from "the schedule fires and the work
+    // breaks", and an operator needs to be sent to different places for each.
+    await recordJobRun(url, 'maintenance', allOk,
+      allOk ? undefined : Object.entries(results)
+        .filter(([, r]) => !r.ok).map(([k]) => k).join(', '));
     json(res, allOk ? 200 : 500, {
       ok: allOk,
       results,
@@ -164,6 +172,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }, cors);
   } catch (err) {
     console.error('[ops/maintenance] connection failed', err);
+    // Best-effort: if the maintenance connection itself failed this will very
+    // likely fail too, and recordJobRun swallows that. When it does land, the
+    // failure counter is what tells an operator the job is firing and dying
+    // rather than not firing at all.
+    await recordJobRun(url, 'maintenance', false, err);
     json(res, 500, { error: 'maintenance_connection_failed' }, cors);
   } finally {
     await client.end().catch(() => {});

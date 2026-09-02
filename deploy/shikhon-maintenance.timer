@@ -1,0 +1,15 @@
+# 18:00 UTC = 00:00 Asia/Dhaka. Written in UTC on purpose: a host whose clock
+# is moved to Dhaka would otherwise shift the job six hours silently.
+[Unit]
+Description=ShikhonBD — maintenance, daily at 01:00 Dhaka
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 UTC
+# A host that was down at 18:00 runs the job when it returns rather than
+# skipping a day of a school's messages.
+Persistent=true
+AccuracySec=1min
+Unit=shikhon-maintenance.service
+
+[Install]
+WantedBy=timers.target

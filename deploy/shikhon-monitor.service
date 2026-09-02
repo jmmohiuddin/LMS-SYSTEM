@@ -1,0 +1,24 @@
+# Drains the SMS outbox. Invoked by shikhon-sms.timer; see deploy/shikhon-cron.md.
+#
+# Type=oneshot, so systemd records the exit status and `systemctl list-timers`
+# reports a real LAST rather than the timer merely having fired. --fail makes
+# curl exit non-zero on a 4xx/5xx, which is what turns an HTTP failure into a
+# unit failure the journal and the host's own alerting can see.
+[Unit]
+Description=ShikhonBD — evaluate alerts and deliver them
+After=network-online.target shikhon-web.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=shikhon
+Group=shikhon
+EnvironmentFile=/etc/shikhon/shikhon.env
+# The secret is sent as a bearer header, never on the command line, so it does
+# not appear in `ps` or in the journal's command echo.
+# PORT comes from the same EnvironmentFile the web unit reads (default 4100),
+# so a host that moves the port does not silently leave the crons calling the
+# old one.
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 60 \
+  -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
+  http://127.0.0.1:${PORT}/api/v1/ops/monitor

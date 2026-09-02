@@ -29,6 +29,7 @@ import {
   evaluateAlerts, alertWebhookUrl, alertText, type Alert,
 } from '../../../packages/server-core/src/alerts.ts';
 import { gatherSignals } from '../../../packages/server-core/src/monitor-signals.ts';
+import { recordJobRun } from '../../../packages/server-core/src/job-runs.ts';
 
 /** Which deployment the alert came from. Two alerts that look identical from
  *  staging and production, with nothing to tell them apart, teach an operator
@@ -117,6 +118,14 @@ export default async function route(req: IncomingMessage, res: ServerResponse): 
   const delivery = req.method === 'POST'
     ? await deliver(alerts, env)
     : { delivered: false, reason: 'GET does not deliver' };
+
+  // The monitor records its OWN heartbeat, and only on the delivering call.
+  // A GET is an operator asking "what would fire right now?" — treating that
+  // as proof the schedule is alive would let a human keep the alert quiet by
+  // looking at it, which is the failure this whole condition exists to catch.
+  if (req.method === 'POST') {
+    await recordJobRun(url, 'monitor', signals.databaseReachable);
+  }
 
   json(res, 200, {
     environment: env,

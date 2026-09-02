@@ -24,8 +24,8 @@
  * messages are not, because an SMS body is a school's words to a parent.
  */
 import pg from 'pg';
-import type { MonitorSignals } from './alerts.ts';
-import { WINDOW_HOURS } from './alerts.ts';
+import type { MonitorSignals, JobHeartbeat } from './alerts.ts';
+import { WINDOW_HOURS, JOB_SILENCE_LIMIT_MINUTES } from './alerts.ts';
 
 export interface GatherResult {
   signals: MonitorSignals;
@@ -41,6 +41,7 @@ const UNREACHABLE: MonitorSignals = {
   pushDevices: 0, pushFailingDevices: 0,
   syncRejectedRecent: 0, syncAppliedRecent: 0,
   otpIssuedRecent: 0, otpExhaustedRecent: 0, otpExhaustedPhones: 0,
+  jobs: [],
 };
 
 export async function gatherSignals(connectionString: string): Promise<GatherResult> {
@@ -145,6 +146,34 @@ export async function gatherSignals(connectionString: string): Promise<GatherRes
       [`${WINDOW_HOURS} hours`],
     );
 
+    // The scheduled-job heartbeat (migration 071). Read through the
+    // SECURITY DEFINER function because `ops_job_runs` is owner-only — the
+    // monitor connects with the same credential everything else does.
+    const jobs = await client.query<{
+      job_name: string; minutes_since_success: string | null;
+      consecutive_failures: number; last_error: string | null;
+    }>('SELECT * FROM app.job_run_status()');
+
+    // A job the deployment expects but has NEVER recorded has no row at all,
+    // so it cannot be found by reading the table. The known names are added
+    // with a null age, which the condition reads as "never ran" — the state
+    // a brand-new deployment is in, and the one B-50 is about.
+    const seen = new Set(jobs.rows.map((r) => r.job_name));
+    const heartbeat: JobHeartbeat[] = [
+      ...jobs.rows.map((r) => ({
+        name: r.job_name,
+        minutesSinceSuccess: r.minutes_since_success === null
+          ? null : num(r.minutes_since_success),
+        consecutiveFailures: Number(r.consecutive_failures) || 0,
+        lastError: r.last_error,
+      })),
+      ...Object.keys(JOB_SILENCE_LIMIT_MINUTES)
+        .filter((name) => !seen.has(name))
+        .map((name) => ({
+          name, minutesSinceSuccess: null, consecutiveFailures: 0, lastError: null,
+        })),
+    ];
+
     return {
       signals: {
         databaseReachable: true,
@@ -162,6 +191,7 @@ export async function gatherSignals(connectionString: string): Promise<GatherRes
         otpIssuedRecent: num(otp.rows[0].issued),
         otpExhaustedRecent: num(otp.rows[0].exhausted),
         otpExhaustedPhones: num(otp.rows[0].exhausted_phones),
+        jobs: heartbeat,
       },
       topErrors: errs.rows.map((r) => ({ code: r.error_code, count: num(r.n) })),
     };

@@ -322,7 +322,29 @@ function sendIfRefused(res, cors, verdict) {
 }
 
 // services/ops-svc/api/maintenance.ts
+import pg3 from "pg";
+
+// packages/server-core/src/job-runs.ts
 import pg2 from "pg";
+async function recordJobRun(connectionString, job, ok, error) {
+  if (!connectionString) return;
+  const client = new pg2.Client({ connectionString, statement_timeout: 5e3 });
+  try {
+    await client.connect();
+    await client.query("SELECT app.record_job_run($1, $2, $3)", [
+      job,
+      ok,
+      error === void 0 ? null : String(
+        error?.message ?? error
+      ).slice(0, 500)
+    ]);
+  } catch (err) {
+    console.error("[ops] could not record job run", job, err);
+  } finally {
+    await client.end().catch(() => {
+    });
+  }
+}
 
 // packages/server-core/src/service-auth.ts
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -408,7 +430,7 @@ async function handler(req, res) {
     }, cors);
     return;
   }
-  const client = new pg2.Client({ connectionString: url, statement_timeout: 12e4 });
+  const client = new pg3.Client({ connectionString: url, statement_timeout: 12e4 });
   const results = {};
   try {
     await client.connect();
@@ -460,6 +482,12 @@ async function handler(req, res) {
         WHERE relname LIKE '%_default' AND n_live_tup > 0`
     ).catch(() => ({ rows: [] }));
     const allOk = Object.values(results).every((r) => r.ok);
+    await recordJobRun(
+      url,
+      "maintenance",
+      allOk,
+      allOk ? void 0 : Object.entries(results).filter(([, r]) => !r.ok).map(([k]) => k).join(", ")
+    );
     json(res, allOk ? 200 : 500, {
       ok: allOk,
       results,
@@ -468,6 +496,7 @@ async function handler(req, res) {
     }, cors);
   } catch (err) {
     console.error("[ops/maintenance] connection failed", err);
+    await recordJobRun(url, "maintenance", false, err);
     json(res, 500, { error: "maintenance_connection_failed" }, cors);
   } finally {
     await client.end().catch(() => {
@@ -5812,6 +5841,17 @@ async function handler19(req, res) {
 
 // packages/server-core/src/alerts.ts
 var WINDOW_HOURS = 24;
+var JOB_SILENCE_LIMIT_MINUTES = {
+  // Daily at 00:00 BST. A miss is visible the following morning, not a week
+  // later, and a school's parents notice a day of silence.
+  sms_dispatch: 26 * 60,
+  // Daily at 01:00 BST, same reasoning.
+  maintenance: 26 * 60,
+  // The monitor writes its own heartbeat. If THIS is late the deployment has
+  // lost the thing that watches it, which is the failure the runbook calls
+  // out as the one nothing inside the process can catch.
+  monitor: 90
+};
 var THRESHOLDS = {
   /** Two hours of a message sitting unsent. The dispatcher runs daily, so a
    *  queue is normal; a queue whose OLDEST member predates the last run is
@@ -5874,6 +5914,42 @@ function evaluateAlerts(s) {
       recover: "Aggregator-side: fix the credential or top up, then re-queue the failed rows \u2014 they keep their attempt count and are retried by the next dispatch. Data-side: the numbers are wrong and the school must correct them; do not retry into a wall."
     });
   }
+  for (const job of s.jobs) {
+    const limit = JOB_SILENCE_LIMIT_MINUTES[job.name];
+    if (limit === void 0) continue;
+    if (job.minutesSinceSuccess === null) {
+      out.push({
+        id: "job_never_ran",
+        severity: "critical",
+        title: `The ${job.name} job has never run`,
+        detail: "No successful execution has ever been recorded on this deployment.",
+        investigate: "This is the state B-50 describes: the schedules live in vercel.json and the Netlify cron-* functions, and a VPS running deploy/shikhon-web.service has neither. Check for the systemd timer that owns this job on THIS host \u2014 `systemctl list-timers 'shikhon-*'`.",
+        recover: "Install the timers from deploy/ and start them. Then invoke the endpoint by hand once with the service key to confirm the credential and the route before trusting the schedule."
+      });
+      continue;
+    }
+    if (job.minutesSinceSuccess > limit) {
+      const hours = Math.round(job.minutesSinceSuccess / 60);
+      out.push({
+        id: "job_silent",
+        severity: "critical",
+        title: `The ${job.name} job has been silent for ${hours}h`,
+        detail: `Last success ${hours}h ago; it is expected at least every ${Math.round(limit / 60)}h.`,
+        investigate: "The scheduler that owns it, on this host. A silent job is almost never a broken endpoint \u2014 invoking it by hand usually works, which is what makes this the alert that matters: nothing else reports a schedule that simply stopped firing.",
+        recover: "Restart the timer, then invoke the endpoint once by hand. Every one of these jobs is idempotent, so a manual run to catch up is safe."
+      });
+    }
+    if (job.consecutiveFailures >= 3) {
+      out.push({
+        id: "job_failing",
+        severity: "critical",
+        title: `The ${job.name} job has failed ${job.consecutiveFailures} times running`,
+        detail: job.lastError ? `Last error: ${job.lastError}` : "It is running on schedule and failing every time.",
+        investigate: "This is the opposite of job_silent and needs the opposite look: the schedule is fine and the work is not. The recorded error is the first thing to read.",
+        recover: "Fix what the error names. The failure counter resets on the next success, so the alert clears itself once the job works."
+      });
+    }
+  }
   if (s.partitionMonthsAhead !== null && s.partitionMonthsAhead < 1) {
     out.push({
       id: "maintenance_cron_stopped",
@@ -5930,7 +6006,7 @@ function alertText(alerts, environment) {
 }
 
 // packages/server-core/src/monitor-signals.ts
-import pg3 from "pg";
+import pg4 from "pg";
 var UNREACHABLE = {
   databaseReachable: false,
   smsQueuedNow: 0,
@@ -5944,10 +6020,11 @@ var UNREACHABLE = {
   syncAppliedRecent: 0,
   otpIssuedRecent: 0,
   otpExhaustedRecent: 0,
-  otpExhaustedPhones: 0
+  otpExhaustedPhones: 0,
+  jobs: []
 };
 async function gatherSignals(connectionString) {
-  const client = new pg3.Client({ connectionString, statement_timeout: 15e3 });
+  const client = new pg4.Client({ connectionString, statement_timeout: 15e3 });
   try {
     await client.connect();
   } catch {
@@ -6022,6 +6099,22 @@ async function gatherSignals(connectionString) {
         WHERE created_at > now() - $1::interval`,
       [`${WINDOW_HOURS} hours`]
     );
+    const jobs = await client.query("SELECT * FROM app.job_run_status()");
+    const seen = new Set(jobs.rows.map((r) => r.job_name));
+    const heartbeat = [
+      ...jobs.rows.map((r) => ({
+        name: r.job_name,
+        minutesSinceSuccess: r.minutes_since_success === null ? null : num2(r.minutes_since_success),
+        consecutiveFailures: Number(r.consecutive_failures) || 0,
+        lastError: r.last_error
+      })),
+      ...Object.keys(JOB_SILENCE_LIMIT_MINUTES).filter((name) => !seen.has(name)).map((name) => ({
+        name,
+        minutesSinceSuccess: null,
+        consecutiveFailures: 0,
+        lastError: null
+      }))
+    ];
     return {
       signals: {
         databaseReachable: true,
@@ -6036,7 +6129,8 @@ async function gatherSignals(connectionString) {
         syncAppliedRecent: num2(sync.rows[0].applied),
         otpIssuedRecent: num2(otp.rows[0].issued),
         otpExhaustedRecent: num2(otp.rows[0].exhausted),
-        otpExhaustedPhones: num2(otp.rows[0].exhausted_phones)
+        otpExhaustedPhones: num2(otp.rows[0].exhausted_phones),
+        jobs: heartbeat
       },
       topErrors: errs.rows.map((r) => ({ code: r.error_code, count: num2(r.n) }))
     };
@@ -6119,6 +6213,9 @@ async function route(req, res) {
     console.error(JSON.stringify({ at: "monitor", environment: env, ...a }));
   }
   const delivery = req.method === "POST" ? await deliver(alerts, env) : { delivered: false, reason: "GET does not deliver" };
+  if (req.method === "POST") {
+    await recordJobRun(url, "monitor", signals.databaseReachable);
+  }
   json(res, 200, {
     environment: env,
     checkedAt: (/* @__PURE__ */ new Date()).toISOString(),

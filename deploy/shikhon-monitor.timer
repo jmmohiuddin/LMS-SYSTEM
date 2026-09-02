@@ -1,0 +1,14 @@
+# Every fifteen minutes. NOT Persistent: a check that missed its slot has
+# nothing to catch up on, and the gap it leaves is precisely what the
+# heartbeat alert (migration 071) is there to report.
+[Unit]
+Description=ShikhonBD — evaluate and deliver alerts
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=shikhon-monitor.service
+
+[Install]
+WantedBy=timers.target

@@ -79,6 +79,14 @@ export interface MonitorSignals {
 
   /** Identity: challenges issued vs. those that burned all their attempts. */
   otpIssuedRecent: number;
+  /**
+   * One entry per scheduled job this deployment expects to see running.
+   *
+   * `minutesSinceSuccess` is null when the job has never reported at all,
+   * which is a finding rather than a gap in the data: a deployment whose
+   * dispatcher has never run once is exactly the state B-50 describes.
+   */
+  jobs: JobHeartbeat[];
   otpExhaustedRecent: number;
   /** Distinct phones that exhausted attempts — one number, many tries. */
   otpExhaustedPhones: number;
@@ -92,6 +100,34 @@ export const WINDOW_HOURS = 24;
  * first real pilot will move some of them and whoever moves them deserves to
  * see what the number was for.
  */
+/** What `app.job_run_status()` reports, per scheduled job. */
+export interface JobHeartbeat {
+  name: string;
+  minutesSinceSuccess: number | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+}
+
+/**
+ * How long each job may stay silent before it is a problem.
+ *
+ * Every value is the job's own interval plus a margin, not a single global
+ * number: the dispatcher runs daily and the monitor every fifteen minutes, so
+ * one threshold would either page on a healthy dispatcher or ignore a dead
+ * monitor for a day.
+ */
+export const JOB_SILENCE_LIMIT_MINUTES: Record<string, number> = {
+  // Daily at 00:00 BST. A miss is visible the following morning, not a week
+  // later, and a school's parents notice a day of silence.
+  sms_dispatch: 26 * 60,
+  // Daily at 01:00 BST, same reasoning.
+  maintenance: 26 * 60,
+  // The monitor writes its own heartbeat. If THIS is late the deployment has
+  // lost the thing that watches it, which is the failure the runbook calls
+  // out as the one nothing inside the process can catch.
+  monitor: 90,
+};
+
 export const THRESHOLDS = {
   /** Two hours of a message sitting unsent. The dispatcher runs daily, so a
    *  queue is normal; a queue whose OLDEST member predates the last run is
@@ -197,6 +233,80 @@ export function evaluateAlerts(s: MonitorSignals): Alert[] {
         + 'next dispatch. Data-side: the numbers are wrong and the school '
         + 'must correct them; do not retry into a wall.',
     });
+  }
+
+  // ── The one that fires when NOTHING is happening ───────────────────────
+  //
+  // Every condition above is a proportion of activity: a failure ratio, a
+  // queue depth, a device count. Together they mean a deployment where the
+  // crons are dead, nobody logs in and nothing sends evaluates to an empty
+  // alert list and reports itself healthy — B-51.
+  //
+  // This one has no floor and no ratio. Its condition is ABSENCE: a job that
+  // has not reported success inside its own interval, or that has never
+  // reported at all. It cannot be quiet just because the school is.
+  for (const job of s.jobs) {
+    const limit = JOB_SILENCE_LIMIT_MINUTES[job.name];
+    if (limit === undefined) continue;
+
+    if (job.minutesSinceSuccess === null) {
+      out.push({
+        id: 'job_never_ran',
+        severity: 'critical',
+        title: `The ${job.name} job has never run`,
+        detail: 'No successful execution has ever been recorded on this '
+          + 'deployment.',
+        investigate:
+          'This is the state B-50 describes: the schedules live in '
+          + 'vercel.json and the Netlify cron-* functions, and a VPS running '
+          + 'deploy/shikhon-web.service has neither. Check for the systemd '
+          + 'timer that owns this job on THIS host — `systemctl list-timers '
+          + "'shikhon-*'`.",
+        recover:
+          'Install the timers from deploy/ and start them. Then invoke the '
+          + 'endpoint by hand once with the service key to confirm the '
+          + 'credential and the route before trusting the schedule.',
+      });
+      continue;
+    }
+
+    if (job.minutesSinceSuccess > limit) {
+      const hours = Math.round(job.minutesSinceSuccess / 60);
+      out.push({
+        id: 'job_silent',
+        severity: 'critical',
+        title: `The ${job.name} job has been silent for ${hours}h`,
+        detail: `Last success ${hours}h ago; it is expected at least every `
+          + `${Math.round(limit / 60)}h.`,
+        investigate:
+          'The scheduler that owns it, on this host. A silent job is almost '
+          + 'never a broken endpoint — invoking it by hand usually works, '
+          + 'which is what makes this the alert that matters: nothing else '
+          + 'reports a schedule that simply stopped firing.',
+        recover:
+          'Restart the timer, then invoke the endpoint once by hand. Every '
+          + 'one of these jobs is idempotent, so a manual run to catch up is '
+          + 'safe.',
+      });
+    }
+
+    if (job.consecutiveFailures >= 3) {
+      out.push({
+        id: 'job_failing',
+        severity: 'critical',
+        title: `The ${job.name} job has failed ${job.consecutiveFailures} times running`,
+        detail: job.lastError
+          ? `Last error: ${job.lastError}`
+          : 'It is running on schedule and failing every time.',
+        investigate:
+          'This is the opposite of job_silent and needs the opposite look: '
+          + 'the schedule is fine and the work is not. The recorded error is '
+          + 'the first thing to read.',
+        recover:
+          'Fix what the error names. The failure counter resets on the next '
+          + 'success, so the alert clears itself once the job works.',
+      });
+    }
   }
 
   // ── The deadline nobody sees coming ─────────────────────────────────────

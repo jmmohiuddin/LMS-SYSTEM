@@ -15,8 +15,22 @@ import assert from 'node:assert/strict';
 
 import {
   evaluateAlerts, alertWebhookUrl, alertText, THRESHOLDS,
-  type MonitorSignals,
+  JOB_SILENCE_LIMIT_MINUTES,
+  type MonitorSignals, type JobHeartbeat,
 } from '../src/alerts.ts';
+
+/**
+ * Jobs that ran a few minutes ago.
+ *
+ * Every fixture here needs one, and the reason is the distinction P-ops
+ * exists to draw: zero BUSINESS activity is a quiet school and must stay
+ * silent, while zero JOB activity is a deployment whose schedules were never
+ * installed and must page. The two used to be the same "empty" state.
+ */
+const jobsRunning = (): JobHeartbeat[] =>
+  Object.keys(JOB_SILENCE_LIMIT_MINUTES).map((name) => ({
+    name, minutesSinceSuccess: 5, consecutiveFailures: 0, lastError: null,
+  }));
 
 /** A healthy, busy deployment: several schools, messages flowing, nothing wrong. */
 function healthy(over: Partial<MonitorSignals> = {}): MonitorSignals {
@@ -28,6 +42,7 @@ function healthy(over: Partial<MonitorSignals> = {}): MonitorSignals {
     pushDevices: 60, pushFailingDevices: 2,
     syncRejectedRecent: 1, syncAppliedRecent: 800,
     otpIssuedRecent: 120, otpExhaustedRecent: 4, otpExhaustedPhones: 4,
+    jobs: jobsRunning(),
     ...over,
   };
 }
@@ -48,6 +63,9 @@ describe('R-8 §7 — silence when there is nothing to say', () => {
       smsQueuedNow: 0, smsQueuedOldestMinutes: null,
       smsFailedRecent: 0, smsSentRecent: 0,
       partitionMonthsAhead: 3,
+      // The schedules ARE running — this test is about a school with nothing
+      // to do, not a deployment with nothing watching it.
+      jobs: jobsRunning(),
       pushDevices: 0, pushFailingDevices: 0,
       syncRejectedRecent: 0, syncAppliedRecent: 0,
       otpIssuedRecent: 0, otpExhaustedRecent: 0, otpExhaustedPhones: 0,
@@ -226,5 +244,83 @@ describe('R-8 §7 — ordering and delivery', () => {
 
   test('D11 — the platform brand appears on the platform surface', () => {
     assert.match(alertText([], 'production'), /shikhonBD/);
+  });
+});
+
+/**
+ * P-ops — the alert that fires when nothing is happening.
+ *
+ * Every condition above this block measures a proportion of activity, so the
+ * deployment B-51 describes — crons dead, no sends, no syncs, no logins —
+ * evaluated to an empty list and reported itself healthy. These are the
+ * conditions whose trigger is ABSENCE, and the distinction they have to hold
+ * is between a quiet school (silence is correct) and an unwatched deployment
+ * (silence is the bug).
+ */
+describe('P-ops §2 — a job that stopped is louder than a school that is quiet', () => {
+  const withJobs = (jobs: JobHeartbeat[]): MonitorSignals => ({
+    databaseReachable: true,
+    smsQueuedNow: 0, smsQueuedOldestMinutes: null,
+    smsFailedRecent: 0, smsSentRecent: 0,
+    partitionMonthsAhead: 3,
+    pushDevices: 0, pushFailingDevices: 0,
+    syncRejectedRecent: 0, syncAppliedRecent: 0,
+    otpIssuedRecent: 0, otpExhaustedRecent: 0, otpExhaustedPhones: 0,
+    jobs,
+  });
+
+  test('THE ONE THAT MATTERS — a totally idle deployment with dead crons alerts', () => {
+    // Zero of everything. Before P-ops this returned [].
+    const fired = evaluateAlerts(withJobs(
+      Object.keys(JOB_SILENCE_LIMIT_MINUTES).map((name) => ({
+        name, minutesSinceSuccess: null, consecutiveFailures: 0, lastError: null,
+      }))));
+    assert.equal(fired.length, 3, 'one per job that has never run');
+    assert.ok(fired.every((a) => a.id === 'job_never_ran'));
+    assert.ok(fired.every((a) => a.severity === 'critical'));
+  });
+
+  test('and the same deployment with its schedules running is silent', () => {
+    // The distinction that matters: nothing to do is not the same as nothing
+    // watching. This is the case the older "an empty deployment" test pins.
+    assert.deepEqual(evaluateAlerts(withJobs(
+      Object.keys(JOB_SILENCE_LIMIT_MINUTES).map((name) => ({
+        name, minutesSinceSuccess: 5, consecutiveFailures: 0, lastError: null,
+      })))), []);
+  });
+
+  test('a job late past its OWN interval fires, and one inside it does not', () => {
+    // Per-job limits, not one global number: the dispatcher runs daily and
+    // the monitor every fifteen minutes, so a single threshold would either
+    // page on a healthy dispatcher or miss a dead monitor for a day.
+    const late = evaluateAlerts(withJobs([
+      { name: 'monitor', minutesSinceSuccess: 120, consecutiveFailures: 0, lastError: null },
+      { name: 'sms_dispatch', minutesSinceSuccess: 120, consecutiveFailures: 0, lastError: null },
+    ]));
+    assert.deepEqual(late.map((a) => a.id), ['job_silent']);
+    assert.match(late[0].title, /monitor/, 'the monitor is late at 2h; the dispatcher is not');
+  });
+
+  test('a job that runs and fails is a different alert from one that is silent', () => {
+    const failing = evaluateAlerts(withJobs([
+      { name: 'sms_dispatch', minutesSinceSuccess: 10, consecutiveFailures: 4,
+        lastError: 'aggregator refused: balance' },
+    ]));
+    assert.deepEqual(failing.map((a) => a.id), ['job_failing']);
+    assert.match(failing[0].detail, /balance/, 'the recorded error must reach the operator');
+  });
+
+  test('two consecutive failures are not yet an alert — a retry is normal', () => {
+    assert.deepEqual(evaluateAlerts(withJobs([
+      { name: 'sms_dispatch', minutesSinceSuccess: 10, consecutiveFailures: 2, lastError: 'timeout' },
+    ])), []);
+  });
+
+  test('an unknown job name is ignored rather than alerting on itself', () => {
+    // A name outside the expected set has no interval to be late against, and
+    // inventing one would page an operator about a job nobody scheduled.
+    assert.deepEqual(evaluateAlerts(withJobs([
+      { name: 'something_else', minutesSinceSuccess: null, consecutiveFailures: 9, lastError: null },
+    ])), []);
   });
 });

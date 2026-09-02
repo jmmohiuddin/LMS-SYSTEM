@@ -231,6 +231,28 @@ async function sharedDb() {
   return db;
 }
 
+// packages/server-core/src/job-runs.ts
+import pg2 from "pg";
+async function recordJobRun(connectionString, job, ok, error) {
+  if (!connectionString) return;
+  const client = new pg2.Client({ connectionString, statement_timeout: 5e3 });
+  try {
+    await client.connect();
+    await client.query("SELECT app.record_job_run($1, $2, $3)", [
+      job,
+      ok,
+      error === void 0 ? null : String(
+        error?.message ?? error
+      ).slice(0, 500)
+    ]);
+  } catch (err) {
+    console.error("[ops] could not record job run", job, err);
+  } finally {
+    await client.end().catch(() => {
+    });
+  }
+}
+
 // packages/server-core/src/rate-limit.ts
 var perHour = (n) => n / 3600;
 var RATE_LIMITS = {
@@ -1144,6 +1166,11 @@ async function handler(req, res) {
         results.push({ tenantId, error: err instanceof Error ? err.message : "unknown_error" });
       }
     }
+    await recordJobRun(
+      process.env.DATABASE_MAINTENANCE_URL ?? process.env.DATABASE_URL,
+      "sms_dispatch",
+      true
+    );
     json(res, 200, { ok: true, results }, cors);
   } catch (err) {
     console.error("[sms-dispatch] unexpected error", err);

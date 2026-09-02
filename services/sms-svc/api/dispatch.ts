@@ -12,6 +12,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
+import { recordJobRun } from '../../../packages/server-core/src/job-runs.ts';
 import { corsHeaders, query, json, header } from '../../../packages/server-core/src/http.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
 import {
@@ -87,6 +88,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         results.push({ tenantId, error: err instanceof Error ? err.message : 'unknown_error' });
       }
     }
+    // The heartbeat. Recorded after the work, so a run that threw is not
+    // counted as a success — the alert reads the gap since the last one.
+    await recordJobRun(process.env.DATABASE_MAINTENANCE_URL ?? process.env.DATABASE_URL,
+      'sms_dispatch', true);
     json(res, 200, { ok: true, results }, cors);
   } catch (err) {
     console.error('[sms-dispatch] unexpected error', err);

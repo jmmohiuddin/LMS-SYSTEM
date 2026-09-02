@@ -10430,3 +10430,99 @@ stack.
   omission is a decision on the record rather than a gap somebody finds later.
 
 **Commits:** `0d8d32c`, `d680570`, `e92e9cb`, `1a2e3d1`, `ad2dea8`, `08b18c9`.
+
+---
+
+# Final Owner-Level SaaS Operations Audit   (2026-09-02) · **REPORT ONLY**
+
+No schema, API, UI or landing-page change. Full report:
+[FINAL-OWNER-SAAS-OPERATIONS-AUDIT.md](FINAL-OWNER-SAAS-OPERATIONS-AUDIT.md).
+
+**Method.** 30 investigating agents across the owner's 22 areas, a runtime entitlement probe
+that created tenants in each lifecycle state and made real HTTP calls, six adversarial passes
+instructed to *refute* the highest-stakes claims, and a completeness critic. Every
+verdict-changing claim was then re-verified by hand. The adversarial pass earned its place:
+it overturned four survey conclusions, including one that would have told the owner service
+disable was airtight.
+
+## The finding that outranks everything else
+
+**A freshly provisioned school cannot run a term.** Four workflows have no writer anywhere:
+
+| Workflow | Writers in production code | In `app.*` SQL functions | Rows across 112 tenants |
+|---|---|---|---|
+| Create an exam | 0 | 0 | 5 (fixtures) |
+| Set a fee amount | 0 | 0 | **0** |
+| Create a routine | 0 | 0 | **0** |
+| Create a room | 0 | 0 | **0** |
+| Record a payment | 1 (MFS webhook only) | — | 1 |
+
+Verified by hand, not only by agents. The consequence: a school onboards, imports students
+and takes attendance — then stops. The exam → grade → GPA → rank → publish chain is fully
+built, tested and **unreachable**, because no exam can be created. The monthly invoice run
+joins `fee_structures` and therefore yields zero invoices forever.
+
+None of the four appears in `docs/BACKLOG.md`, the file its own header calls "the only
+backlog". They are now B-46 … B-49.
+
+## Three findings that would each be an incident
+
+**Production schedules nothing.** `deploy/` holds one systemd unit and it is a plain
+`Type=simple` web process — no timer, no `OnCalendar`. The only crons in the repository are
+in `vercel.json`, and production is a VPS. SMS dispatch, partition maintenance and the alert
+monitor are unscheduled on the host that serves traffic. The backup cron *is* installed on the
+box and is likewise absent from the repo, which shows hand-installation is the undocumented
+practice.
+
+**Five of the seven alerts cannot fire on a total outage.** They are ratio conditions. A
+deployment with zero sends, zero syncs, zero logins and a 4,000-device push fleet evaluates to
+an empty alert list. `push_failure_rate` reads two columns no code ever writes. There is no
+heartbeat, so a silent sink and a healthy deployment are indistinguishable.
+
+**Three commercial controls report success on a school that does not exist.** `POST
+/opsstate`, `/portal` and `/grace` returned 200 for tenant `1111…` — zero rows in
+`tenants`, zero in `tenant_operations` — and wrote three audit entries for operations that
+never occurred. The endpoints `UPDATE … WHERE tenant_id = $1` with no `rowCount` check.
+Migration 053 fixed exactly this for `app.set_student_cap` with `IF NOT FOUND THEN RAISE
+EXCEPTION`, and its own header describes the bug. One endpoint got the fix; these three did
+not.
+
+## What is genuinely strong, and should be said
+
+The entitlement gate is real, database-enforced, fails closed, and was **observed refusing
+live requests** on every surface probed. The Bangla refusal reason comes from
+`app.tenant_access()` at the database layer, not from the UI. No entitlement anywhere is
+frontend-only. Both platform credentials are independently required (key alone 401, JWT alone
+403). The guardian phone is nulled server-side and was observed absent from live bodies for
+three teacher roles. Backup and one restore drill carry genuine production evidence, and
+`production-evidence.json` correctly refuses to let a rehearsal close a production gate.
+
+## Corrections to earlier records
+
+- **Double-period placement IS implemented** (F-504, `f820faf`). The final project audit said
+  it was missing. That was wrong.
+- **The overview is quadratic, not linear.** The prior 1.36 s @ 79 tenants does not reproduce
+  (0.45 s @ 111 today), but `app.platform_overview()` seq-scans the whole `users` table once
+  per tenant, and `app.tenant_access` costs 2.3× that scan. A ~380 ms JIT tax already fires
+  at 5 tenants.
+- **B-39 quantified:** `audit.platform_access` holds 1,959 rows across 6 distinct
+  `admin_id`s; there is no operator table anywhere; `admin_id` has no foreign key and
+  resolves to zero rows in `users`. Two operators produce md5-identical API responses.
+- **Operator authorization is a claim check, not an account check.** A `super_admin` token
+  for a `sub` and `tid` that exist nowhere returned 111 tenants. Not "anyone can forge a
+  token" — the signing key is still required — but there is no account, so no individual
+  operator can be disabled and revocation is all-or-nothing.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Areas audited | 22 of 22, plus a runtime entitlement matrix |
+| Agents | 30 completed (16 re-run after a session limit; results replayed from cache) |
+| Adversarial passes | 6 — four survey conclusions overturned |
+| Verdict-changing claims re-verified by hand | 5 of 5 |
+| Code changed | **none** — report only |
+| `index.html` | `496199bd`, unchanged |
+
+**Outcome:** NOT READY FOR PILOT, on five items (B-46…B-50 plus the SMS aggregator and the
+049–064 catch-up). P9 not started, and blocked on four prerequisites of its own.

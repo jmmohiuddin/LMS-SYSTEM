@@ -753,3 +753,43 @@ now checks the rule at source level (`e92e9cb`).
   does not exist fails silently — two of my own cost a mis-rendered summary
   row this phase. Each needs a look; a baseline of seven unexamined entries is
   how a guard rots. See BACKLOG.
+
+
+---
+
+## Appendix D — status reconciliation after the Owner SaaS Operations Audit (2026-09-02)
+
+**Append-only, like Appendix C. Nothing above is edited.** This appendix corrects STATUS
+only; the historical evidence in Appendices A–C stands as written.
+
+### Claims in this plan and in the report that the SaaS audit found stale or wrong
+
+| Where | Said | Now established |
+|---|---|---|
+| Report §8, §30 | The solver lacks **double-period placement** | **Wrong.** It is implemented — F-504, commit `f820faf`, 2026-08-11 |
+| Report §11, §19 | Overview cost is **linear**, 1.36 s at 79 tenants | **Wrong model.** 0.45 s at 111 today, but `app.platform_overview()` seq-scans the whole `users` table once per tenant — quadratic. `app.tenant_access` costs 2.3x that scan; a ~380 ms JIT tax already fires at 5 tenants |
+| Report §25 M1, M6 | Listed as MUST-BEFORE-PILOT, M1 as risk #1 | **Both CLOSED** 2026-09-02 (`0d8d32c`, `e92e9cb`, `1a2e3d1`). Appendix C records this; the REPORT itself still presents them as open and has no addendum |
+| Report §9 | Guardian phone withheld server-side | **Confirmed**, and observed absent from live bodies for three teacher roles. Three new defects found: 064 lets `PATCH` resurrect a revoked link, `revoked_at` is not in the payload, and `/academics/roster` leaks the student's own phone to every staff role (B-56) |
+| Report §25 M4/M5 | External blockers | **Still true**, and worse than recorded: nothing schedules the monitor on the production host at all (B-50) |
+
+### What no earlier audit found, and this one did
+
+Four workflows have **no writer anywhere in the product** — exam creation, `fee_structures`,
+payment/receipt, and routine/room creation (B-46 … B-49). Verified in production code and in
+every `app.*` SQL function, and corroborated by live row counts across 112 tenants:
+`fee_structures=0`, `routines=0`, `rooms=0`.
+
+This is the most significant gap found in any audit of this project, and it was invisible to
+the earlier ones because they audited **capabilities that exist** rather than asking whether a
+school could complete a term. It is recorded here so the next auditor asks that question
+first.
+
+### One methodological note worth keeping
+
+The completeness critic established that a claim repeated across several areas of the SaaS
+audit — *"a suspended / limited / service-disabled tenant does not exist, so the gate could
+not be observed without a write"* — was **factually wrong**: those fixtures already existed in
+`shikhon_ci` the whole time, and all three gates were observable with a plain `SELECT`.
+
+The lesson generalises beyond this project: **"I could not verify it" needs the same scrutiny
+as "I verified it."** An unexamined blocker is how a real answer gets recorded as unknowable.

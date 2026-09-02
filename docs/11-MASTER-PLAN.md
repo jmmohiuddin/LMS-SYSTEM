@@ -1554,3 +1554,44 @@ and CI's rollback step had never executed a single rollback file written since
 Next: **P9 — Smart Routine Generator**, per the audit's §30. Not started, and
 deliberately: the audit's exit condition for this phase was the MUST list, and
 three of its six items need something only the owner can supply.
+
+---
+
+## Final Owner-Level SaaS Operations Audit (2026-09-02) — the roadmap it implies
+
+Full report: [FINAL-OWNER-SAAS-OPERATIONS-AUDIT.md](FINAL-OWNER-SAAS-OPERATIONS-AUDIT.md).
+
+The audit answered the owner's question — *can one operator run 10 → 500 institutions without
+SQL?* — with a split verdict. **The platform-operations layer is sound**: the entitlement gate
+is database-enforced, fails closed, refuses in Bangla, and was observed firing. **The product
+layer beneath it is not**: four workflows a Bangladeshi institution must perform have no
+writer anywhere in the product, so a school that onboards successfully can take attendance and
+then do nothing else.
+
+### Revised order of work
+
+**P-writers (new, and first).** Exam creation · `fee_structures` · payment + receipt ·
+routine + room creation. B-46 … B-49. Nothing else changes what a customer can do, and the
+routine writer is also P9's largest prerequisite.
+
+**P-ops (small, alongside).** Schedule the crons on the production host; one non-ratio
+heartbeat alert plus a webhook that reaches a person; the `rowCount` guard on the three
+platform endpoints; close the service-disable sibling bypass; make tenant suspension revoke
+sessions. B-50 … B-54.
+
+**P9 — Smart Routine.** After P-writers, because P9 has four unmet prerequisites: no room
+write path (0 rooms in 112 tenants), no routine-creation API, a Ramadan swap that
+`uq_routine_active` structurally forbids, and a routine-editor query selecting a column
+`rooms` does not have. Double-period placement, contrary to the earlier audit, is already
+done.
+
+**P10 — operator ergonomics at scale.** Pagination and sort on the fleet list; the attention
+queue (it flags 103 of 110 institutions today); `/platform/health` in the ops drawer; the
+operator directory (B-39); rename/slug/contact editing. Trigger: the overview's quadratic
+term must be fixed before ~50 real tenants.
+
+**P11 — portability.** Data export, which does not exist in any form today and is the
+clearest customer-trust gap.
+
+The pilot gates remain: the four writers, cron scheduling, an alert that reaches a human, the
+SMS aggregator (external), and the 049 → 064 catch-up.

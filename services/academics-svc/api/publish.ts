@@ -163,22 +163,46 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         if (!scaleId) throw new HttpError(422, 'no default grading scale configured', 'no_grading_scale');
 
         // 1. Per-subject grades (board rule 1 lives inside the function).
+        //
+        // Through a CTE, and it has to be. The original was
+        //   UPDATE exam_marks m ... FROM exam_subjects es,
+        //     LATERAL app.compute_subject_grade(..., m.cq_marks, ...)
+        // and PostgreSQL refuses to parse it:
+        //   ERROR: invalid reference to FROM-clause entry for table "m"
+        //   HINT:  There is an entry for table "m", but it cannot be
+        //          referenced from this part of the query.
+        // An UPDATE's target is not in scope for a LATERAL in its own FROM
+        // list. So this statement failed at parse time on every call, which
+        // means **publishing results has never once executed** — the whole
+        // grade → GPA → rank → publish chain ended here.
+        //
+        // Nothing caught it because no exam could be created in the first
+        // place (there was no writer for `exams` until this phase), so the
+        // endpoint was unreachable and its SQL was never sent to a server.
+        //
+        // In the CTE `m` is an ordinary FROM entry, so the LATERAL may
+        // reference it; the UPDATE then joins back on the primary key.
         const graded = await client.query(
-          `UPDATE exam_marks m
+          `WITH g AS (
+             SELECT m.id AS mark_id, gr.letter, gr.grade_point, gr.component_failed
+               FROM exam_marks m
+               JOIN exam_subjects es ON es.id = m.exam_subject_id
+               CROSS JOIN LATERAL app.compute_subject_grade(
+                 app.current_tenant(),
+                 m.cq_marks, es.cq_max, es.cq_pass,
+                 m.mcq_marks, es.mcq_max, es.mcq_pass,
+                 m.practical_marks, m.ca_marks,
+                 es.cq_max + es.mcq_max + es.practical_max + es.ca_max,
+                 m.is_absent, $2::uuid) gr
+              WHERE es.exam_id = $1
+           )
+           UPDATE exam_marks m
               SET grade_letter = g.letter,
                   grade_point = g.grade_point,
                   component_failed = g.component_failed,
                   row_version = m.row_version + 1
-             FROM exam_subjects es,
-                  LATERAL app.compute_subject_grade(
-                    app.current_tenant(),
-                    m.cq_marks, es.cq_max, es.cq_pass,
-                    m.mcq_marks, es.mcq_max, es.mcq_pass,
-                    m.practical_marks, m.ca_marks,
-                    es.cq_max + es.mcq_max + es.practical_max + es.ca_max,
-                    m.is_absent, $2::uuid) g
-            WHERE es.id = m.exam_subject_id
-              AND es.exam_id = $1`,
+             FROM g
+            WHERE g.mark_id = m.id`,
           [examId, scaleId],
         );
 

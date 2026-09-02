@@ -24,7 +24,7 @@
  * product bug and is in fact a wrong connection string. The preflight below
  * refuses to run rather than let anyone spend an afternoon on that.
  */
-import { readdirSync, existsSync, readFileSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,8 +127,26 @@ for (const group of [...GROUPS, ...EXTRA]) {
       results.push(Number(pass) || 0);
     } catch (err) {
       failed++;
-      console.log('FAIL');
-      process.stdout.write(String(err.stdout ?? '').split('\n').slice(-40).join('\n'));
+      const out = String(err.stdout ?? '');
+      const errOut = String(err.stderr ?? '');
+      // The whole output, to a file, ALWAYS.
+      //
+      // The 40-line tail below is readable and it is not evidence. P0 hit an
+      // ops-svc failure that appeared once in ten runs — `branding.test.ts`
+      // reported as a whole-file failure, which is the signature of a hook
+      // throwing rather than an assertion failing. The tail had already
+      // scrolled past the cause, the run could not be reproduced, and there
+      // was nothing left to diagnose. An intermittent failure you cannot read
+      // is an intermittent failure you will eventually learn to ignore.
+      const slug = (isLeaf ? group : `${group}-${name}`).replace(/[\\/]/g, '-');
+      const dump = join(ROOT, `test-failure-${slug}.log`);
+      try {
+        writeFileSync(dump, `=== stdout ===\n${out}\n=== stderr ===\n${errOut}\n`);
+        console.log(`FAIL  — full output: ${dump.slice(ROOT.length + 1)}`);
+      } catch {
+        console.log('FAIL');
+      }
+      process.stdout.write(out.split('\n').slice(-40).join('\n'));
     }
   }
 }

@@ -94,3 +94,4 @@ _design_import/
 # own domain is a platform page on a tenant surface (D11).
 apps/pwa/public/ui-gallery.js
 apps/pwa/public/ui-gallery.html
+test-failure-*.log

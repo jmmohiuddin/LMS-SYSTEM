@@ -83,7 +83,11 @@ export type AuditAction =
   | 'academic.room.create'
   | 'academic.room.update'
   | 'academic.room.deactivate'
-  | 'academic.room.reactivate';
+  | 'academic.room.reactivate'
+  // P0. Exam authoring. Everything below an exam — marks, grades, GPA, rank,
+  // publish — was complete and unreachable, because nothing could create one.
+  | 'academic.exam.create'
+  | 'academic.exam.update';
 
 export interface AuditEntry {
   action: AuditAction;

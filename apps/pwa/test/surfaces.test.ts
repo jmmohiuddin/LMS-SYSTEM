@@ -204,3 +204,45 @@ describe('an installed PWA opens the application', () => {
     assert.doesNotMatch(JSON.stringify(m), /ShikhonBD|শিখন —/);
   });
 });
+
+/**
+ * P0 — an authoring register must never be served from cache.
+ *
+ * Found by using the screen, not by reading it. Creating room 204 succeeded,
+ * the success line said so, and the list underneath still read
+ * "এখনো কোনো কক্ষ যোগ করা হয়নি" — the room was in the database and the service
+ * worker was replaying the pre-write empty answer. `/api/v1/rms/` as a whole
+ * is stale-while-revalidate ("reference data — instant render beats freshness
+ * here"), which is right for a published timetable and wrong for a register
+ * that is read immediately before a write and re-read immediately after one.
+ *
+ * This is the same reasoning the R-3 block already applies to
+ * `/api/v1/ops/users` and friends: "management reads precede mutations — a
+ * stale one is acted on".
+ */
+describe('authoring registers are network-only', () => {
+  const get = (url: string) => route({ url, method: 'GET' });
+
+  test('THE ONE THAT MATTERS — rooms and exams are never stale-served', () => {
+    for (const url of [
+      'https://x.test/api/v1/rms/rooms',
+      'https://x.test/api/v1/academics/exams?yearId=abc',
+    ]) {
+      const r = get(url);
+      assert.equal(r.strategy, 'network-only', `${url} -> ${r.strategy} (${r.reason})`);
+    }
+  });
+
+  test('and the reference reads they were carved out of still cache', () => {
+    // Without this the fix could have been "make everything network-only",
+    // which would take the timetable away from a teacher on a dead link —
+    // the exact case the offline story exists for.
+    for (const url of [
+      'https://x.test/api/v1/rms/routine?sectionId=abc',
+      'https://x.test/api/v1/academics/roster?sectionId=abc',
+    ]) {
+      const r = get(url);
+      assert.equal(r.strategy, 'stale-while-revalidate', `${url} -> ${r.strategy}`);
+    }
+  });
+});

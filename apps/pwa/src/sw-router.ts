@@ -186,6 +186,27 @@ export function route(request: { url: string; method: string; mode?: string }): 
     };
   }
 
+  // P0. The two authoring registers, carved out of the reference rule below.
+  //
+  // Same argument as the R-3 block above, and found the same way — by using
+  // the screen. The room register is read immediately BEFORE a mutation (is
+  // this code taken?) and again immediately AFTER one, and
+  // stale-while-revalidate serves the pre-write copy to both. Observed in a
+  // browser: creating room 204 succeeded, the success line said so, and the
+  // list underneath it still read "এখনো কোনো কক্ষ যোগ করা হয়নি" — the room was
+  // in the database and the screen was showing the cached empty answer.
+  //
+  // `/rms/routine` and the rest of `/academics/` stay cached below: a
+  // published timetable is exactly the reference data that rule was written
+  // for, and reading it in a corridor on a dead link is the offline story.
+  if (path.startsWith('/api/v1/rms/rooms')
+    || path.startsWith('/api/v1/academics/exams')) {
+    return {
+      strategy: 'network-only',
+      reason: 'authoring register — read before a write and re-read after it',
+    };
+  }
+
   // Reference reads: render instantly from cache, refresh in the background.
   if (path.startsWith('/api/v1/rms/') || path.startsWith('/api/v1/academics/')) {
     return {

@@ -150,6 +150,10 @@ const SENTINELS = [
   ['063_teacher_attendance',           'function_body', 'app.rank_invigilators', 'teacher_absent_on'],
   ['064_guardian_link_conflict_target', 'function_body', 'app.set_guardian_permissions', 'WHERE revoked_at IS NULL DO UPDATE'],
   ['065_room_write_scope',             'policy',        'rooms_insert_scope'],
+  // The policy, not the CHECK: a half-applied 066 that left the constraint
+  // and not the scope would report applied while a subject teacher could
+  // still create an exam, which is the thing it exists to stop.
+  ['066_exam_authoring_scope',         'policy',        'exams_insert_scope'],
 ];
 
 /**
@@ -222,6 +226,7 @@ const MEANING = {
   '063_teacher_attendance':          'M6 — the staff register that the substitute finder and the invigilator ranker had both been filtering on since 006, with nothing in the product able to write it',
   '064_guardian_link_conflict_target': 'M6 follow-on — app.set_guardian_permissions had raised an error on every call since 050, because 050 made the guardianships unique index partial and left the bare ON CONFLICT column list behind',
   '065_room_write_scope':            'P0 — rooms had tenant isolation and no role scope since 003, so a student session could insert one; closed on the day a writer made it reachable',
+  '066_exam_authoring_scope':        'P0 — the exam tables get the write scope they never had, so the one path that can now create an exam is the only path that can',
 };
 
 const QUERIES = {

@@ -1525,23 +1525,89 @@ async function handler2(req, res) {
   }
 }
 
+// packages/server-core/src/audit.ts
+async function writeAudit(client, actor, entry) {
+  const sp = `audit_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await client.query(`SAVEPOINT ${sp}`);
+  } catch {
+  }
+  try {
+    await client.query(
+      `INSERT INTO audit.activity_log
+         (tenant_id, actor_id, actor_role, action, entity_type, entity_id,
+          before_state, after_state)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        actor.tenantId,
+        actor.userId,
+        actor.role,
+        entry.action,
+        entry.entityType,
+        entry.entityId ?? null,
+        entry.before === void 0 ? null : JSON.stringify(entry.before),
+        entry.after === void 0 ? null : JSON.stringify(entry.after)
+      ]
+    );
+    try {
+      await client.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch {
+    }
+  } catch {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+    } catch {
+    }
+  }
+}
+
 // services/academics-svc/api/exams.ts
 var SERVICE = "results";
 var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var EXAM_ROLES = ["principal", "school_owner", "academic_coordinator", "dept_head"];
+var EXAM_TYPES = [
+  "class_test",
+  "monthly",
+  "half_yearly",
+  "pre_test",
+  "test",
+  "annual",
+  "model",
+  "board"
+];
+var NAME_MAX = 120;
 async function handler3(req, res) {
-  const cors = corsHeaders();
+  const cors = corsHeaders([], "GET, POST, PATCH, OPTIONS");
   if (req.method === "OPTIONS") {
     res.writeHead(204, cors);
     res.end();
     return;
   }
-  if (req.method !== "GET") {
-    json(res, 405, { error: "method_not_allowed" }, cors);
-    return;
-  }
   try {
     const claims = await authenticate(req);
+    const db0 = await sharedDb();
+    const wctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
+    if (req.method === "POST") {
+      requireRole(claims, EXAM_ROLES);
+      json(res, 200, await createExam(db0, wctx, req), cors);
+      return;
+    }
+    if (req.method === "PATCH") {
+      requireRole(claims, EXAM_ROLES);
+      json(res, 200, await updateExam(db0, wctx, req), cors);
+      return;
+    }
+    if (req.method !== "GET") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
     requireStaff(claims);
+    const yearId = query(req).get("yearId") ?? "";
+    if (yearId) {
+      if (!UUID_RE2.test(yearId)) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "invalid_year_id");
+      json(res, 200, await listByYear(db0, wctx, yearId, claims.role), cors);
+      return;
+    }
     const sectionId = query(req).get("sectionId") ?? "";
     if (!UUID_RE2.test(sectionId)) throw new HttpError(400, "sectionId must be a valid uuid", "invalid_section_id");
     const db = await sharedDb();
@@ -1599,12 +1665,260 @@ async function handler3(req, res) {
     json(res, 200, { exams }, cors);
   } catch (err) {
     if (err instanceof HttpError) {
-      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      json(
+        res,
+        err.status,
+        { error: err.code ?? "error", message: err.message, ...err.detail ?? {} },
+        cors
+      );
+      return;
+    }
+    const e = err;
+    if (e.code === "23505" && e.constraint === "uq_exam_name_year") {
+      json(res, 409, {
+        error: "duplicate_name",
+        message: "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u098F\u0987 \u09A8\u09BE\u09AE\u09C7 \u098F\u0995\u099F\u09BF \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u0986\u099B\u09C7\u0964",
+        field: "nameBn"
+      }, cors);
       return;
     }
     console.error("[exams] unexpected error", err);
     json(res, 500, { error: "internal_error" }, cors);
   }
+}
+var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+async function listByYear(db, ctx, yearId, role) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      `SELECT e.id, e.name_bn, e.name_en, e.exam_type, e.status,
+              e.starts_on, e.ends_on, e.weight_percent, e.is_gpa_bearing,
+              (SELECT count(*) FROM exam_subjects es WHERE es.exam_id = e.id)  AS paper_count,
+              (SELECT count(DISTINCT es.section_id) FROM exam_subjects es
+                WHERE es.exam_id = e.id)                                       AS section_count,
+              (SELECT count(*) FROM exam_marks m
+                 JOIN exam_subjects es ON es.id = m.exam_subject_id
+                WHERE es.exam_id = e.id)                                       AS mark_count
+         FROM exams e
+        WHERE e.academic_year_id = $1
+        ORDER BY e.starts_on NULLS LAST, e.name_bn`,
+      [yearId]
+    );
+    return {
+      canManage: EXAM_ROLES.includes(role),
+      examTypes: EXAM_TYPES,
+      exams: rows.map((r) => ({
+        id: r.id,
+        nameBn: r.name_bn,
+        nameEn: r.name_en,
+        examType: r.exam_type,
+        status: r.status,
+        startsOn: r.starts_on,
+        endsOn: r.ends_on,
+        weightPercent: Number(r.weight_percent),
+        isGpaBearing: r.is_gpa_bearing,
+        paperCount: Number(r.paper_count),
+        sectionCount: Number(r.section_count),
+        markCount: Number(r.mark_count)
+      }))
+    };
+  });
+}
+function validate(b, opts) {
+  const nameBn = (b.nameBn ?? "").trim();
+  if (!nameBn) throw new HttpError(400, "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09A8\u09BE\u09AE \u09B2\u09BF\u0996\u09C1\u09A8\u0964", "bad_name", { field: "nameBn" });
+  if (nameBn.length > NAME_MAX) {
+    throw new HttpError(400, `\u09A8\u09BE\u09AE ${NAME_MAX} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`, "bad_name", { field: "nameBn" });
+  }
+  const nameEn = (b.nameEn ?? "").trim() || nameBn;
+  const examType = (b.examType ?? "").trim();
+  if (!EXAM_TYPES.includes(examType)) {
+    throw new HttpError(400, "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09B0 \u09A7\u09B0\u09A8 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_exam_type", { field: "examType" });
+  }
+  const weight = b.weightPercent === void 0 ? 100 : Number(b.weightPercent);
+  if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+    throw new HttpError(400, "\u0993\u099C\u09A8 \u09E6 \u09A5\u09C7\u0995\u09C7 \u09E7\u09E6\u09E6-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964", "bad_weight", { field: "weightPercent" });
+  }
+  const startsOn = b.startsOn ? String(b.startsOn) : null;
+  const endsOn = b.endsOn ? String(b.endsOn) : null;
+  for (const [v, f] of [[startsOn, "startsOn"], [endsOn, "endsOn"]]) {
+    if (v !== null && !DATE_RE.test(v)) {
+      throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_date", { field: f });
+    }
+  }
+  if (startsOn && endsOn && endsOn < startsOn) {
+    throw new HttpError(400, "\u09B6\u09C7\u09B7 \u09A4\u09BE\u09B0\u09BF\u0996 \u09B6\u09C1\u09B0\u09C1\u09B0 \u0986\u0997\u09C7 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE\u0964", "bad_date_order", { field: "endsOn" });
+  }
+  if (opts.requireYear && !UUID_RE2.test(b.academicYearId ?? "")) {
+    throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8\u0964", "bad_year", { field: "academicYearId" });
+  }
+  return { nameBn, nameEn, examType, weight, startsOn, endsOn };
+}
+async function assertInYear(c, yearId, startsOn, endsOn) {
+  const yr = await c.query(
+    `SELECT starts_on, ends_on, label FROM academic_years WHERE id = $1`,
+    [yearId]
+  );
+  if (!yr.rowCount) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "year_not_found");
+  const year2 = yr.rows[0];
+  for (const [d, f] of [[startsOn, "startsOn"], [endsOn, "endsOn"]]) {
+    if (d && (d < year2.starts_on || d > year2.ends_on)) {
+      throw new HttpError(
+        400,
+        `\u09A4\u09BE\u09B0\u09BF\u0996\u099F\u09BF ${year2.label} \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7\u09B0 \u09AD\u09C7\u09A4\u09B0\u09C7 \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964`,
+        "date_outside_year",
+        { field: f }
+      );
+    }
+  }
+}
+async function createExam(db, ctx, req) {
+  const body = await readJson(req);
+  const v = validate(body, { requireYear: true });
+  const yearId = String(body.academicYearId);
+  const sectionIds = Array.isArray(body.sectionIds) ? body.sectionIds.map(String) : [];
+  if (sectionIds.length === 0) {
+    throw new HttpError(400, "\u0985\u09A8\u09CD\u09A4\u09A4 \u098F\u0995\u099F\u09BF \u09B8\u09C7\u0995\u09B6\u09A8 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8\u0964", "no_sections", { field: "sectionIds" });
+  }
+  for (const s of sectionIds) {
+    if (!UUID_RE2.test(s)) {
+      throw new HttpError(400, "\u09B8\u09C7\u0995\u09B6\u09A8 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_section", { field: "sectionIds" });
+    }
+  }
+  return db.withTenant(ctx, async (c) => {
+    await assertInYear(c, yearId, v.startsOn, v.endsOn);
+    const secs = await c.query(
+      `SELECT id FROM sections WHERE id = ANY($1::uuid[]) AND academic_year_id = $2`,
+      [sectionIds, yearId]
+    );
+    if (secs.rowCount !== sectionIds.length) {
+      throw new HttpError(
+        400,
+        "\u098F\u0995\u099F\u09BF \u09AC\u09BE \u098F\u0995\u09BE\u09A7\u09BF\u0995 \u09B8\u09C7\u0995\u09B6\u09A8 \u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7\u09B0 \u09A8\u09AF\u09BC\u0964",
+        "section_not_in_year",
+        { field: "sectionIds" }
+      );
+    }
+    const ins = await c.query(
+      `INSERT INTO exams (tenant_id, academic_year_id, term_id, name_bn, name_en,
+                          exam_type, weight_percent, starts_on, ends_on, is_gpa_bearing)
+       VALUES (app.current_tenant(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        yearId,
+        body.termId ?? null,
+        v.nameBn,
+        v.nameEn,
+        v.examType,
+        v.weight,
+        v.startsOn,
+        v.endsOn,
+        body.isGpaBearing !== false
+      ]
+    );
+    const examId = ins.rows[0].id;
+    const papers = await c.query(
+      `WITH made AS (
+         INSERT INTO exam_subjects
+           (tenant_id, exam_id, section_id, subject_id,
+            cq_max, mcq_max, practical_max, ca_max, cq_pass, mcq_pass)
+         SELECT app.current_tenant(), $1, s.id, cs.subject_id,
+                cs.cq_marks, cs.mcq_marks, cs.practical_marks, cs.ca_marks,
+                cs.cq_pass_marks, cs.mcq_pass_marks
+           FROM sections s
+           JOIN class_subjects cs
+             ON cs.class_id = s.class_id AND cs.academic_year_id = s.academic_year_id
+          WHERE s.id = ANY($2::uuid[])
+         RETURNING 1
+       )
+       SELECT count(*)::text AS n FROM made`,
+      [examId, sectionIds]
+    );
+    const paperCount = Number(papers.rows[0].n);
+    if (paperCount === 0) {
+      throw new HttpError(
+        409,
+        "\u098F\u0987 \u09B8\u09C7\u0995\u09B6\u09A8\u0997\u09C1\u09B2\u09CB\u09B0 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u09AC\u09BF\u09B7\u09AF\u09BC \u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8\u0964",
+        "no_class_subjects"
+      );
+    }
+    await writeAudit(c, ctx, {
+      action: "academic.exam.create",
+      entityType: "exam",
+      entityId: examId,
+      after: {
+        nameBn: v.nameBn,
+        examType: v.examType,
+        startsOn: v.startsOn,
+        endsOn: v.endsOn,
+        sections: sectionIds.length,
+        papers: paperCount
+      }
+    });
+    return { id: examId, nameBn: v.nameBn, paperCount, sectionCount: sectionIds.length };
+  }, { write: true });
+}
+async function updateExam(db, ctx, req) {
+  const body = await readJson(req);
+  const id = (body.id ?? "").trim();
+  if (!UUID_RE2.test(id)) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "exam_required", { field: "id" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const cur = await c.query(
+      `SELECT status, name_bn, name_en, exam_type, weight_percent, starts_on, ends_on,
+              academic_year_id, is_gpa_bearing
+         FROM exams WHERE id = $1`,
+      [id]
+    );
+    if (cur.rowCount === 0) throw new HttpError(404, "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "exam_not_found");
+    const was = cur.rows[0];
+    if (was.status === "published" || was.status === "locked") {
+      throw new HttpError(409, "\u09AB\u09B2\u09BE\u09AB\u09B2 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u0986\u09B0 \u09B8\u09AE\u09CD\u09AA\u09BE\u09A6\u09A8\u09BE \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE\u0964", "exam_published");
+    }
+    const v = validate({
+      nameBn: body.nameBn ?? was.name_bn,
+      nameEn: body.nameEn ?? was.name_en,
+      examType: body.examType ?? was.exam_type,
+      weightPercent: body.weightPercent ?? Number(was.weight_percent),
+      startsOn: body.startsOn !== void 0 ? body.startsOn : was.starts_on,
+      endsOn: body.endsOn !== void 0 ? body.endsOn : was.ends_on
+    }, { requireYear: false });
+    await assertInYear(c, was.academic_year_id, v.startsOn, v.endsOn);
+    await c.query(
+      `UPDATE exams
+          SET name_bn = $2, name_en = $3, exam_type = $4, weight_percent = $5,
+              starts_on = $6, ends_on = $7, is_gpa_bearing = $8
+        WHERE id = $1`,
+      [
+        id,
+        v.nameBn,
+        v.nameEn,
+        v.examType,
+        v.weight,
+        v.startsOn,
+        v.endsOn,
+        body.isGpaBearing === void 0 ? was.is_gpa_bearing : body.isGpaBearing
+      ]
+    );
+    await writeAudit(c, ctx, {
+      action: "academic.exam.update",
+      entityType: "exam",
+      entityId: id,
+      before: {
+        nameBn: was.name_bn,
+        examType: was.exam_type,
+        startsOn: was.starts_on,
+        endsOn: was.ends_on
+      },
+      after: {
+        nameBn: v.nameBn,
+        examType: v.examType,
+        startsOn: v.startsOn,
+        endsOn: v.endsOn
+      }
+    });
+    return { id, nameBn: v.nameBn };
+  }, { write: true });
 }
 
 // services/academics-svc/api/marks.ts
@@ -1801,21 +2115,26 @@ async function handler5(req, res) {
         const scaleId = scaleRes.rows[0]?.id;
         if (!scaleId) throw new HttpError(422, "no default grading scale configured", "no_grading_scale");
         const graded = await client.query(
-          `UPDATE exam_marks m
+          `WITH g AS (
+             SELECT m.id AS mark_id, gr.letter, gr.grade_point, gr.component_failed
+               FROM exam_marks m
+               JOIN exam_subjects es ON es.id = m.exam_subject_id
+               CROSS JOIN LATERAL app.compute_subject_grade(
+                 app.current_tenant(),
+                 m.cq_marks, es.cq_max, es.cq_pass,
+                 m.mcq_marks, es.mcq_max, es.mcq_pass,
+                 m.practical_marks, m.ca_marks,
+                 es.cq_max + es.mcq_max + es.practical_max + es.ca_max,
+                 m.is_absent, $2::uuid) gr
+              WHERE es.exam_id = $1
+           )
+           UPDATE exam_marks m
               SET grade_letter = g.letter,
                   grade_point = g.grade_point,
                   component_failed = g.component_failed,
                   row_version = m.row_version + 1
-             FROM exam_subjects es,
-                  LATERAL app.compute_subject_grade(
-                    app.current_tenant(),
-                    m.cq_marks, es.cq_max, es.cq_pass,
-                    m.mcq_marks, es.mcq_max, es.mcq_pass,
-                    m.practical_marks, m.ca_marks,
-                    es.cq_max + es.mcq_max + es.practical_max + es.ca_max,
-                    m.is_absent, $2::uuid) g
-            WHERE es.id = m.exam_subject_id
-              AND es.exam_id = $1`,
+             FROM g
+            WHERE g.mark_id = m.id`,
           [examId, scaleId]
         );
         const results = await client.query(
@@ -5529,7 +5848,7 @@ async function loadFees2(c, studentId) {
 
 // services/academics-svc/api/myroutine.ts
 var UUID_RE18 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+var DATE_RE2 = /^\d{4}-\d{2}-\d{2}$/;
 var ROUTINE_ROLES = [
   "student",
   "guardian",
@@ -5559,7 +5878,7 @@ async function handler22(req, res) {
     if (qsStudent && !UUID_RE18.test(qsStudent)) {
       throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
     }
-    if (qsDate && !DATE_RE.test(qsDate)) {
+    if (qsDate && !DATE_RE2.test(qsDate)) {
       throw new HttpError(400, "date must be YYYY-MM-DD", "invalid_date");
     }
     if (claims.role === "student" && qsStudent && qsStudent !== claims.sub) {

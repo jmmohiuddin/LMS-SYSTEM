@@ -227,6 +227,7 @@ describe('authoring registers are network-only', () => {
     for (const url of [
       'https://x.test/api/v1/rms/rooms',
       'https://x.test/api/v1/academics/exams?yearId=abc',
+      'https://x.test/api/v1/finance/feestructures',
     ]) {
       const r = get(url);
       assert.equal(r.strategy, 'network-only', `${url} -> ${r.strategy} (${r.reason})`);

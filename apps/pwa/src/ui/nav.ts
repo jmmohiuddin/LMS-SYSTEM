@@ -87,6 +87,7 @@ const P = {
   users:       { path: 'users',       labelBn: 'ব্যবহারকারী',       glyph: 'users' },
   staffatt:    { path: 'staffattendance', labelBn: 'শিক্ষক হাজিরা', glyph: 'check-square' },
   rooms:       { path: 'rooms',       labelBn: 'কক্ষ ব্যবস্থাপনা',   glyph: 'layers' },
+  feesetup:    { path: 'feestructures', labelBn: 'ফি নির্ধারণ',      glyph: 'percent' },
   rollover:    { path: 'rollover',    labelBn: 'বার্ষিক উন্নয়ন',    glyph: 'repeat' },
   // P5. Three labels, one route. The screen imports students OR staff and the
   // endpoint gates the two differently — students to principal · owner ·
@@ -167,7 +168,7 @@ const GUARDIAN: RoleNav = {
 
 const ACCOUNTANT: RoleNav = {
   groups: [
-    { labelBn: G.money, items: [P.home, P.fees, P.invoices, P.ledger] },
+    { labelBn: G.money, items: [P.home, P.feesetup, P.fees, P.invoices, P.ledger] },
     { labelBn: G.people, items: [P.students, P.documents] },
     { labelBn: G.comms, items: [P.inbox, P.calendar] },
     TAIL,
@@ -187,7 +188,7 @@ const PRINCIPAL: RoleNav = {
     // M6. Beside the student roll, because the office does both each morning.
     { labelBn: G.people, items: [P.students, P.users, P.imports, P.attendance, P.staffatt] },
     { labelBn: G.teach, items: [P.publish, P.results, P.documents] },
-    { labelBn: G.money, items: [P.fees, P.invoices, P.ledger] },
+    { labelBn: G.money, items: [P.feesetup, P.fees, P.invoices, P.ledger] },
     { labelBn: G.comms, items: [P.inbox, P.compose] },
     { labelBn: G.admin, items: [P.branding, P.settings, P.rollover, P.audit] },
     TAIL,

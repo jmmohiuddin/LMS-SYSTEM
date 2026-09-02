@@ -787,6 +787,7 @@ const DEMO_STAFF_ONLY = new Set([
   '/api/v1/academics/marks',
   '/api/v1/rms/routine',
   '/api/v1/rms/rooms',
+  '/api/v1/finance/feestructures',
   '/api/v1/ops/structure',
 ]);
 

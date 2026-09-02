@@ -44,6 +44,7 @@ import { RolloverView } from './rollover-view.ts';
 import { UsersView } from './users-view.ts';
 import { StaffAttendanceView } from './staff-attendance-view.ts';
 import { RoomsView } from './rooms-view.ts';
+import { FeeStructuresView } from './fee-structures-view.ts';
 import { AuditView } from './audit-view.ts';
 import { CalendarView } from './calendar-view.ts';
 import { DocumentsView, type DocKind } from './documents-view.ts';
@@ -244,6 +245,7 @@ const CARD = {
   users:      { path: 'users',      glyph: 'users',        titleBn: 'ব্যবহারকারী',        subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট' },
   staffAtt:   { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন — বদলি শিক্ষক খোঁজায় লাগে' },
   rooms:      { path: 'rooms',      glyph: 'layers',       titleBn: 'কক্ষ ব্যবস্থাপনা',   subtitleBn: 'শ্রেণিকক্ষ ও ল্যাব — রুটিনে লাগে' },
+  feeSetup:   { path: 'feestructures', glyph: 'percent',    titleBn: 'ফি নির্ধারণ',        subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
   adminSettings: { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস',          subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
   audit:      { path: 'audit',      glyph: 'lock',         titleBn: 'কার্যবিবরণী',        subtitleBn: 'কে কখন কী পরিবর্তন করেছেন' },
@@ -575,6 +577,7 @@ async function main() {
               { path: 'fees', glyph: 'wallet', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
               { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন, কে আসেননি' },
               { path: 'rooms', glyph: 'layers', titleBn: 'কক্ষ ব্যবস্থাপনা', subtitleBn: 'শ্রেণিকক্ষ, ল্যাব ও ধারণক্ষমতা' },
+              { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
               { path: 'substitute', glyph: 'repeat', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
               { path: 'routineeditor', glyph: 'clock', titleBn: 'রুটিন সম্পাদনা', subtitleBn: 'ক্লাস সরান — সংঘর্ষ হলে কারণ জানায়' },
               { path: 'subjectchoice', glyph: 'layers', titleBn: 'বিভাগ ও বিষয় নির্বাচন', subtitleBn: 'ধর্ম শিক্ষা ও চতুর্থ বিষয় নির্ধারণ' },
@@ -798,6 +801,17 @@ async function main() {
             root: container, doc: document, auth,
             canGenerate: GENERATE_INVOICES.has(auth.role),
           });
+        },
+      },
+      {
+        // P0/A2. The price list. `fee_structures` had no writer at all, so the
+        // monthly invoice run joined an empty table and billed nothing.
+        path: 'feestructures',
+        labelBn: 'ফি নির্ধারণ',
+        glyph: 'percent',
+        hidden: true,
+        mount: (container) => {
+          new FeeStructuresView({ root: container, doc: document, auth });
         },
       },
       {

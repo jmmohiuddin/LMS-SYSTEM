@@ -1757,8 +1757,11 @@ async function loadRoles(client, tenantId, userId) {
     `SELECT ur.role_code
        FROM user_roles ur
        JOIN roles r ON r.code = ur.role_code
+       JOIN users u ON u.id = ur.user_id AND u.tenant_id = ur.tenant_id
       WHERE ur.tenant_id = $1 AND ur.user_id = $2
         AND (ur.valid_until IS NULL OR ur.valid_until >= app.today_dhaka())
+        AND u.deleted_at IS NULL
+        AND u.status IN ('active', 'invited')
       ORDER BY r.rank DESC`,
     [tenantId, userId]
   );
@@ -1893,6 +1896,16 @@ async function handler3(req, res) {
       );
       const session = sessionRes.rows[0];
       if (!session) throw new HttpError(401, "refresh token is invalid or expired", "invalid_refresh_token");
+      const accountRes = await client.query(
+        `SELECT status::text AS status FROM users
+          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [session.user_id, tenantId]
+      );
+      const account = accountRes.rows[0];
+      if (!account) throw new HttpError(403, "account no longer exists", "account_not_active");
+      if (account.status !== "active" && account.status !== "invited") {
+        throw new HttpError(403, `account is ${account.status}`, "account_not_active");
+      }
       const { primaryRole, roles } = await loadRoles(client, tenantId, session.user_id);
       if (!primaryRole) throw new HttpError(403, "account has no active role assigned", "no_active_role");
       const newRefreshToken = randomOpaqueToken(32);

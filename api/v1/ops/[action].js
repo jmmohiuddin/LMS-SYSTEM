@@ -3592,14 +3592,34 @@ async function setStatus(db, ctx, req) {
       [next, userId]
     );
     if (rows.length === 0) throw new HttpError(403, "\u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8\u09C7\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987", "forbidden");
+    let revoked = 0;
+    if (!body.active) {
+      const { rowCount } = await c.query(
+        `UPDATE user_sessions
+            SET revoked_at = now(), revoked_reason = 'account_deactivated'
+          WHERE tenant_id = app.current_tenant()
+            AND user_id = $1
+            AND revoked_at IS NULL`,
+        [userId]
+      );
+      revoked = rowCount ?? 0;
+    }
     await writeAudit(c, ctx, {
       action: body.active ? "ops.user.reactivate" : "ops.user.deactivate",
       entityType: "user",
       entityId: userId,
       before: { status: before[0].status },
-      after: { status: rows[0].status }
+      after: { status: rows[0].status, sessionsRevoked: revoked }
     });
-    return { id: userId, nameBn: before[0].name_bn, status: rows[0].status };
+    return {
+      id: userId,
+      nameBn: before[0].name_bn,
+      status: rows[0].status,
+      // Surfaced so the screen can say "signed out of 2 devices" rather
+      // than leaving an operator to wonder whether the phone in the staff
+      // room is still logged in.
+      sessionsRevoked: revoked
+    };
   });
 }
 
@@ -6109,6 +6129,157 @@ async function route(req, res) {
   }, cors);
 }
 
+// services/ops-svc/api/staff-attendance.ts
+var MARK_ROLES = ["principal", "school_owner", "it_admin", "academic_coordinator"];
+var TEACHING_ROLES = ["class_teacher", "subject_teacher", "dept_head", "academic_coordinator"];
+var STATUSES = /* @__PURE__ */ new Set(["present", "absent", "on_leave"]);
+var REASON_MAX = 200;
+async function handler20(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      json(res, 200, await read2(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "POST") {
+      requireRole(claims, MARK_ROLES);
+      json(res, 200, await mark(db, ctx, req), cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    console.error("[staff-attendance] unexpected error", err);
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+function requestedDate(req) {
+  const raw = query(req).get("date");
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_date");
+  }
+  return raw;
+}
+async function read2(db, ctx, req) {
+  const date2 = requestedDate(req);
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      `WITH d AS (SELECT COALESCE($1::date, app.today_dhaka()) AS day)
+       SELECT u.id AS teacher_id, u.full_name_bn, u.full_name_en,
+              max(ur.role_code) AS role_code,
+              ta.status, ta.reason, ta.marked_at,
+              m.full_name_bn AS marked_by_name,
+              (SELECT day FROM d)::text AS the_date
+         FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+         LEFT JOIN teacher_attendance ta
+                ON ta.teacher_id = u.id
+               AND ta.attendance_date = (SELECT day FROM d)
+         LEFT JOIN users m ON m.id = ta.marked_by
+        WHERE u.status = 'active'
+          AND u.deleted_at IS NULL
+          AND ur.role_code = ANY($2)
+          AND (ur.valid_until IS NULL OR ur.valid_until >= (SELECT day FROM d))
+        GROUP BY u.id, u.full_name_bn, u.full_name_en,
+                 ta.status, ta.reason, ta.marked_at, m.full_name_bn
+        ORDER BY u.full_name_bn`,
+      [date2, TEACHING_ROLES]
+    );
+    const away = rows.filter((r) => r.status === "absent" || r.status === "on_leave").length;
+    const marked = rows.filter((r) => r.status !== null).length;
+    return {
+      date: rows[0]?.the_date ?? date2,
+      canMark: MARK_ROLES.includes(ctx.role),
+      total: rows.length,
+      marked,
+      away,
+      teachers: rows.map((r) => ({
+        teacherId: r.teacher_id,
+        name: { bn: r.full_name_bn, en: r.full_name_en },
+        roleCode: r.role_code,
+        status: r.status,
+        reason: r.reason,
+        markedAt: r.marked_at,
+        markedBy: r.marked_by_name
+      }))
+    };
+  });
+}
+async function mark(db, ctx, req) {
+  const body = await readJson(req);
+  const teacherId = body.teacherId ?? "";
+  const status = body.status ?? "";
+  const reason = (body.reason ?? "").trim();
+  if (!teacherId) throw new HttpError(400, "\u0995\u09CB\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "teacher_required");
+  if (!STATUSES.has(status)) throw new HttpError(400, "\u0989\u09AA\u09B8\u09CD\u09A5\u09BF\u09A4\u09BF\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_status");
+  if (body.date !== void 0 && !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+    throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_date");
+  }
+  if (reason.length > REASON_MAX) {
+    throw new HttpError(400, `\u0995\u09BE\u09B0\u09A3 ${REASON_MAX} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09B2\u09BF\u0996\u09C1\u09A8\u0964`, "reason_too_long");
+  }
+  return db.withTenant(ctx, async (c) => {
+    const who = await c.query(
+      `SELECT u.full_name_bn
+         FROM users u
+        WHERE u.id = $1 AND u.status = 'active' AND u.deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM user_roles ur
+                       WHERE ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+                         AND ur.role_code = ANY($2))`,
+      [teacherId, TEACHING_ROLES]
+    );
+    if (who.rowCount === 0) {
+      throw new HttpError(404, "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u0995\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "teacher_not_found");
+    }
+    const prev = await c.query(
+      `SELECT status, reason FROM teacher_attendance
+        WHERE teacher_id = $1
+          AND attendance_date = COALESCE($2::date, app.today_dhaka())`,
+      [teacherId, body.date ?? null]
+    );
+    const { rows } = await c.query(
+      `INSERT INTO teacher_attendance
+         (tenant_id, teacher_id, attendance_date, status, reason, marked_by)
+       VALUES (app.current_tenant(), $1,
+               COALESCE($2::date, app.today_dhaka()), $3, NULLIF($4, ''), $5)
+       ON CONFLICT (tenant_id, teacher_id, attendance_date) DO UPDATE
+          SET status     = EXCLUDED.status,
+              reason     = EXCLUDED.reason,
+              marked_by  = EXCLUDED.marked_by,
+              updated_at = now()
+       RETURNING attendance_date::text AS attendance_date, status, reason`,
+      [teacherId, body.date ?? null, status, reason, ctx.userId]
+    );
+    const row = rows[0];
+    await writeAudit(c, ctx, {
+      action: "ops.staff_attendance.mark",
+      entityType: "teacher_attendance",
+      entityId: teacherId,
+      before: prev.rows[0] ? { status: prev.rows[0].status, reason: prev.rows[0].reason } : null,
+      after: { status: row.status, reason: row.reason, date: row.attendance_date }
+    });
+    return {
+      teacherId,
+      nameBn: who.rows[0].full_name_bn,
+      date: row.attendance_date,
+      status: row.status,
+      reason: row.reason
+    };
+  }, { write: true });
+}
+
 // services/ops-svc/api/index.ts
 var ROUTES = {
   maintenance: handler,
@@ -6130,9 +6301,10 @@ var ROUTES = {
   calendar: handler17,
   document: handler18,
   push: handler19,
-  monitor: route
+  monitor: route,
+  "staff-attendance": handler20
 };
-async function handler20(req, res) {
+async function handler21(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route2 = ROUTES[sub];
@@ -6155,7 +6327,8 @@ async function handler20(req, res) {
       "structure",
       "guardians",
       "calendar",
-      "push"
+      "push",
+      "staff-attendance"
     ]);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? "mutation" : "read";
     if (!await enforceRateLimit(req, res, corsHeaders(), bucket)) return;
@@ -6163,5 +6336,5 @@ async function handler20(req, res) {
   return route2(req, res);
 }
 export {
-  handler20 as default
+  handler21 as default
 };

@@ -85,6 +85,7 @@ const P = {
   academic:    { path: 'academic',    labelBn: 'একাডেমিক কাঠামো',  glyph: 'layers' },
   publish:     { path: 'publish',     labelBn: 'ফলাফল প্রকাশ',      glyph: 'award' },
   users:       { path: 'users',       labelBn: 'ব্যবহারকারী',       glyph: 'users' },
+  staffatt:    { path: 'staffattendance', labelBn: 'শিক্ষক হাজিরা', glyph: 'check-square' },
   rollover:    { path: 'rollover',    labelBn: 'বার্ষিক উন্নয়ন',    glyph: 'repeat' },
   // P5. Three labels, one route. The screen imports students OR staff and the
   // endpoint gates the two differently — students to principal · owner ·
@@ -182,7 +183,8 @@ const PRINCIPAL: RoleNav = {
     // P5. `imports` was reachable only from the More menu, and a principal is
     // the role bulk import was built for — 784 rows on day one is their job,
     // not a thing they do so rarely it belongs in an overflow list.
-    { labelBn: G.people, items: [P.students, P.users, P.imports, P.attendance] },
+    // M6. Beside the student roll, because the office does both each morning.
+    { labelBn: G.people, items: [P.students, P.users, P.imports, P.attendance, P.staffatt] },
     { labelBn: G.teach, items: [P.publish, P.results, P.documents] },
     { labelBn: G.money, items: [P.fees, P.invoices, P.ledger] },
     { labelBn: G.comms, items: [P.inbox, P.compose] },
@@ -201,7 +203,7 @@ const IT_ADMIN: RoleNav = {
     // §28: structure and accounts, not teaching. An IT admin has no class, so
     // there is no attendance row here to invite a 403.
     { labelBn: G.org, items: [P.home, P.academic, P.rollover] },
-    { labelBn: G.people, items: [P.users, P.students, P.importsStaff] },
+    { labelBn: G.people, items: [P.users, P.students, P.importsStaff, P.staffatt] },
     { labelBn: G.admin, items: [P.branding, P.settings, P.system, P.audit] },
     TAIL,
   ],
@@ -211,7 +213,8 @@ const IT_ADMIN: RoleNav = {
 const COORDINATOR: RoleNav = {
   groups: [
     { labelBn: G.org, items: [P.home, P.academic, P.routine, P.calendar] },
-    { labelBn: G.people, items: [P.students, P.importsStu, P.attendance, P.substitute] },
+    // M6 sits next to `substitute`: the register is what the finder reads.
+    { labelBn: G.people, items: [P.students, P.importsStu, P.attendance, P.staffatt, P.substitute] },
     { labelBn: G.teach, items: [P.publish, P.results, P.documents] },
     { labelBn: G.comms, items: [P.inbox, P.compose] },
     TAIL,

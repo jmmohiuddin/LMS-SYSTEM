@@ -23,7 +23,7 @@ import { pageHeader } from './ui/page-header.ts';
 import {
   el, append, button, buttonRow, field, dataTable, statusBadge,
   permissionState, permissionMessage, openDrawer, confirmOverlay,
-  type OverlayHandle,
+  setBusy, announce, type OverlayHandle,
 } from './ui/index.ts';
 
 interface Room {
@@ -69,7 +69,12 @@ export class RoomsView {
   private notice = '';
   private busy = false;
 
-  constructor(private readonly o: RoomsViewOptions) {
+  // See fee-structures-view.ts: a parameter property makes the class
+  // unimportable by the type-stripping test runner.
+  private readonly o: RoomsViewOptions;
+
+  constructor(options: RoomsViewOptions) {
+    this.o = options;
     this.render();
     void this.load();
   }
@@ -91,29 +96,33 @@ export class RoomsView {
     }
   }
 
-  private async send(method: 'POST' | 'PATCH', body: unknown, ok: string): Promise<boolean> {
+  /**
+   * Returns '' when the write was accepted, otherwise the sentence to show.
+   *
+   * It deliberately does NOT set `this.error` on a refusal: the `finally`
+   * below calls `load()`, whose first statement is `this.error = ''`, so a
+   * refusal used to erase its own message and a duplicate room code failed
+   * in total silence. See apps/pwa/test/writer-save-errors.test.ts.
+   */
+  private async send(method: 'POST' | 'PATCH', body: unknown, ok: string): Promise<string> {
     this.busy = true;
-    this.error = '';
     this.notice = '';
-    this.render();
     try {
       const res = await this.o.auth.authedFetch('/api/v1/rms/rooms', {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const out = await res.json() as { message?: string; code?: string };
+      const out = await res.json().catch(() => ({})) as { message?: string; code?: string };
       if (!res.ok) {
         // The server's Bangla message names the field; showing it verbatim is
         // better than a generic failure the office cannot act on.
-        this.error = out.message ?? 'কক্ষ সংরক্ষণ করা যায়নি।';
-        return false;
+        return out.message ?? 'কক্ষ সংরক্ষণ করা যায়নি।';
       }
       this.notice = `${out.code ?? 'কক্ষ'} — ${ok}`;
-      return true;
+      return '';
     } catch {
-      this.error = 'কক্ষ সংরক্ষণ করা যায়নি।';
-      return false;
+      return 'কক্ষ সংরক্ষণ করা যায়নি।';
     } finally {
       this.busy = false;
       await this.load();
@@ -218,9 +227,16 @@ export class RoomsView {
       }));
   }
 
+  /** No drawer survives these, so a refusal is raised on the page instead. */
+  private async toggle(id: string, isBookable: boolean, ok: string): Promise<void> {
+    // Set after `send` resolves: its own `load()` would have cleared it.
+    const msg = await this.send('PATCH', { id, isBookable }, ok);
+    if (msg) { this.error = msg; this.render(); }
+  }
+
   private confirmToggle(r: Room): void {
     if (!r.isBookable) {
-      void this.send('PATCH', { id: r.id, isBookable: true }, 'আবার চালু করা হয়েছে।');
+      void this.toggle(r.id, true, 'আবার চালু করা হয়েছে।');
       return;
     }
     // Say what the room is carrying rather than asking blind. A room with a
@@ -239,7 +255,7 @@ export class RoomsView {
         : 'বন্ধ করলে নতুন রুটিনে এই কক্ষটি আর বাছাই হবে না। কিছুই মুছে যাবে না।',
       confirmLabel: 'বন্ধ করুন',
       danger: true,
-      onConfirm: () => { void this.send('PATCH', { id: r.id, isBookable: false }, 'বন্ধ করা হয়েছে।'); },
+      onConfirm: () => this.toggle(r.id, false, 'বন্ধ করা হয়েছে।'),
     });
   }
 
@@ -309,6 +325,14 @@ export class RoomsView {
       append(form, group);
     }
 
+    // A refusal is shown here, beside the values that caused it, and the
+    // drawer stays open so they do not have to be retyped.
+    const errLine = el(d, 'p', {
+      className: 'ui-field-error',
+      attrs: { role: 'alert', hidden: 'hidden' },
+    });
+    append(form, errLine);
+
     let handle: OverlayHandle;
     const cancel = button(d, {
       label: 'বাতিল', variant: 'secondary',
@@ -317,7 +341,7 @@ export class RoomsView {
     const save = button(d, {
       label: existing ? 'সংরক্ষণ করুন' : 'যোগ করুন',
       variant: 'primary',
-      onClick: () => {
+      onClick: async () => {
         const floorRaw = floorNo.input.value.trim();
         const payload: Record<string, unknown> = {
           code: code.input.value.trim(),
@@ -328,9 +352,21 @@ export class RoomsView {
           capabilities: [...chosen].sort(),
         };
         if (existing) payload.id = existing.id;
-        handle.close();
-        void this.send(existing ? 'PATCH' : 'POST', payload,
+
+        errLine.setAttribute('hidden', 'hidden');
+        setBusy(save, true);
+        // The drawer closes only once the server has accepted it. It used to
+        // close here, before the request was even sent, so a refusal looked
+        // exactly like a save.
+        const msg = await this.send(existing ? 'PATCH' : 'POST', payload,
           existing ? 'সংরক্ষণ করা হয়েছে।' : 'যোগ করা হয়েছে।');
+        setBusy(save, false);
+        if (!msg) { handle.close(); return; }
+        errLine.textContent = msg;
+        errLine.removeAttribute('hidden');
+        // Announced as well as shown: focus is on the button just pressed, and
+        // a message that only appears is one a screen-reader user never gets.
+        announce(d, msg, true);
       },
     });
     handle = openDrawer(d, {

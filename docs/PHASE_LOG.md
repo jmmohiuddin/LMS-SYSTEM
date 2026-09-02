@@ -10965,3 +10965,97 @@ absence, not the B-70(b) bypass. Adding one is a commercial decision.
 
 B production scheduling · C alerting and the deadman · D entitlement bypasses ·
 E fresh-tenant E2E. **All four writers (A1–A4) are now complete.**
+
+# P-writers complete — B-48 payment and receipt (2026-09-03)
+
+`ddbab64` migration 070 and the webhook fix · `cb34338` the writer and its UI ·
+`ea01193` a fixture that asked the wrong day
+
+## The last missing writer
+
+`fee_structures` priced the bill (A2), `generate` issued it — and nothing could
+record that it had been paid. The only `INSERT INTO payment_receipts` in the
+product was inside the MFS webhook, and `POST /finance/pay` returns 503 until
+merchant credentials exist. So the ledger, the receipts screen, a student's
+payment history and `mv_fee_collection` all read a table only an unreachable
+webhook could fill.
+
+`POST /api/v1/finance/payments` applies the payment, issues the receipt and
+posts the balanced ledger pair in one transaction. It is **not** the online
+flow: `/finance/pay` stays kill-switched, because a gateway payment needs
+credentials this deployment does not have and faking one would be worse than
+refusing it. What an office does is take money by hand, and
+`payment_receipts.method` has modelled `cash`, `cheque` and `bank_transfer`
+since migration 007.
+
+**Partial payments are the normal case.** There is no uniqueness on
+`invoice_id` and `app.apply_payment_to_invoice` sets `partly_paid` when the
+running total is short, so a family paying in instalments gets a receipt each
+time. The endpoint takes an amount and refuses only an overpayment —
+`invoices.balance_amount` is `GENERATED ALWAYS AS (total_amount - paid_amount)`
+and would otherwise store a negative silently.
+
+## Two money defects, both proved before they were fixed
+
+**A student could forge a receipt.** `invoices` was scoped properly; the tables
+either side of it were on `tenant_isolation` alone. As `app.role='student'`:
+
+```
+UPDATE payment_receipts SET amount = 1          -> 1 row
+DELETE FROM payment_receipts                    -> 1 row
+INSERT INTO payment_receipts (… 99999, 'cash')  -> allowed
+UPDATE invoice_lines SET amount = 0             -> 2 rows
+UPDATE invoices SET status='paid'               -> 0 rows   (the control)
+```
+
+SELECT was scoped too — every student could read every family's payment
+history. DELETE is granted to the three money roles rather than refused: a
+receipt has no void column, so a hard block would make a mis-keyed one
+permanently uncorrectable, and the FK is already `ON DELETE RESTRICT`.
+
+**A receipt could silently never be issued.** The webhook built its number as
+`max()+1` inline and wrote it `ON CONFLICT … DO NOTHING RETURNING receipt_no`,
+reading the result through optional chaining. Its own comment claimed that
+generating the number in SQL stopped concurrent webhooks colliding; it does
+not. Two transactions read the same maximum, one inserted, the other got zero
+rows — and `app.apply_payment_to_invoice` had **already run**. Money applied,
+invoice paid, ledger posted, no receipt, no error. `app.next_receipt_no()` now
+allocates under an advisory lock and the `ON CONFLICT` is gone.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,706 passing**, 13 workspaces |
+| SQL suites | **26/26** |
+| `services/finance-svc` | **26/26** (12 fee + 14 payment) |
+| TypeScript — 3 CI configs | 0 errors, baseline 71 |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Browser | partial → `RCP-2026-09-00001`, row `৳900.00 আংশিক`; overpayment refused naming the balance, drawer open, figure kept; prior receipt listed; settled → `৳0.00 পরিশোধিত`, button gone |
+| Ledger | balanced pair, cheque reference in the memo, `issued_by` set |
+| Concurrency | two simultaneous payments get two distinct receipts (the regression this exists to prevent) |
+| Roles | student and teacher 403 on read and write; DB refuses a forged receipt independently |
+| Cross-tenant | 404 on both read and write |
+| Responsive | 375 list and drawer fit, save button reachable; desktop verified |
+| `index.html` | `496199bd` |
+
+## Recorded honestly
+
+**A fixture asked the wrong day.** `ward.test.ts` failed with `todayStatus`
+`absent`. Not my change and not the month-boundary bug its own comment
+describes: the fixture used `CURRENT_DATE` while the endpoint reads
+`app.today_dhaka()` (migration 059). Caught at 20:39 UTC on the 2nd — 02:39 on
+the 3rd in Dhaka. **The suite failed every evening UTC and passed every
+morning.** Fixed in the fixture, which now asks the question the product
+answers.
+
+**A suspicion raised and disproved.** Hand-editing `localStorage` to switch
+tenants showed the previous school's data, which looked like a cache-privacy
+leak. It is not: `doLogout()` calls `purgeLocalData('logout')`, which deletes
+the service worker caches. B-8's fix is real; no user can reach that state.
+
+## P-writers is complete
+
+`B-46` exam creation · `B-47` fee amounts · `B-48` payment/receipt ·
+`B-49` routine/room creation — all four closed, each with a UI and browser
+evidence. Next in the roadmap order is **P-ops**.

@@ -1570,9 +1570,23 @@ then do nothing else.
 
 ### Revised order of work
 
-**P-writers (new, and first).** Exam creation · `fee_structures` · payment + receipt ·
-routine + room creation. B-46 … B-49. Nothing else changes what a customer can do, and the
-routine writer is also P9's largest prerequisite.
+**P-writers (new, and first). COMPLETE 2026-09-03.** Exam creation · `fee_structures` ·
+payment + receipt · routine + room creation. B-46 … B-49, all four closed, each with a real
+UI and browser evidence:
+
+| Writer | Backlog | Closed by |
+|---|---|---|
+| Rooms | `B-49a` | P0/A3 `9af6a9d`, migration 065 |
+| Exam creation | `B-46` | P0/A1 `577162e`+`ccf7226`, migrations 066 + 068 |
+| Fee structures | `B-47` | P0/A2 `62b6146`+`660afed`, migration 067 |
+| Routine authoring | `B-49b` | P0/A4 `2e90d1b`+`2109141`, migration 069 |
+| Payment + receipt | `B-48` | `ddbab64`+`cb34338`, migration 070 |
+
+Each one was the same shape: a complete downstream and a missing top. Along the way the
+audits found five things worse than the gaps — an exam bricked by publishing its own
+timetable (`B-68`), a self-serve commercial upgrade (`B-71`), a deletable timetable
+(`B-72`), a forgeable receipt (`B-77`), and a payment that could be applied with no
+receipt at all (`B-78`).
 
 **P-ops (small, alongside).** Schedule the crons on the production host; one non-ratio
 heartbeat alert plus a webhook that reaches a person; the `rowCount` guard on the three

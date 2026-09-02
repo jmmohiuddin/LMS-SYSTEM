@@ -725,7 +725,7 @@ in development.
 
 | | Repository | Production |
 |---|---|---|
-| Migration | **069** | **048** (unverified from outside — see below) |
+| Migration | **070** | **048** (unverified from outside — see below) |
 | Landing page | `496199bd` | `496199bd` — **byte-identical, confirmed today** |
 | `ops/staff-attendance` | present | **404** |
 
@@ -790,7 +790,21 @@ platform console (its own database role). It WILL refuse
 `UPDATE tenants SET plan_code` issued as the application role — which is the
 point, and which required one test fixture to buy its plan at creation instead.
 
-Each has a rollback in `db/rollback/`. Rolling back 065–069 **re-opens the
+**070 changes no data and adds no column.** It gives `payment_receipts` and
+`invoice_lines` per-command write scopes and adds `app.next_receipt_no()`. Before
+applying it, check whether any tenant already has a payment applied with no
+receipt — the defect it closes:
+
+```bash
+docker exec -i shikhon-r5 psql -U shikhon_owner -d shikhon_lms -tAc "SELECT count(*) FROM invoices i WHERE i.paid_amount > 0 AND NOT EXISTS (SELECT 1 FROM payment_receipts r WHERE r.invoice_id = i.id)"
+```
+
+Every row that returns is money a parent paid with no receipt to show for it.
+070 does not repair those — the receipt number and method cannot be
+reconstructed — so record the count and reconcile them by hand from
+`mfs_transactions`.
+
+Each has a rollback in `db/rollback/`. Rolling back 065–070 **re-opens the
 write hole** rather than restoring a safe state; the rollback headers say so.
 068's rollback additionally drops `routine_published_at` and re-points the two
 routine guards at `status`, so `services/rms-svc/api/examroutine.ts` must be

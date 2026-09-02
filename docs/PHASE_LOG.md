@@ -10825,3 +10825,23 @@ regression suites and the network-only cache rules were re-run green.
 
 A4 routine authoring · B production scheduling · C alerting and the deadman ·
 D entitlement bypasses · E fresh-tenant E2E.
+
+## Addendum to checkpoint 5 — a third instance of B-58's signature
+
+The final gate run failed too, in a **third** file:
+`services/ops-svc/test/events.test.ts`, whole-file, empty stderr, 362ms.
+
+Four full-suite runs this phase: two green at 1,675, two failed — each in a
+different file, neither reproducible. Six consecutive clean runs of `ops-svc`
+alone and four of `platform-svc` alone.
+
+Ruled out with evidence: connection exhaustion (`max_connections` 100, 6 in
+use), cross-workspace parallelism (`test-all.mjs` is sequential `execSync`),
+and `installTestKeys` (process-local `process.env`). The narrowed suspect is
+`lockFixtures`' deliberately **unref'd** socket: if no ref'd handle remains at
+some instant, Node exits the process mid-file, which is exactly a fast, silent,
+whole-file failure. **Not proven, and B-58 stays OPEN** — see `B-66`.
+
+Stated plainly: **the full suite is not reliably green on this machine.** Every
+individual workspace is, and every A1 assertion in this phase was verified by
+running its own suite directly. That is the honest state.

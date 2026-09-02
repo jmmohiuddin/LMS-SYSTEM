@@ -179,10 +179,12 @@ describe('exam routine endpoint (§8.3, F-510)', { skip }, () => {
     const b = r.body as { error: string; message: string };
     assert.equal(b.error, 'exam_routine_clash');
     assert.match(b.message, /আনিকা/);
-    // And the refusal is real: the exam is still unpublished.
+    // And the refusal is real: the routine was not announced.
     const after = await call(examroutine, {
       url: `/api/v1/rms/examroutine?examId=${EXAM}`, token: coordToken });
-    assert.equal((after.body as { exam: { status: string } }).exam.status, 'planned');
+    const ex = (after.body as { exam: { status: string; routinePublished: boolean } }).exam;
+    assert.equal(ex.routinePublished, false);
+    assert.equal(ex.status, 'planned');
   });
 
   test('rescheduling through the endpoint clears the clash, and publication then succeeds', async () => {
@@ -211,8 +213,16 @@ describe('exam routine endpoint (§8.3, F-510)', { skip }, () => {
       token: coordToken, body: { examId: EXAM, publish: true },
     });
     assert.equal(r.status, 200);
-    const b = r.body as { exam: { status: string }; canPublish: boolean; clashes: unknown[] };
-    assert.equal(b.exam.status, 'published');
+    const b = r.body as {
+      exam: { status: string; routinePublished: boolean };
+      canPublish: boolean; clashes: unknown[];
+    };
+    // Migration 068. This used to assert `status === 'published'`, which is the
+    // RESULTS lifecycle — so the suite was green while a published routine made
+    // the exam permanently unmarkable. Announcing a timetable records that it
+    // was announced and leaves the exam where it was.
+    assert.equal(b.exam.routinePublished, true);
+    assert.equal(b.exam.status, 'planned');
     assert.equal(b.canPublish, true);
     assert.equal(b.clashes.length, 0);
   });

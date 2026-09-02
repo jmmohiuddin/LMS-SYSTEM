@@ -129,7 +129,10 @@ DO $$
 DECLARE msg text;
 BEGIN
   BEGIN
-    UPDATE exams SET status = 'published' WHERE id = '7d000000-0000-4000-8000-000000000092';
+    -- Migration 068: announcing the TIMETABLE is what the clash guard hangs
+    -- off, not the results lifecycle. `status = 'published'` means a parent
+    -- has been shown a grade, and publishing a routine used to write it.
+    UPDATE exams SET routine_published_at = now() WHERE id = '7d000000-0000-4000-8000-000000000092';
     RAISE EXCEPTION 'FAIL 3: an exam routine with a per-student clash was published';
   EXCEPTION WHEN check_violation THEN
     GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
@@ -154,9 +157,13 @@ BEGIN
   SELECT count(*) INTO n FROM app.exam_student_clashes('7d000000-0000-4000-8000-000000000092');
   IF n <> 0 THEN RAISE EXCEPTION 'FAIL 4: % clash(es) remain after rescheduling', n; END IF;
 
-  UPDATE exams SET status = 'published' WHERE id = '7d000000-0000-4000-8000-000000000092';
-  SELECT status::text INTO st FROM exams WHERE id = '7d000000-0000-4000-8000-000000000092';
-  IF st <> 'published' THEN RAISE EXCEPTION 'FAIL 4: status is % after a clean publish', st; END IF;
+  UPDATE exams SET routine_published_at = now() WHERE id = '7d000000-0000-4000-8000-000000000092';
+  SELECT CASE WHEN routine_published_at IS NULL THEN 'unpublished' ELSE 'published' END
+    INTO st FROM exams WHERE id = '7d000000-0000-4000-8000-000000000092';
+  IF st <> 'published' THEN RAISE EXCEPTION 'FAIL 4: routine is % after a clean publish', st; END IF;
+  -- And the results lifecycle was NOT touched by announcing a timetable.
+  PERFORM 1 FROM exams WHERE id = '7d000000-0000-4000-8000-000000000092' AND status = 'planned';
+  IF NOT FOUND THEN RAISE EXCEPTION 'FAIL 4: publishing the routine moved exams.status'; END IF;
   RAISE NOTICE 'PASS 4 — rescheduling clears the clash and publication succeeds';
 END $$;
 
@@ -168,7 +175,7 @@ END $$;
 DO $$
 DECLARE n integer;
 BEGIN
-  UPDATE exams SET status = 'planned' WHERE id = '7d000000-0000-4000-8000-000000000092';
+  UPDATE exams SET routine_published_at = NULL WHERE id = '7d000000-0000-4000-8000-000000000092';
   UPDATE exam_subjects SET exam_date = '2026-12-14', start_time = '13:00'
    WHERE exam_id = '7d000000-0000-4000-8000-000000000092'
      AND subject_id = '7d000000-0000-4000-8000-000000000126';

@@ -2563,7 +2563,8 @@ async function handler4(req, res) {
     if (req.method === "GET" && examId === "") {
       const exams = await db.withTenant(ctx, async (client) => {
         const r = await client.query(
-          `SELECT e.id, e.name_bn, e.exam_type, e.starts_on, e.ends_on, e.status
+          `SELECT e.id, e.name_bn, e.exam_type, e.starts_on, e.ends_on, e.status,
+                  e.routine_published_at
              FROM exams e
              JOIN academic_years y ON y.id = e.academic_year_id
             WHERE y.is_current
@@ -2575,7 +2576,8 @@ async function handler4(req, res) {
           examType: e.exam_type,
           startsOn: isoDate(e.starts_on),
           endsOn: isoDate(e.ends_on),
-          status: e.status
+          status: e.status,
+          routinePublished: e.routine_published_at !== null
         }));
       });
       json(res, 200, { exams }, cors);
@@ -2586,12 +2588,13 @@ async function handler4(req, res) {
     }
     const payload = await db.withTenant(ctx, async (client) => {
       const exam = await client.query(
-        `SELECT id, name_bn, exam_type, starts_on, ends_on, status FROM exams WHERE id = $1`,
+        `SELECT id, name_bn, exam_type, starts_on, ends_on, status, routine_published_at
+           FROM exams WHERE id = $1`,
         [examId]
       );
       if (!exam.rows[0]) throw new HttpError(404, "exam not found", "exam_not_found");
       if (reschedule) {
-        if (exam.rows[0].status === "published") {
+        if (exam.rows[0].routine_published_at !== null) {
           throw new HttpError(
             409,
             "a published exam routine cannot be rescheduled here",
@@ -2609,8 +2612,12 @@ async function handler4(req, res) {
       }
       if (publish2) {
         try {
-          await client.query(`UPDATE exams SET status = 'published' WHERE id = $1`, [examId]);
-          exam.rows[0].status = "published";
+          const now = await client.query(
+            `UPDATE exams SET routine_published_at = now()
+              WHERE id = $1 RETURNING routine_published_at AS at`,
+            [examId]
+          );
+          exam.rows[0].routine_published_at = now.rows[0].at;
           const sections = await client.query(
             `SELECT COALESCE(array_agg(DISTINCT section_id), '{}') AS ids
                FROM exam_subjects WHERE exam_id = $1`,
@@ -2671,7 +2678,8 @@ async function handler4(req, res) {
           examType: exam.rows[0].exam_type,
           startsOn: isoDate(exam.rows[0].starts_on),
           endsOn: isoDate(exam.rows[0].ends_on),
-          status: exam.rows[0].status
+          status: exam.rows[0].status,
+          routinePublished: exam.rows[0].routine_published_at !== null
         },
         papers: papers.rows.map((p) => {
           const date = isoDate(p.exam_date);

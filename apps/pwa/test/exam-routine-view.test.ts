@@ -34,6 +34,9 @@ before(() => {
 const EXAM = {
   id: 'e1', nameBn: 'বার্ষিক পরীক্ষা', examType: 'annual',
   startsOn: '2026-12-10', endsOn: '2026-12-20', status: 'planned',
+  // Migration 068. `status` is the RESULTS lifecycle; whether the TIMETABLE
+  // has been announced is its own fact. This screen reads only the latter.
+  routinePublished: false,
 };
 
 const paper = (id: string, subjectBn: string, examDate: string, hasClash: boolean) => ({
@@ -184,7 +187,7 @@ describe('exam routine view (§8.3)', () => {
 
   describe('once published', () => {
     test('the routine cannot be rescheduled or published again from here', async () => {
-      root = await mount({ ...clean, exam: { ...EXAM, status: 'published' } });
+      root = await mount({ ...clean, exam: { ...EXAM, routinePublished: true } });
       const labels = [...root.querySelectorAll('button')].map((b) => b.textContent);
       assert.ok(!labels.includes('প্রকাশ করুন'));
       assert.ok(!labels.includes('সময় পরিবর্তন করুন'));

@@ -74,7 +74,10 @@ interface ExamRow {
   exam_type: string;
   starts_on: string;
   ends_on: string;
+  /** The RESULTS lifecycle. This screen reads it but must never write it. */
   status: string;
+  /** When this TIMETABLE was announced. Migration 068 — see the publish branch. */
+  routine_published_at: string | null;
 }
 
 /** "10:00:00" + 180 → "13:00". Times come back from pg as HH:MM:SS. */
@@ -158,7 +161,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (req.method === 'GET' && examId === '') {
       const exams = await db.withTenant(ctx, async (client) => {
         const r = await client.query<ExamRow>(
-          `SELECT e.id, e.name_bn, e.exam_type, e.starts_on, e.ends_on, e.status
+          `SELECT e.id, e.name_bn, e.exam_type, e.starts_on, e.ends_on, e.status,
+                  e.routine_published_at
              FROM exams e
              JOIN academic_years y ON y.id = e.academic_year_id
             WHERE y.is_current
@@ -171,6 +175,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           startsOn: isoDate(e.starts_on),
           endsOn: isoDate(e.ends_on),
           status: e.status,
+          routinePublished: e.routine_published_at !== null,
         }));
       });
       json(res, 200, { exams }, cors);
@@ -183,7 +188,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     const payload = await db.withTenant(ctx, async (client) => {
       const exam = await client.query<ExamRow>(
-        `SELECT id, name_bn, exam_type, starts_on, ends_on, status FROM exams WHERE id = $1`,
+        `SELECT id, name_bn, exam_type, starts_on, ends_on, status, routine_published_at
+           FROM exams WHERE id = $1`,
         [examId],
       );
       if (!exam.rows[0]) throw new HttpError(404, 'exam not found', 'exam_not_found');
@@ -195,7 +201,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // it silently underneath them is a different feature with different
       // consequences.
       if (reschedule) {
-        if (exam.rows[0].status === 'published') {
+        if (exam.rows[0].routine_published_at !== null) {
           throw new HttpError(
             409, 'a published exam routine cannot be rescheduled here', 'exam_published');
         }
@@ -211,8 +217,21 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
       if (publish) {
         try {
-          await client.query(`UPDATE exams SET status = 'published' WHERE id = $1`, [examId]);
-          exam.rows[0].status = 'published';
+          // Migration 068. This used to write `status = 'published'`, which is
+          // the RESULTS lifecycle: from that moment appliers.ts refused every
+          // mark as `published_marks_immutable`, publish.ts refused the real
+          // results publication as `already_published`, and exams.ts refused
+          // every correction. A school that announced its timetable — weeks
+          // before anyone sat a paper — permanently bricked the exam, and
+          // nothing anywhere moved the status back.
+          //
+          // The two routine guards (clash-free, halls-staffed) moved to this
+          // column with the fact they were guarding, so publication is still
+          // refused when a student has two papers at once.
+          const now = await client.query<{ at: string }>(
+            `UPDATE exams SET routine_published_at = now()
+              WHERE id = $1 RETURNING routine_published_at AS at`, [examId]);
+          exam.rows[0].routine_published_at = now.rows[0].at;
 
           // R-2. Tell the students sitting it, and their guardians — in this
           // same transaction, so a routine that fails to publish announces
@@ -291,6 +310,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           startsOn: isoDate(exam.rows[0].starts_on),
           endsOn: isoDate(exam.rows[0].ends_on),
           status: exam.rows[0].status,
+          routinePublished: exam.rows[0].routine_published_at !== null,
         },
         papers: papers.rows.map((p) => {
           const date = isoDate(p.exam_date);

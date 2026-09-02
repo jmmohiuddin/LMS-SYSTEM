@@ -40,7 +40,10 @@ export interface ExamSummary {
   examType: string;
   startsOn: string;
   endsOn: string;
+  /** The RESULTS lifecycle. This screen displays nothing from it. */
   status: string;
+  /** Whether this TIMETABLE has been announced. Migration 068. */
+  routinePublished: boolean;
 }
 
 export interface PaperRow {
@@ -218,7 +221,10 @@ export class ExamRoutineView {
 
   private actions(exam: ExamSummary): HTMLElement {
     const d = this.o.doc;
-    const published = exam.status === 'published';
+    // Migration 068. This read `status === 'published'`, which is the RESULTS
+    // lifecycle — so a school whose results were out saw its routine marked
+    // "প্রকাশিত" although no timetable had been announced, and vice versa.
+    const published = exam.routinePublished;
     const blocked = !(this.data?.canPublish ?? false);
 
     const controls: Array<Node | null> = [
@@ -318,7 +324,7 @@ export class ExamRoutineView {
 
       tbody.append(tr);
 
-      if (p.hasClash && this.data?.exam.status !== 'published') {
+      if (p.hasClash && !this.data?.exam.routinePublished) {
         tbody.append(this.rescheduleRow(p));
       }
     }

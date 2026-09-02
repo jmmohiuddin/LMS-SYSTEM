@@ -406,7 +406,9 @@ DO $$
 DECLARE msg text;
 BEGIN
   BEGIN
-    UPDATE exams SET status = 'published' WHERE id = '7e000000-0000-4000-8000-000000000092';
+    -- Migration 068: the halls-staffed guard hangs off the TIMETABLE
+    -- announcement, which is when an unstaffed hall actually matters.
+    UPDATE exams SET routine_published_at = now() WHERE id = '7e000000-0000-4000-8000-000000000092';
     RAISE EXCEPTION 'FAIL 10: an exam with an unstaffed hall was published';
   EXCEPTION WHEN check_violation THEN
     GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
@@ -419,7 +421,11 @@ BEGIN
   VALUES (app.current_tenant(), '7e000000-0000-4000-8000-00000000d1d1',
           '7e000000-0000-4000-8000-00000000a3a3', 'chief', 'ranked');
 
-  UPDATE exams SET status = 'published' WHERE id = '7e000000-0000-4000-8000-000000000092';
+  UPDATE exams SET routine_published_at = now() WHERE id = '7e000000-0000-4000-8000-000000000092';
+  PERFORM 1 FROM exams WHERE id = '7e000000-0000-4000-8000-000000000092' AND routine_published_at IS NOT NULL AND status = 'planned';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'FAIL 10: publishing the routine did not record it, or moved exams.status';
+  END IF;
   RAISE NOTICE 'PASS 10 — publication blocked while HALL-1 was unstaffed, and succeeds once staffed';
 END $$;
 

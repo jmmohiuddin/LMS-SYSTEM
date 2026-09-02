@@ -40,9 +40,27 @@
     "    worth more to the next person than a bare null, and it stops the same",
     "    dead end being walked into twice."
   ],
-  "wildcard_dns": null,
-  "wildcard_tls": null,
-  "subdomain_routing": null,
+  "wildcard_dns": {
+    "status": "blocked",
+    "date": "2026-09-02",
+    "environment": "production",
+    "result": null,
+    "evidence": "ATTEMPTED AND NOT PRESENT. Queried 8.8.8.8 directly: sikhon.systems and www.sikhon.systems both answer 200.234.43.179; *.sikhon.systems is NXDOMAIN, and arbitrary labels (demo-school, random-probe-9z8x) do not resolve. curl agrees - \"Could not resolve host\". There is no wildcard record. A first pass through the local ISP resolver appeared to show one; that was nslookup printing the RESOLVER address (ns1.mazedanetworks.net, 103.60.172.20), not an answer. Per-school subdomains cannot work until a wildcard A record exists. M3 is an owner decision: the ?tid= link works today and is what the console prints."
+  },
+  "wildcard_tls": {
+    "status": "blocked",
+    "date": "2026-09-02",
+    "environment": "production",
+    "result": null,
+    "evidence": "Not reachable to test: no wildcard DNS exists (see wildcard_dns), so there is no subdomain to present a certificate for. The apex is fine - https://sikhon.systems/ returns 200 with ssl_verify_result=0. A wildcard certificate additionally needs DNS-01 validation, which needs API access to the DNS provider; that is a second piece of work after the record exists, not a consequence of it."
+  },
+  "subdomain_routing": {
+    "status": "blocked",
+    "date": "2026-09-02",
+    "environment": "production",
+    "result": null,
+    "evidence": "Untestable end-to-end without DNS. The CODE half is present and was read: apps/pwa/src/app.ts resolves tenantKeyFromHost() and app.public_branding() accepts a slug or a tenant id against the same row, with ?tid= taking priority so an installed PWA is never overridden. So this is a DNS and TLS gap, not a product gap."
+  },
   "real_sms_delivery": null,
   "real_push_delivery": {
     "status": "blocked",
@@ -65,7 +83,13 @@
     "result": "pass",
     "evidence": "scripts/restore-drill.mjs against the PRODUCTION shikhon-postgres container: pg_dump -Fc (0.8 MB) -> restore into an isolated database -> 7 schema counts (121 tables, 227 RLS policies, functions, triggers, partitions) and 27 table counts identical to source. RTO 1.5s (on a near-empty pre-pilot DB; re-measure at pilot size). Supersedes the 2026-08-30 local-docker rehearsal."
   },
-  "alert_delivered": null,
+  "alert_delivered": {
+    "status": "rehearsed",
+    "date": "2026-09-02",
+    "environment": "local-docker",
+    "result": null,
+    "evidence": "scripts/alert-rehearsal.mjs, 7/7 checks. The real ops-svc monitor endpoint was booted with DATABASE_MAINTENANCE_URL pointed at a closed port, so database_unavailable was EVALUATED rather than injected. GET returned the firing alert and delivered nothing; POST returned delivery.delivered=true and a real HTTPS listener received the POST 21ms later carrying the alert id, severity, environment and the runbook recover text. NOT a production gate: the listener was local with a self-signed certificate, and no message reached a person. Remaining: ALERT_WEBHOOK_URL pointing somewhere a human reads, and the observation that it arrived."
+  },
   "pilot_onboarding": null,
   "pilot_offline": null,
   "prod_cross_tenant": {

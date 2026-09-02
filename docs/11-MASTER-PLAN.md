@@ -1595,3 +1595,28 @@ clearest customer-trust gap.
 
 The pilot gates remain: the four writers, cron scheduling, an alert that reaches a human, the
 SMS aggregator (external), and the 049 → 064 catch-up.
+
+## P0 — Core write paths (in progress, 2026-09-02)
+
+The P-writers phase above, under way. One vocabulary, used exactly, and the
+distinction this table exists to keep is **backend-complete** vs **a school
+can do it**.
+
+| Workstream | Backend | UI | Status | What is not done |
+|---|---|---|---|---|
+| **A1** exam creation | **COMPLETE** — `academics-svc/api/exams.ts`, POST + PATCH, routed, migration 066 | **DOES NOT EXIST** | **PARTIAL** | No screen calls `/api/v1/academics/exams`. Its only PWA callers are `marks-view` and `scripts-view`, both read-only with `?sectionId=`; `exam-routine-view` posts to `/api/v1/rms/examroutine`, which *schedules* an exam that already exists. **An admin cannot create an exam through the product.** |
+| **A2** fee structures | **COMPLETE** — `finance-svc/api/feestructures.ts`, migration 067 | **COMPLETE** — `fee-structures-view.ts` | **COMPLETE** | Browser-verified create · edit · delete · duplicate-refusal · reload-persistence · cross-tenant · four roles. Payment capture is A3's, not this |
+| **A3** rooms | **COMPLETE** — migration 065 | **COMPLETE** | **COMPLETE** | Regression re-verified 2026-09-02: Room A → visible → survives reload → Room B |
+| **A4** routine authoring | NOT STARTED | NOT STARTED | **NOT STARTED** | P9's largest prerequisite |
+| **B** production scheduling | NOT STARTED | — | **NOT STARTED** | — |
+| **C** alerting + deadman | NOT STARTED | — | **NOT STARTED** | — |
+| **D** entitlement bypasses | NOT STARTED | — | **NOT STARTED** | — |
+| **E** fresh-tenant E2E | NOT STARTED | — | **NOT STARTED** | — |
+
+**The recurring finding, now three for three.** Every writer this phase has
+touched was missing beneath a complete downstream: `rooms` fed an empty
+solver, `exams` fed a marks pipeline nothing could start, `fee_structures`
+fed an invoice run that billed nothing. A2 added a fourth variant — a control
+that *did* run, was refused correctly by the database, and told nobody
+(`B-60`). "Backend complete" has not once meant "a school can do it".
+

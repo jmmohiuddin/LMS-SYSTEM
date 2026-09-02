@@ -725,7 +725,7 @@ in development.
 
 | | Repository | Production |
 |---|---|---|
-| Migration | **064** | **048** (unverified from outside — see below) |
+| Migration | **067** | **048** (unverified from outside — see below) |
 | Landing page | `496199bd` | `496199bd` — **byte-identical, confirmed today** |
 | `ops/staff-attendance` | present | **404** |
 
@@ -741,6 +741,26 @@ an observation.
 Migrations 049–063 **must not be left applied without 064**: 050 broke
 `app.set_guardian_permissions` and 064 is the repair, so the whole range is
 one unit of work. Production works today because it is on 048.
+
+**065 · 066 · 067 are the P0 write-path migrations** and extend that unit
+rather than standing apart. Each one adds the per-command RESTRICTIVE write
+scopes a table never had, so applying the writer's code without its migration
+leaves the table writable by **any role in the tenant** — the hole the
+migration exists to close. 067 additionally adds
+`uq_fee_structure_scope … NULLS NOT DISTINCT`; it was verified against zero
+live violations before being written, but that check was run against the CI
+database and **must be re-run against production before applying**:
+
+```bash
+docker exec -i shikhon-r5 psql -U shikhon_owner -d shikhon_lms -tAc "SELECT tenant_id, fee_head_id, academic_year_id, class_id, count(*) FROM fee_structures GROUP BY 1,2,3,4 HAVING count(*) > 1"
+```
+
+An empty result is the precondition. If it returns rows, the index will fail
+to build and the duplicates must be reconciled by the school — **not deleted**,
+since a fee structure is financial configuration a past invoice may reference.
+
+Each has a rollback in `db/rollback/`. Rolling back 065–067 **re-opens the
+write hole** rather than restoring a safe state; the rollback headers say so.
 
 ### Monitoring — what changed
 

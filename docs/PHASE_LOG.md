@@ -10625,3 +10625,91 @@ not a passing test.
 
 A2 fee structures · A4 routine authoring · B production scheduling ·
 C alerting and the deadman · D entitlement bypasses · E fresh-tenant E2E.
+
+# P0 checkpoint 4 — A2 fee structures
+
+`577162e` server · `ccf7226` UI · `31d364d` the silent-refusal fix
+
+## What A2 was
+
+The third instance of one shape. `fee_structures` had no writer, so the
+monthly invoice run joined an empty table and issued empty bills — exactly
+as `rooms` fed an empty solver and `exams` fed a complete marks pipeline
+nothing could start.
+
+Migration 067 gave the three fee tables the per-command RESTRICTIVE write
+scopes they never had: a PERMISSIVE `tenant_isolation` policy alone let any
+role in the tenant insert a price. It also added
+`uq_fee_structure_scope … NULLS NOT DISTINCT`, because `quota_category` is
+always NULL and UNIQUE treats NULLs as distinct — the "already priced" guard
+had silently never fired. Zero live violations were confirmed before adding
+it.
+
+The screen offers **no** `quota_category` field, because the invoice run
+joins `fs.quota_category IS NULL`. A field the engine ignores would be a
+price the office believes it set.
+
+## Found by using it
+
+**Both P0 writers refused saves in total silence.** A duplicate price is
+refused with a 409 and a Bangla sentence. The drawer closed, the typed
+values were discarded, the list re-read, and nothing was shown. Two
+independent faults: `handle.close()` ran before the request was sent, and
+`send()` set `this.error` whose own `finally` called `load()`, whose first
+statement is `this.error = ''`. `rooms-view.ts` had both, in code already
+committed at `9af6a9d` — every failed room save had been silent since.
+
+**Neither view could be imported by a test at all.** Both used a
+`private readonly o` parameter property, which Node's type-stripping runner
+rejects outright. That is why neither had a view test. Now both use the
+explicit assignment every other view uses, and
+`apps/pwa/test/writer-save-errors.test.ts` covers them together — asserting
+the *server's* message reaches the screen, since a generic failure line
+would satisfy a weaker test and still leave a clerk unable to tell a
+duplicate from a dead connection.
+
+**`services/finance-svc` had test files and no `test` script.** The twelve
+A2 tests had never once run under `npm test`; `scripts/test-all.mjs` reported
+it as an error, which is the check working. Adding the package.json put them
+in the suite.
+
+**Two suites were being skipped for want of a credential, not a reason.**
+`platform-svc` and 41 `server-core` tests need `PLATFORM_DATABASE_URL`.
+Supplied, the suite went from 1,572 to 1,660.
+
+## Gate at checkpoint 4
+
+| Check | Result |
+|---|---|
+| Full suite | **1,660 passing**, 13 workspaces (`DATABASE_URL` + `PLATFORM_DATABASE_URL`) |
+| SQL suites | **26/26** — run via `docker exec`, as `psql` is not on this machine's PATH |
+| TypeScript — all three CI configs | 0 errors |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Browser — create/edit/delete | done through the real UI, persisted across reload |
+| Browser — duplicate refused | 409 shown in the drawer, typed values kept, no row written |
+| Tenant isolation | proved against a **second real school**, not a missing one |
+| Role model | student/guardian 403 on read; teacher 200 `canManage:false`; accountant 200 `canManage:true` |
+| A3 room regression | Room A → visible → **survives reload** → Room B — passes |
+| `index.html` | `496199bd` |
+
+## Recorded honestly
+
+**A1 is backend-complete, not product-complete.** `academics-svc/api/exams.ts`
+has POST and PATCH and is routed. No screen calls it: the only PWA callers of
+`/api/v1/academics/exams` are `marks-view` and `scripts-view`, both read-only
+with `?sectionId=`, and `exam-routine-view` posts to `/api/v1/rms/examroutine`
+— scheduling an exam that already exists, not creating one. **An admin still
+cannot create an exam through the product.**
+
+**B-58 remains OPEN.** Untouched by this checkpoint and still unexplained.
+
+**B-60, new:** `db/tests/guardian_links.sql` is not idempotent — it commits
+its fixture tenants and only rolls back its last block, so a second run fails
+on `tenants_pkey`. Pre-existing, unrelated to 067; it passes once its own
+leftovers are cleared. 26/26 was reached that way.
+
+## Still to do in P0
+
+A4 routine authoring · B production scheduling · C alerting and the deadman ·
+D entitlement bypasses · E fresh-tenant E2E. **And the A1 exam UI**, without
+which A1 is not a feature a school can use.

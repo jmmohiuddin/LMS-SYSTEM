@@ -91,6 +91,14 @@ export type AuditAction =
   // P0/A2. The price list. Financial configuration is sensitive: what a fee
   // costs, when it is due and what the late charge is are all answers a
   // parent may one day dispute.
+  // P0/A4. Routine authoring. `routines` and `routine_slots` had 0 rows in
+  // every tenant: the solver, the editor's move and the publish action all
+  // operated on a timetable nothing could create.
+  | 'rms.routine.create'
+  | 'rms.slot.place'
+  | 'rms.slot.assign'
+  | 'rms.slot.remove'
+  | 'rms.routine.publish'
   | 'finance.fee_structure.create'
   | 'finance.fee_structure.update'
   | 'finance.fee_structure.delete';

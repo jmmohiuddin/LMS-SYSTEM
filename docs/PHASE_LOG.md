@@ -10217,3 +10217,5 @@ two of them found a bug in their own first implementation.
 The pattern is the same in all four: the bug had already been found and fixed
 at least once, a comment or a helper was left behind to prevent the next one,
 and nothing looked. A comment is not a control.
+
+**Commit:** `c5a6256`.

@@ -58,23 +58,6 @@ export function cachedOtpLogin(): boolean {
   }
 }
 
-/**
- * Whether this device has ever had an ANSWER, as opposed to having cached a
- * `false`. The two are the same to the login screen — both mean "offer the
- * activation-code path", which works either way — and they are emphatically
- * not the same to the demo-mode gate in app.ts, where an unanswered device
- * treated as OFF drops a real visitor into a sample school on their first
- * ever visit. That gate waits for a real answer; this is how it tells.
- */
-export function otpLoginAnswered(): boolean {
-  try {
-    return localStorage.getItem(OTP_CACHE_KEY) !== null;
-  } catch {
-    // No storage at all (private mode). Nothing can be learned and nothing
-    // can be remembered, so the caller should not block waiting for it.
-    return true;
-  }
-}
 
 function cacheOtpLogin(on: boolean): void {
   try {
@@ -86,7 +69,7 @@ function cacheOtpLogin(on: boolean): void {
 /**
  * R-7.12 — the school's door, resolved from the hostname.
  *
- *     monipur-high-school.shikhonbd.com  →  monipur-high-school
+ *     monipur-high-school.sikhon.systems  →  monipur-high-school
  *
  * There is no third identifier and no new lookup: `app.public_branding()`
  * has accepted a slug OR a tenant id since migration 039, precisely so a
@@ -105,7 +88,7 @@ const NOT_A_TENANT = new Set(['www', 'app', 'platform', 'api', 'staging', 'local
 
 export function tenantKeyFromHost(host: string = location.hostname): string {
   const labels = host.split('.');
-  // Fewer than three labels is an apex domain (shikhonbd.com) or a bare
+  // Fewer than three labels is an apex domain (sikhon.systems) or a bare
   // hostname (localhost) — no room for a school's label.
   if (labels.length < 3) return '';
   const first = labels[0].toLowerCase();

@@ -4,7 +4,7 @@
 > part delivery record. **P0–P4 are delivered** (§21–§24 below); **P5–P8 are
 > not started**. The authoritative status board for every phase is
 > [11-MASTER-PLAN.md §5a](11-MASTER-PLAN.md); what is *not* built is
-> [BACKLOG.md](BACKLOG.md). Last reconciled 2026-09-02, after P7. The
+> [BACKLOG.md](BACKLOG.md). Last reconciled 2026-09-02, after P8. The
 > "PLAN ONLY" line immediately below was true on the day it was written and is
 > kept for that reason — it is not true of the document today.
 
@@ -514,7 +514,7 @@ Chosen to minimise regression:
 | **P5** | **Principal + IT Admin**: institution, academic, users, publish, rollover, audit, settings, branding | tag `ui-p5`; rollover/publish gates re-tested |
 | **P6** | **New designs** (§6): notices, notifications, calendar, documents, student history | tag `ui-p6` |
 | **P7** | **Platform Operations Center** (`/platform`), platform-branded | **COMPLETE 2026-09-02.** Not a restyle — see the note below the rollback line |
-| **P8** | Cleanup: delete `--c-*` at zero usage, retire dead CSS, re-measure budget | tag `ui-p8` |
+| **P8** | Cleanup: retire dead CSS, re-measure budget | **COMPLETE 2026-09-02.** 491 lines of dead CSS removed (3,926 → 3,850 lines; 53.0 → 51.2 KB gzipped). `--c-*` is **retained**: it is an alias layer over `--color-*`, not a second system — 721 live usages, zero of them at zero usage. See PHASE_LOG P8 |
 
 **Rollback:** every phase is its own commit range behind a tag; `git revert` of
 a phase restores the previous UI without touching data, API or schema —

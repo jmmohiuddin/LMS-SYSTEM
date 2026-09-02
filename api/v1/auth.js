@@ -1758,7 +1758,7 @@ async function loadRoles(client, tenantId, userId) {
        FROM user_roles ur
        JOIN roles r ON r.code = ur.role_code
       WHERE ur.tenant_id = $1 AND ur.user_id = $2
-        AND (ur.valid_until IS NULL OR ur.valid_until >= CURRENT_DATE)
+        AND (ur.valid_until IS NULL OR ur.valid_until >= app.today_dhaka())
       ORDER BY r.rank DESC`,
     [tenantId, userId]
   );

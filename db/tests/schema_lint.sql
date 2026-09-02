@@ -37,7 +37,17 @@ INSERT INTO lint_global_exempt VALUES
   -- only access path. Listed here rather than given a token tenant_id,
   -- because a tenant_id nobody could set would be a lie that silences
   -- this lint without providing anything.
-  ('rate_limit_buckets');
+  ('rate_limit_buckets'),
+  -- P7's commercial model (migration 051). `plans` is the price list and
+  -- `service_catalogue` is the thirteen sellable services: both are
+  -- platform-global reference data, like `subject_catalogue` above. There is
+  -- no per-school price list, and giving either a `tenant_id` nobody could
+  -- set would be the same lie `rate_limit_buckets` refuses to tell.
+  --
+  -- The lint caught both the day P7 shipped and was not run until P8, which
+  -- is the argument for running it: an un-scoped table is either deliberate
+  -- or serious, and only a person can say which.
+  ('plans'), ('service_catalogue');
 
 -- ---------------------------------------------------------------------
 -- Tables whose tenant_id is nullable BY DESIGN (written before a tenant

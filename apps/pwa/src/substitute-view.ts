@@ -10,7 +10,7 @@
  */
 import type { Auth } from './auth.ts';
 import type { RoutineSlot } from './routine-view.ts';
-import { formatTime } from '../../../packages/ui-core/src/format.ts';
+import { formatTime, todayLocalIso } from '../../../packages/ui-core/src/format.ts';
 import {
   pageHeader, field, dataTable, statusBadge, button, listSkeleton, openDrawer,
   setOverlayBody, el, append, type OverlayHandle,
@@ -31,13 +31,10 @@ export interface SubstituteViewOptions {
   auth: Auth;
 }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export class SubstituteView {
   private readonly o: SubstituteViewOptions;
-  private date = todayIso();
+  private date = todayLocalIso();
   private slots: RoutineSlot[] = [];
   private selectedSlot: RoutineSlot | null = null;
   private candidates: Candidate[] = [];

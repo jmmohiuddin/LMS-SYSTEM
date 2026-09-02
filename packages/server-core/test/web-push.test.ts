@@ -151,7 +151,18 @@ describe('R-9 — RFC 8292 VAPID', () => {
     const claims = JSON.parse(unb64url((/t=([^,]+)/.exec(h)?.[1] ?? '').split('.')[1]).toString());
     // A push service operator with an abuse complaint needs to reach us, not a
     // head teacher who has never heard of RFC 8292.
-    assert.match(claims.sub, /^mailto:.+@shikhonbd\.com$/);
+    //
+    // P8: this pinned `@shikhonbd.com`, the pre-launch domain. Production
+    // serves sikhon.systems, so the assertion had quietly become a record of
+    // a stale default rather than a check on the property it names. It now
+    // asserts the PROPERTY — a reachable platform mailbox, on a bare apex,
+    // never a per-school subdomain — which is what D11 is about and what
+    // survives the next rename.
+    assert.match(claims.sub, /^mailto:[^@\s]+@[a-z0-9-]+\.[a-z.]+$/,
+      'the VAPID subject must be a reachable mailbox');
+    const host = claims.sub.split('@')[1];
+    assert.equal(host.split('.').length, 2,
+      `the contact must be the platform apex, not a school subdomain: ${host}`);
   });
 });
 

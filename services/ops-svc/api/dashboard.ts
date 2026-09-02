@@ -97,11 +97,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
            count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
            count(ar.id)::int                                                       AS marked,
            (SELECT count(*)::int FROM attendance_sessions s
-             WHERE s.taken_on = CURRENT_DATE)                                      AS sessions,
+             WHERE s.taken_on = app.today_dhaka())                                      AS sessions,
            (SELECT count(*)::int FROM sections s
              WHERE s.academic_year_id = $1)                                        AS sections_expected
          FROM attendance_records ar
-        WHERE ar.taken_on = CURRENT_DATE`,
+        WHERE ar.taken_on = app.today_dhaka()`,
         [year.id],
       );
 
@@ -118,14 +118,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
            LEFT JOIN enrolments e
                   ON e.student_id = ar.student_id AND e.section_id = ar.section_id
                  AND e.status = 'active'
-          WHERE ar.taken_on = CURRENT_DATE AND ar.status = 'absent'
+          WHERE ar.taken_on = app.today_dhaka() AND ar.status = 'absent'
           ORDER BY cl.level_no, s.name, e.roll_no
           LIMIT $1`,
         [ABSENT_LIST_CAP],
       );
       const { rows: absentTotal } = await c.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM attendance_records
-          WHERE taken_on = CURRENT_DATE AND status = 'absent'`,
+          WHERE taken_on = app.today_dhaka() AND status = 'absent'`,
       );
 
       const { rows: exams } = await c.query<{
@@ -133,7 +133,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       }>(
         `SELECT id, name_bn, starts_on::text AS starts_on, status::text AS status
            FROM exams
-          WHERE academic_year_id = $1 AND starts_on >= CURRENT_DATE - INTERVAL '7 days'
+          WHERE academic_year_id = $1 AND starts_on >= app.today_dhaka() - INTERVAL '7 days'
           ORDER BY starts_on
           LIMIT 5`,
         [year.id],
@@ -176,7 +176,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
              AS subjects_without_teacher,
            (SELECT count(*)::int FROM exams e
              WHERE e.academic_year_id = $1 AND e.status <> 'published'
-               AND e.ends_on < CURRENT_DATE)
+               AND e.ends_on < app.today_dhaka())
              AS exams_awaiting_publication,
            (SELECT count(*)::int
               FROM users u

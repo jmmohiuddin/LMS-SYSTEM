@@ -182,7 +182,10 @@ export class Shell {
    */
   setUnread(count: number): void {
     const n = Math.max(0, Math.floor(count));
-    const label = n === 0 ? 'নোটিশ' : `নোটিশ — ${n}টি পড়া হয়নি`;
+    // Bangla digits in the ACCESSIBLE name too, not only on the badge.
+    // The badge said "৩" and the aria-label said "3": a sighted user read
+    // Bangla and a screen-reader user heard Latin, in the same control.
+    const label = n === 0 ? 'নোটিশ' : `নোটিশ — ${formatCount(n, 'bn')}টি পড়া হয়নি`;
     for (const badge of this.bellBadgeEls) {
       badge.hidden = n === 0;
       badge.textContent = n > 9 ? '৯+' : formatCount(n, 'bn');

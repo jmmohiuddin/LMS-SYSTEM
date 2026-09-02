@@ -19,9 +19,6 @@ const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ2345678';
 /** Exported: the redeem path length-checks a typed code against it. */
 export const CODE_LEN = 8;
 
-/** R-7.9: single-use, 72-hour expiry. The column default is the authority; this mirrors it. */
-export const CODE_TTL_HOURS = 72;
-
 export function generateCode(): string {
   const bytes = randomBytes(CODE_LEN);
   let out = '';

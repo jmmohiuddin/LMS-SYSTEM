@@ -127,6 +127,23 @@ const SENTINELS = [
   ['056_portal_of_system',             'function_body', 'app.portal_of',     'system_ingest'],
   ['057_platform_activity',            'function_body', 'app.platform_overview', 'user_sessions'],
   ['058_service_dependency_integrity', 'function',   'app.check_service_dependencies'],
+  ['059_dhaka_calendar_dates',         'function',   'app.today_dhaka'],
+  ['060_explicit_grace_is_authoritative', 'function_body', 'app.tenant_billing_state', 'grace_until IS NOT NULL'],
+  // 'rows' interpolates the WHOLE from-clause, so the predicate goes here and
+  // there is no fourth element. Both of these were written with the predicate
+  // in the pattern slot first, where it was ignored: 061 probed
+  // "SELECT 1 FROM pg_class" and 062 carried an "OR true". Each reported
+  // applied on a database where it was not, which is the one thing a sentinel
+  // must never do.
+  ['061_p7_schema_lint_repairs',       'rows',
+   "pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' " +
+   "AND c.relname IN ('tenant_operations','tenant_payments') AND c.relforcerowsecurity " +
+   "GROUP BY 1 HAVING count(*)=2"],
+  // Absence is the applied state, so the probe must return a row when the two
+  // indexes are GONE.
+  ['062_drop_redundant_indexes',       'rows',
+   "(SELECT 1) t WHERE NOT EXISTS (SELECT 1 FROM pg_indexes " +
+   "WHERE indexname IN ('ix_practice_options','ix_blocks_topic'))"],
 ];
 
 /**
@@ -192,6 +209,10 @@ const MEANING = {
   '056_portal_of_system':            'P7 — login and the SMS run are not teachers, so the teacher switch cannot stop a school signing in',
   '057_platform_activity':           'P7 — the console can see when a school was last actually used, from sessions and events it already records',
   '058_service_dependency_integrity': 'P7 — a catalogue cannot name a service that does not exist, which silently disabled the dependency refusal',
+  '059_dhaka_calendar_dates':        'P8 — a calendar day is a day in Bangladesh: the server runs UTC and was six hours behind every date the product records',
+  '060_explicit_grace_is_authoritative': 'P8 — an operator can end a grace period, instead of being overruled by the plan default',
+  '061_p7_schema_lint_repairs':      'P8 — the two tables P7 left with RLS enabled but NOT forced, plus the two platform tables the lint asked us to declare',
+  '062_drop_redundant_indexes':      'P8 — two indexes that duplicated the UNIQUE index beside them and cost a write on every insert',
 };
 
 const QUERIES = {

@@ -30,7 +30,7 @@
  *        the religion variant.
  */
 import { parseCsv, type CsvTable } from '../../../packages/server-core/src/csv.ts';
-import { toLatinDigits } from '../../../packages/ui-core/src/format.ts';
+import { toLatinDigits, toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 
 /** Canonical column names, and the aliases a real file uses instead. */
 const COLUMNS = {
@@ -222,7 +222,7 @@ export function validateStudents(table: CsvTable, snap: SchoolSnapshot): Validat
 
     if (ragged.has(row.lineNo)) {
       const r = ragged.get(row.lineNo) as { expected: number; got: number };
-      fail('row', `সারিতে ${r.got}টি ঘর, থাকার কথা ${r.expected}টি — সম্ভবত উদ্ধৃতি চিহ্ন ভুল`);
+      fail('row', `সারিতে ${toBanglaDigits(r.got)}টি ঘর, থাকার কথা ${toBanglaDigits(r.expected)}টি — সম্ভবত উদ্ধৃতি চিহ্ন ভুল`);
       continue;
     }
 

@@ -227,7 +227,7 @@ export class Console_ {
   private tenantId: string | null = null;
   private detail: { tenant: TenantRow & { branding: Record<string, string>; weekendDays: number[] };
                     state: OnboardingState; canActivate: boolean;
-                    /** R-8 §9D — does *.shikhonbd.com resolve yet? */
+                    /** R-8 §9D — does *.sikhon.systems resolve yet? */
                     subdomainsLive?: boolean } | null = null;
   private activationCode = '';
   private busy = false;
@@ -838,7 +838,7 @@ export class Console_ {
     note.textContent = live
       ? 'দুটোই একই প্রতিষ্ঠানে নিয়ে যায়। পুরোনো ?tid= লিংক কাজ করতেই থাকবে।'
       : 'এখন কেবল ইনস্টল লিংকটি কাজ করে — সেটিই ভর্তি স্লিপে ছাপুন। '
-        + 'সাবডোমেইন চালু হবে *.shikhonbd.com এর DNS ও TLS হওয়ার পর।';
+        + 'সাবডোমেইন চালু হবে *.sikhon.systems এর DNS ও TLS হওয়ার পর।';
     wrap.append(note);
 
     if (this.activationCode) {

@@ -12,7 +12,6 @@
  *    record could wedge a teacher's outbox permanently, and the retry would
  *    fail identically forever.
  */
-import type pg from 'pg';
 import { TenantBlocked, type Db, type TenantContext } from './db.ts';
 import { APPLIERS } from './appliers.ts';
 

@@ -160,10 +160,11 @@ export function evaluateAlerts(s: MonitorSignals): Alert[] {
         + `${Math.round(stalled / 60)}h (limit `
         + `${THRESHOLDS.smsQueueStalledMinutes / 60}h).`,
       investigate:
-        'Did the dispatch cron run? Netlify → Functions → cron-sms, or the '
-        + 'Vercel cron log. Then GET /api/v1/ops/health for the same counts '
-        + 'per tenant. A queue with a stalled head and no failures usually '
-        + 'means the job never fired, not that sending broke.',
+        'Did the dispatch cron run? Check the scheduler that owns it on '
+        + 'this deployment. Then GET /api/v1/platform/health?id=<tenant> for '
+        + 'the same counts per school — it needs BOTH platform credentials. '
+        + 'A queue with a stalled head and no failures usually means the job '
+        + 'never fired, not that sending broke.',
       recover:
         'Invoke POST /api/v1/sms/dispatch by hand with the service key. It is '
         + 'idempotent per row — a message already sent is not sent twice. If '
@@ -185,7 +186,8 @@ export function evaluateAlerts(s: MonitorSignals): Alert[] {
       detail: `${s.smsFailedRecent} failed of ${smsTotal} attempted in the `
         + `last ${WINDOW_HOURS}h.`,
       investigate:
-        'GET /api/v1/ops/health shows the top error codes. A single repeated '
+        'GET /api/v1/platform/health?id=<tenant> shows the top error codes. '
+        + 'A single repeated '
         + 'code is the aggregator (credentials, balance, sender identity '
         + 'unapproved); a spread of codes is more likely bad numbers in one '
         + "school's import.",

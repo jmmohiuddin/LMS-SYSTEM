@@ -121,6 +121,27 @@ describe('P0 — every alias resolves to a real value', () => {
     assert.deepEqual(missing, [], `used but never defined: ${missing.join(', ')}`);
   });
 
+  test('THE ONE THAT MATTERS — no token of ANY family is used but never defined', () => {
+    // P8. The two tests above check `--c-` and `--color-`. Every other family
+    // — `--lh-`, `--text-`, `--space-`, `--radius-`, `--shadow-`, `--z-` —
+    // was unguarded, and that is exactly where the bug was hiding:
+    //
+    //   four rules read `var(--lh-normal)`          (.perf-q-stem, .perf-reteach,
+    //   and the token was defined NOWHERE            .perf-wide-note, .perf-att-signals li)
+    //
+    // so the browser dropped all four `line-height` declarations and the
+    // elements inherited 1.75 instead of the 1.65 the rule asked for.
+    // Measured in a browser before the fix: `.perf-q-stem` computed
+    // 26.25px on a 15px font — the inherited value, not its own.
+    //
+    // The whole `--lh-*` ramp had zero readers at the same time: it was
+    // authored, and then every rule was written against a name outside it.
+    //
+    // One prefix, so a new family cannot be forgotten the way those were.
+    const missing = undefinedWithoutFallback('--');
+    assert.deepEqual(missing, [], `used but never defined: ${missing.join(', ')}`);
+  });
+
   test('the canonical Ata Ekta palette is present, not the pre-P0 one', () => {
     const light = lightBlock();
     assert.match(light, /--color-primary:\s*#D23B2E/i, 'the WCAG-corrected red');

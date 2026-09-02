@@ -247,6 +247,95 @@ describe('P7 — the billing lifecycle is derived, never stored', { skip }, () =
   });
 });
 
+
+/**
+ * P8 §8 — the four dates where being one day out is the whole question.
+ *
+ * These are the boundaries a school argues about. Every one of them was
+ * evaluated against the SERVER's date until migration 059, and the server
+ * runs UTC — six hours behind Dhaka — so for the six hours between midnight
+ * and 6am in Bangladesh the product's answer and the headmaster's calendar
+ * disagreed.
+ *
+ * Observed, not theorised, on the day this was written:
+ *
+ *     CURRENT_DATE                             2026-09-01
+ *     (now() AT TIME ZONE 'Asia/Dhaka')::date  2026-09-02
+ *
+ * A school whose grace ended on the 1st was still reported as in grace.
+ */
+describe('P8 — billing boundaries, in Dhaka', { skip }, () => {
+  before(ensure);
+
+  test('THE ONE THAT MATTERS — the database agrees with a Dhaka calendar', async () => {
+    const { rows } = await plat.pool.query<{ dhaka: string; utc: string }>(
+      `SELECT app.today_dhaka()::text AS dhaka, CURRENT_DATE::text AS utc`);
+    // Not asserting they differ — for eighteen hours a day they agree. What
+    // must hold is that the product uses the Dhaka one.
+    assert.equal(rows[0].dhaka, daysFromNow(0),
+      'app.today_dhaka() and the suite disagree about what day it is in Dhaka');
+  });
+
+  test('due TODAY is not yet late', async () => {
+    await setOps({ ops_state: 'active', next_due_on: daysFromNow(0), grace_until: null });
+    const a = await db.tenantAccess(T);
+    assert.equal(a.billingState, 'active');
+    assert.equal(a.access, 'full', 'a school is not penalised on the day the bill falls due');
+  });
+
+  test('due YESTERDAY enters grace, not limbo', async () => {
+    await setOps({ ops_state: 'active', next_due_on: daysFromNow(-1), grace_until: null });
+    assert.equal((await db.tenantAccess(T)).billingState, 'grace_period');
+  });
+
+  test('grace ending TODAY still works — the last day is a whole day', async () => {
+    await setOps({
+      ops_state: 'active', next_due_on: daysFromNow(-9), grace_until: daysFromNow(0),
+    });
+    const a = await db.tenantAccess(T);
+    assert.equal(a.billingState, 'grace_period');
+    assert.equal(a.access, 'full');
+  });
+
+  test('THE ONE THAT MATTERS — grace that ended YESTERDAY is over', async () => {
+    // Migration 060. This returned `grace_period` before it: the explicit
+    // grant had expired, but the PLAN's own grace window had not, and the
+    // fallback clause silently extended the school by six more days. An
+    // operator who says "until the first, and no longer" was overruled by a
+    // default and told the change had worked.
+    await setOps({
+      ops_state: 'active', next_due_on: daysFromNow(-9), grace_until: daysFromNow(-1),
+    });
+    const a = await db.tenantAccess(T);
+    assert.equal(a.billingState, 'limited');
+    assert.equal(a.access, 'read_only', 'limited is read-only, never data loss');
+  });
+
+  test('an explicit grace can SHORTEN the plan window, not only extend it', async () => {
+    // The plan carries 14 days. The operator gives 2. On day 3 it is over.
+    await setOps({
+      ops_state: 'active', next_due_on: daysFromNow(-3), grace_until: daysFromNow(-1),
+    });
+    assert.equal((await db.tenantAccess(T)).billingState, 'limited');
+  });
+
+  test('and still extends it when that is what the operator wants', async () => {
+    await setOps({
+      ops_state: 'active', next_due_on: daysFromNow(-400), grace_until: daysFromNow(3),
+    });
+    assert.equal((await db.tenantAccess(T)).billingState, 'grace_period');
+  });
+
+  test('with no explicit grace the plan window still protects the school', async () => {
+    // The clause the 060 fix was careful NOT to break: nobody decided, so a
+    // school does not lose service because an operator forgot to press a
+    // button.
+    await setOps({ ops_state: 'active', next_due_on: daysFromNow(-3), grace_until: null });
+    assert.equal((await db.tenantAccess(T)).billingState, 'grace_period');
+    await setOps({ ops_state: 'active', next_due_on: null, grace_until: null });
+  });
+});
+
 describe('P7 — tenant isolation of the gate itself', { skip }, () => {
   before(ensure);
 
@@ -471,8 +560,18 @@ after(async () => {
   await unlockFixtures();
 });
 
+/**
+ * N days from TODAY IN DHAKA, which is the only "today" this product has.
+ *
+ * This used to count from the UTC date. That is invisible at an offset of
+ * -400 and decisive at an offset of 0: for six hours every day the UTC date
+ * is yesterday in Bangladesh, so `daysFromNow(0)` would have produced
+ * "yesterday" and a boundary test would have asserted the wrong day while
+ * passing. Migration 059 has the whole story.
+ */
 function daysFromNow(n: number): string {
-  const d = new Date();
+  const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
+  const d = new Date(Date.now() + DHAKA_OFFSET_MS);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }

@@ -16,6 +16,7 @@
  * unless the label is wired — which is what `<label for>` below does.
  */
 import { el, icon, append, uid } from './dom.ts';
+import { toBanglaDigits } from '../../../../packages/ui-core/src/format.ts';
 
 export interface UploadOptions {
   label: string;
@@ -88,7 +89,7 @@ export function fileUpload(doc: Document, o: UploadOptions): {
     }
     chosen.textContent = files.length === 1
       ? files[0].name
-      : `${bn(files.length)}টি ফাইল নির্বাচিত`;
+      : `${toBanglaDigits(files.length)}টি ফাইল নির্বাচিত`;
     o.onFiles(files);
   });
 
@@ -107,5 +108,3 @@ export function fileUpload(doc: Document, o: UploadOptions): {
 }
 
 const mb = (b: number): string => (b / (1024 * 1024)).toFixed(1);
-const bn = (n: number): string =>
-  String(n).replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]);

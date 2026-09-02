@@ -192,7 +192,6 @@
   --c-primary-text: var(--color-primary-text);   /* accent as TYPE 5.47:1 */
   --c-primary-ink:  var(--color-primary-ink);
   --c-primary-soft: var(--color-primary-soft);
-  --c-primary-flat: var(--color-primary);        /* fills with no text over them */
   /* The label colour for text ON a brand fill. Defaults to white, which is
      what seventeen rules in this file used as a literal. branding.ts
      overrides it per tenant: a school whose crest is a pale yellow gets a
@@ -954,12 +953,7 @@ textarea:focus {
 .next-glyph svg, .offline-icon svg { display: block; }
 
 /* ----------------------------------------------------------------- roster */
-.section-picker {
-  display: block; width: calc(100% - 2 * var(--s-4)); margin: var(--s-3) var(--s-4);
-  min-height: var(--tap-min); padding: 0 var(--s-3);
-  border: 1px solid var(--c-line); border-radius: var(--radius);
-  font-size: var(--text-base); background: var(--c-surface);
-}
+
 .roster-list { list-style: none; margin: 0; padding: 0 var(--s-4); }
 .roster-row {
   display: flex; align-items: center; gap: var(--s-3);
@@ -970,10 +964,10 @@ textarea:focus {
 .roster-name { flex: 1; }
 
 /* ---------------------------------------------------------------- routine */
-.routine-toggle { grid-column: 1 / -1; display: flex; gap: var(--s-2); margin-top: var(--s-2); }
-.routine-toggle .btn-secondary { margin: 0; flex: 1; }
-.routine-toggle .btn-secondary.active { background: var(--c-primary); color: var(--c-on-primary); }
-.routine-day-heading { margin: var(--s-4) var(--s-4) var(--s-1); font-size: var(--text-base); }
+
+
+
+
 .routine-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-4); }
 .routine-row {
   display: grid; grid-template-columns: 3.5em 1fr auto; align-items: center; gap: var(--s-2);
@@ -986,8 +980,8 @@ textarea:focus {
 .routine-body { display: flex; flex-direction: column; }
 .routine-subject { font-weight: 600; }
 .routine-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
-.routine-sub-tag { font-size: var(--text-2xs); color: var(--c-warn); }
-.routine-chip { font-size: var(--text-2xs); color: var(--c-success); white-space: nowrap; }
+
+
 
 /* ------------------------------------------------------------------ marks */
 .marks-list { list-style: none; margin: 0; padding: 0 var(--s-4) calc(var(--tap-min) + var(--s-4)); }
@@ -1028,43 +1022,36 @@ textarea:focus {
 .marks-complete[data-done='true'] { color: var(--c-success); }
 
 /* ------------------------------------------------------------------- fees */
-.fees-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-4); }
-.fees-row { border-bottom: 1px solid var(--c-line); }
-.fees-head {
-  display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'title amount' 'meta amount';
-  width: 100%; min-height: var(--tap-min); padding: var(--s-2) 0;
-  background: none; border: 0; text-align: left; font: inherit; cursor: pointer;
-}
-.fees-title { grid-area: title; font-weight: 600; }
-.fees-meta { grid-area: meta; font-size: var(--text-2xs); color: var(--c-ink-2); }
-.fees-amount { grid-area: amount; align-self: center; font-variant-numeric: tabular-nums; font-weight: 600; }
-.fees-row[data-status='paid'] .fees-amount { color: var(--c-success); }
-.fees-row[data-status='overdue'] .fees-meta { color: var(--c-warn); }
-.fees-detail { padding: 0 0 var(--s-3) var(--s-2); }
-.fees-line {
-  display: flex; justify-content: space-between; gap: var(--s-3);
-  padding: 2px 0; font-size: var(--text-xs);
-}
-.fees-due { color: var(--c-ink-2); }
-.fees-receipts-h { margin-top: var(--s-1); font-weight: 600; }
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ------------------------------------------------------------------- more */
-.more-list { list-style: none; margin: 0; padding: 0 var(--s-4); }
+
 .more-item {
   display: flex; align-items: center; gap: var(--s-3); width: 100%;
   min-height: var(--tap-min); padding: var(--s-2) 0;
   background: none; border: 0; border-bottom: 1px solid var(--c-line);
   text-align: left; font: inherit; cursor: pointer;
 }
-.more-glyph { width: 1.8em; font-size: var(--text-xl); text-align: center; }
-.more-body { display: flex; flex-direction: column; }
-.more-title { font-weight: 600; }
-.more-sub { font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+
+
+
 
 /* --------------------------------------------------------------------- ai */
-.ai-form { display: flex; flex-direction: column; gap: var(--s-2); padding: 0 var(--s-4); }
+
 .ai-field { margin: 0; width: 100%; }
-.ai-notes { min-height: 60px; padding: var(--s-2) var(--s-3); }
+
 .ai-output {
   margin: var(--s-3) var(--s-4); padding: var(--s-3);
   background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
@@ -1112,17 +1099,11 @@ textarea:focus {
 .chat-send { margin: 0; flex: none; width: auto; padding: 0 var(--s-4); }
 
 /* ------------------------------------------------------------- substitute */
-.sub-slot-btn {
-  flex: 1; min-height: var(--tap-min); background: none; border: 0;
-  text-align: left; font: inherit; font-weight: 600; cursor: pointer;
-}
-.sub-candidates { list-style: none; margin: var(--s-2) 0 0; padding: 0 var(--s-4); }
-.sub-candidate {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
-  min-height: var(--tap-min); padding: var(--s-2) 0; border-bottom: 1px solid var(--c-line);
-}
-.sub-assign { margin: 0; width: auto; flex: none; padding: 0 var(--s-3); }
-.sub-assigned { display: block; margin: var(--s-3) var(--s-4); font-size: var(--text-sm); }
+
+
+
+
+
 
 /* ============================================================== redesign
    New surfaces introduced with the home dashboard + answer-script capture.
@@ -1227,11 +1208,7 @@ h2.section-heading { letter-spacing: normal; }
   background: var(--c-surface); font-size: var(--text-base); color: var(--c-ink);
 }
 /* Focus is the unified input:focus rule near the top of this file. */
-.btn-capture {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-height: var(--tap-min); border-radius: var(--radius);
-  background: var(--c-primary); color: var(--c-on-primary); font-weight: 600; cursor: pointer;
-}
+
 .btn-ghost {
   background: transparent; color: var(--c-ink-2);
   border: 1px solid var(--c-line); border-radius: var(--radius);
@@ -1251,35 +1228,28 @@ h2.section-heading { letter-spacing: normal; }
 }
 
 /* Script pages ---------------------------------------------------------- */
-.script-pages { list-style: none; margin: var(--s-3) 0 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-3); }
-.script-page {
-  display: grid; grid-template-columns: 84px 1fr auto; align-items: center;
-  gap: var(--s-3); padding: var(--s-2);
-}
+
+
 .script-thumb {
   width: 84px; height: 108px; object-fit: cover;
   border-radius: var(--radius); background: var(--c-surface-3);
 }
-.script-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.script-title { font-weight: 600; font-size: var(--text-sm); }
-.script-meta { font-size: var(--text-2xs); color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
-.script-status { font-size: var(--text-2xs); }
-.script-page[data-status='saved'] .script-status { color: var(--c-success); }
-.script-page[data-status='uploading'] .script-status { color: var(--c-info); }
-.script-page[data-status='error'] .script-status { color: var(--c-warn); }
-.script-actions { display: flex; flex-direction: column; gap: var(--s-1); }
+
+
+
+
+
+
+
+
 
 /* =============================================================== roles */
-.iso-banner {
-  display: flex; gap: var(--s-3); align-items: flex-start;
-  margin: var(--s-3) var(--s-4); padding: var(--s-3) var(--s-4);
-  background: var(--c-primary-soft); border-color: transparent;
-}
-.iso-icon { font-size: var(--text-2xl); line-height: 1; }
-.iso-title { display: block; font-weight: 600; color: var(--c-primary-ink); }
-.iso-desc { display: block; font-size: var(--text-2xs); color: var(--c-ink-2); line-height: 1.5; }
 
-.roles-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
+
+
+
+
+
 .role-card {
   display: grid; grid-template-columns: 1fr auto; grid-template-areas:
     'name code'
@@ -1287,40 +1257,33 @@ h2.section-heading { letter-spacing: normal; }
     'scope scope';
   gap: var(--s-1) var(--s-3); padding: var(--s-3);
 }
-.role-name  { grid-area: name;  font-weight: 600; font-size: var(--text-sm); }
+
 .role-code  { grid-area: code;  font-size: var(--text-3xs); color: var(--c-ink-3); font-family: ui-monospace, monospace;
               background: var(--c-surface-3); padding: 2px var(--s-2); border-radius: var(--radius); align-self: start; }
-.role-can   { grid-area: can;   font-size: var(--text-2xs); color: var(--c-ink-2); }
-.role-scope { grid-area: scope; font-size: var(--text-3xs); color: var(--c-ink-3); }
+
+
 
 /* ============================================================== ledger */
-.recon-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-2); padding: 0 var(--s-4); }
-.recon-card { padding: var(--s-3); display: flex; flex-direction: column; gap: 2px; }
-.recon-provider { font-size: var(--text-2xs); color: var(--c-ink-3); }
-.recon-posted { font-size: var(--text-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
-.recon-meta { font-size: var(--text-3xs); }
-.recon-meta[data-state='ok']      { color: var(--c-success); }
-.recon-meta[data-state='partial'] { color: var(--c-warn); }
 
-.ledger-list { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: 2px; }
-.ledger-row {
-  display: grid; grid-template-columns: 100px 1fr auto; gap: var(--s-2); align-items: center;
-  padding: var(--s-2) var(--s-3);
-  background: var(--c-surface); border: 1px solid var(--c-line); border-radius: var(--radius);
-}
-.ledger-code { font-family: ui-monospace, monospace; font-size: var(--text-2xs); color: var(--c-ink-2); }
-.ledger-name { font-size: var(--text-xs); }
-.ledger-bal  { font-variant-numeric: tabular-nums; font-weight: 600; }
-.ledger-row[data-type='income'] .ledger-bal { color: var(--c-success); }
 
-.batch-card { margin: var(--s-2) var(--s-4); padding: var(--s-3); }
-.batch-memo { font-size: var(--text-2xs); color: var(--c-ink-2); margin-bottom: var(--s-2); }
-.batch-line {
-  display: grid; grid-template-columns: 1fr auto auto; gap: var(--s-3);
-  padding: var(--s-1) 0; font-size: var(--text-2xs); font-variant-numeric: tabular-nums;
-}
-.batch-dr { color: var(--c-info); }
-.batch-cr { color: var(--c-success); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ============================================================== system */
 .system-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
@@ -1335,23 +1298,19 @@ h2.section-heading { letter-spacing: normal; }
   background: none; border: 0; color: inherit; font: inherit; text-align: start;
   width: 100%;
 }
-.system-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
 .system-title { font-weight: 600; font-size: var(--text-sm); }
 .system-desc { font-size: var(--text-2xs); color: var(--c-ink-2); }
 .system-path {
   font-family: ui-monospace, monospace; font-size: var(--text-3xs); color: var(--c-ink-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.system-detail { font-size: var(--text-2xs); color: var(--c-warn); margin-top: 2px; }
-.system-chip {
-  align-self: start;
-  padding: 4px var(--s-2); border-radius: 999px; font-size: var(--text-3xs); font-weight: 600;
-  white-space: nowrap;
-}
-.system-chip[data-state='on']         { background: var(--c-success-soft); color: var(--c-success); }
-.system-chip[data-state='dark']       { background: var(--c-warn-soft); color: var(--c-warn); }
-.system-chip[data-state='invisible']  { background: var(--c-surface-3); color: var(--c-ink-2); }
-.system-chip[data-state='unknown']    { background: var(--c-surface-3); color: var(--c-ink-3); }
+
+
+
+
+
+
 
 /* =============================================================== learn
    Syllabus browse + lesson reader — the student-facing learning surface. */
@@ -1395,20 +1354,15 @@ h2.section-heading { letter-spacing: normal; }
 }
 
 /* Lesson list ----------------------------------------------------------- */
-.lesson-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
-.lesson-card {
-  display: grid; grid-template-columns: 28px 1fr; gap: var(--s-3); align-items: center;
-  width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
-  cursor: pointer; background: var(--c-surface);
-  border: 1px solid var(--c-line); border-radius: var(--radius);
-}
-.lesson-mark { font-size: var(--text-lg); line-height: 1; color: var(--c-ink-3); text-align: center; }
-.lesson-card[data-state='completed'] .lesson-mark { color: var(--c-success); }
-.lesson-card[data-state='started'] .lesson-mark { color: var(--c-warn); }
-.lesson-card[data-state='completed'] { background: color-mix(in srgb, var(--c-primary-soft) 55%, var(--c-surface)); }
-.lesson-body { display: flex; flex-direction: column; gap: 1px; }
-.lesson-title { font-weight: 600; font-size: var(--text-sm); }
-.lesson-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+
+
+
+
+
+
+
+
 
 /* Reader ---------------------------------------------------------------- */
 .lesson-reader {
@@ -1464,37 +1418,30 @@ h2.section-heading { letter-spacing: normal; }
 .block-figure img { width: 100%; height: auto; border-radius: var(--radius); background: var(--c-surface-3); }
 .block-figure figcaption { margin-top: var(--s-1); font-size: var(--text-2xs); color: var(--c-ink-2); }
 
-.lesson-done { margin: var(--s-4) var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }
+
 
 /* ============================================================== results */
-.result-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
-.result-card { overflow: hidden; }
-.result-head {
-  display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); align-items: center;
-  width: 100%; padding: var(--s-3); background: none; border: 0;
-  text-align: left; font: inherit; color: inherit; cursor: pointer;
-}
-.result-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.result-exam { font-weight: 600; font-size: var(--text-sm); }
-.result-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
-.result-score { display: flex; flex-direction: column; align-items: center; gap: 0; }
+
+
+
+
+
+
+
 .result-gpa {
   font-size: var(--text-2xl); font-weight: 700; line-height: 1.1;
   font-variant-numeric: tabular-nums; color: var(--c-primary-text);
 }
-.result-letter { font-size: var(--text-2xs); font-weight: 600; color: var(--c-ink-2); }
-.result-card[data-pass='false'] .result-gpa { color: var(--c-accent); }
 
-.result-detail { padding: 0 var(--s-3) var(--s-3); border-top: 1px solid var(--c-line); }
-.result-subject {
-  display: flex; justify-content: space-between; gap: var(--s-3);
-  padding: var(--s-2) 0; font-size: var(--text-xs); border-bottom: 1px solid var(--c-line-2);
-}
-.result-subject:last-child { border-bottom: none; }
-.result-subject-mark { font-variant-numeric: tabular-nums; color: var(--c-ink-2); white-space: nowrap; }
-.result-subject-mark[data-absent='true'] { color: var(--c-accent); }
-.result-total { font-weight: 700; border-top: 1px solid var(--c-line); margin-top: var(--s-1); }
-.result-total span { color: var(--c-ink); }
+
+
+
+
+
+
+
+
+
 
 /* Demo role picker in the top bar */
 .shell-role {
@@ -1510,36 +1457,27 @@ h2.section-heading { letter-spacing: normal; }
 .shell-role option { color: var(--c-ink); background: var(--c-surface); }
 
 /* ========================================================== assignments */
-.assign-list { list-style: none; margin: 0; padding: 0 var(--s-4) var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
-.assign-card {
-  display: grid; grid-template-columns: 1fr auto; gap: var(--s-3); align-items: center;
-  width: 100%; padding: var(--s-3); text-align: left; font: inherit; color: inherit;
-  cursor: pointer; background: var(--c-surface);
-  border: 1px solid var(--c-line); border-radius: var(--radius); box-shadow: var(--shadow-1);
-}
+
+
 /* urgency-rail-card — a named component in the wireframe's vocabulary (§3),
    with states high / medium / low / none, and drawn in §6.1 as the leading
    ▐ on every suggestion card. The rail is how the list scans without
    reading; F-812 is satisfied because .assign-chip states the same urgency
    in words beside it, so colour is never the only carrier. */
-.assign-card { border-left: 3px solid transparent; }
-.assign-card[data-state='overdue'] { border-left-color: var(--c-accent); }
-.assign-card[data-state='today']   { border-left-color: var(--c-warn); }
-.assign-card[data-state='soon']    { border-left-color: var(--c-warn); }
-.assign-card[data-state='later']   { border-left-color: var(--c-line); }
-.assign-card[data-state='done']    { border-left-color: var(--c-success);
-  background: color-mix(in srgb, var(--c-primary-soft) 45%, var(--c-surface)); }
-.assign-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.assign-title { font-weight: 600; font-size: var(--text-sm); }
-.assign-meta { font-size: var(--text-2xs); color: var(--c-ink-2); }
-.assign-chip {
-  padding: 3px var(--s-2); border-radius: 999px; font-size: var(--text-3xs); font-weight: 700;
-  white-space: nowrap; background: var(--c-surface-3); color: var(--c-ink-2);
-}
-.assign-chip[data-state='overdue'] { background: var(--c-danger-soft); color: var(--c-accent); }
-.assign-chip[data-state='today']   { background: var(--c-warn-soft); color: var(--c-warn); }
-.assign-chip[data-state='soon']    { background: var(--c-warn-soft); color: var(--c-warn); }
-.assign-chip[data-state='done']    { background: var(--c-success-soft); color: var(--c-success); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .assign-instructions {
   margin: var(--s-2) var(--s-4); padding: var(--s-3) var(--s-4);
@@ -1652,7 +1590,7 @@ h2.section-heading { letter-spacing: normal; }
 .prac-actions { display: flex; gap: var(--s-2); margin-top: var(--s-3); }
 .prac-actions .btn-primary, .prac-actions .btn-secondary { margin: 0; flex: 1; }
 .prac-retry { flex: none !important; width: auto; padding: 0 var(--s-3) !important; }
-.lesson-done-alt { margin: 0 var(--s-4) var(--s-5); width: calc(100% - 2 * var(--s-4)); }
+
 
 /* ============================================================ next block */
 .next-slot { display: block; }
@@ -1768,11 +1706,7 @@ button.subj-card::after {
 /* ============================================================ my results */
 /* F-805, wireframe §6.5. */
 .page-header-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
-.exam-select {
-  min-height: var(--tap-min); padding: 0 var(--s-2); max-width: 55%;
-  border: 1px solid var(--c-line); border-radius: var(--radius);
-  background: var(--c-surface); color: var(--c-ink); font: inherit; font-size: var(--text-xs);
-}
+
 
 .result-summary { margin: 0 var(--s-4) var(--s-3); }
 .result-summary-row { display: flex; gap: var(--s-6); }
@@ -1837,7 +1771,7 @@ button.subj-card::after {
 /* P6: the horizontal inset is gone — this is a `card()` now, and the card
    sits inside the content column that already provides it. */
 .att-summary { margin: 0 0 var(--s-3); }
-.att-headline { display: flex; flex-direction: column; margin-bottom: var(--s-3); }
+
 .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .att-note { margin: var(--s-3) 0 0; font-size: var(--text-2xs); color: var(--c-ink-2); }
 
@@ -1852,15 +1786,11 @@ button.subj-card::after {
    beside it says the same thing in words — colour is never the only carrier. */
 .progress-fill[data-low='true'] { background: var(--c-warn); }
 
-.att-register { list-style: none; margin: 0; padding: 0 var(--s-4); display: flex; flex-direction: column; gap: var(--s-2); }
-.att-entry {
-  display: grid; grid-template-columns: 7rem 1fr; gap: var(--s-3);
-  align-items: baseline; padding: var(--s-2) 0;
-  border-bottom: 1px solid var(--c-line-2);
-}
-.att-entry-date { font-size: var(--text-2xs); color: var(--c-ink-2); font-variant-numeric: tabular-nums; }
-.att-entry-body { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
-.att-entry-note { font-size: var(--text-2xs); color: var(--c-ink-2); }
+
+
+
+
+
 
 /* --------------------------------------------------------- segmented bar */
 /* Wireframe §6.6's [ বাকি ] [ জমা ] [ মূল্যায়িত ]. Three options all visible
@@ -1920,9 +1850,9 @@ button.subj-card::after {
 /* ── Group & optional-subject selection (F-305/F-304, §10.3) ───────────
    Derived subjects are TEXT; only the pools are controls. The visual split
    is the requirement: nothing that isn't a decision should look pressable. */
-.choice-block { margin: 0 var(--s-4) var(--s-3); padding: var(--s-3); }
-.choice-block .section-heading { margin: 0 0 var(--s-2); }
-.choice-readonly-value { margin: 0; font-size: var(--text-lg); font-weight: 700; }
+
+
+
 .choice-derived { margin: 0; font-size: var(--text-xs); line-height: 1.7; color: var(--c-ink); }
 .choice-note { margin: var(--s-1) 0 0; font-size: var(--text-2xs);
                color: var(--c-ink-3); line-height: 1.6; }
@@ -2031,11 +1961,11 @@ button.subj-card::after {
 .stepper-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .import-card { display: grid; gap: var(--s-3); padding: var(--s-4); }
-.import-help { margin: 0; font-size: var(--text-xs); color: var(--c-ink-2); line-height: 1.6; }
-.import-help-quiet { color: var(--c-ink-3); }
-.import-stat { margin: 0; font-size: var(--text-base); font-weight: 700; }
-.import-stat.is-ok   { color: var(--c-success); }
-.import-stat.is-warn { color: var(--c-warn); }
+
+
+
+
+
 
 .import-errors { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2);
                  max-height: 46vh; overflow-y: auto; }
@@ -2045,12 +1975,11 @@ button.subj-card::after {
 .import-errors li:last-child { border-bottom: 0; padding-bottom: 0; }
 /* Line numbers are what the operator types into Excel's "go to row" box,
    so they get a fixed column and tabular figures. */
-.import-line { font-variant-numeric: tabular-nums; font-weight: 700;
-               color: var(--c-ink-2); white-space: nowrap; }
-.import-why { color: var(--c-ink-1); }
-.import-more { color: var(--c-ink-3); font-size: var(--text-2xs); }
 
-.import-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+
+
+
+
 /* The primary action carries both counts, so the skipped students cannot
    be pressed past without being read. It needs room to say so. */
 .import-go { min-height: var(--tap-min); padding: var(--s-2) var(--s-3);
@@ -2070,11 +1999,11 @@ button.subj-card::after {
    timetable for 1,200 children. The trade-offs sit ABOVE the accept
    button, never behind a disclosure — "nothing is silently accepted" is a
    layout requirement as much as a data one. */
-.gen-counters { display: grid; gap: var(--s-1); padding: var(--s-4); }
+
 .gen-counter { margin: 0; font-size: var(--text-base); font-weight: 700; }
 .gen-counter.is-ok   { color: var(--c-success); }
 .gen-counter.is-warn { color: var(--c-warn); }
-.gen-meta { margin: var(--s-1) 0 0; font-size: var(--text-2xs); color: var(--c-ink-3); }
+
 
 .gen-head { margin: 0 0 var(--s-2); font-size: var(--text-sm); font-weight: 700; color: var(--c-ink-1); }
 .gen-trades { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
@@ -2113,28 +2042,27 @@ button.subj-card::after {
 
 /* The switcher never scrolls away — §9.1 calls it the single most-used
    control on this surface. */
-.ward-switcher { position: sticky; top: 0; z-index: 2; margin-top: 0; }
-.ward-identity { padding-bottom: var(--s-2); }
 
-.ward-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3);
-             margin: 0 var(--s-4) var(--s-3); }
+
+
+
 /* Below ~340px two cards side by side start truncating the money, which is
    the one number that must never be clipped. */
 @media (max-width: 359px) { .ward-grid { grid-template-columns: 1fr; } }
 
-.ward-card { padding: var(--s-3); display: grid; gap: 2px; align-content: start; }
-.ward-card-head { margin: 0; font-size: var(--text-2xs); font-weight: 600; color: var(--c-ink-3); }
+
+
 /* The status line is the largest thing in the card: it is the answer to
    the question the guardian opened the app to ask. */
-.ward-card-main { margin: 0; font-size: var(--text-xl); font-weight: 700; line-height: 1.3; }
-.ward-card-main[data-tone='ok']     { color: var(--c-success); }
-.ward-card-main[data-tone='warn']   { color: var(--c-warn); }
-.ward-card-main[data-tone='danger'] { color: var(--c-accent); }
-.ward-card-main[data-tone='muted']  { color: var(--c-ink-2); }
-.ward-card-sub { margin: 0; font-size: var(--text-2xs); color: var(--c-ink-3); }
 
-.ward-result { margin: 0 var(--s-4) var(--s-3); padding: var(--s-4); display: grid; gap: var(--s-2); }
-.ward-result-line { margin: 0; font-size: var(--text-lg); font-weight: 700; color: var(--c-ink-1); }
+
+
+
+
+
+
+
+
 
 /* Payment is one tap from home (§9.1), so the control is full-width and
    the last thing on the screen — where a thumb already is. */
@@ -2177,13 +2105,10 @@ button.subj-card::after {
 .perf-bar-value { font-size: var(--text-xs); color: var(--c-ink-2);
                   font-variant-numeric: tabular-nums; }
 
-.perf-qlist { list-style: none; margin: var(--space-3) 0 0; padding: 0;
-              border-top: 1px solid var(--color-neutral-300); }
-.perf-q { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-neutral-300); }
-.perf-q-stem { margin: 0; font-size: var(--text-sm); line-height: var(--lh-normal);
-               color: var(--c-ink-1); }
-.perf-q-meta { margin: var(--space-1) 0 0; font-size: var(--text-xs); color: var(--c-ink-2);
-               font-variant-numeric: tabular-nums; }
+
+
+
+
 /* The panel's conclusion, so it carries weight rather than decoration.
    It had a 3px side tab; the only other side-borders in this system are
    transparent reserved gutters, and .perf-wide-note — the same kind of
@@ -2192,7 +2117,7 @@ button.subj-card::after {
    does the emphasis without inventing a third grouping device. */
 .perf-reteach { margin: var(--space-3) 0 0; padding: var(--space-3);
                 background: var(--color-neutral-100); font-weight: 600;
-                font-size: var(--text-sm); line-height: var(--lh-normal); color: var(--c-ink-1); }
+                font-size: var(--text-sm); line-height: var(--lh-body); color: var(--c-ink-1); }
 
 /* ── §7.5 attention list (F-1502) ────────────────────────────────────────
    Deliberately undecorated. No severity colour, no badge, no ordering cue.
@@ -2201,21 +2126,20 @@ button.subj-card::after {
    varies is the text of the observations. */
 .perf-wide-note { margin: var(--space-3) 0 0; padding: var(--space-3);
                   background: var(--color-neutral-100); font-size: var(--text-sm);
-                  line-height: var(--lh-normal); color: var(--c-ink-1); }
-.perf-attention { list-style: none; margin: var(--space-3) 0 0; padding: 0;
-                  border-top: 1px solid var(--color-neutral-300); }
-.perf-att-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-neutral-300); }
-.perf-att-name { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--c-ink-1); }
+                  line-height: var(--lh-body); color: var(--c-ink-1); }
+
+
+
 .perf-att-signals { list-style: none; margin: var(--space-1) 0 0; padding: 0;
                     display: grid; gap: 2px; }
 .perf-att-signals li { font-size: var(--text-xs); color: var(--c-ink-2);
-                       line-height: var(--lh-normal); }
+                       line-height: var(--lh-ui); }
 
 /* .card carries no padding in this system — each child insets itself, the
    way .section-heading does with its own margin. These children were
    written as if the card padded them and ran flush to the viewport edge. */
 .perf-card > * { margin-inline: var(--space-4); }
-.perf-coverage { margin: var(--space-2) var(--space-4) 0; }
+
 
 /* ── F-902 submission capture ────────────────────────────────────────────
    Hidden while SUBMISSION_MEDIA_ENABLED is false; styled now so turning it
@@ -2382,7 +2306,7 @@ a { text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
 
 /* F-1607 theme picker (More screen). Three equal segments — the choice is
    between peers, so none of them is a primary action. */
-.theme-picker { margin-top: var(--space-4); }
+
 .theme-options { display: grid; grid-template-columns: repeat(3, 1fr);
                  gap: var(--space-2); margin: var(--space-3) var(--space-4) var(--space-4); }
 .theme-option { min-height: var(--tap-min); padding: 0 var(--space-2);

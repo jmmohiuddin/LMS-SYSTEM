@@ -41,7 +41,7 @@ import {
   statusBadge, list, listItem, listSkeleton, emptyState, errorState,
   humanError, icon,
 } from './ui/index.ts';
-import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { formatCount, weekdayDateBn } from '../../../packages/ui-core/src/format.ts';
 
 export interface Suggestion {
   kind: string;
@@ -166,7 +166,7 @@ export class StudentHomeView {
 
     append(root, pageHeader(d, {
       title: greeting(this.now()) + (this.o.displayName ? `, ${this.o.displayName}` : ''),
-      subtitle: todayBn(this.now()),
+      subtitle: weekdayDateBn(this.now()),
     }));
 
     if (!this.booted && this.next === null && this.totals === null) {
@@ -379,9 +379,6 @@ const MONTHS = ['জানুয়ারি', 'ফেব্রুয়ার�
   'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'];
 const DAYS = ['রবিবার', 'সোমবার', 'মঙ্গলবার', 'বুধবার', 'বৃহস্পতিবার', 'শুক্রবার', 'শনিবার'];
 
-export function todayBn(now: Date): string {
-  return `${DAYS[now.getDay()]}, ${formatCount(now.getDate(), 'bn')} ${MONTHS[now.getMonth()]}`;
-}
 
 /**
  * Bangla ordinals. NOT `formatCount(n) + 'ম'`, which is how the first draft

@@ -156,9 +156,9 @@ async function loadAttendance(client: Client, studentId: string) {
        SELECT a.status, a.taken_on AS d
          FROM attendance_records a
         WHERE a.student_id = $1
-          AND a.taken_on >= date_trunc('month', CURRENT_DATE)::date
+          AND a.taken_on >= date_trunc('month', app.today_dhaka())::date
      )
-     SELECT (SELECT status FROM month WHERE d = CURRENT_DATE LIMIT 1) AS today_status,
+     SELECT (SELECT status FROM month WHERE d = app.today_dhaka() LIMIT 1) AS today_status,
             count(*) FILTER (WHERE status = 'present')  AS present,
             count(*) FILTER (WHERE status = 'late')     AS late,
             count(*) FILTER (WHERE status = 'absent')   AS absent,
@@ -189,7 +189,7 @@ async function loadFees(client: Client, studentId: string) {
     `SELECT COALESCE(sum(i.balance_amount), 0) AS outstanding,
             min(i.due_on) FILTER (WHERE i.balance_amount > 0) AS earliest_due,
             count(*) FILTER (WHERE i.balance_amount > 0
-                               AND i.due_on < CURRENT_DATE) AS overdue
+                               AND i.due_on < app.today_dhaka()) AS overdue
        FROM invoices i
       WHERE i.student_id = $1 AND i.status <> 'cancelled'`,
     [studentId]);

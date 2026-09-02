@@ -93,7 +93,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       { tenantId: claims.tid, userId: claims.sub, role: claims.role },
       async (client) => {
         const yearRow = await client.query<{ y: number }>(
-          `SELECT EXTRACT(year FROM COALESCE(e.starts_on, CURRENT_DATE))::int AS y
+          `SELECT EXTRACT(year FROM COALESCE(e.starts_on, app.today_dhaka()))::int AS y
              FROM exam_subjects es JOIN exams e ON e.id = es.exam_id
             WHERE es.id = $1`,
           [examSubjectId],

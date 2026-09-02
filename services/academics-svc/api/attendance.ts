@@ -90,7 +90,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                   count(*) FILTER (WHERE status = 'half_day')::int AS half_day
              FROM attendance_records
             WHERE student_id = $1
-              AND taken_on >= date_trunc('month', CURRENT_DATE - $2::interval)
+              AND taken_on >= date_trunc('month', app.today_dhaka() - $2::interval)
             GROUP BY 1
             ORDER BY 1 DESC`,
           [studentId, since],
@@ -108,7 +108,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
              JOIN attendance_sessions s ON s.id = r.session_id
              LEFT JOIN subjects sub ON sub.id = s.subject_id
             WHERE r.student_id = $1
-              AND r.taken_on >= date_trunc('month', CURRENT_DATE - $2::interval)
+              AND r.taken_on >= date_trunc('month', app.today_dhaka() - $2::interval)
               AND s.subject_id IS NOT NULL
             GROUP BY sub.name_bn
             ORDER BY count(*) FILTER (WHERE r.status = 'absent') DESC, sub.name_bn`,
@@ -125,7 +125,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
              LEFT JOIN subjects sub ON sub.id = s.subject_id
             WHERE r.student_id = $1
               AND r.status <> 'present'
-              AND r.taken_on >= date_trunc('month', CURRENT_DATE - $2::interval)
+              AND r.taken_on >= date_trunc('month', app.today_dhaka() - $2::interval)
             ORDER BY r.taken_on DESC
             LIMIT 60`,
           [studentId, since],

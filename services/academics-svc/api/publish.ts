@@ -155,8 +155,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         const scaleRes = await client.query<{ id: string }>(
           `SELECT id FROM grading_scales
             WHERE is_default
-              AND effective_from <= CURRENT_DATE
-              AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+              AND effective_from <= app.today_dhaka()
+              AND (effective_to IS NULL OR effective_to >= app.today_dhaka())
             ORDER BY effective_from DESC LIMIT 1`,
         );
         const scaleId = scaleRes.rows[0]?.id;

@@ -292,7 +292,7 @@ async function generate(req: IncomingMessage, res: ServerResponse, cors: Record<
            SELECT app.current_tenant(),
                   'INV-' || $2 || '-' || lpad((n.base + n.rn)::text, 5, '0'),
                   n.student_id, $1, n.section_id, $2,
-                  CURRENT_DATE,
+                  app.today_dhaka(),
                   $3::date + (n.due_day - 1),
                   n.subtotal, n.waiver_total, n.subtotal - n.waiver_total, 'issued'
              FROM numbered n

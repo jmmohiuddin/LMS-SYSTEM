@@ -1782,8 +1782,12 @@ function blindIndexFor(field, normalized, tenantId, version) {
 
 // packages/ui-core/src/format.ts
 var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var LATIN_DIGITS = "0123456789";
 function toLatinDigits(s) {
   return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
+}
+function toBanglaDigits(s) {
+  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
 }
 
 // services/academics-svc/src/student-import.ts
@@ -1929,7 +1933,7 @@ function validateStudents(table, snap) {
     };
     if (ragged.has(row.lineNo)) {
       const r = ragged.get(row.lineNo);
-      fail("row", `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${r.got}\u099F\u09BF \u0998\u09B0, \u09A5\u09BE\u0995\u09BE\u09B0 \u0995\u09A5\u09BE ${r.expected}\u099F\u09BF \u2014 \u09B8\u09AE\u09CD\u09AD\u09AC\u09A4 \u0989\u09A6\u09CD\u09A7\u09C3\u09A4\u09BF \u099A\u09BF\u09B9\u09CD\u09A8 \u09AD\u09C1\u09B2`);
+      fail("row", `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${toBanglaDigits(r.got)}\u099F\u09BF \u0998\u09B0, \u09A5\u09BE\u0995\u09BE\u09B0 \u0995\u09A5\u09BE ${toBanglaDigits(r.expected)}\u099F\u09BF \u2014 \u09B8\u09AE\u09CD\u09AD\u09AC\u09A4 \u0989\u09A6\u09CD\u09A7\u09C3\u09A4\u09BF \u099A\u09BF\u09B9\u09CD\u09A8 \u09AD\u09C1\u09B2`);
       continue;
     }
     const nameBn = get(c, "nameBn");
@@ -2106,7 +2110,7 @@ function validateTeachers(table, snap) {
       lineNo: r.lineNo,
       rollNo: "",
       field: "row",
-      messageBn: `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${r.got}\u099F\u09BF \u0998\u09B0, ${r.expected}\u099F\u09BF \u09B9\u0993\u09AF\u09BC\u09BE\u09B0 \u0995\u09A5\u09BE`
+      messageBn: `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${toBanglaDigits(r.got)}\u099F\u09BF \u0998\u09B0, ${toBanglaDigits(r.expected)}\u099F\u09BF \u09B9\u0993\u09AF\u09BC\u09BE\u09B0 \u0995\u09A5\u09BE`
     });
   }
   const seenCodes = /* @__PURE__ */ new Set();
@@ -2370,7 +2374,7 @@ async function writeStudents(client, rows, academicYearId, tenantId) {
       `INSERT INTO student_profiles
          (user_id, tenant_id, student_code, admission_date, admission_class,
           religion, lifecycle_status)
-       VALUES ($1, app.current_tenant(), $2, CURRENT_DATE, $3, $4, 'enrolled')
+       VALUES ($1, app.current_tenant(), $2, app.today_dhaka(), $3, $4, 'enrolled')
        ON CONFLICT (user_id) DO NOTHING`,
       [studentId, studentCodeFor(studentId), r.classLevel, r.religion]
     );
@@ -2611,7 +2615,7 @@ function goLiveChecks(env = process.env) {
       key: "sms_allowlist",
       labelBn: "\u098F\u09B8\u098F\u09AE\u098F\u09B8 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE\u09AE\u09C2\u09B2\u0995 \u09A4\u09BE\u09B2\u09BF\u0995\u09BE",
       ready: !smsRestrictedToAllowlist(env),
-      detailBn: smsRestrictedToAllowlist(env) ? `\u09B8\u09C0\u09AE\u09BF\u09A4 \u2014 \u0995\u09C7\u09AC\u09B2 ${smsTestRecipients(env).length}\u099F\u09BF \u09A8\u09AE\u09CD\u09AC\u09B0\u09C7 \u09AF\u09BE\u09AC\u09C7, \u09AC\u09BE\u0995\u09BF \u09B8\u09AC \u0986\u099F\u0995\u09C7 \u09A5\u09BE\u0995\u09AC\u09C7` : "\u09B8\u09C0\u09AE\u09BF\u09A4 \u09A8\u09AF\u09BC \u2014 \u09B8\u09AC \u09AA\u09CD\u09B0\u09BE\u09AA\u0995\u09C7\u09B0 \u0995\u09BE\u099B\u09C7 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AF\u09BE\u09AC\u09C7",
+      detailBn: smsRestrictedToAllowlist(env) ? `\u09B8\u09C0\u09AE\u09BF\u09A4 \u2014 \u0995\u09C7\u09AC\u09B2 ${toBanglaDigits(smsTestRecipients(env).length)}\u099F\u09BF \u09A8\u09AE\u09CD\u09AC\u09B0\u09C7 \u09AF\u09BE\u09AC\u09C7, \u09AC\u09BE\u0995\u09BF \u09B8\u09AC \u0986\u099F\u0995\u09C7 \u09A5\u09BE\u0995\u09AC\u09C7` : "\u09B8\u09C0\u09AE\u09BF\u09A4 \u09A8\u09AF\u09BC \u2014 \u09B8\u09AC \u09AA\u09CD\u09B0\u09BE\u09AA\u0995\u09C7\u09B0 \u0995\u09BE\u099B\u09C7 \u09AC\u09BE\u09B0\u09CD\u09A4\u09BE \u09AF\u09BE\u09AC\u09C7",
       severity: "advisory"
     },
     {
@@ -2623,7 +2627,7 @@ function goLiveChecks(env = process.env) {
       key: "subdomains",
       labelBn: "\u09B8\u09CD\u0995\u09C1\u09B2-\u09AD\u09BF\u09A4\u09CD\u09A4\u09BF\u0995 \u09B8\u09BE\u09AC\u09A1\u09CB\u09AE\u09C7\u0987\u09A8",
       ready: subdomainsReady(env),
-      detailBn: subdomainsReady(env) ? "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8 \u09A8\u09BF\u099C\u09C7\u09B0 \u09A0\u09BF\u0995\u09BE\u09A8\u09BE\u09AF\u09BC \u09AA\u09CC\u0981\u099B\u09BE\u09AC\u09C7" : "\u09AC\u09A8\u09CD\u09A7 \u2014 *.shikhonbd.com \u098F\u09B0 DNS \u0993 TLS \u098F\u0996\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF; ?tid= \u09B2\u09BF\u0982\u0995 \u099A\u09B2\u099B\u09C7",
+      detailBn: subdomainsReady(env) ? "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8 \u09A8\u09BF\u099C\u09C7\u09B0 \u09A0\u09BF\u0995\u09BE\u09A8\u09BE\u09AF\u09BC \u09AA\u09CC\u0981\u099B\u09BE\u09AC\u09C7" : "\u09AC\u09A8\u09CD\u09A7 \u2014 *.sikhon.systems \u098F\u09B0 DNS \u0993 TLS \u098F\u0996\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF; ?tid= \u09B2\u09BF\u0982\u0995 \u099A\u09B2\u099B\u09C7",
       severity: "advisory"
     },
     {
@@ -2867,7 +2871,7 @@ async function getTenant(db, req) {
     canActivate: Number(s.years) > 0 && Number(s.grading_bands) > 0 && Number(s.admins) > 0,
     // R-8 §9D. Whether the school's own subdomain actually resolves. The
     // console listed it beside the install link as an equal way in, and
-    // *.shikhonbd.com has never had DNS or a certificate — see go-live.ts.
+    // *.sikhon.systems has never had DNS or a certificate — see go-live.ts.
     subdomainsLive: subdomainsReady()
   };
 }
@@ -3004,7 +3008,10 @@ async function setBranding(db, op, req) {
   return db.withTenant(ctx, async (c) => {
     await c.query(
       `UPDATE tenants SET settings = jsonb_set(COALESCE(settings,'{}'::jsonb),
-                                               '{branding}', $1::jsonb, true),
+                                               '{branding}',
+                                               COALESCE(settings->'branding','{}'::jsonb)
+                                                 || $1::jsonb,
+                                               true),
                           updated_at = now()
         WHERE id = app.current_tenant()`,
       [JSON.stringify(clean)]
@@ -3013,7 +3020,11 @@ async function setBranding(db, op, req) {
       `SELECT app.log_platform_action($1, $2, 'R-7 branding', 'set branding')`,
       [op.id, tenantId]
     );
-    return { branding: clean };
+    const { rows } = await c.query(
+      `SELECT COALESCE(settings->'branding','{}'::jsonb) AS branding
+         FROM tenants WHERE id = app.current_tenant()`
+    );
+    return { branding: rows[0]?.branding ?? clean };
   }, {
     // P7. The console must reach INTO a school the gate would stop — that is
     // how a suspended school gets inspected, and how it gets reopened. This
@@ -3204,14 +3215,14 @@ async function tenantHealth(db, req) {
   return db.withTenant({ tenantId: id, userId: id, role: "system_ingest" }, async (c) => {
     const { rows: sms } = await c.query(
       `SELECT
-         count(*) FILTER (WHERE created_on = CURRENT_DATE)                    AS queued_today,
+         count(*) FILTER (WHERE created_on = app.today_dhaka())                    AS queued_today,
          count(*) FILTER (WHERE status IN ('sent','delivered'))               AS sent_total,
          count(*) FILTER (WHERE status = 'delivered')                         AS delivered_total,
          count(*) FILTER (WHERE status = 'failed')                            AS failed_total,
          count(*) FILTER (WHERE status = 'suppressed')                        AS suppressed_total,
          count(*) FILTER (WHERE status = 'queued')                            AS queued_now,
          COALESCE(sum(cost_bdt) FILTER (WHERE status IN ('sent','delivered')), 0)::text AS cost_bdt,
-         COALESCE(sum(segments) FILTER (WHERE created_on >= date_trunc('month', CURRENT_DATE)), 0)::text
+         COALESCE(sum(segments) FILTER (WHERE created_on >= date_trunc('month', app.today_dhaka())), 0)::text
                                                                               AS segments_this_month,
          to_char(max(sent_at), 'YYYY-MM-DD"T"HH24:MI:SSZ')                    AS last_sent_at
        FROM sms_outbox`
@@ -3236,7 +3247,7 @@ async function tenantHealth(db, req) {
     );
     const { rows: att } = await c.query(
       `SELECT to_char(max(taken_on), 'YYYY-MM-DD') AS last_attendance_on,
-              count(*) FILTER (WHERE taken_on > CURRENT_DATE - 7)::text AS sessions_7d
+              count(*) FILTER (WHERE taken_on > app.today_dhaka() - 7)::text AS sessions_7d
          FROM attendance_sessions`
     );
     const oldest = await c.query(

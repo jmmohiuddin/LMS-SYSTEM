@@ -1327,7 +1327,7 @@ DEFERRED · NOT STARTED · SUPERSEDED · PLANNED**. Historical detail for every
 row is in [PHASE_LOG.md](PHASE_LOG.md); the current snapshot of the repository
 is [07-IMPLEMENTATION-STATUS.md](07-IMPLEMENTATION-STATUS.md).
 
-Last reconciled **2026-09-02**, after **P7**.
+Last reconciled **2026-09-02**, after **P8**.
 
 ### Functional roadmap (R-series)
 
@@ -1361,7 +1361,7 @@ Last reconciled **2026-09-02**, after **P7**.
 | P5 | Principal + IT admin final UI **+ B-7** | **COMPLETE** 2026-09-01 | P5-0 · **B-7 RESOLVED** (migration 050) · Principal dashboard · **B-34 RESOLVED**: every IT Admin and Principal screen on the design system, `results` and `inbox` recorded exceptions. Eleven defects fixed, five of them security or privacy — a ledger that fabricated accounts under a 403, three ungated finance endpoints in the public demo, a composer offered to students, `requireRole`'s English role codes reaching a Bangla screen. 19,812 element checks, 0 failures |
 | P6 | Screens that still need designing | **NOT STARTED** | — |
 | P7 | Platform Operations Center **+ D16 commercial controls** | **COMPLETE** (2026-09-02) | Plans, manual payments, a derived billing lifecycle, per-institution service control, role portals, student caps and the audit trail all have operator screens; **nothing commercial is SQL-only**. The phase's central finding was that suspension, portals and service switches were all **inert** — written, audited, and read by no application code — so most of P7 is enforcement (migrations 051–056), not restyling. §32 support mode is **deferred with its blocker named** (`B-38`) |
-| P8 | Retire the legacy `--c-*` alias layer | **NOT STARTED** | — |
+| P8 | Final legacy cleanup, consistency and release hardening | **COMPLETE** (2026-09-02) | The `--c-*` layer is **retained, with the reason recorded**: all 30 of its tokens are aliases of `--color-*` with 721 live usages, so it is one system with a compatibility layer rather than two competing systems, and "remove only confirmed zero-usage items" does not reach it. What P8 did remove is **491 lines of genuinely dead CSS** (123 classes no source, test, page or built bundle names), six dead exports and eleven duplicate helper copies. The phase also found seven LIVE defects while looking — chiefly that a calendar day was read as UTC at three of four layers (migrations 059/062 and 31 embedded-SQL sites), that a grace period could not be ended by the operator who set it (060), and that P7 left four schema-lint violations including two tenant tables without FORCE ROW LEVEL SECURITY (061) |
 
 **P5 opened with three items and two of them are now closed.** The Pre-P5
 Product Closure Pass took `B-8` (logout and cache privacy, including the

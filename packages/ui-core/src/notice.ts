@@ -212,6 +212,8 @@ export function parseNotice(input: unknown): NoticeDraft {
  * this next to the SMS toggle so the cost of a long message is visible while
  * it is being written, not after it has been sent to 900 guardians.
  */
+import { toBanglaDigits } from './format.ts';
+
 export function smsSegmentsFor(body: string): number {
   // Any character outside the GSM-7 basic set forces the whole message to
   // UCS-2 — one Bangla word in an English notice doubles its cost.
@@ -224,5 +226,5 @@ export function smsSegmentsFor(body: string): number {
 export function smsCostHintBn(body: string, recipients: number): string {
   const seg = smsSegmentsFor(body);
   const total = seg * Math.max(0, recipients);
-  return `প্রতি জনে ${seg}টি এসএমএস · আনুমানিক মোট ${total}টি`;
+  return `প্রতি জনে ${toBanglaDigits(seg)}টি এসএমএস · আনুমানিক মোট ${toBanglaDigits(total)}টি`;
 }

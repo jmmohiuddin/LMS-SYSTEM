@@ -432,7 +432,7 @@ async function studentDetail(db: Db, ctx: Ctx, studentId: string) {
               count(*)::int AS total
          FROM attendance_records ar
         WHERE ar.student_id = $1
-          AND ar.taken_on >= CURRENT_DATE - INTERVAL '90 days'`,
+          AND ar.taken_on >= app.today_dhaka() - INTERVAL '90 days'`,
       [studentId],
     );
 

@@ -32,6 +32,7 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { writeAudit } from '../../../packages/server-core/src/audit.ts';
+import { toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 
 const ENROL_ROLES = ['principal', 'school_owner', 'academic_coordinator', 'it_admin'];
 
@@ -69,7 +70,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
     if (studentIds.length > MAX_MOVE) {
       throw new HttpError(400,
-        `একবারে সর্বোচ্চ ${MAX_MOVE} জন — বেশি হলে আমদানি ব্যবহার করুন`,
+        `একবারে সর্বোচ্চ ${toBanglaDigits(MAX_MOVE)} জন — বেশি হলে আমদানি ব্যবহার করুন`,
         'too_many', { field: 'studentIds' });
     }
 

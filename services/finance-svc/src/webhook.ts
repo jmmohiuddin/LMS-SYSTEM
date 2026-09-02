@@ -350,7 +350,7 @@ export class MfsWebhookProcessor {
                (tenant_id, batch_id, account_id, entry_date, debit, credit,
                 reference_type, reference_id, memo)
              VALUES
-               (app.current_tenant(), gen_random_uuid(), $1, CURRENT_DATE,
+               (app.current_tenant(), gen_random_uuid(), $1, app.today_dhaka(),
                 $3, 0, 'mfs_transaction', $2, 'MFS payment received')
              RETURNING batch_id AS id`,
             [bankAcct, txId, amount],
@@ -360,7 +360,7 @@ export class MfsWebhookProcessor {
             `INSERT INTO ledger_entries
                (tenant_id, batch_id, account_id, entry_date, debit, credit,
                 reference_type, reference_id, memo)
-             VALUES (app.current_tenant(), $1, $2, CURRENT_DATE, 0, $4,
+             VALUES (app.current_tenant(), $1, $2, app.today_dhaka(), 0, $4,
                      'mfs_transaction', $3, 'Fee income')`,
             [ledgerBatchId, incomeAcct, txId, amount],
           );

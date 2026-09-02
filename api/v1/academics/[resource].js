@@ -1794,8 +1794,8 @@ async function handler5(req, res) {
         const scaleRes = await client.query(
           `SELECT id FROM grading_scales
             WHERE is_default
-              AND effective_from <= CURRENT_DATE
-              AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+              AND effective_from <= app.today_dhaka()
+              AND (effective_to IS NULL OR effective_to >= app.today_dhaka())
             ORDER BY effective_from DESC LIMIT 1`
         );
         const scaleId = scaleRes.rows[0]?.id;
@@ -1973,7 +1973,7 @@ async function handler6(req, res) {
       { tenantId: claims.tid, userId: claims.sub, role: claims.role },
       async (client) => {
         const yearRow = await client.query(
-          `SELECT EXTRACT(year FROM COALESCE(e.starts_on, CURRENT_DATE))::int AS y
+          `SELECT EXTRACT(year FROM COALESCE(e.starts_on, app.today_dhaka()))::int AS y
              FROM exam_subjects es JOIN exams e ON e.id = es.exam_id
             WHERE es.id = $1`,
           [examSubjectId]
@@ -2670,6 +2670,16 @@ async function handler11(req, res) {
   }
 }
 
+// packages/ui-core/src/format.ts
+var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var LATIN_DIGITS = "0123456789";
+function toLatinDigits(s) {
+  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
+}
+function toBanglaDigits(s) {
+  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
+}
+
 // services/academics-svc/api/next.ts
 var SERVICE9 = "learning";
 var MAX_SUGGESTIONS = 3;
@@ -2737,7 +2747,7 @@ async function handler12(req, res) {
             out.push({
               kind: "redo_practice",
               titleBn: w.title_bn,
-              whyBn: `${w.n}\u099F\u09BF \u09AA\u09CD\u09B0\u09B6\u09CD\u09A8 \u098F\u0996\u09A8\u09CB \u09AD\u09C1\u09B2 \u0986\u099B\u09C7 \u2014 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09CB`,
+              whyBn: `${toBanglaDigits(w.n)}\u099F\u09BF \u09AA\u09CD\u09B0\u09B6\u09CD\u09A8 \u098F\u0996\u09A8\u09CB \u09AD\u09C1\u09B2 \u0986\u099B\u09C7 \u2014 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09CB`,
               route: "learn",
               refId: w.topic_id,
               urgency: "medium"
@@ -3016,7 +3026,7 @@ async function handler14(req, res) {
                   count(*) FILTER (WHERE status = 'half_day')::int AS half_day
              FROM attendance_records
             WHERE student_id = $1
-              AND taken_on >= date_trunc('month', CURRENT_DATE - $2::interval)
+              AND taken_on >= date_trunc('month', app.today_dhaka() - $2::interval)
             GROUP BY 1
             ORDER BY 1 DESC`,
           [studentId, since]
@@ -3031,7 +3041,7 @@ async function handler14(req, res) {
              JOIN attendance_sessions s ON s.id = r.session_id
              LEFT JOIN subjects sub ON sub.id = s.subject_id
             WHERE r.student_id = $1
-              AND r.taken_on >= date_trunc('month', CURRENT_DATE - $2::interval)
+              AND r.taken_on >= date_trunc('month', app.today_dhaka() - $2::interval)
               AND s.subject_id IS NOT NULL
             GROUP BY sub.name_bn
             ORDER BY count(*) FILTER (WHERE r.status = 'absent') DESC, sub.name_bn`,
@@ -3045,7 +3055,7 @@ async function handler14(req, res) {
              LEFT JOIN subjects sub ON sub.id = s.subject_id
             WHERE r.student_id = $1
               AND r.status <> 'present'
-              AND r.taken_on >= date_trunc('month', CURRENT_DATE - $2::interval)
+              AND r.taken_on >= date_trunc('month', app.today_dhaka() - $2::interval)
             ORDER BY r.taken_on DESC
             LIMIT 60`,
           [studentId, since]
@@ -3317,12 +3327,6 @@ function blindIndexFor(field, normalized, tenantId, version) {
   return createHmac2("sha256", pepper).update(normalized, "utf8").digest();
 }
 
-// packages/ui-core/src/format.ts
-var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-function toLatinDigits(s) {
-  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
-}
-
 // services/academics-svc/src/student-import.ts
 var COLUMNS = {
   rollNo: ["roll_no", "roll", "\u09B0\u09CB\u09B2"],
@@ -3466,7 +3470,7 @@ function validateStudents(table, snap) {
     };
     if (ragged.has(row.lineNo)) {
       const r = ragged.get(row.lineNo);
-      fail("row", `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${r.got}\u099F\u09BF \u0998\u09B0, \u09A5\u09BE\u0995\u09BE\u09B0 \u0995\u09A5\u09BE ${r.expected}\u099F\u09BF \u2014 \u09B8\u09AE\u09CD\u09AD\u09AC\u09A4 \u0989\u09A6\u09CD\u09A7\u09C3\u09A4\u09BF \u099A\u09BF\u09B9\u09CD\u09A8 \u09AD\u09C1\u09B2`);
+      fail("row", `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${toBanglaDigits(r.got)}\u099F\u09BF \u0998\u09B0, \u09A5\u09BE\u0995\u09BE\u09B0 \u0995\u09A5\u09BE ${toBanglaDigits(r.expected)}\u099F\u09BF \u2014 \u09B8\u09AE\u09CD\u09AD\u09AC\u09A4 \u0989\u09A6\u09CD\u09A7\u09C3\u09A4\u09BF \u099A\u09BF\u09B9\u09CD\u09A8 \u09AD\u09C1\u09B2`);
       continue;
     }
     const nameBn = get(c, "nameBn");
@@ -3643,7 +3647,7 @@ function validateTeachers(table, snap) {
       lineNo: r.lineNo,
       rollNo: "",
       field: "row",
-      messageBn: `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${r.got}\u099F\u09BF \u0998\u09B0, ${r.expected}\u099F\u09BF \u09B9\u0993\u09AF\u09BC\u09BE\u09B0 \u0995\u09A5\u09BE`
+      messageBn: `\u09B8\u09BE\u09B0\u09BF\u09A4\u09C7 ${toBanglaDigits(r.got)}\u099F\u09BF \u0998\u09B0, ${toBanglaDigits(r.expected)}\u099F\u09BF \u09B9\u0993\u09AF\u09BC\u09BE\u09B0 \u0995\u09A5\u09BE`
     });
   }
   const seenCodes = /* @__PURE__ */ new Set();
@@ -3907,7 +3911,7 @@ async function writeStudents(client, rows, academicYearId, tenantId) {
       `INSERT INTO student_profiles
          (user_id, tenant_id, student_code, admission_date, admission_class,
           religion, lifecycle_status)
-       VALUES ($1, app.current_tenant(), $2, CURRENT_DATE, $3, $4, 'enrolled')
+       VALUES ($1, app.current_tenant(), $2, app.today_dhaka(), $3, $4, 'enrolled')
        ON CONFLICT (user_id) DO NOTHING`,
       [studentId, studentCodeFor(studentId), r.classLevel, r.religion]
     );
@@ -4182,9 +4186,9 @@ async function loadAttendance(client, studentId) {
        SELECT a.status, a.taken_on AS d
          FROM attendance_records a
         WHERE a.student_id = $1
-          AND a.taken_on >= date_trunc('month', CURRENT_DATE)::date
+          AND a.taken_on >= date_trunc('month', app.today_dhaka())::date
      )
-     SELECT (SELECT status FROM month WHERE d = CURRENT_DATE LIMIT 1) AS today_status,
+     SELECT (SELECT status FROM month WHERE d = app.today_dhaka() LIMIT 1) AS today_status,
             count(*) FILTER (WHERE status = 'present')  AS present,
             count(*) FILTER (WHERE status = 'late')     AS late,
             count(*) FILTER (WHERE status = 'absent')   AS absent,
@@ -4211,7 +4215,7 @@ async function loadFees(client, studentId) {
     `SELECT COALESCE(sum(i.balance_amount), 0) AS outstanding,
             min(i.due_on) FILTER (WHERE i.balance_amount > 0) AS earliest_due,
             count(*) FILTER (WHERE i.balance_amount > 0
-                               AND i.due_on < CURRENT_DATE) AS overdue
+                               AND i.due_on < app.today_dhaka()) AS overdue
        FROM invoices i
       WHERE i.student_id = $1 AND i.status <> 'cancelled'`,
     [studentId]
@@ -4640,7 +4644,7 @@ async function loadAttention(client, head) {
               (ar.status IN ('present','late')) AS here
          FROM attendance_records ar
         WHERE ar.section_id = $1
-          AND ar.taken_on >= CURRENT_DATE - ($2::int || ' days')::interval
+          AND ar.taken_on >= app.today_dhaka() - ($2::int || ' days')::interval
      ),
      -- Length of the CURRENT absence run: count back from the most recent
      -- record until a day the student was here. A streak that ended last
@@ -5006,7 +5010,7 @@ async function studentDetail(db, ctx, studentId) {
               count(*)::int AS total
          FROM attendance_records ar
         WHERE ar.student_id = $1
-          AND ar.taken_on >= CURRENT_DATE - INTERVAL '90 days'`,
+          AND ar.taken_on >= app.today_dhaka() - INTERVAL '90 days'`,
       [studentId]
     );
     return {
@@ -5569,7 +5573,7 @@ async function handler22(req, res) {
         `SELECT slot_id, period_no, starts_at::text, ends_at::text, slot_kind,
                 subject_bn, subject_en, section_label, room_code,
                 teacher_name_bn, is_substitution
-           FROM app.student_day($1::uuid, COALESCE($2::date, CURRENT_DATE))`,
+           FROM app.student_day($1::uuid, COALESCE($2::date, app.today_dhaka()))`,
         [studentId, qsDate || null]
       );
       return r.rows;
@@ -5590,7 +5594,10 @@ async function handler22(req, res) {
       isSubstitution: r.is_substitution
     }));
     json(res, 200, {
-      date: qsDate || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+      // dhakaToday, not toISOString(): the server runs UTC and is six hours
+      // behind Dhaka, so before 6am local this defaulted a student's routine
+      // to YESTERDAY — the hours they check it before leaving for school.
+      date: qsDate || dhakaToday(),
       studentId,
       slots
     }, cors);

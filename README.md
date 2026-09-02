@@ -10,16 +10,22 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 > questions about what this is, what is actually deployed, what is built, what
 > is not, and why — and it links to everything else.
 >
-> **Current state, 2026-09-01 (Pre-P5 Product Closure Pass):** production is
+> **Current state, 2026-09-02 (end of P8):** production is
 > **`https://sikhon.systems/`** on a **VPS + Caddy + Docker PostgreSQL** —
 > *not* the Vercel + Neon architecture much of this README and
 > `docs/06-DEPLOYMENT.md` still describe. That drift is deliberate and
 > disclosed, not an oversight: see
-> [`docs/11-MASTER-PLAN.md` §5b](docs/11-MASTER-PLAN.md). **49 migrations in
-> the repository** (production is on 48 — migration 049 is not deployed) ·
-> 227 RLS policies · **1,407 tests passing** · UI phases P0–P4 complete, plus a
-> Pre-P5 closure pass, and **none of it deployed**. What is missing is one
-> list: [`docs/BACKLOG.md`](docs/BACKLOG.md).
+> [`docs/11-MASTER-PLAN.md` §5b](docs/11-MASTER-PLAN.md) and `B-27`.
+>
+> **60 migrations in the repository** (production is on 48 — everything from
+> 049 onward, including the whole commercial model, is **not deployed**) ·
+> 227 RLS policies · **1,565+ tests passing** · UI phases **P0–P7 complete**
+> plus this cleanup pass. What is missing is one list:
+> [`docs/BACKLOG.md`](docs/BACKLOG.md).
+>
+> Superseded figures are not lost — every one of them is in
+> [`docs/PHASE_LOG.md`](docs/PHASE_LOG.md) under the phase that produced it,
+> which is where D17 says they belong.
 
 **Design envelope (non-negotiable constraints driving every decision below):**
 
@@ -57,17 +63,31 @@ Primary, Secondary, Higher Secondary and Madrasah streams in Bangladesh.
 
 ## Surfaces
 
-One deployment, three addresses (R-1-A; master plan §1a):
+One deployment, **five** addresses (D15; R-1-A; master plan §1a). This table
+listed three until P8: `/demo` and the operations console were missing, which
+made the document disagree with both the router and D15.
 
 | Address | File | What it is | Brand |
 |---|---|---|---|
-| `/` | `apps/pwa/public/index.html` | The shikhonBD / eShikhon marketing site | **platform** |
+| `/` | `apps/pwa/public/index.html` | The shikhonBD marketing site — **frozen**, see below | **platform** |
+| `/demo` | `apps/pwa/src/demo.ts` | The isolated public preview: every screen, sample data, no login, a role picker | white-labelled, two sample brandings |
 | `/app` | `apps/pwa/public/app.html` | The tenant management PWA — the actual product | white-labelled per institution |
+| `/platform` | `apps/pwa/public/platform.html` | The **Platform Operations Center** — operator only, two credentials | **platform**, permanently (D11) |
 | `/design` | `apps/pwa/public/design.html` | The Ata Ekta design prototype, kept as a reference | — |
 
 A school reaches its own application through its own link, `/app?tid=<tenant-id>`,
 and later through its own subdomain (R-7). There is no school-picker, by decision
 D12: it would enumerate the customer list to anyone who loads the page.
+
+`/platform` is a **separate bundle** from the tenant app, not a route inside it
+(D11). A school's device never downloads the console's code, and the console is
+never served from a cache — see "Service worker" below.
+
+### The landing page is frozen
+
+`apps/pwa/public/index.html` is the approved marketing page and is **byte-identical
+across every phase since R-1-A** (git hash `496199bd`). It is verified before
+every commit. Nothing in a product phase may redesign, recolour or re-copy it.
 
 ---
 
@@ -183,12 +203,16 @@ CI ([`.github/workflows/database.yml`](.github/workflows/database.yml)) runs all
 full **up → down → up** rollback cycle, an idempotency re-run, a residue guard and an RLS-coverage
 guard. Migrations must apply with **zero output** — a warning fails the build.
 
-**Executed against two engines:**
+**Currently:** 26 SQL assertion suites, **62/62 migrations applied**, schema
+lint clean (L1–L8), against PostgreSQL 16 + pgvector in Docker.
 
-| Engine | Result |
-|---|---|
-| PostgreSQL 16.14 (local) | 11/11 migrations, 15/15 assertions — pgvector shimmed out (unavailable locally) |
-| **Neon PostgreSQL 18.4** (`shikhon_lms`, ap-southeast-1) | **15/15 migrations with zero output · 23/23 SQL assertions · rollback → rollback → up cycle clean · run twice, zero residue · pgvector 0.8.1 real, both HNSW indexes built** |
+*Historical, kept because it records what was actually observed at the time —
+the engines below are not what the project runs on now:*
+
+| Engine | Result | When |
+|---|---|---|
+| PostgreSQL 16.14 (local) | 11/11 migrations, 15/15 assertions — pgvector shimmed out | pre-R-5 |
+| Neon PostgreSQL 18.4 (`shikhon_lms`, ap-southeast-1) | 15/15 migrations with zero output · 23/23 SQL assertions · rollback → rollback → up cycle clean · run twice, zero residue · pgvector 0.8.1 real, both HNSW indexes built | pre-R-5 |
 
 ## Application code
 
@@ -264,17 +288,72 @@ guarantee is silently void. The app must connect as **`shikhon_runtime`** (creat
 false`, verified over the wire) via the **pooled** endpoint, and must use `SET LOCAL` — never
 plain `SET` — for tenant context.
 
+## How to work on it
+
+```bash
+docker compose up -d          # PostgreSQL 16 + pgvector on 127.0.0.1:55432
+./db/migrate.sh               # 62 migrations, in order
+npm test                      # 1,582 tests — set DATABASE_URL or DB suites SKIP
+npm run typecheck             # all three CI tsconfigs plus the drift guard
+npm run build                 # app.js + sw.js + 11 API bundles
+```
+
+**Read the "NOTHING RAN" line.** Without `DATABASE_URL` the same `npm test`
+reports about a thousand tests and prints `NOTHING RAN` for the DB-backed
+workspaces. A green tick has meant nothing here before.
+
+`node scripts/migration-status.mjs` says which migrations a database has, by
+probing for the object each one installs rather than by trusting a ledger.
+`node scripts/security-probe.mjs` runs 29 checks against a running
+deployment. `db/tests/schema_lint.sql` enforces the tenant-isolation
+invariants — every table carries `tenant_id` or is on a declared exempt list,
+and every tenant table has RLS **enabled and forced**.
+
+### The platform console
+
+`/platform` is the operator surface, and it needs **two credentials at once**:
+a `super_admin` bearer token AND `PLATFORM_API_KEY` in `x-platform-key`.
+Either alone is refused, and no tenant role — principal included — can reach
+any of it. From there an operator creates a school, brands it, sets its plan
+and student cap, records payments, grants grace, opens and closes role
+portals, enables and disables individual services, suspends and restores, and
+reads the audit trail. Every one of those states its consequence before it
+happens and records the operator's own written reason.
+
+The console is a **separate bundle** from the tenant app (D11) and is never
+served from a cache: an operator acting through a stale copy of a screen that
+suspends schools is a person clicking a button whose meaning has changed.
+
+### The final audit
+
+[docs/FINAL-FULL-PROJECT-AUDIT-PLAN.md](docs/FINAL-FULL-PROJECT-AUDIT-PLAN.md)
+is the specification for an end-to-end audit written so it needs no chat
+history — what to check, what counts as evidence, and what may not be taken on
+trust. It has not been run.
+
+---
+
 ## Status
 
-**Complete** — and note that *deployed* is a separate question, answered above:
-the system blueprint (7 documents); the database layer
-(**48 migrations, 227 RLS policies over 110 RLS-enabled tables, 108 carrying
-`tenant_id`** — verified on production 2026-08-31; this line read
-"15 migrations, 88 tables, 103 RLS policies" until D17's reconciliation); tenant
-provisioning; three SQL test suites; rollback migrations; the offline sync engine; the PWA
-(login, shell, attendance, roster, routine, offline marks entry, demo mode); all eight
-service directories compiled into 9 Vercel functions (exams/marks, fee engine, AI gateway,
-ANS hooks, substitution finder included); and CI.
+**Complete** — and note that *deployed* is a separate question, answered above.
+Production is on migration 48; everything from 049 onward is in this repository
+and **not deployed**.
+
+The system blueprint (7 documents); the database layer (**62 migrations, 227
+RLS policies over 110 RLS-enabled tables, 108 carrying `tenant_id`**); tenant
+provisioning; 26 SQL assertion suites; rollback migrations; the offline sync
+engine; and the PWA in full — login, shell, attendance, roster, routine,
+offline marks entry, results, fees, documents, notices, calendar, the student
+and guardian surfaces, the principal and IT-admin surfaces, and the demo.
+
+**The commercial model (D16) is built** and is P7's work: plans, manual
+payments, a billing lifecycle DERIVED from dates and payments rather than set
+by hand, per-institution service control, role portals, student caps, grace
+periods and the audit trail — all with operator screens, and all enforced by a
+gate inside `withTenant` that no endpoint can forget.
+
+UI phases **P0–P7 complete**, plus P8's cleanup pass. Superseded figures live
+in [PHASE_LOG.md](docs/PHASE_LOG.md) under the phase that produced them.
 
 **Currently off by configuration, not by code** ([docs/07 §5](docs/07-IMPLEMENTATION-STATUS.md)):
 OTP login (`OTP_SENDING_ENABLED`), real SMS sending (`SMS_PROVIDER` and its
@@ -288,12 +367,15 @@ screen reports which of them a given deployment actually has. What remains
 genuinely blocked is commercial: an SMS aggregator contract and MFS merchant
 credentials. Use `?demo=1` to preview the UI meanwhile.
 
-**Follow-on work:** result publication & report cards, invoice generation,
-guardian/principal UI surfaces, NCTB corpus ingestion for grounded RAG — gap list with
-phasing in [docs/07 §10](docs/07-IMPLEMENTATION-STATUS.md).
+**Follow-on work:** NCTB corpus ingestion for grounded RAG, object storage for
+stored PDFs (`B-17`), section chat (`B-20`). Result publication, report cards,
+invoice generation and the guardian/principal surfaces — listed here as
+follow-on work until P8 — are **built**; the current list is
+[BACKLOG.md](docs/BACKLOG.md), which is the only one.
 
-**Verified totals:** 23 SQL assertions + **109 TypeScript tests** (`node --test`), all green
-against Neon PostgreSQL 18.4 on a from-scratch rebuild.
+**Verified totals:** 26 SQL assertion suites + **1,582 TypeScript tests**
+(`node --test`), all green against PostgreSQL 16 + pgvector, run twice, plus
+29 of 29 security-probe checks.
 
 **Defects the integration tests caught before they could ship** — each would have been silent in
 production:

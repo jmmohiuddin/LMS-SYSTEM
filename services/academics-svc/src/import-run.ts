@@ -285,7 +285,7 @@ async function writeStudents(
       `INSERT INTO student_profiles
          (user_id, tenant_id, student_code, admission_date, admission_class,
           religion, lifecycle_status)
-       VALUES ($1, app.current_tenant(), $2, CURRENT_DATE, $3, $4, 'enrolled')
+       VALUES ($1, app.current_tenant(), $2, app.today_dhaka(), $3, $4, 'enrolled')
        ON CONFLICT (user_id) DO NOTHING`,
       [studentId, studentCodeFor(studentId), r.classLevel, r.religion],
     );

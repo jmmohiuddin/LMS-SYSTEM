@@ -285,8 +285,15 @@ describe('P2 — badges', () => {
     assert.equal(countBadge(doc(), 42, 'নোটিশ')?.textContent, '৯+');
   });
 
-  test('a count is announced with its subject, not as a bare number', () => {
-    assert.equal(countBadge(doc(), 3, 'নোটিশ')?.getAttribute('aria-label'), 'নোটিশ — 3');
+  test('a count is announced with its subject, in the script it is painted in', () => {
+    // P8: this asserted 'নোটিশ — 3'. The badge PAINTED "৩" and ANNOUNCED "3",
+    // so a sighted user read Bangla and a screen-reader user heard Latin from
+    // the same element — and the assertion pinned the wrong half. Third test
+    // found encoding this same defect in one pass; `bangla-numerals.test.ts`
+    // now looks for the pattern instead of waiting for someone to notice.
+    const el = countBadge(doc(), 3, 'নোটিশ');
+    assert.equal(el?.getAttribute('aria-label'), 'নোটিশ — ৩');
+    assert.equal(el?.textContent, '৩', 'the visible badge and its name must agree');
   });
 
   test('a plain badge is a label and carries no state', () => {

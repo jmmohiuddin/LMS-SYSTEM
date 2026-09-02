@@ -56,6 +56,8 @@ import {
   ADMIT_INSTRUCTIONS_BN,
   type StudentRef,
 } from '../../../packages/ui-core/src/documents.ts';
+import { toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
+import { dhakaToday } from '../../../packages/server-core/src/time.ts';
 
 /**
  * The purchasable service this endpoint IS (migration 051 catalogue).
@@ -196,7 +198,7 @@ async function studentIdsFor(c: Client, q: URLSearchParams): Promise<string[]> {
   if (explicit.length > 0) {
     if (explicit.length > MAX_BULK) {
       throw new HttpError(400,
-        `একবারে সর্বোচ্চ ${MAX_BULK} জনের নথি তৈরি করা যায়`, 'too_many', { field: 'studentIds' });
+        `একবারে সর্বোচ্চ ${toBanglaDigits(MAX_BULK)} জনের নথি তৈরি করা যায়`, 'too_many', { field: 'studentIds' });
     }
     return explicit;
   }
@@ -558,7 +560,9 @@ async function transferCertificate(
     // UNIQUE per tenant, so this cannot collide and regenerating gives the
     // same number. See docs/07 §9h for why there is no serial register yet.
     certificateNo: `TC-${last[0].year_label}-${s.student_code ?? s.id.slice(0, 8)}`,
-    issuedOn: new Date().toISOString().slice(0, 10),
+    // The date printed on a document a school keeps. A UTC server dated a
+    // certificate issued at 00:30 in Dhaka to the day before.
+    issuedOn: dhakaToday(),
     lastClassBn: last[0].class_bn,
     lastYearLabel: last[0].year_label,
     admissionDate: s.admission_date,

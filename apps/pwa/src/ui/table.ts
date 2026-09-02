@@ -33,6 +33,7 @@
 import { el, append, uid, type Child } from './dom.ts';
 import { emptyState, type EmptyOptions } from '../view-states.ts';
 import { icon } from './dom.ts';
+import { toBanglaDigits } from '../../../../packages/ui-core/src/format.ts';
 
 /** Where a column goes on a phone. */
 export type MobileRole = 'title' | 'subtitle' | 'meta' | 'status' | 'hidden';
@@ -276,7 +277,7 @@ export function pagination(doc: Document, o: {
     mk('আগের পাতা', 'arrow-left', o.page - 1, o.page <= 1),
     el(doc, 'span', {
       className: 'ui-page-pos',
-      text: o.summary ?? `${bn(o.page)} / ${bn(o.pageCount)}`,
+      text: o.summary ?? `${toBanglaDigits(o.page)} / ${toBanglaDigits(o.pageCount)}`,
       attrs: { 'aria-live': 'polite' },
     }),
     mk('পরের পাতা', 'arrow-right', o.page + 1, o.page >= o.pageCount));
@@ -309,9 +310,4 @@ export function timeline(doc: Document, o: {
   return ol;
 }
 
-function bn(n: number): string {
-  return String(n).replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]);
-}
 
-/** Convenience id for a table's caption when one is generated. */
-export const tableId = uid;

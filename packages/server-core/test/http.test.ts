@@ -30,17 +30,17 @@ describe('R-8 — the CORS origin allowlist', () => {
 
   test('a listed origin is echoed, and the response varies on it', () => {
     const env = {
-      ALLOWED_ORIGINS: 'https://app.shikhonbd.com,https://platform.shikhonbd.com',
+      ALLOWED_ORIGINS: 'https://app.sikhon.systems,https://platform.sikhon.systems',
     };
-    assert.deepEqual(corsOriginFor('https://platform.shikhonbd.com', env),
-      { origin: 'https://platform.shikhonbd.com', vary: true });
+    assert.deepEqual(corsOriginFor('https://platform.sikhon.systems', env),
+      { origin: 'https://platform.sikhon.systems', vary: true });
     // Vary matters: a shared cache must not hand one origin's allowed
     // response to another.
-    assert.equal(corsOriginFor('https://app.shikhonbd.com', env).vary, true);
+    assert.equal(corsOriginFor('https://app.sikhon.systems', env).vary, true);
   });
 
   test('an unlisted origin is neither echoed nor given a wildcard', () => {
-    const env = { ALLOWED_ORIGINS: 'https://app.shikhonbd.com' };
+    const env = { ALLOWED_ORIGINS: 'https://app.sikhon.systems' };
     const got = corsOriginFor('https://evil.example', env);
     assert.notEqual(got.origin, 'https://evil.example');
     assert.notEqual(got.origin, '*');
@@ -50,7 +50,7 @@ describe('R-8 — the CORS origin allowlist', () => {
     // Otherwise the list is defeated by the one caller most able to omit the
     // header — and a request without an Origin is not a browser cross-origin
     // request in the first place.
-    const env = { ALLOWED_ORIGINS: 'https://app.shikhonbd.com' };
+    const env = { ALLOWED_ORIGINS: 'https://app.sikhon.systems' };
     assert.notEqual(corsOriginFor(undefined, env).origin, '*');
   });
 

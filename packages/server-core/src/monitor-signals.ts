@@ -82,7 +82,7 @@ export async function gatherSignals(connectionString: string): Promise<GatherRes
                             AND sent_at > now() - $1::interval)::text AS sent_recent
        -- created_on is the partition key: this bound keeps the scan on the
        -- current and previous partitions instead of every month ever sent.
-       FROM sms_outbox WHERE created_on >= CURRENT_DATE - 2`,
+       FROM sms_outbox WHERE created_on >= app.today_dhaka() - 2`,
       [`${WINDOW_HOURS} hours`],
     );
 
@@ -91,7 +91,7 @@ export async function gatherSignals(connectionString: string): Promise<GatherRes
          FROM sms_outbox
         WHERE status IN ('failed','suppressed')
           AND error_code IS NOT NULL
-          AND created_on >= CURRENT_DATE - 2
+          AND created_on >= app.today_dhaka() - 2
           AND COALESCE(sent_at, queued_at) > now() - $1::interval
         GROUP BY 1 ORDER BY count(*) DESC LIMIT 5`,
       [`${WINDOW_HOURS} hours`],
@@ -103,9 +103,9 @@ export async function gatherSignals(connectionString: string): Promise<GatherRes
     const part = await client.query<{ months_ahead: string | null }>(
       `SELECT max(
                 (EXTRACT(YEAR  FROM to_date(right(c.relname, 7), 'YYYY_MM'))
-                 - EXTRACT(YEAR  FROM CURRENT_DATE)) * 12
+                 - EXTRACT(YEAR  FROM app.today_dhaka())) * 12
               + (EXTRACT(MONTH FROM to_date(right(c.relname, 7), 'YYYY_MM'))
-                 - EXTRACT(MONTH FROM CURRENT_DATE))
+                 - EXTRACT(MONTH FROM app.today_dhaka()))
               )::int::text AS months_ahead
          FROM pg_inherits i
          JOIN pg_class c ON c.oid = i.inhrelid

@@ -37,7 +37,7 @@
  * `monthLabel()` helpers — NOT `formatShortDate`, which is the SMS form and
  * drops the year to save characters. No ISO date reaches an official document.
  */
-import { type Branding, brandName } from './branding.ts';
+import { type Branding } from './branding.ts';
 import { escapeHtml } from './branded-doc.ts';
 import { toBanglaDigits, formatBdt, formatDayMonth, type Locale } from './format.ts';
 

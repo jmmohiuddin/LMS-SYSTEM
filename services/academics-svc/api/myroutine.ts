@@ -42,6 +42,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
+import { dhakaToday } from '../../../packages/server-core/src/time.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -122,7 +123,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         `SELECT slot_id, period_no, starts_at::text, ends_at::text, slot_kind,
                 subject_bn, subject_en, section_label, room_code,
                 teacher_name_bn, is_substitution
-           FROM app.student_day($1::uuid, COALESCE($2::date, CURRENT_DATE))`,
+           FROM app.student_day($1::uuid, COALESCE($2::date, app.today_dhaka()))`,
         [studentId, qsDate || null],
       );
       return r.rows;
@@ -145,7 +146,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }));
 
     json(res, 200, {
-      date: qsDate || new Date().toISOString().slice(0, 10),
+      // dhakaToday, not toISOString(): the server runs UTC and is six hours
+      // behind Dhaka, so before 6am local this defaulted a student's routine
+      // to YESTERDAY — the hours they check it before leaving for school.
+      date: qsDate || dhakaToday(),
       studentId,
       slots,
     }, cors);

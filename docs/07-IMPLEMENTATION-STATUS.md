@@ -4,7 +4,7 @@ Documents 01–06 are the design blueprint. This document is the reconciliation:
 actually in the repository today, where the implementation deliberately diverges from the
 blueprint, how to operate it, and what remains.
 
-**Last reconciled 2026-09-02, at the end of P7** (complete — see the status
+**Last reconciled 2026-09-02, at the end of P8** (complete — see the status
 board), under D17.
 New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
 
@@ -26,10 +26,10 @@ New to the repository? Read [00-START-HERE.md](00-START-HERE.md) first.
 | **Database (as-built)** | `pgvector/pgvector:pg16` Docker container `shikhon-postgres`, bound to `127.0.0.1:5433`, dedicated — not the shared cluster that holds the sibling apps. **The blueprint says Neon PostgreSQL 18.4 (`ap-southeast-1`); [06-DEPLOYMENT.md](06-DEPLOYMENT.md) documents the Neon pooler and is not what production runs** (`B-27`) |
 | **Deployed commit** | cut by `git archive` from the 2026-08-31 tree (`0b6df00` + `52d1609`). **Nothing from P0–P4 is deployed.** That no deploy has run since is INFERRED from the absence of a later PHASE_LOG entry, not re-observed on the box |
 | Repo | `github.com/jmmohiuddin/LMS-SYSTEM`, branch `main`, current at `95c34bf` |
-| **Tests** | **1,565 passing, 0 failing** — 2026-09-02, run twice, against a real PostgreSQL 16 (pgvector). offline 50 · server-core 236 · ui-core 161 · academics-svc 141 · identity-svc 20 · ops-svc 98 · platform-svc 40 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 659 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
+| **Tests** | **1,582 passing, 0 failing** — 2026-09-02, run twice, against a real PostgreSQL 16 (pgvector). offline 50 · server-core 236 · ui-core 161 · academics-svc 141 · identity-svc 20 · ops-svc 98 · platform-svc 40 · rms-svc 62 · sms-svc 67 · sync-svc 23 · pwa 659 · netlify 8. **Without `DATABASE_URL` the same command reports 1,042 and prints "NOTHING RAN" for four workspaces** — the difference is the DB-backed suites, and reading past that line is how a green tick has meant nothing here before |
 | **TypeScript** | **0 errors across all THREE configs** — `tsconfig.json`, `apps/pwa/tsconfig.json`, `apps/pwa/tsconfig.sw.json`. Run them with **`npm run typecheck`**, which parses the CI workflow for its list so local and CI scope cannot drift (`B-31`, closed in P5-0). The root config **excludes `apps/pwa`**, so `tsc -p .` alone typechecks the services and not the application. Coverage: **239 of 305** repo `.ts` files; the other 66 are checked by no config and frozen in `scripts/typecheck-baseline.json` (`B-32`) |
 | **Build** | `app.js` + `sw.js` + 11 API bundles |
-| **Schema** | **58 migrations**, 57 rollback files, 26 SQL assertion suites. **P7 added 051–058**: the commercial model, and the enforcement that made three inert console controls real. Verified on production: **227 RLS policies · 110 RLS-enabled tables · 108 carrying `tenant_id` · 0 tenants visible with no tenant context** |
+| **Schema** | **62 migrations**, 61 rollback files, 26 SQL assertion suites. **P7 added 051–058; P8 added 059–062**: the commercial model, and the enforcement that made three inert console controls real. Verified on production: **227 RLS policies · 110 RLS-enabled tables · 108 carrying `tenant_id` · 0 tenants visible with no tenant context** |
 | **Login** | R-8 turned the kill switch from three hardcoded constants into environment switches that **default OFF** (`packages/server-core/src/go-live.ts`). Whether login is enabled on production is a property of `/etc/shikhon/shikhon.env` and is **NOT OBSERVED from this repository**. `OTP_SENDING_ENABLED` was off at the R-8 deployment; a pilot is designed to run on activation codes, needing no SMS |
 | **Surfaces (D15)** | five — `/` shikhonBD marketing (**frozen**) · `/demo` the isolated demo, its own address since P1 · `<slug>.sikhon.systems` the white-labelled tenant app, `/app?tid=` kept as the compatibility door · `platform.sikhon.systems` the Platform Console, `/platform` as compatibility · `/design` a development reference, never a customer destination |
 | **UI/UX (D14)** | **P0–P4 complete.** Token foundation · application shell (real desktop, real mobile) · ~30 shared components · teacher screens · student + guardian screens. **P5–P8 not started**; principal, IT-admin and console screens still carry pre-P2 markup. Per-phase detail: [UI-UX-INTEGRATION-PLAN.md](UI-UX-INTEGRATION-PLAN.md) |
@@ -1871,3 +1871,55 @@ moment the gate existed, and sync is how a phone files a week of attendance.
 - **`rms-svc` is ungated** — the routine has no `service_catalogue` entry, so
   it can be neither sold nor disabled (`B-37`, needs a product decision).
 - **No online payment gateway**, by D16. Manual recording is the requirement.
+
+---
+
+## P8 — final legacy cleanup, consistency and release hardening (2026-09-02)
+
+A cleanup phase that found seven live defects, because the way to establish
+that code is obsolete is to look at what it actually does. Full narrative in
+[PHASE_LOG.md](PHASE_LOG.md).
+
+### The rule this phase leaves behind
+
+**A calendar day is a day in Bangladesh.** The server runs UTC and is six
+hours behind Dhaka, so for six hours of every day — midnight to 6am local —
+anything reading the host's date names YESTERDAY.
+
+| Where | Use |
+|---|---|
+| Browser | `todayLocalIso()` — `packages/ui-core/src/format.ts` |
+| Server | `dhakaToday()` — `packages/server-core/src/time.ts` |
+| SQL, including SQL embedded in TypeScript | `app.today_dhaka()` — migration 059 |
+
+`CURRENT_DATE` and `new Date().toISOString().slice(0, 10)` are both wrong in
+this product, and `apps/pwa/test/calendar-dates.test.ts` fails on either.
+
+### What was removed
+
+491 lines of dead CSS (123 classes) · six dead exports · eleven duplicate
+helper copies (four Bangla-digit converters inside `ui/` alone, three
+`todayBn`, three `todayIso`) · two indexes duplicating a UNIQUE index · one
+orphan design token.
+
+### What was deliberately kept, with reasons
+
+- **`--c-*`** — an alias layer over `--color-*`, 721 live usages, not a second
+  system. §3's "confirmed zero-usage" does not reach it.
+- **Two table systems and two card systems** — both halves live; converting
+  the hand-built call sites is a screen-by-screen change with real regression
+  surface (`B-41`).
+- **`POST /rms/solve` API-only** — a recorded decision, not an omission.
+- **Seven student/guardian views on legacy markup** — `B-19`, unchanged.
+
+### Four new source guards
+
+Each was written because the same defect had already shipped more than once,
+and each was proved to fail on a planted defect before being trusted:
+
+| Guard | Catches |
+|---|---|
+| `apps/pwa/test/calendar-dates.test.ts` | a UTC date used as a calendar day, in JS or in embedded SQL |
+| `apps/pwa/test/bangla-numerals.test.ts` | a Latin digit feeding a Bangla counter |
+| `apps/pwa/test/icon-names.test.ts` (P7) | a glyph name that does not exist |
+| `design-tokens.test.ts`, widened | a token of ANY family used but never defined |

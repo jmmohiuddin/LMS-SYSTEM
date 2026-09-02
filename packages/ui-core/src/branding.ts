@@ -333,7 +333,6 @@ export function brandingCssVars(
       '--c-on-primary': onFill,
       // Semantic aliases — what every rule in app.css actually reads.
       '--c-primary': p,
-      '--c-primary-flat': p,
       // Text has a stricter contrast obligation than a fill carrying white
       // label text, so it steps down the same hue rather than reusing it.
       '--c-primary-text': readableBrandText(p, LIGHT_GROUNDS, -0.28, -0.05),
@@ -360,7 +359,6 @@ export function brandingCssVars(
     dark: {
       '--c-on-primary': onFill,
       '--c-primary': p,
-      '--c-primary-flat': p,
       // Lightened, mirroring how app.css moves from accent-700 to
       // accent-400 on a near-black ground.
       '--c-primary-text': readableBrandText(p, DARK_GROUNDS, 0.42, 0.05),

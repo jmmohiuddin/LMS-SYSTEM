@@ -332,4 +332,3 @@ export function permissionMessageWithContact(subject?: string): string {
 }
 
 /** A full-screen first-load skeleton. Re-exported name for discoverability. */
-export const pageSkeleton = skeleton;

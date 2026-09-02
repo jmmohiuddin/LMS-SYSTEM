@@ -363,7 +363,7 @@ async function loadAttention(client: Client, head: Header) {
               (ar.status IN ('present','late')) AS here
          FROM attendance_records ar
         WHERE ar.section_id = $1
-          AND ar.taken_on >= CURRENT_DATE - ($2::int || ' days')::interval
+          AND ar.taken_on >= app.today_dhaka() - ($2::int || ' days')::interval
      ),
      -- Length of the CURRENT absence run: count back from the most recent
      -- record until a day the student was here. A streak that ended last

@@ -229,7 +229,7 @@ if (origins.length === 0) {
   pass('DNS/TLS', 'application origin is declared', origins.join(' '));
 }
 attested('DNS/TLS', 'wildcard DNS resolves', 'wildcard_dns');
-attested('DNS/TLS', 'TLS certificate covers *.shikhonbd.com', 'wildcard_tls');
+attested('DNS/TLS', 'TLS certificate covers *.sikhon.systems', 'wildcard_tls');
 attested('DNS/TLS', 'a tenant subdomain routes and isolates', 'subdomain_routing');
 
 const subdomainsReady = ['true', '1', 'yes', 'on'].includes(val('WILDCARD_DNS_READY').toLowerCase());

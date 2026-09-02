@@ -17,6 +17,7 @@
  * one shortcut.
  */
 import { el, icon, append } from './dom.ts';
+import { toBanglaDigits } from '../../../../packages/ui-core/src/format.ts';
 
 export type BadgeTone = 'neutral' | 'primary' | 'info' | 'success' | 'warn' | 'danger';
 
@@ -102,12 +103,12 @@ export function countBadge(doc: Document, count: number, label: string): HTMLEle
   if (n === 0) return null;
   return el(doc, 'span', {
     className: 'ui-count',
-    text: n > 9 ? '৯+' : bnDigits(n),
-    attrs: { 'aria-label': `${label} — ${n}` },
+    text: n > 9 ? '৯+' : toBanglaDigits(n),
+    // Bangla digits in the accessible name too. This painted "৩" and
+    // announced "3": a sighted user read Bangla and a screen-reader
+    // user heard Latin, from the same badge. Same defect as shell.ts's
+    // unread bell, found in the same pass.
+    attrs: { 'aria-label': `${label} — ${toBanglaDigits(n)}` },
   });
 }
 
-/** Latin digits to Bangla. Local to avoid a cycle with view-states.ts. */
-function bnDigits(n: number): string {
-  return String(n).replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]);
-}

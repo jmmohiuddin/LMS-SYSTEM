@@ -108,7 +108,7 @@ describe('R-8 §2 — a key presented from a browser', () => {
   test('THE ONE THAT MATTERS — a valid key from a page is refused', () => {
     const env = { SERVICE_API_KEY: KEY, SERVICE_KEY_TENANT_SWITCH: 'on' } as NodeJS.ProcessEnv;
     const r = quiet(() => authenticateServiceKey(
-      req({ origin: 'https://app.shikhonbd.com', 'x-tenant-id': 't', 'x-user-id': 'u' }),
+      req({ origin: 'https://app.sikhon.systems', 'x-tenant-id': 't', 'x-user-id': 'u' }),
       KEY, env, 'sync/push'));
     assert.equal(r.kind, 'refused');
     assert.equal(r.kind === 'refused' && r.code, 'service_key_from_browser');

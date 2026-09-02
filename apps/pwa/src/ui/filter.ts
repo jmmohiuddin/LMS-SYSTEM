@@ -14,6 +14,7 @@
 import { el, icon, append, uid, type Child } from './dom.ts';
 import { openDrawer } from './overlay.ts';
 import { announce } from './feedback.ts';
+import { toBanglaDigits } from '../../../../packages/ui-core/src/format.ts';
 
 export interface TabItem {
   id: string;
@@ -57,7 +58,7 @@ export function tabs(doc: Document, o: {
       data: { id: item.id },
     }, el(doc, 'span', { text: item.label }));
     if (item.count !== undefined) {
-      append(b, el(doc, 'span', { className: 'ui-tab-count', text: bn(item.count) }));
+      append(b, el(doc, 'span', { className: 'ui-tab-count', text: toBanglaDigits(item.count) }));
     }
     b.addEventListener('click', () => o.onSelect(item.id));
     buttons.push(b);
@@ -122,12 +123,12 @@ export function filterBar(doc: Document, o: {
     attrs: {
       type: 'button',
       'aria-label': active.length
-        ? `ছাঁকনি — ${bn(active.length)}টি চালু`
+        ? `ছাঁকনি — ${toBanglaDigits(active.length)}টি চালু`
         : 'ছাঁকনি',
     },
   }, icon(doc, 'layers'), el(doc, 'span', { text: 'ছাঁকনি' }),
      active.length
-       ? el(doc, 'span', { className: 'ui-count', text: bn(active.length) })
+       ? el(doc, 'span', { className: 'ui-count', text: toBanglaDigits(active.length) })
        : null);
   openBtn.addEventListener('click', () => {
     const body = el(doc, 'div', { className: 'ui-filter-sheet' });
@@ -197,6 +198,3 @@ function selectControl(
   return wrap;
 }
 
-function bn(n: number): string {
-  return String(n).replace(/\d/g, (d) => '০১২৩৪৫৬৭৮৯'[Number(d)]);
-}

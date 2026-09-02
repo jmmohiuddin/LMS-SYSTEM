@@ -167,7 +167,9 @@ export class PracticeView {
     const diff = d.createElement('span');
     diff.className = 'prac-difficulty';
     diff.textContent = '●'.repeat(q.difficulty) + '○'.repeat(5 - q.difficulty);
-    diff.setAttribute('aria-label', `কঠিনতা ${q.difficulty} / ৫`);
+    // Both numbers in the same script. It read "কঠিনতা 3 / ৫" — the child's
+    // own difficulty in Latin and the maximum in Bangla, in one phrase.
+    diff.setAttribute('aria-label', `কঠিনতা ${formatCount(q.difficulty, 'bn')} / ৫`);
     meta.append(num, diff);
     card.append(meta);
 

@@ -9,7 +9,7 @@
  */
 import type { Auth } from './auth.ts';
 import { bnNum } from './view-states.ts';
-import { formatDayMonth, formatTime } from '../../../packages/ui-core/src/format.ts';
+import { formatDayMonth, formatTime, todayLocalIso } from '../../../packages/ui-core/src/format.ts';
 import {
   el, append, icon, pageHeader, sectionHeading, tabs, listSkeleton,
   emptyState, statusBadge, badge, announce,
@@ -37,9 +37,6 @@ interface WeekResponse { scope: 'week'; weekStart: string; days: { date: string;
 const DAY_CACHE_PREFIX = 'shikhon_routine_day_';
 const WEEK_CACHE_PREFIX = 'shikhon_routine_week_';
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export interface RoutineViewOptions {
   root: HTMLElement;
@@ -52,7 +49,7 @@ type Mode = 'day' | 'week';
 export class RoutineView {
   private readonly o: RoutineViewOptions;
   private mode: Mode = 'day';
-  private date = todayIso();
+  private date = todayLocalIso();
   private day: DayResponse | null = null;
   private week: WeekResponse | null = null;
   private offline = false;

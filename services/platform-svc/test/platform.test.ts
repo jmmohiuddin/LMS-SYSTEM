@@ -263,7 +263,52 @@ describe('R-7 — platform console', { skip }, () => {
       const b = (r.body as { branding: Record<string, string> }).branding;
       // parseBranding fills defaults for absent fields; persisting those
       // would have written "Institution" over every school's English name.
-      assert.deepEqual(Object.keys(b).sort(), ['nameBn', 'primaryColor']);
+      assert.equal(b.nameBn, 'আলফা বিদ্যালয়');
+      assert.equal(b.primaryColor, '#1b5e20');
+      assert.ok(!('nameEn' in b), 'a placeholder English name was persisted');
+      assert.ok(!('accentColor' in b), 'a placeholder accent colour was persisted');
+    });
+
+    test('THE ONE THAT MATTERS — a partial write keeps everything else', async () => {
+      // P8. `jsonb_set(settings, {branding}, clean)` REPLACED the object, so a
+      // request carrying one key deleted every key already saved. Observed on
+      // a real tenant: changing only the primary colour erased the school's
+      // name, English name, short name and logo — the whole white-label
+      // identity, from a colour picker.
+      //
+      // The test that was here checked the placeholder half of the rule and
+      // not this half, which is why it passed throughout.
+      //
+      // services/ops-svc/api/branding.ts — the SCHOOL's own editor — had it
+      // right all along and says so in its header. The console reimplemented
+      // the rule instead of reusing it.
+      await asOperator('/api/v1/platform/branding', {
+        tenantId,
+        branding: {
+          nameBn: 'আলফা বিদ্যালয়', nameEn: 'Alpha School',
+          shortName: 'আলফা', logoUrl: '/media/alpha.png', primaryColor: '#1B5E20',
+        },
+      });
+
+      const r = await asOperator('/api/v1/platform/branding', {
+        tenantId, branding: { primaryColor: '#0D47A1' },
+      });
+      assert.equal(r.status, 200);
+      const b = (r.body as { branding: Record<string, string> }).branding;
+
+      assert.equal(b.primaryColor, '#0d47a1', 'the change did not take');
+      assert.equal(b.nameBn, 'আলফা বিদ্যালয়', 'the school lost its name');
+      assert.equal(b.nameEn, 'Alpha School', 'the school lost its English name');
+      assert.equal(b.shortName, 'আলফা', 'the school lost its short name');
+      assert.equal(b.logoUrl, '/media/alpha.png', 'the school lost its logo');
+
+      // And the row itself, not just what the response chose to echo back.
+      const stored = await asOperator(`/api/v1/platform/tenant?id=${tenantId}`);
+      const t = (stored.body as { tenant: { branding?: Record<string, string> } }).tenant;
+      if (t.branding) {
+        assert.equal(t.branding.logoUrl, '/media/alpha.png',
+          'the response and the stored row disagree');
+      }
     });
 
     test('the first admin is created with a one-time activation code', async () => {

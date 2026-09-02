@@ -70,7 +70,7 @@ export {
   toast, announce, inlineLoader, progress, tooltip,
   listSkeleton, permissionState, humanError, permissionMessage, serverMessage,
   permissionMessageWithContact,
-  skeleton, emptyState, errorState, successNote, pageSkeleton,
+  skeleton, emptyState, errorState, successNote,
 } from './feedback.ts';
 export type { ToastTone } from './feedback.ts';
 

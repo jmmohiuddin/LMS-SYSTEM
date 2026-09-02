@@ -80,7 +80,7 @@ const apiBase = location.origin;
 const tenantIdFromUrl = params.get('tid') ?? '';
 if (tenantIdFromUrl) localStorage.setItem('shikhon_tid', tenantIdFromUrl);
 
-// R-7.12. A school reached at monipur-high-school.shikhonbd.com carries its
+// R-7.12. A school reached at monipur-high-school.sikhon.systems carries its
 // key in the hostname. `?tid=` still wins: it is printed on admission slips
 // and baked into installed PWAs, so a subdomain that overrode it would break
 // every device already in a school's hands. The two agree because

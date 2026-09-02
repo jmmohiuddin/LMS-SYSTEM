@@ -21,6 +21,7 @@
  */
 import type { CsvTable } from '../../../packages/server-core/src/csv.ts';
 import { normalizePhone, type RowError } from './student-import.ts';
+import { toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 
 /**
  * Accepted headers, aliases included, Bangla included.
@@ -131,7 +132,7 @@ export function validateTeachers(table: CsvTable, snap: StaffSnapshot): TeacherV
   for (const r of table.ragged) {
     errors.push({
       lineNo: r.lineNo, rollNo: '', field: 'row',
-      messageBn: `সারিতে ${r.got}টি ঘর, ${r.expected}টি হওয়ার কথা`,
+      messageBn: `সারিতে ${toBanglaDigits(r.got)}টি ঘর, ${toBanglaDigits(r.expected)}টি হওয়ার কথা`,
     });
   }
 

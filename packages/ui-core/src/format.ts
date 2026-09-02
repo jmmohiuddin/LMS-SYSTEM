@@ -186,3 +186,29 @@ export function todayLocalIso(now: Date = new Date()): string {
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 }
+
+/**
+ * Bangla weekday names, full form. `বৃহঃ` and friends are the SHORT form and
+ * belong to whoever needs a hero line to fit, not here.
+ */
+const BN_WEEKDAYS = [
+  'রবিবার', 'সোমবার', 'মঙ্গলবার', 'বুধবার', 'বৃহস্পতিবার', 'শুক্রবার', 'শনিবার',
+];
+
+/**
+ * "রবিবার, ৬ আগস্ট" — the date line every home screen puts under its greeting.
+ *
+ * There were three byte-identical private copies of this, one in each of
+ * `principal-home-view`, `student-home-view` and `teacher-home-view`, each
+ * with its own DAYS and MONTHS arrays beside it. Three copies of a month
+ * table is three chances to mistype a month.
+ *
+ * `home-view.ts` keeps a different one on purpose: its hero line uses the
+ * SHORT weekday ("রবি") because the full form does not fit, so it is a
+ * different string rather than a duplicate of this one.
+ *
+ * Takes the instant, so a caller with an injected clock stays testable.
+ */
+export function weekdayDateBn(now: Date): string {
+  return `${BN_WEEKDAYS[now.getDay()]}, ${toBanglaDigits(now.getDate())} ${BN_MONTHS[now.getMonth()]}`;
+}

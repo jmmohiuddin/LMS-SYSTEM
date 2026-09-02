@@ -350,7 +350,7 @@ export class SmsDispatchWorker {
 
     const used = await client.query<{ count: string }>(
       `SELECT count(*) FROM sms_outbox
-        WHERE tenant_id = $1 AND created_on = CURRENT_DATE AND status <> 'suppressed'`,
+        WHERE tenant_id = $1 AND created_on = app.today_dhaka() AND status <> 'suppressed'`,
       [tenantId],
     );
 

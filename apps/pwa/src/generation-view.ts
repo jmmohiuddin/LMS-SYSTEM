@@ -458,7 +458,3 @@ export class GenerationView {
   }
 }
 
-/** Exported for the shell's route, which formats a slot label the same way. */
-export function slotLabel(s: GenSlot): string {
-  return `${DAY_BN[s.dayOfWeek]} · ${formatTime(s.startsAt, 'bn')} · ${s.sectionLabel} · ${s.subjectBn}`;
-}

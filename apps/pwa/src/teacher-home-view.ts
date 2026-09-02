@@ -38,7 +38,7 @@ import {
   badge, statusBadge, list, listItem, listSkeleton, emptyState, errorState,
   permissionState, humanError, announce,
 } from './ui/index.ts';
-import { formatCount, formatTime } from '../../../packages/ui-core/src/format.ts';
+import { formatCount, formatTime, todayLocalIso, weekdayDateBn } from '../../../packages/ui-core/src/format.ts';
 
 /** The subset of the routine slot this screen reads. Mirrors routine-view. */
 export interface TeacherSlot {
@@ -94,8 +94,11 @@ export class TeacherHomeView {
     // Local date, not toISOString(): a teacher in Dhaka opening the app at
     // 07:00 is on the day their timetable says, and UTC would still be
     // yesterday for six hours of every morning.
-    const d = this.now();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    //
+    // This was the only one of four copies that got it right. `routine-view`
+    // and `substitute-view` both used toISOString() and showed a teacher
+    // yesterday's routine before 6am; all four now call one helper.
+    return todayLocalIso(this.now());
   }
 
   /* ── data ───────────────────────────────────────────────────────────── */
@@ -211,7 +214,7 @@ export class TeacherHomeView {
 
     append(root, pageHeader(d, {
       title: greetingBn(this.now()) + (this.o.displayName ? `, ${this.o.displayName}` : ''),
-      subtitle: todayBn(this.now()),
+      subtitle: weekdayDateBn(this.now()),
     }));
 
     if (this.phase === 'loading') {
@@ -386,11 +389,4 @@ export function greetingBn(now: Date): string {
   if (h < 17) return 'শুভ দুপুর';
   if (h < 20) return 'শুভ বিকেল';
   return 'শুভ সন্ধ্যা';
-}
-
-export function todayBn(now: Date): string {
-  const months = ['জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন', 'জুলাই',
-    'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'];
-  const days = ['রবিবার', 'সোমবার', 'মঙ্গলবার', 'বুধবার', 'বৃহস্পতিবার', 'শুক্রবার', 'শনিবার'];
-  return `${days[now.getDay()]}, ${formatCount(now.getDate(), 'bn')} ${months[now.getMonth()]}`;
 }

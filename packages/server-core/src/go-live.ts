@@ -37,6 +37,8 @@
  * A missing variable and a misspelt one give the same answer as `false`,
  * which is the answer that cannot hurt anybody.
  */
+import { toBanglaDigits } from '../../ui-core/src/format.ts';
+
 export function enabled(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
   return (env[name] ?? '').trim().toLowerCase() === 'true';
 }
@@ -74,7 +76,7 @@ export function aiEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
  * R-8 §9D. Are per-school subdomains actually reachable?
  *
  * R-7 shipped the resolver and 06-DEPLOYMENT.md has carried the two remaining
- * DEPLOYMENT actions ever since — point *.shikhonbd.com at the deployment, and
+ * DEPLOYMENT actions ever since — point *.sikhon.systems at the deployment, and
  * issue a wildcard certificate. Neither is code, neither has been done, and
  * nothing in the product could tell. There is no way to detect it either: a DNS
  * lookup from a serverless function proves nothing about a visitor's resolver.
@@ -236,7 +238,7 @@ export function goLiveChecks(env: NodeJS.ProcessEnv = process.env): GoLiveCheck[
       labelBn: 'এসএমএস পরীক্ষামূলক তালিকা',
       ready: !smsRestrictedToAllowlist(env),
       detailBn: smsRestrictedToAllowlist(env)
-        ? `সীমিত — কেবল ${smsTestRecipients(env).length}টি নম্বরে যাবে, বাকি সব আটকে থাকবে`
+        ? `সীমিত — কেবল ${toBanglaDigits(smsTestRecipients(env).length)}টি নম্বরে যাবে, বাকি সব আটকে থাকবে`
         : 'সীমিত নয় — সব প্রাপকের কাছে বার্তা যাবে',
       severity: 'advisory',
     },
@@ -251,7 +253,7 @@ export function goLiveChecks(env: NodeJS.ProcessEnv = process.env): GoLiveCheck[
       ready: subdomainsReady(env),
       detailBn: subdomainsReady(env)
         ? 'প্রতিষ্ঠান নিজের ঠিকানায় পৌঁছাবে'
-        : 'বন্ধ — *.shikhonbd.com এর DNS ও TLS এখনো হয়নি; ?tid= লিংক চলছে',
+        : 'বন্ধ — *.sikhon.systems এর DNS ও TLS এখনো হয়নি; ?tid= লিংক চলছে',
       severity: 'advisory',
     },
     {

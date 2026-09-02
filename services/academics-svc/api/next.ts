@@ -33,6 +33,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate } from '../../../packages/server-core/src/auth.ts';
+import { toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 
 /**
  * The purchasable service this endpoint IS (migration 051 catalogue).
@@ -120,7 +121,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
             out.push({
               kind: 'redo_practice',
               titleBn: w.title_bn,
-              whyBn: `${w.n}টি প্রশ্ন এখনো ভুল আছে — আবার চেষ্টা করো`,
+              whyBn: `${toBanglaDigits(w.n)}টি প্রশ্ন এখনো ভুল আছে — আবার চেষ্টা করো`,
               route: 'learn',
               refId: w.topic_id,
               urgency: 'medium',

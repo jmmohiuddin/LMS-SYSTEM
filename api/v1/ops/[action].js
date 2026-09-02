@@ -1904,6 +1904,57 @@ async function resolvePublicTenant(key) {
   }
 }
 
+// packages/ui-core/src/format.ts
+var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var LATIN_DIGITS = "0123456789";
+function toLatinDigits(s) {
+  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
+}
+function toBanglaDigits(s) {
+  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
+}
+function formatCount(n, locale) {
+  return locale === "bn" ? toBanglaDigits(n) : String(n);
+}
+function formatBdt(amount) {
+  const n = typeof amount === "string" ? Number(toLatinDigits(amount)) : amount;
+  if (!Number.isFinite(n)) return "\u09F3 \u2014";
+  return `\u09F3 ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+var BN_MONTHS = [
+  "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
+  "\u09AE\u09BE\u09B0\u09CD\u099A",
+  "\u098F\u09AA\u09CD\u09B0\u09BF\u09B2",
+  "\u09AE\u09C7",
+  "\u099C\u09C1\u09A8",
+  "\u099C\u09C1\u09B2\u09BE\u0987",
+  "\u0986\u0997\u09B8\u09CD\u099F",
+  "\u09B8\u09C7\u09AA\u09CD\u099F\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u0985\u0995\u09CD\u099F\u09CB\u09AC\u09B0",
+  "\u09A8\u09AD\u09C7\u09AE\u09CD\u09AC\u09B0",
+  "\u09A1\u09BF\u09B8\u09C7\u09AE\u09CD\u09AC\u09B0"
+];
+var EN_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+function formatDayMonth(isoDate, locale) {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
+}
+
 // packages/server-core/src/go-live.ts
 function enabled(name, env = process.env) {
   return (env[name] ?? "").trim().toLowerCase() === "true";
@@ -2519,11 +2570,11 @@ async function handler8(req, res) {
            count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
            count(ar.id)::int                                                       AS marked,
            (SELECT count(*)::int FROM attendance_sessions s
-             WHERE s.taken_on = CURRENT_DATE)                                      AS sessions,
+             WHERE s.taken_on = app.today_dhaka())                                      AS sessions,
            (SELECT count(*)::int FROM sections s
              WHERE s.academic_year_id = $1)                                        AS sections_expected
          FROM attendance_records ar
-        WHERE ar.taken_on = CURRENT_DATE`,
+        WHERE ar.taken_on = app.today_dhaka()`,
         [year2.id]
       );
       const { rows: absent } = await c.query(
@@ -2536,19 +2587,19 @@ async function handler8(req, res) {
            LEFT JOIN enrolments e
                   ON e.student_id = ar.student_id AND e.section_id = ar.section_id
                  AND e.status = 'active'
-          WHERE ar.taken_on = CURRENT_DATE AND ar.status = 'absent'
+          WHERE ar.taken_on = app.today_dhaka() AND ar.status = 'absent'
           ORDER BY cl.level_no, s.name, e.roll_no
           LIMIT $1`,
         [ABSENT_LIST_CAP]
       );
       const { rows: absentTotal } = await c.query(
         `SELECT count(*)::int AS n FROM attendance_records
-          WHERE taken_on = CURRENT_DATE AND status = 'absent'`
+          WHERE taken_on = app.today_dhaka() AND status = 'absent'`
       );
       const { rows: exams } = await c.query(
         `SELECT id, name_bn, starts_on::text AS starts_on, status::text AS status
            FROM exams
-          WHERE academic_year_id = $1 AND starts_on >= CURRENT_DATE - INTERVAL '7 days'
+          WHERE academic_year_id = $1 AND starts_on >= app.today_dhaka() - INTERVAL '7 days'
           ORDER BY starts_on
           LIMIT 5`,
         [year2.id]
@@ -2578,7 +2629,7 @@ async function handler8(req, res) {
              AS subjects_without_teacher,
            (SELECT count(*)::int FROM exams e
              WHERE e.academic_year_id = $1 AND e.status <> 'published'
-               AND e.ends_on < CURRENT_DATE)
+               AND e.ends_on < app.today_dhaka())
              AS exams_awaiting_publication,
            (SELECT count(*)::int
               FROM users u
@@ -2706,11 +2757,17 @@ async function writeAudit(client, actor, entry) {
   }
 }
 
+// packages/server-core/src/time.ts
+var DHAKA_UTC_OFFSET_MS = 6 * 60 * 60 * 1e3;
+function dhakaToday(now = Date.now()) {
+  return new Date(now + DHAKA_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 // services/ops-svc/api/assign.ts
 var ASSIGN_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
 var MAX_REASON = 200;
 function parseEffective(raw) {
-  if (!raw) return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  if (!raw) return dhakaToday();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     throw new HttpError(400, "\u09A4\u09BE\u09B0\u09BF\u0996\u099F\u09BF \u09AC\u09C1\u099D\u09A4\u09C7 \u09AA\u09BE\u09B0\u09BF\u09A8\u09BF", "bad_date", { field: "effectiveDate" });
   }
@@ -2910,7 +2967,7 @@ async function handler10(req, res) {
     if (studentIds.length > MAX_MOVE) {
       throw new HttpError(
         400,
-        `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_MOVE} \u099C\u09A8 \u2014 \u09AC\u09C7\u09B6\u09BF \u09B9\u09B2\u09C7 \u0986\u09AE\u09A6\u09BE\u09A8\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8`,
+        `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${toBanglaDigits(MAX_MOVE)} \u099C\u09A8 \u2014 \u09AC\u09C7\u09B6\u09BF \u09B9\u09B2\u09C7 \u0986\u09AE\u09A6\u09BE\u09A8\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8`,
         "too_many",
         { field: "studentIds" }
       );
@@ -3544,57 +3601,6 @@ async function setStatus(db, ctx, req) {
     });
     return { id: userId, nameBn: before[0].name_bn, status: rows[0].status };
   });
-}
-
-// packages/ui-core/src/format.ts
-var BN_DIGITS = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var LATIN_DIGITS = "0123456789";
-function toLatinDigits(s) {
-  return s.replace(/[০-৯]/g, (d) => String(BN_DIGITS.indexOf(d)));
-}
-function toBanglaDigits(s) {
-  return String(s).replace(/[0-9]/g, (d) => BN_DIGITS[LATIN_DIGITS.indexOf(d)]);
-}
-function formatCount(n, locale) {
-  return locale === "bn" ? toBanglaDigits(n) : String(n);
-}
-function formatBdt(amount) {
-  const n = typeof amount === "string" ? Number(toLatinDigits(amount)) : amount;
-  if (!Number.isFinite(n)) return "\u09F3 \u2014";
-  return `\u09F3 ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-var BN_MONTHS = [
-  "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
-  "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
-  "\u09AE\u09BE\u09B0\u09CD\u099A",
-  "\u098F\u09AA\u09CD\u09B0\u09BF\u09B2",
-  "\u09AE\u09C7",
-  "\u099C\u09C1\u09A8",
-  "\u099C\u09C1\u09B2\u09BE\u0987",
-  "\u0986\u0997\u09B8\u09CD\u099F",
-  "\u09B8\u09C7\u09AA\u09CD\u099F\u09C7\u09AE\u09CD\u09AC\u09B0",
-  "\u0985\u0995\u09CD\u099F\u09CB\u09AC\u09B0",
-  "\u09A8\u09AD\u09C7\u09AE\u09CD\u09AC\u09B0",
-  "\u09A1\u09BF\u09B8\u09C7\u09AE\u09CD\u09AC\u09B0"
-];
-var EN_MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December"
-];
-function formatDayMonth(isoDate, locale) {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  if (!y || !m || !d) return isoDate;
-  return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
 }
 
 // services/ops-svc/api/structure.ts
@@ -5304,7 +5310,7 @@ async function studentIdsFor(c, q) {
     if (explicit.length > MAX_BULK) {
       throw new HttpError(
         400,
-        `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_BULK} \u099C\u09A8\u09C7\u09B0 \u09A8\u09A5\u09BF \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC`,
+        `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${toBanglaDigits(MAX_BULK)} \u099C\u09A8\u09C7\u09B0 \u09A8\u09A5\u09BF \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC`,
         "too_many",
         { field: "studentIds" }
       );
@@ -5581,7 +5587,9 @@ async function transferCertificate(c, q, _branding) {
     // UNIQUE per tenant, so this cannot collide and regenerating gives the
     // same number. See docs/07 §9h for why there is no serial register yet.
     certificateNo: `TC-${last[0].year_label}-${s.student_code ?? s.id.slice(0, 8)}`,
-    issuedOn: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+    // The date printed on a document a school keeps. A UTC server dated a
+    // certificate issued at 00:30 in Dhaka to the day before.
+    issuedOn: dhakaToday(),
     lastClassBn: last[0].class_bn,
     lastYearLabel: last[0].year_label,
     admissionDate: s.admission_date,
@@ -5829,7 +5837,7 @@ function evaluateAlerts(s) {
       severity: "critical",
       title: "SMS queue is not draining",
       detail: `${s.smsQueuedNow} queued; the oldest has waited ${Math.round(stalled / 60)}h (limit ${THRESHOLDS.smsQueueStalledMinutes / 60}h).`,
-      investigate: "Did the dispatch cron run? Netlify \u2192 Functions \u2192 cron-sms, or the Vercel cron log. Then GET /api/v1/ops/health for the same counts per tenant. A queue with a stalled head and no failures usually means the job never fired, not that sending broke.",
+      investigate: "Did the dispatch cron run? Check the scheduler that owns it on this deployment. Then GET /api/v1/platform/health?id=<tenant> for the same counts per school \u2014 it needs BOTH platform credentials. A queue with a stalled head and no failures usually means the job never fired, not that sending broke.",
       recover: "Invoke POST /api/v1/sms/dispatch by hand with the service key. It is idempotent per row \u2014 a message already sent is not sent twice. If the cron itself is dead, check NETLIFY_CRONS_ENABLED on the host that owns the schedule (it defaults to off, deliberately)."
     });
   }
@@ -5842,7 +5850,7 @@ function evaluateAlerts(s) {
       severity: critical ? "critical" : "warning",
       title: `SMS failing at ${pct(s.smsFailedRecent, smsTotal)}`,
       detail: `${s.smsFailedRecent} failed of ${smsTotal} attempted in the last ${WINDOW_HOURS}h.`,
-      investigate: "GET /api/v1/ops/health shows the top error codes. A single repeated code is the aggregator (credentials, balance, sender identity unapproved); a spread of codes is more likely bad numbers in one school's import.",
+      investigate: "GET /api/v1/platform/health?id=<tenant> shows the top error codes. A single repeated code is the aggregator (credentials, balance, sender identity unapproved); a spread of codes is more likely bad numbers in one school's import.",
       recover: "Aggregator-side: fix the credential or top up, then re-queue the failed rows \u2014 they keep their attempt count and are retried by the next dispatch. Data-side: the numbers are wrong and the school must correct them; do not retry into a wall."
     });
   }
@@ -5942,7 +5950,7 @@ async function gatherSignals(connectionString) {
                             AND sent_at > now() - $1::interval)::text AS sent_recent
        -- created_on is the partition key: this bound keeps the scan on the
        -- current and previous partitions instead of every month ever sent.
-       FROM sms_outbox WHERE created_on >= CURRENT_DATE - 2`,
+       FROM sms_outbox WHERE created_on >= app.today_dhaka() - 2`,
       [`${WINDOW_HOURS} hours`]
     );
     const errs = await client.query(
@@ -5950,7 +5958,7 @@ async function gatherSignals(connectionString) {
          FROM sms_outbox
         WHERE status IN ('failed','suppressed')
           AND error_code IS NOT NULL
-          AND created_on >= CURRENT_DATE - 2
+          AND created_on >= app.today_dhaka() - 2
           AND COALESCE(sent_at, queued_at) > now() - $1::interval
         GROUP BY 1 ORDER BY count(*) DESC LIMIT 5`,
       [`${WINDOW_HOURS} hours`]
@@ -5958,9 +5966,9 @@ async function gatherSignals(connectionString) {
     const part = await client.query(
       `SELECT max(
                 (EXTRACT(YEAR  FROM to_date(right(c.relname, 7), 'YYYY_MM'))
-                 - EXTRACT(YEAR  FROM CURRENT_DATE)) * 12
+                 - EXTRACT(YEAR  FROM app.today_dhaka())) * 12
               + (EXTRACT(MONTH FROM to_date(right(c.relname, 7), 'YYYY_MM'))
-                 - EXTRACT(MONTH FROM CURRENT_DATE))
+                 - EXTRACT(MONTH FROM app.today_dhaka()))
               )::int::text AS months_ahead
          FROM pg_inherits i
          JOIN pg_class c ON c.oid = i.inhrelid

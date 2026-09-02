@@ -287,7 +287,7 @@ async function getTenant(db: Db, req: IncomingMessage) {
     canActivate: Number(s.years) > 0 && Number(s.grading_bands) > 0 && Number(s.admins) > 0,
     // R-8 §9D. Whether the school's own subdomain actually resolves. The
     // console listed it beside the install link as an equal way in, and
-    // *.shikhonbd.com has never had DNS or a certificate — see go-live.ts.
+    // *.sikhon.systems has never had DNS or a certificate — see go-live.ts.
     subdomainsLive: subdomainsReady(),
   };
 }
@@ -467,6 +467,19 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
   // every school's real English name. Only the keys the operator actually
   // supplied are persisted; the rest stay absent, which is what lets
   // migration 039's seed keep showing the school's own name.
+  // P8. And the write MERGES, because filtering the keys was only half of it.
+  //
+  // `jsonb_set(settings, {branding}, clean)` REPLACES the whole object, so a
+  // request carrying one key deleted every other key already saved. Observed:
+  // an operator changing only the primary colour erased the school's name,
+  // English name, short name and logo — the entire white-label identity, from
+  // a colour picker.
+  //
+  // services/ops-svc/api/branding.ts had this right all along, and says so in
+  // its header: "a future caller sending only { primaryColor } must not blank
+  // the school's address, logo and headmaster as a side effect." That is the
+  // school's own editor; this is the console, and it reimplemented the rule
+  // instead of reusing it. One rule, two implementations, one of them wrong.
   const supplied = b.branding ?? {};
   const parsed = parseBranding(supplied) as unknown as Record<string, unknown>;
   const clean: Record<string, string> = {};
@@ -479,7 +492,10 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
   return db.withTenant(ctx, async (c) => {
     await c.query(
       `UPDATE tenants SET settings = jsonb_set(COALESCE(settings,'{}'::jsonb),
-                                               '{branding}', $1::jsonb, true),
+                                               '{branding}',
+                                               COALESCE(settings->'branding','{}'::jsonb)
+                                                 || $1::jsonb,
+                                               true),
                           updated_at = now()
         WHERE id = app.current_tenant()`,
       [JSON.stringify(clean)],
@@ -487,7 +503,13 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
     await c.query(
       `SELECT app.log_platform_action($1, $2, 'R-7 branding', 'set branding')`,
       [op.id, tenantId]);
-    return { branding: clean };
+    // Return what the school NOW has, not just what this request changed —
+    // otherwise the console redraws its form from a one-key object and looks
+    // exactly like the bug this fixed.
+    const { rows } = await c.query<{ branding: Record<string, string> }>(
+      `SELECT COALESCE(settings->'branding','{}'::jsonb) AS branding
+         FROM tenants WHERE id = app.current_tenant()`);
+    return { branding: rows[0]?.branding ?? clean };
   }, {
     // P7. The console must reach INTO a school the gate would stop — that is
     // how a suspended school gets inspected, and how it gets reopened. This
@@ -805,14 +827,14 @@ async function tenantHealth(db: Db, req: IncomingMessage) {
   return db.withTenant({ tenantId: id, userId: id, role: 'system_ingest' }, async (c) => {
     const { rows: sms } = await c.query<Record<string, string>>(
       `SELECT
-         count(*) FILTER (WHERE created_on = CURRENT_DATE)                    AS queued_today,
+         count(*) FILTER (WHERE created_on = app.today_dhaka())                    AS queued_today,
          count(*) FILTER (WHERE status IN ('sent','delivered'))               AS sent_total,
          count(*) FILTER (WHERE status = 'delivered')                         AS delivered_total,
          count(*) FILTER (WHERE status = 'failed')                            AS failed_total,
          count(*) FILTER (WHERE status = 'suppressed')                        AS suppressed_total,
          count(*) FILTER (WHERE status = 'queued')                            AS queued_now,
          COALESCE(sum(cost_bdt) FILTER (WHERE status IN ('sent','delivered')), 0)::text AS cost_bdt,
-         COALESCE(sum(segments) FILTER (WHERE created_on >= date_trunc('month', CURRENT_DATE)), 0)::text
+         COALESCE(sum(segments) FILTER (WHERE created_on >= date_trunc('month', app.today_dhaka())), 0)::text
                                                                               AS segments_this_month,
          to_char(max(sent_at), 'YYYY-MM-DD"T"HH24:MI:SSZ')                    AS last_sent_at
        FROM sms_outbox`);
@@ -841,7 +863,7 @@ async function tenantHealth(db: Db, req: IncomingMessage) {
 
     const { rows: att } = await c.query<Record<string, string>>(
       `SELECT to_char(max(taken_on), 'YYYY-MM-DD') AS last_attendance_on,
-              count(*) FILTER (WHERE taken_on > CURRENT_DATE - 7)::text AS sessions_7d
+              count(*) FILTER (WHERE taken_on > app.today_dhaka() - 7)::text AS sessions_7d
          FROM attendance_sessions`);
 
     const oldest = await c.query<{ age_minutes: string | null }>(

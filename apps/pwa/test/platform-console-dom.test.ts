@@ -28,7 +28,7 @@ let PlatformConsole: new (root: HTMLElement) => unknown;
 
 before(async () => {
   dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',
-    { url: 'https://platform.shikhonbd.com/platform.html' });
+    { url: 'https://platform.sikhon.systems/platform.html' });
   const g = globalThis as Record<string, unknown>;
   // platform.ts captures `document` at field-initialiser time, so the globals
   // have to exist before the module is imported, not merely before the

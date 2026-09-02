@@ -35,6 +35,7 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, query, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { writeAudit } from '../../../packages/server-core/src/audit.ts';
+import { dhakaToday } from '../../../packages/server-core/src/time.ts';
 
 /**
  * Who may change who teaches. Mirrors cta_write_scope in migration 041 — the
@@ -57,7 +58,9 @@ interface AssignBody {
 
 /** ISO date, and a real one — `new Date('2026-02-30')` is not. */
 function parseEffective(raw: string | undefined): string {
-  if (!raw) return new Date().toISOString().slice(0, 10);
+  // dhakaToday: a UTC server names the previous day for six hours of
+  // every Bangladeshi morning, and this is the date an assignment starts.
+  if (!raw) return dhakaToday();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     throw new HttpError(400, 'তারিখটি বুঝতে পারিনি', 'bad_date', { field: 'effectiveDate' });
   }

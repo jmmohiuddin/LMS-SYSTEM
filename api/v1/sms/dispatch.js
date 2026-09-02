@@ -490,7 +490,7 @@ function vapidHeader(endpoint, keys, opts = {}) {
   const now = opts.nowSeconds ?? Math.floor(Date.now() / 1e3);
   const exp = now + (opts.ttlSeconds ?? 12 * 60 * 60);
   const header2 = b64url(Buffer.from(JSON.stringify({ typ: "JWT", alg: "ES256" })));
-  const claims = { aud, exp, sub: opts.subject ?? "mailto:ops@shikhonbd.com" };
+  const claims = { aud, exp, sub: opts.subject ?? "mailto:ops@sikhon.systems" };
   const body = b64url(Buffer.from(JSON.stringify(claims)));
   const signingInput = `${header2}.${body}`;
   const signature = signSync("sha256", Buffer.from(signingInput, "utf8"), {
@@ -798,7 +798,7 @@ var SmsDispatchWorker = class {
     const row = res.rows[0];
     const used = await client.query(
       `SELECT count(*) FROM sms_outbox
-        WHERE tenant_id = $1 AND created_on = CURRENT_DATE AND status <> 'suppressed'`,
+        WHERE tenant_id = $1 AND created_on = app.today_dhaka() AND status <> 'suppressed'`,
       [tenantId]
     );
     return {

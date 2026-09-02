@@ -9706,3 +9706,514 @@ characters, confirms inside the surface that raised it, and writes
 exception — `/status`, the legacy suspension — was closed in this pass.
 
 **Commit:** `c5ab9d0`.
+
+---
+
+# P8 — final legacy cleanup, consistency and release hardening   (2026-09-02) · **COMPLETE**
+
+A cleanup phase that found seven live defects, because the way to know whether
+code is obsolete is to look at what it actually does.
+
+---
+
+## The inventory (§1)
+
+Eight dimensions audited read-only in parallel, then **every removability
+claim handed to a separate agent whose instructions were to prove it wrong**.
+
+| | |
+|---|---|
+| Items inventoried | **164** |
+| Claimed safe to remove | 56 |
+| **Survived refutation** | **24** |
+| **REFUTED — would have broken something** | **16** |
+
+Those sixteen are the phase's best argument for the second pass. Among them:
+`bnNum`, `BULK_CAPABLE` and `smsCostHintBn` are each imported by a CI-executed
+test (a test is a real consumer); `ix_blocks_lesson` is named by a later
+forward migration; `v_default_partition_leakage` has documented consumers; and
+two `bnDate` copies look identical but feed different input shapes, so the
+proposed shared replacement *crashes one screen and prints raw timestamps on
+the other*. Every one of those would have been a confident, evidenced,
+wrong deletion.
+
+One refutation was about the auditor's own conduct and it was right: files
+were edited while the read-only inventory was still running, which shifted
+every `app.css` line number after 195 by one. The audit's findings hold; its
+line references for that file need the offset.
+
+---
+
+## The defect the phase was really about
+
+**A calendar day in this product is a day in Bangladesh, and three of the four
+layers were reading UTC.**
+
+Observed live rather than reasoned about:
+
+```
+TimeZone                                  Etc/UTC
+now()                                     2026-09-01 23:17:22+00
+CURRENT_DATE                              2026-09-01
+(now() AT TIME ZONE 'Asia/Dhaka')::date   2026-09-02
+```
+
+The database and the person disagreed, **for six hours of every day** —
+18:00–24:00 UTC, which is midnight to 6am in Bangladesh. Not unusual hours: an
+IT admin importing a roster the night before term, a teacher checking tomorrow's
+routine before bed, a receipt printed at half past midnight.
+
+Proven on real data before anything was changed:
+
+```
+grace_until                    2026-09-01   (yesterday, in Dhaka)
+'2026-09-01' >= CURRENT_DATE   → true       "still in grace"
+'2026-09-01' >= dhaka_today    → false      "grace has ended"
+```
+
+### Why it was still there
+
+It had been found and fixed **twice**, at the two layers above:
+
+- `packages/server-core/src/time.ts` — `dhakaToday()`, whose header says
+  *"the same trap is reachable from every service that defaults a date, and
+  two of them had already reached it"*
+- `packages/ui-core/src/format.ts` — `todayLocalIso()`, added in P7 after the
+  same bug surfaced on a payment form
+
+Two helpers existed to stop it. Nobody had looked at the database, which is
+where most of the dates come from.
+
+### What P8 changed
+
+| Layer | Sites | Fix |
+|---|---|---|
+| Database functions | 6 functions, 14 comparisons | migration **059** → `app.today_dhaka()` |
+| Database column defaults | **19 columns** | migration **059** |
+| SQL embedded in TypeScript | **31 sites, 15 files** | `app.today_dhaka()` |
+| Server JavaScript | 3 (`myroutine`, `assign`, `document`) | `dhakaToday()` |
+| Browser JavaScript | 3 (`routine-view`, `substitute-view`, `teacher-home-view`) | `todayLocalIso()` |
+
+`document.ts` was the one worth wincing at: `issuedOn` on a printed
+certificate, dated to the day before for anything issued after midnight.
+
+Migration 059's function bodies are the LIVE definitions from
+`pg_get_functiondef`, changed in exactly one way, with the substitution count
+asserted per function — because the first draft of that migration rewrote
+`commit_rollover` from memory and invented a four-argument signature, dropped
+its refusal to run with blocked students, and dropped the
+`derive_student_subjects` call that gives a promoted child the right subjects.
+None of that shows up in a diff of a body you retyped.
+
+**`ALTER DATABASE … SET timezone` was considered and rejected as the
+mechanism.** It would fix everything at once and it is worth setting as well —
+but it is a configuration a new environment can be brought up without, and it
+fails silently when missing. Correctness that depends on a setting somebody
+must remember is not correctness.
+
+---
+
+## §8 — the four boundary dates, walked
+
+| Case | Before | After |
+|---|---|---|
+| due TODAY (Dhaka) | active | **active** ✓ |
+| due YESTERDAY | grace_period | **grace_period** ✓ |
+| grace ends TODAY | grace_period | **grace_period** ✓ |
+| grace ended YESTERDAY | grace_period ✗ | **limited** ✓ |
+
+The fourth exposed a second, separate bug. The explicit grant had expired, but
+the plan's own 14-day window had not, so the fallback clause silently extended
+the school six more days. The clause's own comment says it applies *"if the
+plan carries grace days **and none was recorded**"* — and the code never
+checked that second half.
+
+The consequence was a half-inert control: the console's grace field could only
+ever push grace *later* than the plan default. An operator deciding "until the
+first, and no longer" was overruled by a default and told the change had
+worked. **Migration 060** makes an explicit `grace_until` authoritative while
+it is set — it may extend the plan's window or cut it short, because a person
+looked at this school and decided.
+
+Eight boundary tests now pin all of it, and the suite's own `daysFromNow`
+helper was counting from the UTC date — invisible at an offset of -400 and
+decisive at 0.
+
+---
+
+## §12 — the schema lint had been failing since P7
+
+Nobody had run it. Four problems, all P7's:
+
+```
+L1 plans:              no tenant_id column and not in the exempt list
+L1 service_catalogue:  no tenant_id column and not in the exempt list
+L2 tenant_operations:  RLS enabled=t forced=f  (both must be true)
+L2 tenant_payments:    RLS enabled=t forced=f
+```
+
+**L2 is the one that mattered.** `ENABLE ROW LEVEL SECURITY` does not apply to
+a table's owner; every other tenant-scoped table in this schema also carries
+`FORCE`, so that no role — not even the one migrations run as — can read
+across schools by accident. `tenant_operations` holds every school's
+operational state and `tenant_payments` holds every payment ever recorded, and
+they were the only two tenant tables in the product without it. Migration
+**061** closes it and proves the change rather than trusting the statement.
+
+L1 was a declaration the lint was right to demand: `plans` and
+`service_catalogue` are platform-global reference data, like
+`subject_catalogue` beside them, and a table with no `tenant_id` is either
+deliberate or serious — the only way to tell is for somebody to say which.
+
+**Migration 062** drops two indexes that duplicate the UNIQUE index beside
+them on identical columns (`ix_practice_options`, `ix_blocks_topic`). A unique
+btree answers every query a non-unique one on the same columns answers; what
+the duplicate did was cost a write on every insert into two bulk-written
+tables. The `CREATE INDEX` statements in migrations 017 and 019 are left
+exactly as they are — a migration records what happened, and editing one so a
+replay skips a step is how a fresh database stops matching a migrated one.
+
+---
+
+## §2/§3 — the design system
+
+**491 lines of dead CSS removed.** 123 class selectors that no source file, no
+test, no HTML page and no BUILT bundle ever names — whole screen-local
+families (`fees-*`, `ledger-*`, `ward-card*`, `result-card*`, `script-*`,
+`lesson-*`, `more-*`, `sub-*`, `system-*`, `recon-*`, `iso-*`, `role-*`,
+`batch-*`) left behind when P2–P6 rebuilt those screens on the `ui-*`
+primitives.
+
+Verified three ways before deleting, because CSS has no error for a missing
+rule: an independent re-scan (123 against the audit's 128, the gap being
+dynamic `is-`/`tab-` prefixes I excluded); a check that every removed selector
+contains at least one dead class, since a compound selector cannot match when
+any of its classes is never applied; and a check that the rewrite ADDED
+nothing but whitespace. Then **25 routes across three roles** driven in a
+browser: all render, none overflow, including `#/scripts` and `#/substitute`.
+
+`app.css`: **3,926 → 3,850 lines, 219.6 KB → 204.0 KB raw, 53.0 → 51.2 KB
+gzipped.**
+
+The rebuilt screens kept a handful of their own class names —
+`result-footnote`, `ward-cta`, `lesson-reader` — and not one of those appeared
+in the dead list. That is the sharpest evidence the scan cut at the right
+granularity.
+
+### A live defect inside the token system
+
+Four rules read `var(--lh-normal)`. **That token is defined nowhere**, so the
+browser dropped all four `line-height` declarations and the elements
+inherited. Measured before the fix: `.perf-q-stem` computed 26.25px on a 15px
+font — 1.75, the inherited value, not the 1.65 the rule asked for. At the same
+time the entire `--lh-*` ramp had **zero** readers: it was authored, and then
+every rule was written against a name outside it.
+
+It survived because `design-tokens.test.ts` only scanned `--c-` and
+`--color-`. Every other family — `--lh-`, `--text-`, `--space-`, `--radius-`,
+`--shadow-` — was unguarded. One prefix now covers all of them, and the guard
+was proved to fail on a planted `var(--lh-does-not-exist)` before being
+trusted.
+
+### Not a duplicate system, and said so
+
+`--c-*` (30 tokens, 721 uses) turned out to be **aliases** of `--color-*` —
+all 30 resolve as `var(--color-…)`. One system with a compatibility layer, not
+two competing ones, so §3's "remove only confirmed zero-usage items" leaves it
+standing. `--c-primary-flat` was the single orphan: defined once, written
+twice by the tenant-branding runtime, read by nothing. Removed from all three
+places.
+
+Two genuine duplications are **recorded and not removed**, because both halves
+are live: `.data-table`/`.table-scroll` (10 hand-built call sites) beside
+`.ui-table` (19 via `dataTable()`), which are not visually equivalent — 14px
+right-aligned against 13px end-aligned, and `my-attendance-view` and
+`students-view` each render BOTH; and `.card` (62 sites) beside `.ui-card`
+(23 modules), near-identical bodies differing only in padding. Converting the
+call sites is the fix; deleting CSS is not. Recorded as `B-41`.
+
+---
+
+## §21 — a number in a Bangla sentence
+
+Twelve strings across nine files counted in Latin digits inside Bangla prose,
+and two were **accessible names that disagreed with the pixels beside them**:
+the unread bell painted "৩" and announced "3"; the count badge did the same;
+`practice-view` said "কঠিনতা 3 / ৫", the child's score in one script and the
+maximum in the other, in one phrase.
+
+**Three separate tests were found asserting the defect** — `notice.test.ts`
+pinned `/2/` and `/200/`, `ui-core.test.ts` pinned `'নোটিশ — 3'`, and
+`search.ts` carries a comment recording that this same class of bug was found
+and fixed once before. A test that pins the wrong half passes for exactly as
+long as the bug lives.
+
+`bangla-numerals.test.ts` now looks for the pattern instead: a Latin digit
+feeding a Bangla counter (`টি`, `জন`, …) is unambiguous, while a bare Latin
+digit near Bangla is not and is deliberately NOT flagged — R-8 decided money
+and identifiers stay Latin. Its self-check caught a bug in its own regex on
+the first run (`\b` is an ASCII word boundary and never matches after a Bangla
+character), and a second on CRLF checkouts (`.` excludes `\r`, so the comment
+stripper matched nothing and reported two comments as defects).
+
+---
+
+## Duplicate helpers, consolidated
+
+- **four** byte-identical private "convert to Bangla digits" functions inside
+  `apps/pwa/src/ui/` alone — `badge`, `filter`, `table`, `upload` — now
+  `toBanglaDigits`
+- **three** identical exported `todayBn` copies, one per home view, each with
+  its own weekday and month tables beside it, now `weekdayDateBn` in ui-core.
+  `home-view`'s fourth copy stays: it uses the SHORT weekday ("রবি") because a
+  hero line has to fit, so it is a different string rather than a duplicate
+- **three** `todayIso()` copies, **two of them the UTC bug** on a teacher's
+  routine and substitute screens; the third had the comment explaining exactly
+  that hazard and was the only one that got it right
+
+Six dead exports removed — `pageSkeleton`, `tableId`, `otpLoginAnswered`,
+`slotLabel`, `CODE_TTL_HOURS`, plus two unused imports. Each carried a comment
+naming a consumer that does not exist: `slotLabel` says "exported for the
+shell's route", and the shell does not import it.
+
+---
+
+## §7/§6 — a colour picker that erased a school's identity
+
+The console's branding endpoint wrote
+
+```sql
+jsonb_set(settings, '{branding}', <only the keys in this request>)
+```
+
+and `jsonb_set` REPLACES. Observed on a real tenant: setting only
+`primaryColor` left `{"primaryColor": "#0d47a1"}` and destroyed the school's
+name, English name, short name and logo — the whole white-label identity, from
+a colour picker.
+
+`services/ops-svc/api/branding.ts`, the SCHOOL's own editor, had it right all
+along and says so in its header: *"a future caller sending only
+{ primaryColor } must not blank the school's address, logo and headmaster as a
+side effect."* The console reimplemented the rule instead of reusing it. One
+rule, two implementations, one of them wrong.
+
+The existing test checked the placeholder half of the rule and not this half,
+which is why it passed throughout.
+
+---
+
+## §9 — the skipped security probe, resolved
+
+P7 left `scripts/security-probe.mjs` at **28 of 29, one skipped**: "repeated
+OTP requests are refused before they become a bill" could not run, because the
+feature gate answers 503 before the limiter is ever reached. Turning
+`OTP_SENDING_ENABLED` on in the local acceptance harness lets the probe reach
+it — no SMS leaves the machine, because `SMS_PROVIDER` is unset and the
+dispatcher queues and stops.
+
+**29 of 29, 0 failed, 0 skipped.**
+
+It stays recorded as `rehearsed` rather than `verified`: production has 0
+tenants, so a two-tenant isolation probe cannot run there. That is an external
+dependency (`B-5`), and `docs/production-evidence.json` already said so
+precisely.
+
+---
+
+## §18 — an instruction an operator reads at 2am
+
+`packages/server-core/src/alerts.ts` told whoever is paged for an SMS outage
+to `GET /api/v1/ops/health`. **That endpoint does not exist**, on any host —
+following it returns `404 {"error":"not_found"}`, which reads as "the whole
+thing is down" during exactly the incident where that inference is most
+expensive. The real endpoint is `GET /api/v1/platform/health?id=<tenant>`, and
+it needs both platform credentials. Fixed in the alert text and in the two
+places `docs/12-PRODUCTION-RUNBOOK.md` repeats it.
+
+`shikhonbd.com` replaced with `sikhon.systems` in **24 places across 13
+files** — including two operator-facing Bangla strings telling somebody to
+configure DNS for a domain the company does not serve, and the VAPID `sub`
+claim, which is a real value in a real protocol that goes to a push service.
+Documentation keeps its historical references, per D17.
+
+A test pinned the old domain too, under the name *"the contact is the PLATFORM,
+never a school (D11)"*. It now asserts that property — a reachable mailbox on a
+bare apex, never a per-school subdomain — instead of a literal that had quietly
+become a record of a stale default.
+
+---
+
+## §5/§11 — session, cache and offline, verified rather than assumed
+
+Nothing needed changing here, and that is worth recording with the evidence
+rather than as a claim.
+
+**Logout was already right.** `purgeLocalData()` deletes every Cache API cache
+and sweeps the `shikhon_*` localStorage tiers, in that order, and its comment
+explains why the order is the whole point: sweeping storage first gives a
+resolved `authedFetch` a turn, and a screen's entire job on resolving is to
+write what it received into its cache — so the last screen the previous user
+had open quietly re-cached itself into an already-swept store. `sweepNow()`
+runs synchronously beside the reload to close even the microtask gap. The
+offline outbox (IndexedDB) is deliberately NOT touched, and the file asserts
+that by grepping itself for `deleteDatabase`.
+
+**Cache contents, read out of a live browser:**
+
+```
+shikhon-shell-v2   /app  /offline  /app.css  /app.js  /icons/icon.svg
+                   /manifest.webmanifest  + versioned font and CDN assets
+shikhon-data-v1    /api/v1/ops/brand
+```
+
+- `/` is **not** cached — the marketing site never becomes the app shell
+- `/platform*` is **not** cached — P7 made the console network-only
+- no `shikhon-shell-v1`, so the version bump pruned cleanly
+
+**Offline, with the server actually stopped:**
+
+| Request | Result |
+|---|---|
+| `/app` | **serves from the SW** — shell, title and `#root` all present |
+| `/` | **fails** — correct: network-only, so the SW must not substitute the app |
+| `/platform` | **fails** — correct: an operator console must never be stale |
+
+Two apparent findings were investigated and both were benign. `/app.js`
+appeared four times in one cache under different `?v=` query strings — that
+token is injected by `.claude/static-server.mjs` for local cache-busting and
+`app.html` ships bare paths, so production stores exactly one entry. And the
+`fonts.gstatic.com` / `unpkg.com` entries cached cache-first are version-
+addressed URLs, where cache-first is the correct policy rather than a leak.
+
+---
+
+## §7 — the platform controls, re-tested against two schools
+
+Eleven acts on school A, with school B read before and after:
+
+```
+maintenance · limited · suspended · active
+portal close · portal open
+service disable · service enable
+student cap · grace period · payment
+                                     all 200
+```
+
+```
+B before:  mohammadpur-college|pilot|600|active|{}|{}||0
+B after:   mohammadpur-college|pilot|600|active|{}|{}||0
+```
+
+Byte-identical. Plan, cap, ops state, services, portals, grace and payment
+count all unchanged on the school that was not touched.
+
+---
+
+## §22 — the browser matrix, risk-based
+
+The brief permits a risk-based matrix over a Cartesian product, so here is
+exactly what was driven and why.
+
+**Layout risk lives at the breakpoints**, so every width was measured:
+360 · 375 · 390 · 640 · 768 · 1024 · 1280 · 1440 · 1600.
+**Contrast risk is token-level, not width-level**, so both themes were
+measured at two widths rather than eighteen.
+**Content-shape risk is per role**, so all roles were driven through their own
+routes at one desktop and one phone width.
+
+| Surface | What was driven | Result |
+|---|---|---|
+| tenant app | 9 widths light, 4 widths dark | no horizontal overflow anywhere; worst contrast 4.51 light / 5.01 dark |
+| tenant app, per role | 25 routes across teacher, student and guardian | every route renders with real content; none overflow |
+| platform console | 390 · 1024 · 1280, light and dark | no overflow; worst contrast 4.77 (white on the brand red, which app.css documents as 4.77:1) |
+| demo | 1280 light | white-labelled, role picker present, banner present |
+
+Every page-state was also checked for `undefined`, `NaN`, `null`,
+`[object Object]`, a raw UUID, an unnamed control, and a Latin digit feeding a
+Bangla counter — in the visible text AND in every `aria-label`, `title`,
+`placeholder` and `alt`. **Zero occurrences of any of them**, including across
+all three top-level console views and all six drawer tabs.
+
+The worst light-theme reading, 4.51 against a 4.5 requirement, passes by 0.01
+and is recorded here so the next person who moves a token knows how little
+room there is.
+
+---
+
+## §19 and §20 — the two things not built, classified
+
+**B-38 support mode → POST-PILOT.** Not a pilot blocker. A pilot is a handful
+of schools whose staff are reachable by phone, and the support question a
+pilot raises is answered by the console — institution state, services,
+portals, billing, audit — plus a call. Impersonation earns its risk at the
+scale where support cannot ring the head teacher. The technical blocker is
+unchanged and specific: 18 RLS policies key off `app.current_user_id()` or
+`app.my_section_ids()`, so a support session would render a *different screen*
+from the one being reported, which is worse than none.
+
+**B-40 bulk operations → POST-PILOT, with a stated trigger.** §20 asks whether
+the current institution count justifies it. It does not: the console lists 62
+schools in a development database and **0 in production**. The trigger is
+roughly **50 real institutions**, or the first time one commercial change must
+reach more than about ten schools in a sitting — a term-boundary invoice run
+being the likely first. Until then the risk is one-sided: the natural first
+bulk action is suspension, and a mis-selected bulk suspend is the most
+destructive thing this product can do.
+
+---
+
+## §13 — the test harness
+
+B-35's advisory lock is kept. It is the right mechanism: session-scoped, so a
+killed process releases it, which a lock table would not. P7 added `unref()`
+so a suite that dies badly cannot hold it forever, and `asBootstrap()` so
+fixture setup can create the school the gate would otherwise refuse.
+
+What P8 adds is the observation that **four DB-backed suites are outside the
+fence** — `academics-svc/test/api.test.ts` and the three `rms-svc` solver
+suites either import the lock helper without taking it or do not import it at
+all, while writing the same shared database as the 27 suites that do. They
+have not been observed to fail, which is precisely the property B-35 warns
+about: the failure mode is a scatter of assertion errors with no common cause,
+not a clean break. Recorded as `B-43` rather than fixed, because bringing them
+inside the fence changes how long the suite takes and wants its own pass.
+
+**Reproducibility, measured:** the full suite was run twice back-to-back at the
+end of this phase, and `platform-svc` five consecutive times when P7's
+rate-limit flake was diagnosed.
+
+---
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,582 passing**, 0 failing, 12 workspaces — run **twice**, identical |
+| TypeScript — all three CI configs | 0 errors |
+| Typecheck drift guard | passed; baseline 66 → **68** (two new guard tests) |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Migrations | **62/62 applied**, 61 rollback files |
+| **Schema lint** | **PASS L1–L8** — had been failing since P7 |
+| `scripts/security-probe.mjs` | **29 of 29**, 0 failed, **0 skipped** (was 28/29) |
+| `index.html` | git hash `496199bd` — **unchanged**, 0 modifications |
+| `app.css` | 3,926 → **3,850 lines**, 53.0 → **51.2 KB** gzipped |
+| `app.js` | **161 KB** gzipped, against the 180 KB critical-path budget |
+| Offline | `/app` serves from the SW with the server stopped; `/` and `/platform` correctly do not |
+| Tenant isolation | 11 platform acts on A; B byte-identical |
+| Browser | 9 widths × 2 themes, 25 routes × 3 roles, 3 surfaces — 0 overflow, 0 forbidden strings, 0 unnamed controls, 0 raw UUIDs |
+
+### Four defects that shipped, and the guard each one now has
+
+Every guard was proved to fail on a planted defect before being trusted, and
+two of them found a bug in their own first implementation.
+
+| Shipped | Guard |
+|---|---|
+| a UTC date read as a calendar day, six times over four layers | `calendar-dates.test.ts` |
+| a Latin digit inside a Bangla sentence, three times | `bangla-numerals.test.ts` |
+| a glyph name that does not exist, twice (P5 → P8) | `icon-names.test.ts` |
+| a design token used but never defined, in an unguarded family | `design-tokens.test.ts`, widened to all families |
+
+The pattern is the same in all four: the bug had already been found and fixed
+at least once, a comment or a helper was left behind to prevent the next one,
+and nothing looked. A comment is not a control.

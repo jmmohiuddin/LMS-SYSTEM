@@ -203,9 +203,9 @@ export function vapidHeader(
   const header = b64url(Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
   // `sub` must be a contact a push service operator can reach if our traffic
   // misbehaves. It is the PLATFORM's address, not a school's: the operator of
-  // shikhonbd.com is who they would need, and putting a school's address here
+  // sikhon.systems is who they would need, and putting a school's address here
   // would send someone else's abuse report to a head teacher.
-  const claims = { aud, exp, sub: opts.subject ?? 'mailto:ops@shikhonbd.com' };
+  const claims = { aud, exp, sub: opts.subject ?? 'mailto:ops@sikhon.systems' };
   const body = b64url(Buffer.from(JSON.stringify(claims)));
   const signingInput = `${header}.${body}`;
 

@@ -2169,6 +2169,19 @@ export class DemoAuth extends Auth {
         // the refusal path is demonstrable without a database.
         if (init.method === 'POST') {
           const req = JSON.parse(String(init.body ?? '{}')) as { action?: string; periodNo?: number };
+          // A4's authoring actions write rows; this grid is a constant, so
+          // there is nothing for them to write to. Answering ok({ok:true})
+          // would make the preview claim it had placed a lesson and then show
+          // the same fixed grid — the exact fake success /demo must never
+          // produce. `move` and `publish` stay demonstrable because their
+          // whole visible effect is the response.
+          if (req.action === 'create-routine' || req.action === 'place'
+            || req.action === 'assign' || req.action === 'remove') {
+            return new Response(JSON.stringify({
+              error: 'demo_read_only',
+              message: 'এটি প্রদর্শনী সংস্করণ — এখানে সত্যিকারের রুটিন সংরক্ষণ হয় না।',
+            }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+          }
           if (req.action === 'publish') return ok({ ok: true, unfilled: 1 });
           // Period 2 is where the demo's Rafiq is already teaching 9-খ, so
           // moving onto it shows the named refusal rather than a shrug.
@@ -2190,6 +2203,22 @@ export class DemoAuth extends Auth {
         });
         return ok({
           sectionId: 'demo-sec-1',
+          // The teaching week the real endpoint derives from
+          // tenants.weekend_days. Supplied here so the preview draws the same
+          // five columns rather than falling back to a constant.
+          days: [
+            { dow: 0, bn: 'রবি' }, { dow: 1, bn: 'সোম' }, { dow: 2, bn: 'মঙ্গল' },
+            { dow: 3, bn: 'বুধ' }, { dow: 4, bn: 'বৃহঃ' },
+          ],
+          subjects: [
+            { id: 'demo-sub-ban', nameBn: 'বাংলা', periodsPerWeek: 6, doublePeriodsPerWeek: 0 },
+            { id: 'demo-sub-mat', nameBn: 'গণিত', periodsPerWeek: 6, doublePeriodsPerWeek: 0 },
+          ],
+          teachers: [
+            { subjectId: 'demo-sub-ban', id: 'demo-t-1', nameBn: 'রফিক ইসলাম' },
+            { subjectId: 'demo-sub-mat', id: 'demo-t-1', nameBn: 'রফিক ইসলাম' },
+          ],
+          rooms: [{ id: 'demo-room-1', label: 'কক্ষ ২০১', capacity: 60 }],
           routine: {
             id: 'demo-routine-1', nameBn: 'নিয়মিত রুটিন', shift: 'morning',
             status: 'draft', version: 2, publishedAt: null, editable: true,

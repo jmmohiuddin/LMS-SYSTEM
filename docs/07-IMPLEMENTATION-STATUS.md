@@ -1923,3 +1923,42 @@ and each was proved to fail on a planted defect before being trusted:
 | `apps/pwa/test/bangla-numerals.test.ts` | a Latin digit feeding a Bangla counter |
 | `apps/pwa/test/icon-names.test.ts` (P7) | a glyph name that does not exist |
 | `design-tokens.test.ts`, widened | a token of ANY family used but never defined |
+
+---
+
+## P-pilot-hardening (2026-09-02) — PARTIAL
+
+Two of the six MUST-BEFORE-PILOT items are closed; three are blocked on things
+that do not exist yet, and one is written and rehearsed but not run. Full
+detail in [PHASE_LOG.md](PHASE_LOG.md).
+
+### Built
+
+| | What |
+|---|---|
+| **M1** | `loadRoles` requires a live account, so all three auth doors get it; `refresh` keeps its own check for the message; deactivation revokes live sessions in the same transaction and audits the count |
+| **M6** | Migration 063 — `teacher_attendance`, `app.teacher_absent_on()`, a RESTRICTIVE write policy; `GET/POST /api/v1/ops/staff-attendance`; the শিক্ষক হাজিরা screen, registered in route, tile, More menu and the sidebar for three roles |
+| Pilot fix | A guardian's phone on the admin student drawer is a `tel:` link, gated by the server's existing decision to send or withhold the number |
+
+### Fixed, and not on any list
+
+| | What |
+|---|---|
+| Migration 064 | `app.set_guardian_permissions` has raised an error on **every call since migration 050** — a partial unique index and a bare `ON CONFLICT` column list. The whole guardian-link path. Production is on 048 and unaffected; the catch-up would have carried it there |
+| `rms-svc/api/substitute.ts` | The candidate query passed `slotId` as `$1` and never referenced it, so PostgreSQL refused the statement. **The substitute finder has never returned a candidate.** It had no test at all |
+| `scripts/test-all.mjs` | Now runs `db/tests/*.sql`. Twenty-six suites that `npm test` had never run — which is how the two above survived four phases and a full audit |
+| `.github/workflows/database.yml` | The SQL suites and the rollback chain are directory loops now. 13 of 26 suites had never run in CI, and every rollback file from 049 onward had never been executed at all |
+| B-43 | Five suites released a fixture lock they never took. Fenced, with a source-level guard |
+
+### Numbers
+
+1,609 tests over 12 workspaces (three identical runs) · 26/26 SQL suites ·
+64/64 migrations, 63 rollback files with up → down → up clean for the first
+time · typecheck 0 errors, baseline 69 · security probe 29/29 ·
+`index.html` `496199bd`, and production serves the same bytes.
+
+### Not built, on the record
+
+The guardian today's-status card, the principal absent-trend, and receipt
+serials — all SHOULD-list items. Named so the omission is a decision rather
+than something found later.

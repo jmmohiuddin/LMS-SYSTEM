@@ -716,3 +716,59 @@ functions and 11 are in use — one spare.
 **Cron:** `vercel.json` schedules `/api/v1/sms/dispatch` and
 `/api/v1/ops/maintenance` daily. Both are opt-in on the host and neither runs
 in development.
+
+---
+
+## Update — P-pilot-hardening, 2026-09-02
+
+### Current state of the two revisions
+
+| | Repository | Production |
+|---|---|---|
+| Migration | **064** | **048** (unverified from outside — see below) |
+| Landing page | `496199bd` | `496199bd` — **byte-identical, confirmed today** |
+| `ops/staff-attendance` | present | **404** |
+
+**The deployed revision could not be established from outside.** `platform/*`
+answers 403 before route lookup, and no `ops/*` route is new enough to date
+P7 or P8. Establishing it requires host access: `git log -1` on the VPS. Until
+then, treat the migration number above as the last recorded value and not as
+an observation.
+
+### Before any deploy, read this
+
+[13-MIGRATION-CATCHUP.md](13-MIGRATION-CATCHUP.md) — and its §0 first.
+Migrations 049–063 **must not be left applied without 064**: 050 broke
+`app.set_guardian_permissions` and 064 is the repair, so the whole range is
+one unit of work. Production works today because it is on 048.
+
+### Monitoring — what changed
+
+`ALERT_WEBHOOK_URL` is still unset, so `/ops/monitor` still logs into a file
+nobody watches. What is new is that the delivery half has been **proved**:
+`scripts/alert-rehearsal.mjs` runs the real endpoint against a genuinely
+firing condition and a real HTTPS listener, 7/7. When the webhook is set, that
+run is a repeat of something rehearsed rather than a first attempt.
+
+To fire it by hand once the URL exists:
+
+```bash
+curl -X POST -H "Authorization: Bearer $SERVICE_API_KEY" \
+  https://sikhon.systems/api/v1/ops/monitor
+```
+
+Then record `alert_delivered` in `production-evidence.json` with the time the
+message arrived on a handset — not the time it was sent.
+
+### One new log line worth watching
+
+`[refresh] account_not_active` — M1 now refuses a deactivated account at the
+refresh endpoint. A spike means somebody's account state is wrong, not that
+the check is.
+
+### Per-school subdomains
+
+There is **no wildcard DNS record**. `*.sikhon.systems` is NXDOMAIN and
+arbitrary labels do not resolve. Both product code paths exist and work; the
+missing pieces are a wildcard A record and a DNS-01-validated certificate.
+Recorded as `blocked` in `production-evidence.json` with what was tried.

@@ -10219,3 +10219,214 @@ at least once, a comment or a helper was left behind to prevent the next one,
 and nothing looked. A comment is not a control.
 
 **Commit:** `c5a6256`.
+
+---
+
+# P-pilot-hardening — the six MUST items, and the four defects found on the way   (2026-09-02) · **PARTIAL**
+
+Report-only audit accepted; this phase closes what it can and says plainly
+what it cannot. **PARTIAL, not COMPLETE**: three of the six MUST items depend
+on things that do not exist yet — an aggregator contract, a DNS record, and a
+webhook pointing at a person — and no amount of code closes those.
+
+## M1 — a deactivated account loses access
+
+The audit proved, against a running stack, that deactivation did nothing:
+plant a refresh session for a real principal, set the row to `left`, call
+`/api/v1/auth/refresh`, and receive **200 with a fresh principal-role token**.
+Refresh rotates, so the session never aged out — a dismissed teacher with the
+app installed kept working access indefinitely.
+
+Three auth doors call `loadRoles`. `activate` and `otp-verify` checked
+`users.status` first; `refresh` did not. So the check moved into the function
+all three already call, where the next door cannot forget it — the same
+argument P7 made for putting the tenant gate inside `withTenant`. `refresh`
+keeps its own check as well, deliberately duplicated, **for the message**:
+"account is left" tells the office what happened, where "no active role
+assigned" sends them hunting through role assignments for a problem that is
+not there.
+
+`invited` stays allowed beside `active`, because that is the rule the two
+correct callers already applied: `otp-verify` admits an invited user without
+promoting them, and refusing it here would end their session fifteen minutes
+after they logged in.
+
+Deactivation now also revokes live sessions in the same transaction and
+records how many in the audit row. Blocking the next refresh is not the same
+as signing somebody out.
+
+**Each layer was reverted on its own and the matching test went red:**
+
+| Layer removed | What happened |
+|---|---|
+| the `refresh` status check | still 403 — but degraded to `no_active_role`, which is the argument for keeping it |
+| the `loadRoles` filter | the shared-door test failed; the endpoints held |
+| the session revocation | three tests failed |
+
+`scripts/m1-deactivation-probe.mjs` re-runs the audit's experiment over real
+HTTP against `deploy/server.mjs`. On the pre-M1 code it prints the 200 and the
+decoded principal token; on this commit it returns 403 `account_not_active`.
+
+## M6 — the register the substitute finder had been waiting for since 006
+
+The substitute finder refuses to offer an absent teacher. So does the
+invigilator ranker. Both read `teacher_leaves` and `teacher_availability`, and
+**nothing in the product has ever written to either** — one grep hit
+repo-wide, and it is a test fixture. Real filters, tested, inert: on a live
+school the finder would cheerfully propose the teacher everybody knows is at
+a funeral.
+
+Migration 063 adds `teacher_attendance` — one row per teacher per day, three
+states, an optional line of text. `present` is recorded rather than inferred,
+because "nobody has marked today" and "everyone was here" are different facts.
+Not leave management, not payroll, no approval chain; `teacher_leaves` is left
+exactly as it is for the day that is actually wanted.
+
+`app.teacher_absent_on()` is the single definition of away and both readers
+call it. Pasting a fourth `NOT EXISTS` into two places is how P8's calendar
+bug survived being fixed twice.
+
+**The ranker's body was regenerated from `pg_get_functiondef` with the one
+substitution asserted — and the first draft, assembled from a partial quote of
+migration 030 plus memory, had invented a different `RETURNS TABLE`, returned
+quietly instead of raising on a missing hall, and dropped the computation of
+the session end from the longest paper. It would have applied cleanly.** That
+is migration 059's rule paying for itself a second time.
+
+The screen — শিক্ষক হাজিরা — has a date, the staff list, and three buttons a
+row. No save button: each button POSTs on press and the row renders what the
+**server** returned, because a register showing a mark that failed is worse
+than one showing nothing. Driven in a browser against the real API as a
+principal: five teachers, one marked absent with a reason, the row and the
+counts moved, both themes, and at 375px where the table collapses to cards.
+
+## The three defects nobody was looking for
+
+Same shape the audit named, and the reason each survived is the same: nothing
+ran the thing that would have caught it.
+
+**1. `app.set_guardian_permissions` has raised an error on every call since
+migration 050.** 050 made the `guardianships` unique index partial
+(`WHERE revoked_at IS NULL`) and left the function inferring it with a bare
+column list. PostgreSQL will not infer a partial index that way. That is the
+whole guardian-link path — adding a guardian, changing a relation, moving
+`is_primary`, and setting the `receives_sms` / `can_pay_fees` flags that decide
+who receives the absence SMS. **Production is on 048 and still works; it would
+have broken the moment the M2 catch-up ran 049–062.** Migration 064 repairs it,
+and also scopes the primary-demotion to live rows so it stops rewriting revoked
+history.
+
+**2. The substitute finder's candidate query has never worked.** It passes
+`slotId` as `$1` and never references it, so PostgreSQL refuses the statement:
+*could not determine data type of parameter $1*. Every call was a 500. Nothing
+caught it because `rms-svc` had no substitute test at all — the feature the
+audit named as M6's consumer had zero coverage. `$2..$6` renumbered, and the
+M6 suite is now its regression test.
+
+**3. Why both survived: `npm test` never ran `db/tests/*.sql`.** Twenty-six SQL
+suites, invisible to the command every phase used to declare itself green.
+Three of them had been failing since 050. And the same failure twice more in
+CI: `database.yml` named the suites by hand and **13 of the 26 had never run
+there**, and its rollback step globbed `*.down.sql`, a suffix dropped at 049,
+so **every rollback file from 049 onward had never been executed**. Its "left N
+objects" assertion still passed, because rolling back 001 cascades the later
+tables away regardless.
+
+All three are now directory loops that cannot drift, and `test-all.mjs` runs
+the SQL suites — the script whose opening line is "fail loudly if a workspace
+has tests that nothing runs".
+
+Also closed: **B-43**, which the audit could only record as risk #13. Five
+suites imported `lockFixtures`, never called it, and called `unlockFixtures`
+in `after` — a no-op on a lock never taken — so they ran unfenced beside every
+other DB suite. It surfaced here as one rms file reporting 57 tests where 62
+were expected, no test named, then three clean runs on its own. All five
+fenced, and `fixture-fencing.test.ts` checks the rule at source level, because
+re-running cannot prove it.
+
+## M2, M3, M4, M5 — what was established, and what is still missing
+
+**M2 — procedure written and rehearsed, not run.** `docs/13-MIGRATION-CATCHUP.md`.
+Its section 0 is the finding above: 049–063 must not be left applied without
+064, so the range is one unit of work and a failure goes back to 048.
+Rehearsed locally: 64 migrations apply silently to an empty database, 26/26 SQL
+suites pass twice leaving zero rows, and up then down then up over all 63
+rollback files leaves zero objects in `public` and re-applies clean. Production
+is not reachable from here.
+
+**M3 — verified, and it is not what was assumed.** `*.sikhon.systems` is
+NXDOMAIN. Arbitrary labels do not resolve on 8.8.8.8 and `curl` agrees. A first
+pass through the local ISP resolver looked like a wildcard; that was `nslookup`
+printing the RESOLVER's own address, not an answer — worth recording, because
+it is exactly the kind of reading that produces "DNS is configured". The apex
+and `www` resolve to 200.234.43.179 and serve valid TLS. **Both code paths
+already exist** (`tenantKeyFromHost`, and `app.public_branding()` resolving a
+slug or a tenant id to the same row, with `?tid=` keeping priority so installed
+PWAs are never overridden). This is a DNS record and a DNS-01 wildcard
+certificate, not product work. **Owner decision.**
+
+**M4 — external blocker, untouched.** No aggregator contract, no credentials.
+The fake-aggregator tests were left exactly as they were, as instructed. The
+seam and the SSL Wireless adapter exist; unset, the stub is used, and
+`SMS_PROVIDER` named without credentials throws rather than pretending.
+
+**M5 — pipeline proved, destination missing.** `scripts/alert-rehearsal.mjs`,
+7/7. It boots the real monitor endpoint with `DATABASE_MAINTENANCE_URL` on a
+closed port, so `database_unavailable` is **evaluated, not injected**; GET
+returns the alert and delivers nothing, POST delivers, and a real HTTPS
+listener receives the POST 21ms later carrying the alert id, severity,
+environment and the runbook's recover text. Recorded as `rehearsed`, never
+`verified`: the listener was local and self-signed, and no message reached a
+person.
+
+## Verified read-only against production
+
+- It serves the frozen landing page **byte-identical at `496199bd`**.
+- The pre-auth brand endpoint returns the generic signboard for an unknown
+  slug, with `tenantId: null` and no school list — D12 holding.
+- `ops/staff-attendance` is **404**, which is the check that will say whether
+  the migrations went out without the code.
+- The deployed revision could not be established from outside. `platform/*`
+  answers 403 before route lookup, and no `ops/*` route dates P7 or P8.
+
+## One pilot fix
+
+A guardian's phone number on the admin student drawer is now a `tel:` anchor
+with a 48px target and an aria-label naming who is being rung. No server
+change and **deliberately no client-side role check**: `ops/guardians` already
+returns the number to three roles and `phone: null` to everyone else, so the
+number's presence *is* the authorization, and a second copy of that rule on
+the client would be free to drift. Verified both ways against the running
+stack.
+
+## Gate
+
+| Check | Result |
+|---|---|
+| Full suite | **1,609 passing**, 0 failing, 12 workspaces — run **three times**, identical |
+| **SQL suites** | **26 of 26** — now inside `npm test`; 13 had never run anywhere |
+| TypeScript — all three CI configs | 0 errors |
+| Typecheck drift guard | passed; baseline 68 to **69**, taken deliberately (one new `apps/pwa/test` file, B-32's unchecked directory) |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Migrations | **64/64 applied**; 63 rollback files, **up then down then up clean for the first time** |
+| Schema lint | PASS L1–L8, with the new table |
+| `scripts/security-probe.mjs` | **29 of 29**, 0 failed, 0 skipped |
+| `scripts/m1-deactivation-probe.mjs` | PASS — and FAILS 4 of 6 checks on the pre-M1 code |
+| `scripts/alert-rehearsal.mjs` | PASS 7/7 — rehearsal, closes no production gate |
+| `index.html` | git hash `496199bd` — unchanged, and **production serves the same bytes** |
+| `app.js` | **159 KB** gzipped, against the 180 KB budget |
+| `app.css` | **50 KB** gzipped |
+| Browser | শিক্ষক হাজিরা and the guardian call link driven against the real API, two themes, 375px and desktop — 0 raw UUIDs, 0 English errors |
+
+## What is still open
+
+- The seven `ui-` class names referenced in `apps/pwa/src` and absent from
+  `app.css`. A class that does not exist fails silently — two of my own cost a
+  mis-rendered summary row this phase. Recorded in BACKLOG rather than
+  baselined: each needs a look, and a baseline of seven unexamined entries is
+  how a guard rots.
+- The SHOULD list's other items were not built: the guardian today's-status
+  card, the principal absent-trend, and receipt serials. Named here so the
+  omission is a decision on the record rather than a gap somebody finds later.
+
+**Commits:** `0d8d32c`, `d680570`, `e92e9cb`, `1a2e3d1`, `ad2dea8`, `08b18c9`.

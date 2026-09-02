@@ -1528,3 +1528,29 @@ P5 opens with two items P4 identified and deliberately did not take: a
 section-scoped routine endpoint (so a student can be told what class is next),
 and what `doLogout` should do about the read-through caches on a shared device
 when the sync outbox may hold unsent attendance.
+
+---
+
+## P-pilot-hardening (2026-09-02) — PARTIAL
+
+The audit's six MUST-BEFORE-PILOT items. **M1** (deactivation) and **M6** (the
+teacher register) are closed and proved. **M2** has a written, locally
+rehearsed procedure and has not been run against production. **M3** turned out
+to be answerable: there is **no wildcard DNS record** — `*.sikhon.systems` is
+NXDOMAIN, verified against 8.8.8.8 rather than assumed — so the per-school
+subdomain is a DNS and certificate task, not product work, and the `?tid=`
+link the console already prints is what a pilot would use. **M4** and **M5**
+remain blocked on an aggregator contract and a webhook destination
+respectively; M5's pipeline is now proved end to end against a real listener.
+
+Three defects were found that were on no list, all the shape this project
+keeps meeting — a control that exists, is audited, returns success, and does
+nothing. Guardian linking had been broken since migration 050; the substitute
+finder's candidate query had never worked; and both survived because
+`npm test` never ran the twenty-six SQL suites, CI ran only thirteen of them,
+and CI's rollback step had never executed a single rollback file written since
+049. All three are now directory loops that cannot drift.
+
+Next: **P9 — Smart Routine Generator**, per the audit's §30. Not started, and
+deliberately: the audit's exit condition for this phase was the MUST list, and
+three of its six items need something only the owner can supply.

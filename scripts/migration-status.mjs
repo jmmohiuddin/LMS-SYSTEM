@@ -148,6 +148,8 @@ const SENTINELS = [
   // two readers now consult it. So probe the ranker's BODY for the call,
   // which is the part a half-applied 063 would leave behind.
   ['063_teacher_attendance',           'function_body', 'app.rank_invigilators', 'teacher_absent_on'],
+  ['064_guardian_link_conflict_target', 'function_body', 'app.set_guardian_permissions', 'WHERE revoked_at IS NULL DO UPDATE'],
+  ['065_room_write_scope',             'policy',        'rooms_insert_scope'],
 ];
 
 /**
@@ -218,6 +220,8 @@ const MEANING = {
   '061_p7_schema_lint_repairs':      'P8 — the two tables P7 left with RLS enabled but NOT forced, plus the two platform tables the lint asked us to declare',
   '062_drop_redundant_indexes':      'P8 — two indexes that duplicated the UNIQUE index beside them and cost a write on every insert',
   '063_teacher_attendance':          'M6 — the staff register that the substitute finder and the invigilator ranker had both been filtering on since 006, with nothing in the product able to write it',
+  '064_guardian_link_conflict_target': 'M6 follow-on — app.set_guardian_permissions had raised an error on every call since 050, because 050 made the guardianships unique index partial and left the bare ON CONFLICT column list behind',
+  '065_room_write_scope':            'P0 — rooms had tenant isolation and no role scope since 003, so a student session could insert one; closed on the day a writer made it reachable',
 };
 
 const QUERIES = {

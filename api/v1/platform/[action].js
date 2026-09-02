@@ -3370,6 +3370,7 @@ async function setStatus(db, op, req) {
     throw new HttpError(400, "\u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_status", { field: "status" });
   }
   const reason = requireReason(b.reason);
+  await requireExistingTenant(db, tenantId);
   if (b.status === "active") {
     const { rows: rows2 } = await db.pool.query(
       `SELECT * FROM app.tenant_onboarding_state($1)`,
@@ -3463,6 +3464,15 @@ function requireTenantId(raw) {
     throw new HttpError(400, "tenantId must be a valid uuid", "invalid_tenant");
   }
   return id;
+}
+async function requireExistingTenant(db, id) {
+  const { rows } = await db.pool.query(
+    `SELECT 1 FROM app.platform_operations($1)`,
+    [id]
+  );
+  if (rows.length === 0) {
+    throw new HttpError(404, "no such tenant", "not_found");
+  }
 }
 async function overview(db) {
   const { rows } = await db.pool.query(`SELECT * FROM app.platform_overview()`);
@@ -3600,6 +3610,7 @@ async function getOperations(db, req) {
 async function setOpsState(db, op, req) {
   const body = await readJson(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const state = String(body.state ?? "");
   if (!OPS_STATES.includes(state)) {
@@ -3628,6 +3639,7 @@ async function setOpsState(db, op, req) {
 async function setService(db, op, req) {
   const body = await readJson(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const code = String(body.service ?? "");
   const state = String(body.state ?? "");
@@ -3686,6 +3698,7 @@ async function setService(db, op, req) {
 async function setPortal(db, op, req) {
   const body = await readJson(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const portal = String(body.portal ?? "");
   const open = body.open === true;
@@ -3799,6 +3812,7 @@ async function recordPayment(db, op, req) {
 async function extendGrace(db, op, req) {
   const body = await readJson(req);
   const id = requireTenantId(body.tenantId);
+  await requireExistingTenant(db, id);
   const reason = requireReason(body.reason);
   const until = String(body.until ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) {
@@ -3991,7 +4005,9 @@ async function setCap(db, op, req) {
         { enrolled }
       );
     }
-    if (code === "02000") throw new HttpError(404, "no such tenant", "not_found");
+    if (code === "02000" || code === "P0002") {
+      throw new HttpError(404, "no such tenant", "not_found");
+    }
     throw err;
   }
   return afterChange(db, id);
@@ -4003,7 +4019,8 @@ async function afterChange(db, id) {
        FROM app.platform_operations($1)`,
     [id]
   );
-  const r = rows[0] ?? {};
+  if (rows.length === 0) throw new HttpError(404, "no such tenant", "not_found");
+  const r = rows[0];
   return {
     ok: true,
     state: {

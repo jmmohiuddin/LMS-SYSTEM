@@ -86,6 +86,7 @@ const P = {
   publish:     { path: 'publish',     labelBn: 'ফলাফল প্রকাশ',      glyph: 'award' },
   users:       { path: 'users',       labelBn: 'ব্যবহারকারী',       glyph: 'users' },
   staffatt:    { path: 'staffattendance', labelBn: 'শিক্ষক হাজিরা', glyph: 'check-square' },
+  rooms:       { path: 'rooms',       labelBn: 'কক্ষ ব্যবস্থাপনা',   glyph: 'layers' },
   rollover:    { path: 'rollover',    labelBn: 'বার্ষিক উন্নয়ন',    glyph: 'repeat' },
   // P5. Three labels, one route. The screen imports students OR staff and the
   // endpoint gates the two differently — students to principal · owner ·
@@ -179,7 +180,7 @@ const PRINCIPAL: RoleNav = {
     // P7-0. `institution` was a second dashboard over the same endpoint and
     // is now a redirect to `home`; a nav item pointing at a redirect is a
     // second entry to one screen.
-    { labelBn: G.org, items: [P.home, P.academic, P.calendar] },
+    { labelBn: G.org, items: [P.home, P.academic, P.rooms, P.calendar] },
     // P5. `imports` was reachable only from the More menu, and a principal is
     // the role bulk import was built for — 784 rows on day one is their job,
     // not a thing they do so rarely it belongs in an overflow list.
@@ -202,7 +203,7 @@ const IT_ADMIN: RoleNav = {
   groups: [
     // §28: structure and accounts, not teaching. An IT admin has no class, so
     // there is no attendance row here to invite a 403.
-    { labelBn: G.org, items: [P.home, P.academic, P.rollover] },
+    { labelBn: G.org, items: [P.home, P.academic, P.rooms, P.rollover] },
     { labelBn: G.people, items: [P.users, P.students, P.importsStaff, P.staffatt] },
     { labelBn: G.admin, items: [P.branding, P.settings, P.system, P.audit] },
     TAIL,
@@ -212,7 +213,7 @@ const IT_ADMIN: RoleNav = {
 
 const COORDINATOR: RoleNav = {
   groups: [
-    { labelBn: G.org, items: [P.home, P.academic, P.routine, P.calendar] },
+    { labelBn: G.org, items: [P.home, P.academic, P.routine, P.rooms, P.calendar] },
     // M6 sits next to `substitute`: the register is what the finder reads.
     { labelBn: G.people, items: [P.students, P.importsStu, P.attendance, P.staffatt, P.substitute] },
     { labelBn: G.teach, items: [P.publish, P.results, P.documents] },

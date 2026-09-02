@@ -13,10 +13,12 @@ import substitute from './substitute.ts';
 import examroutine from './examroutine.ts';
 import generation from './generation.ts';
 import editor from './editor.ts';
+// P0. The room register — nothing in the product could write `rooms` until now.
+import rooms from './rooms.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
-const ROUTES: Record<string, Handler> = { routine, solve, substitute, examroutine, generation, editor };
+const ROUTES: Record<string, Handler> = { routine, solve, substitute, examroutine, generation, editor, rooms };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? '/', 'http://internal').pathname;

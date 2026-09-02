@@ -1510,8 +1510,8 @@ function evaluateSoftConstraints(input) {
   const subject = (id) => input.subjectNames.get(id) ?? "\u09AC\u09BF\u09B7\u09AF\u09BC";
   const perTeacher = /* @__PURE__ */ new Map();
   for (const s of input.slots) {
-    const list = perTeacher.get(s.teacherId);
-    if (list) list.push(s);
+    const list2 = perTeacher.get(s.teacherId);
+    if (list2) list2.push(s);
     else perTeacher.set(s.teacherId, [s]);
   }
   for (const [teacherId, slots] of perTeacher) {
@@ -1552,8 +1552,8 @@ function evaluateSoftConstraints(input) {
   const perSectionSubject = /* @__PURE__ */ new Map();
   for (const s of input.slots) {
     const k = `${s.sectionId}|${s.subjectId}`;
-    const list = perSectionSubject.get(k);
-    if (list) list.push(s);
+    const list2 = perSectionSubject.get(k);
+    if (list2) list2.push(s);
     else perSectionSubject.set(k, [s]);
   }
   for (const [key, slots] of perSectionSubject) {
@@ -1590,8 +1590,8 @@ function evaluateSoftConstraints(input) {
   for (const [teacherId, slots] of perTeacher) {
     const byDay = /* @__PURE__ */ new Map();
     for (const s of slots) {
-      const list = byDay.get(s.dayOfWeek);
-      if (list) list.push(s);
+      const list2 = byDay.get(s.dayOfWeek);
+      if (list2) list2.push(s);
       else byDay.set(s.dayOfWeek, [s]);
     }
     for (const [day2, daySlots] of [...byDay].sort((a, b) => a[0] - b[0])) {
@@ -1642,16 +1642,16 @@ var IntervalBook = class {
   byKey = /* @__PURE__ */ new Map();
   add(resourceId, day2, startsAt, endsAt) {
     const k = `${resourceId}|${day2}`;
-    const list = this.byKey.get(k);
-    if (list) list.push([startsAt, endsAt]);
+    const list2 = this.byKey.get(k);
+    if (list2) list2.push([startsAt, endsAt]);
     else this.byKey.set(k, [[startsAt, endsAt]]);
   }
   overlaps(resourceId, day2, startsAt, endsAt) {
-    const list = this.byKey.get(`${resourceId}|${day2}`);
-    if (!list) return false;
+    const list2 = this.byKey.get(`${resourceId}|${day2}`);
+    if (!list2) return false;
     const s = norm(startsAt);
     const e = norm(endsAt);
-    return list.some(([bs, be]) => s < norm(be) && norm(bs) < e);
+    return list2.some(([bs, be]) => s < norm(be) && norm(bs) < e);
   }
 };
 function norm(t) {
@@ -1673,8 +1673,8 @@ function groupIntoUnits(demand, poolOf) {
       continue;
     }
     const k = `${d.sectionId}|${pool}`;
-    const list = byPool.get(k);
-    if (list) list.push(d);
+    const list2 = byPool.get(k);
+    if (list2) list2.push(d);
     else byPool.set(k, [d]);
   }
   for (const [k, members] of byPool) {
@@ -2241,8 +2241,8 @@ var RmsSolver = class {
       [capabilities]
     );
     for (const r of rows) {
-      const list = map.get(r.capability);
-      if (list) list.push(r.id);
+      const list2 = map.get(r.capability);
+      if (list2) list2.push(r.id);
       else map.set(r.capability, [r.id]);
     }
     for (const c of capabilities) if (!map.has(c)) map.set(c, []);
@@ -3026,7 +3026,14 @@ async function loadGrid(c, sectionId) {
     `SELECT s.id, s.day_of_week, s.period_no,
             sub.name_bn AS subject_bn,
             u.full_name_bn AS teacher_name,
-            rm.name AS room_name,
+            -- rooms has code (NOT NULL) and name_bn (nullable). It has no
+            -- column called name, and asking for one made both of this file's
+            -- slot queries fail at parse time, so the routine editor has never
+            -- opened a grid and the clash sentence below has never been shown.
+            -- COALESCE rather than code alone because the value lands inside a
+            -- Bangla sentence, where ROOM-204 reads worse than a room's own
+            -- name when the school has bothered to give it one.
+            COALESCE(rm.name_bn, rm.code) AS room_name,
             s.is_double, s.double_group_id, s.parallel_pool, s.is_pinned, s.row_version
        FROM routine_slots s
        LEFT JOIN subjects sub ON sub.id = s.subject_id
@@ -3148,7 +3155,8 @@ async function explainConflict(c, constraint, slot, day2, startsAt, endsAt) {
     return new HttpError(409, "\u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u0986\u09B0\u09C7\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099B\u09C7\u0964", "slot_conflict");
   }
   const r = await c.query(
-    `SELECT sub.name_bn AS subject_bn, u.full_name_bn AS teacher_name, rm.name AS room_name,
+    `SELECT sub.name_bn AS subject_bn, u.full_name_bn AS teacher_name,
+            COALESCE(rm.name_bn, rm.code) AS room_name,
             cl.name_bn || '-' || sec.name AS section_label
        FROM routine_slots s
        LEFT JOIN subjects sub ON sub.id = s.subject_id
@@ -3198,9 +3206,296 @@ async function publish(c, userId, routineId) {
   return { ok: true, unfilled: Number(rt.unfilled) };
 }
 
-// services/rms-svc/api/index.ts
-var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5, editor: handler6 };
+// packages/server-core/src/audit.ts
+async function writeAudit(client, actor, entry) {
+  const sp = `audit_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await client.query(`SAVEPOINT ${sp}`);
+  } catch {
+  }
+  try {
+    await client.query(
+      `INSERT INTO audit.activity_log
+         (tenant_id, actor_id, actor_role, action, entity_type, entity_id,
+          before_state, after_state)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        actor.tenantId,
+        actor.userId,
+        actor.role,
+        entry.action,
+        entry.entityType,
+        entry.entityId ?? null,
+        entry.before === void 0 ? null : JSON.stringify(entry.before),
+        entry.after === void 0 ? null : JSON.stringify(entry.after)
+      ]
+    );
+    try {
+      await client.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch {
+    }
+  } catch {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+    } catch {
+    }
+  }
+}
+
+// services/rms-svc/api/rooms.ts
+var ROOM_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var CODE_MAX = 20;
+var NAME_MAX = 80;
+var BUILDING_MAX = 60;
+var CAPACITY_MIN = 1;
+var CAPACITY_MAX = 1e3;
+var FLOOR_MIN = -2;
+var FLOOR_MAX = 20;
+var CAPS_MAX = 8;
+var CAPS_MAX_BN = "\u09EE";
 async function handler7(req, res) {
+  const cors = corsHeaders([], "GET, POST, PATCH, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireStaff(claims);
+      json(res, 200, await list(db, ctx), cors);
+      return;
+    }
+    if (req.method === "POST") {
+      requireRole(claims, ROOM_ROLES);
+      json(res, 200, await create(db, ctx, req), cors);
+      return;
+    }
+    if (req.method === "PATCH") {
+      requireRole(claims, ROOM_ROLES);
+      json(res, 200, await update(db, ctx, req), cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    const e = err;
+    if (e.code === "23505" && e.constraint === "rooms_tenant_id_code_key") {
+      json(res, 409, {
+        error: "duplicate_code",
+        message: "\u098F\u0987 \u0995\u09CB\u09A1\u09C7\u09B0 \u0995\u0995\u09CD\u09B7 \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u0986\u099B\u09C7\u0964",
+        field: "code"
+      }, cors);
+      return;
+    }
+    console.error("[rms/rooms] unexpected error", err);
+    json(res, 500, { error: "internal_error" }, cors);
+  }
+}
+var shape = (r) => ({
+  id: r.id,
+  code: r.code,
+  nameBn: r.name_bn,
+  building: r.building,
+  floorNo: r.floor_no,
+  capacity: r.capacity,
+  capabilities: r.capabilities ?? [],
+  isBookable: r.is_bookable,
+  homeSections: Number(r.home_sections),
+  slotCount: Number(r.slot_count),
+  hallCount: Number(r.hall_count)
+});
+async function capabilityOptions(c) {
+  const { rows } = await c.query(
+    `SELECT cap FROM (
+       SELECT DISTINCT requires_capability AS cap FROM subject_catalogue WHERE requires_capability IS NOT NULL
+       UNION
+       SELECT DISTINCT requires_capability      FROM subjects           WHERE requires_capability IS NOT NULL
+     ) u ORDER BY cap`
+  );
+  return rows.map((r) => r.cap);
+}
+async function list(db, ctx) {
+  return db.withTenant(ctx, async (c) => {
+    const { rows } = await c.query(
+      // The three counts exist so the "take out of service" confirmation can
+      // say what the room is currently carrying, instead of asking blind.
+      `SELECT r.id, r.code, r.name_bn, r.building, r.floor_no, r.capacity,
+              r.capabilities, r.is_bookable,
+              (SELECT count(*) FROM sections s WHERE s.home_room_id = r.id) AS home_sections,
+              (SELECT count(*) FROM routine_slots rs
+                 JOIN routines rt ON rt.id = rs.routine_id
+                WHERE rs.room_id = r.id AND rs.status = 'active'
+                  AND rt.status IN ('draft','review','active'))            AS slot_count,
+              (SELECT count(*) FROM exam_halls h WHERE h.room_id = r.id)   AS hall_count
+         FROM rooms r
+        ORDER BY r.is_bookable DESC, r.code`
+    );
+    return {
+      canManage: ROOM_ROLES.includes(ctx.role),
+      capabilityOptions: await capabilityOptions(c),
+      rooms: rows.map(shape)
+    };
+  });
+}
+async function clean(body, allowed, opts) {
+  const code = (body.code ?? "").trim();
+  if (opts.requireCode || body.code !== void 0) {
+    if (!code) throw new HttpError(400, "\u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u0995\u09CB\u09A1 \u09B2\u09BF\u0996\u09C1\u09A8\u0964", "bad_code", { field: "code" });
+    if (code.length > CODE_MAX) {
+      throw new HttpError(400, `\u0995\u09CB\u09A1 ${CODE_MAX} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`, "bad_code", { field: "code" });
+    }
+  }
+  const nameBn = (body.nameBn ?? "").trim();
+  if (nameBn.length > NAME_MAX) {
+    throw new HttpError(400, `\u09A8\u09BE\u09AE ${NAME_MAX} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`, "bad_name", { field: "nameBn" });
+  }
+  const building = (body.building ?? "").trim();
+  if (building.length > BUILDING_MAX) {
+    throw new HttpError(400, `\u09AD\u09AC\u09A8\u09C7\u09B0 \u09A8\u09BE\u09AE ${BUILDING_MAX} \u0985\u0995\u09CD\u09B7\u09B0\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`, "bad_building", { field: "building" });
+  }
+  const floorNo = body.floorNo === void 0 || body.floorNo === null ? null : Number(body.floorNo);
+  if (floorNo !== null && (!Number.isInteger(floorNo) || floorNo < FLOOR_MIN || floorNo > FLOOR_MAX)) {
+    throw new HttpError(400, `\u09A4\u09B2\u09BE ${FLOOR_MIN} \u09A5\u09C7\u0995\u09C7 ${FLOOR_MAX}-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`, "bad_floor", { field: "floorNo" });
+  }
+  const capacity = body.capacity === void 0 ? 60 : Number(body.capacity);
+  if (!Number.isInteger(capacity) || capacity < CAPACITY_MIN || capacity > CAPACITY_MAX) {
+    throw new HttpError(
+      400,
+      `\u09A7\u09BE\u09B0\u09A3\u0995\u09CD\u09B7\u09AE\u09A4\u09BE ${CAPACITY_MIN} \u09A5\u09C7\u0995\u09C7 ${CAPACITY_MAX}-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`,
+      "bad_capacity",
+      { field: "capacity" }
+    );
+  }
+  let capabilities = [];
+  if (body.capabilities !== void 0) {
+    if (!Array.isArray(body.capabilities)) {
+      throw new HttpError(400, "\u09B8\u09C1\u09AC\u09BF\u09A7\u09BE\u09B0 \u09A4\u09BE\u09B2\u09BF\u0995\u09BE \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_capabilities", { field: "capabilities" });
+    }
+    capabilities = [...new Set(body.capabilities.map((x) => String(x).trim()).filter(Boolean))].sort();
+    if (capabilities.length > CAPS_MAX) {
+      throw new HttpError(400, `\u09B8\u09C1\u09AC\u09BF\u09A7\u09BE ${CAPS_MAX_BN}\u099F\u09BF\u09B0 \u09AC\u09C7\u09B6\u09BF \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964`, "bad_capabilities", { field: "capabilities" });
+    }
+    for (const cap of capabilities) {
+      if (!allowed.includes(cap)) {
+        throw new HttpError(
+          400,
+          `"${cap}" \u2014 \u098F\u0987 \u09B8\u09C1\u09AC\u09BF\u09A7\u09BE\u099F\u09BF \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09A6\u09B0\u0995\u09BE\u09B0 \u09B9\u09AF\u09BC \u09A8\u09BE\u0964`,
+          "bad_capability",
+          { field: "capabilities" }
+        );
+      }
+    }
+  }
+  return { code, nameBn, building, floorNo, capacity, capabilities };
+}
+async function create(db, ctx, req) {
+  const body = await readJson(req);
+  return db.withTenant(ctx, async (c) => {
+    const v = await clean(body, await capabilityOptions(c), { requireCode: true });
+    const { rows } = await c.query(
+      `INSERT INTO rooms (tenant_id, code, name_bn, building, floor_no, capacity, capabilities, is_bookable)
+       VALUES (app.current_tenant(), $1, NULLIF($2,''), NULLIF($3,''), $4, $5, $6::text[], true)
+       RETURNING id, code, name_bn, building, floor_no, capacity, capabilities, is_bookable,
+                 0 AS home_sections, 0 AS slot_count, 0 AS hall_count`,
+      [v.code, v.nameBn, v.building, v.floorNo, v.capacity, v.capabilities]
+    );
+    const row = rows[0];
+    await writeAudit(c, ctx, {
+      action: "academic.room.create",
+      entityType: "room",
+      entityId: row.id,
+      after: {
+        code: row.code,
+        nameBn: row.name_bn,
+        building: row.building,
+        floorNo: row.floor_no,
+        capacity: row.capacity,
+        capabilities: v.capabilities
+      }
+    });
+    return shape(row);
+  }, { write: true });
+}
+async function update(db, ctx, req) {
+  const body = await readJson(req);
+  const id = (body.id ?? "").trim();
+  if (!UUID_RE6.test(id)) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u0995\u0995\u09CD\u09B7 \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "room_required", { field: "id" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const before = await c.query(
+      `SELECT id, code, name_bn, building, floor_no, capacity, capabilities, is_bookable,
+              0 AS home_sections, 0 AS slot_count, 0 AS hall_count
+         FROM rooms WHERE id = $1`,
+      [id]
+    );
+    if (before.rowCount === 0) {
+      throw new HttpError(404, "\u098F\u0987 \u0995\u0995\u09CD\u09B7\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "room_not_found");
+    }
+    const was = before.rows[0];
+    const v = await clean({
+      code: body.code ?? was.code,
+      nameBn: body.nameBn ?? was.name_bn ?? "",
+      building: body.building ?? was.building ?? "",
+      floorNo: body.floorNo !== void 0 ? body.floorNo : was.floor_no,
+      capacity: body.capacity ?? was.capacity ?? 60,
+      capabilities: body.capabilities ?? was.capabilities ?? []
+    }, await capabilityOptions(c), { requireCode: true });
+    const bookable = body.isBookable === void 0 ? was.is_bookable : Boolean(body.isBookable);
+    const { rows } = await c.query(
+      `UPDATE rooms
+          SET code = $2, name_bn = NULLIF($3,''), building = NULLIF($4,''),
+              floor_no = $5, capacity = $6, capabilities = $7::text[], is_bookable = $8
+        WHERE id = $1
+       RETURNING id, code, name_bn, building, floor_no, capacity, capabilities, is_bookable,
+                 (SELECT count(*) FROM sections s WHERE s.home_room_id = rooms.id) AS home_sections,
+                 (SELECT count(*) FROM routine_slots rs
+                    JOIN routines rt ON rt.id = rs.routine_id
+                   WHERE rs.room_id = rooms.id AND rs.status = 'active'
+                     AND rt.status IN ('draft','review','active'))            AS slot_count,
+                 (SELECT count(*) FROM exam_halls h WHERE h.room_id = rooms.id) AS hall_count`,
+      [id, v.code, v.nameBn, v.building, v.floorNo, v.capacity, v.capabilities, bookable]
+    );
+    const row = rows[0];
+    const action = was.is_bookable === row.is_bookable ? "academic.room.update" : row.is_bookable ? "academic.room.reactivate" : "academic.room.deactivate";
+    await writeAudit(c, ctx, {
+      action,
+      entityType: "room",
+      entityId: id,
+      before: {
+        code: was.code,
+        nameBn: was.name_bn,
+        building: was.building,
+        floorNo: was.floor_no,
+        capacity: was.capacity,
+        capabilities: was.capabilities ?? [],
+        isBookable: was.is_bookable
+      },
+      after: {
+        code: row.code,
+        nameBn: row.name_bn,
+        building: row.building,
+        floorNo: row.floor_no,
+        capacity: row.capacity,
+        capabilities: v.capabilities,
+        isBookable: row.is_bookable
+      }
+    });
+    return shape(row);
+  }, { write: true });
+}
+
+// services/rms-svc/api/index.ts
+var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5, editor: handler6, rooms: handler7 };
+async function handler8(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -3215,5 +3510,5 @@ async function handler7(req, res) {
   return route(req, res);
 }
 export {
-  handler7 as default
+  handler8 as default
 };

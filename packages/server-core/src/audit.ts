@@ -73,7 +73,17 @@ export type AuditAction =
   // M6. A teacher marked present, absent or on leave for a day. Re-marking
   // overwrites the row, so the correction history lives here and nowhere
   // else — which is why `before` carries the previous status.
-  | 'ops.staff_attendance.mark';
+  | 'ops.staff_attendance.mark'
+  // P0. The room register. `academic.*` because rooms live in migration 003
+  // beside classes and sections and are written by the same four roles.
+  // `deactivate` is separated from `update` for the same reason
+  // `ops.user.deactivate` is: "took a room out of service" is a different
+  // event from "corrected its name", and the register gets read to answer the
+  // first question.
+  | 'academic.room.create'
+  | 'academic.room.update'
+  | 'academic.room.deactivate'
+  | 'academic.room.reactivate';
 
 export interface AuditEntry {
   action: AuditAction;

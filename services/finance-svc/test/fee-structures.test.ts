@@ -69,13 +69,18 @@ async function seed(): Promise<void> {
 
   await asBootstrap(db, asHead, async (c) => {
     await c.query(
-      `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
-       VALUES ($1,'p0-fee-a','ফি বিদ্যালয়','Fee School','bangla_medium','secondary')`, [T]);
-    // The finance service is only in the standard and complete plans — the
-    // default pilot plan does not carry it, and withTenant refuses the whole
-    // endpoint with tenant_blocked. A school that wants fee management buys a
-    // plan that has it, so the fixture buys one.
-    await c.query(`UPDATE tenants SET plan_code = 'standard' WHERE id = $1`, [T]);
+      // The finance service is only in the standard and complete plans — the
+      // default pilot plan does not carry it, and withTenant refuses the whole
+      // endpoint with tenant_blocked. A school that wants fee management buys
+      // a plan that has it, so the fixture is created holding one.
+      //
+      // Set in the INSERT rather than a following UPDATE: migration 069 made
+      // plan_code platform-owned, so `UPDATE tenants SET plan_code` from the
+      // application role is refused — which is the point of it. A school
+      // cannot upgrade its own plan, and neither can a fixture pretending to
+      // be one.
+      `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, plan_code)
+       VALUES ($1,'p0-fee-a','ফি বিদ্যালয়','Fee School','bangla_medium','secondary','standard')`, [T]);
     await c.query(
       `INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status) VALUES
          ($1,$3,'প্রধান শিক্ষক','Head','+8801799680001','active'),
@@ -121,9 +126,8 @@ async function seed(): Promise<void> {
 
   await asBootstrap(db, asHeadB, async (c) => {
     await c.query(
-      `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
-       VALUES ($1,'p0-fee-b','অন্য বিদ্যালয়','Other','bangla_medium','secondary')`, [OTHER]);
-    await c.query(`UPDATE tenants SET plan_code = 'standard' WHERE id = $1`, [OTHER]);
+      `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, plan_code)
+       VALUES ($1,'p0-fee-b','অন্য বিদ্যালয়','Other','bangla_medium','secondary','standard')`, [OTHER]);
     await c.query(
       `INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status)
        VALUES ($1,$2,'প্রধান খ','Head B','+8801799680004','active')`, [HEAD_B, OTHER]);

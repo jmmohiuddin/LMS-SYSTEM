@@ -10526,3 +10526,102 @@ three teacher roles. Backup and one restore drill carry genuine production evide
 
 **Outcome:** NOT READY FOR PILOT, on five items (B-46…B-50 plus the SMS aggregator and the
 049–064 catch-up). P9 not started, and blocked on four prerequisites of its own.
+
+---
+
+# P0 — core write paths + production operations   (2026-09-02) · **IN PROGRESS**
+
+The four missing writers, the operational gaps, and the defects found
+underneath them. Delivered as verified checkpoints rather than one commit.
+
+## Checkpoint 1 — `dbd838e`
+
+**The routine editor's query had never parsed.** `services/rms-svc/api/editor.ts`
+selected `rm.name`; `rooms` has `code` and `name_bn` and no `name`. PostgreSQL
+rejects that at parse time, so BOTH of the editor's slot queries failed on every
+call — the grid has never rendered, and the Bangla clash sentence it builds has
+never been shown to anyone. Now `COALESCE(rm.name_bn, rm.code)`, matching the
+precedent at `ops-svc/api/document.ts:457`.
+
+Nothing caught it because nothing ran it: the rms suites exercise the SOLVER,
+and the editor sits downstream of a `routines` row that no code could create.
+`sql-columns.test.ts` now resolves every SQL alias in the service against the
+live schema. Its first draft scanned whole files and reported four false
+positives that were TypeScript property accesses on a result row; it reads only
+SQL template literals now.
+
+**Three platform controls reported success on a school that does not exist.**
+`/opsstate`, `/portal`, `/service` and `/grace` ran `UPDATE … WHERE tenant_id = $1`
+with no rowCount check, wrote an audit row, and returned 200. `/status` was
+better and still wrong: `set_tenant_status` raises P0002, only 02000 was mapped,
+so it answered 500. Fixed the way migration 053 fixed `set_student_cap` —
+`requireExistingTenant` before any mutation, so no phantom audit row is written,
+plus a `rows.length` check in `afterChange()`, which every operations endpoint
+returns through and a new endpoint cannot forget.
+
+## Checkpoint 2 — `9af6a9d` · workstream A3 complete
+
+**`rooms` had no writer and no write scope.** Read-only since migration 003 —
+the solver, the routine grid, the admit card and the seat plan all read it, and
+across 112 institutions there were **zero rows**. It was also writable by
+anybody: a session holding `app.role = 'student'` inserted one, proved against a
+live database, and proved refused after migration 065.
+
+Nobody gets DELETE. `exam_halls.room_id` is ON DELETE RESTRICT while
+`sections.home_room_id` and `routine_slots.room_id` are ON DELETE SET NULL, so a
+delete either fails on a hall or makes every past routine forget where a class
+was held. Capabilities are read from the database rather than a constant: the
+valid set is whatever the school's own subjects actually require.
+
+My own test caught a PATCH bug before it shipped — omitted fields fell through
+to create-time defaults, so `{id, isBookable:false}` silently reset capacity to
+60 and wiped the lab capabilities that decide which practicals can be placed.
+
+## Checkpoint 3 — `7f9c7be` · workstream A1 complete
+
+**Nothing could create an exam, and publishing had never executed.** Each
+defect hid the other: with no exam to publish, `POST /academics/publish` was
+unreachable and its SQL was never sent to a server. That SQL was
+
+    UPDATE exam_marks m … FROM exam_subjects es,
+      LATERAL app.compute_subject_grade(…, m.cq_marks, …)
+
+which PostgreSQL rejects at parse time — an UPDATE's target is not in scope for
+a LATERAL in its own FROM list. Rewritten as a CTE, with the same join
+predicates, the same filter, the same arguments and the same `row_version + 1`.
+
+Migration 066 gives both exam tables the write scope they never had; a subject
+teacher's session could insert an exam before it. An exam is created WITH its
+papers, maxima copied from `class_subjects` per migration 005's own
+instruction — an exam with no papers is invisible, because the marks feed INNER
+JOINs them, so a create that would produce none rolls back entirely.
+
+**Found by using the screen rather than reading it:** creating a room
+succeeded, said so, and the list underneath still showed the empty state.
+`/api/v1/rms/` is cached stale-while-revalidate as reference data — right for a
+published timetable, wrong for a register read before a write and re-read after
+it. Now network-only for `rooms` and `exams`; the timetable stays cached. B-59.
+
+**An unexplained flake, instrumented rather than dismissed:** an ops-svc suite
+failed once in ten full runs, and the runner's 40-line tail had scrolled past
+the cause. `test-all.mjs` now dumps full output to a file on any failure. B-58,
+deliberately left OPEN — an intermittent failure that was never explained is
+not a passing test.
+
+## Gate at checkpoint 3
+
+| Check | Result |
+|---|---|
+| Full suite | **1,644 passing**, 12 workspaces |
+| SQL suites | **26/26**, on a database built only from migrations |
+| Migrations | **66/66**, applied clean to a fresh database |
+| TypeScript — all three CI configs | 0 errors, baseline 69 |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Browser | room created, listed and deactivated through a confirm proved reachable by `elementFromPoint` |
+| Both fixes proved load-bearing | reverting the CTE reproduces the parse error across 5 tests; dropping `exams_insert_scope` breaks the database-refusal test |
+| `index.html` | `496199bd` |
+
+## Still to do in P0
+
+A2 fee structures · A4 routine authoring · B production scheduling ·
+C alerting and the deadman · D entitlement bypasses · E fresh-tenant E2E.

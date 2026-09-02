@@ -253,14 +253,48 @@ async function setStatus(db: Db, ctx: Ctx, req: IncomingMessage) {
     );
     if (rows.length === 0) throw new HttpError(403, 'পরিবর্তনের অনুমতি নেই', 'forbidden');
 
+    // M1. Deactivation ENDS the sessions, in the same transaction.
+    //
+    // Blocking the next refresh is not the same as signing somebody out.
+    // The access token already in their hand stays valid until it expires
+    // (15 minutes, by design — a stateless token is what makes the rest of
+    // the system fast), but without this the REFRESH token kept minting new
+    // ones and the session never ended at all. The final audit proved that
+    // against a running stack.
+    //
+    // Revoked, never deleted: `user_sessions` rows are the record of which
+    // device was signed in and when it stopped, and the reason is written
+    // down so an operator reading the table later knows this was an act
+    // rather than an expiry.
+    let revoked = 0;
+    if (!body.active) {
+      const { rowCount } = await c.query(
+        `UPDATE user_sessions
+            SET revoked_at = now(), revoked_reason = 'account_deactivated'
+          WHERE tenant_id = app.current_tenant()
+            AND user_id = $1
+            AND revoked_at IS NULL`,
+        [userId],
+      );
+      revoked = rowCount ?? 0;
+    }
+
     await writeAudit(c, ctx, {
       action: body.active ? 'ops.user.reactivate' : 'ops.user.deactivate',
       entityType: 'user',
       entityId: userId,
       before: { status: before[0].status },
-      after: { status: rows[0].status },
+      after: { status: rows[0].status, sessionsRevoked: revoked },
     });
 
-    return { id: userId, nameBn: before[0].name_bn, status: rows[0].status };
+    return {
+      id: userId,
+      nameBn: before[0].name_bn,
+      status: rows[0].status,
+      // Surfaced so the screen can say "signed out of 2 devices" rather
+      // than leaving an operator to wonder whether the phone in the staff
+      // room is still logged in.
+      sessionsRevoked: revoked,
+    };
   });
 }

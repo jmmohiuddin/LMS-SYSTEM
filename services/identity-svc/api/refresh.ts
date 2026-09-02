@@ -56,6 +56,30 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       const session = sessionRes.rows[0];
       if (!session) throw new HttpError(401, 'refresh token is invalid or expired', 'invalid_refresh_token');
 
+      // M1. The account must still be a live account.
+      //
+      // A session is not a standing permission. This endpoint mints a fresh
+      // access token AND rotates the refresh token, so without this check a
+      // deactivated user never expires: they simply keep refreshing. The
+      // final audit proved it against a running stack — set a real
+      // principal to `left`, call this endpoint, receive a 200 and a token
+      // carrying the principal role.
+      //
+      // `loadRoles` now refuses the same states, so this is the second of
+      // two layers. It exists for the message: "account is left" tells the
+      // office what happened, where "no active role assigned" sends them
+      // hunting through role assignments for a problem that is not there.
+      const accountRes = await client.query<{ status: string }>(
+        `SELECT status::text AS status FROM users
+          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [session.user_id, tenantId],
+      );
+      const account = accountRes.rows[0];
+      if (!account) throw new HttpError(403, 'account no longer exists', 'account_not_active');
+      if (account.status !== 'active' && account.status !== 'invited') {
+        throw new HttpError(403, `account is ${account.status}`, 'account_not_active');
+      }
+
       const { primaryRole, roles } = await loadRoles(client, tenantId, session.user_id);
       if (!primaryRole) throw new HttpError(403, 'account has no active role assigned', 'no_active_role');
 

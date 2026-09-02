@@ -485,23 +485,14 @@ var MfsWebhookProcessor = class {
           `INSERT INTO payment_receipts
              (tenant_id, receipt_no, mfs_transaction_id, invoice_id, student_id,
               amount, method)
-           VALUES (
-             app.current_tenant(),
-             'RCP-' || to_char(now(), 'YYYY-MM') || '-' ||
-               lpad(
-                 (1 + COALESCE((
-                   SELECT max(substring(receipt_no from '\\d+$')::int)
-                     FROM payment_receipts
-                    WHERE receipt_no LIKE 'RCP-' || to_char(now(), 'YYYY-MM') || '-%'
-                 ), 0))::text,
-                 5, '0'
-               ),
-             $1, $2, $3, $4, $5)
-           ON CONFLICT (tenant_id, receipt_no) DO NOTHING
+           VALUES (app.current_tenant(), app.next_receipt_no(), $1, $2, $3, $4, $5)
            RETURNING receipt_no`,
           [txId, invoiceId, invoice.student_id, amount, provider]
         );
         receiptNo = receiptInsert.rows[0]?.receipt_no ?? null;
+        if (!receiptNo) {
+          throw new Error("payment applied but no receipt was issued");
+        }
         const bankCode = provider === "bkash" ? "MFS-BKASH" : provider === "nagad" ? "MFS-NAGAD" : provider === "rocket" ? "MFS-ROCKET" : "CASH";
         const accounts = await client.query(
           `SELECT code, id FROM ledger_accounts

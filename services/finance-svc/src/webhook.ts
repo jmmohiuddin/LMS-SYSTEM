@@ -300,30 +300,42 @@ export class MfsWebhookProcessor {
         );
         invoiceStatus = applied.rows[0]?.status ?? null;
 
-        // Digital receipt (PRD §4). Number is RCP-YYYY-MM-<seq within
-        // tenant/month>, generated in SQL so concurrent webhooks don't
-        // collide — the UNIQUE(tenant_id, receipt_no) index is authoritative.
+        // Digital receipt (PRD §4), RCP-YYYY-MM-<seq within tenant/month>.
+        //
+        // This used to build the number inline as max()+1 over the month and
+        // write it `ON CONFLICT (tenant_id, receipt_no) DO NOTHING RETURNING
+        // receipt_no`, reading the result as `rows[0]?.receipt_no ?? null`.
+        // Its comment claimed that generating the number in SQL stopped
+        // concurrent webhooks colliding. It does not: two transactions read
+        // the same maximum and compute the same number. One inserted; the
+        // other got zero rows from DO NOTHING, `?.` turned that into
+        // undefined, `?? null` into null, and nothing checked it.
+        //
+        // `app.apply_payment_to_invoice` had already run by then. So the
+        // parent's money was applied, the invoice marked paid and the ledger
+        // posted, with NO RECEIPT and no error anywhere — B-48's "silently
+        // issues no receipt".
+        //
+        // app.next_receipt_no() (migration 070) allocates under an advisory
+        // lock on (tenant, month), so the second transaction waits instead of
+        // duplicating. There is no ON CONFLICT any more: a collision now means
+        // something is genuinely wrong, and it must take the transaction down
+        // rather than leave money recorded against nothing.
         const receiptInsert = await client.query<{ receipt_no: string }>(
           `INSERT INTO payment_receipts
              (tenant_id, receipt_no, mfs_transaction_id, invoice_id, student_id,
               amount, method)
-           VALUES (
-             app.current_tenant(),
-             'RCP-' || to_char(now(), 'YYYY-MM') || '-' ||
-               lpad(
-                 (1 + COALESCE((
-                   SELECT max(substring(receipt_no from '\\d+$')::int)
-                     FROM payment_receipts
-                    WHERE receipt_no LIKE 'RCP-' || to_char(now(), 'YYYY-MM') || '-%'
-                 ), 0))::text,
-                 5, '0'
-               ),
-             $1, $2, $3, $4, $5)
-           ON CONFLICT (tenant_id, receipt_no) DO NOTHING
+           VALUES (app.current_tenant(), app.next_receipt_no(), $1, $2, $3, $4, $5)
            RETURNING receipt_no`,
           [txId, invoiceId, invoice.student_id, amount, provider],
         );
         receiptNo = receiptInsert.rows[0]?.receipt_no ?? null;
+        if (!receiptNo) {
+          // Unreachable with the INSERT above, which either returns a row or
+          // throws. Kept as the assertion it is: if a later edit reintroduces
+          // a conflict clause, a payment must not go through receiptless.
+          throw new Error('payment applied but no receipt was issued');
+        }
 
         // Balanced ledger entries (PRD §4 "ledger reconciliation"). One
         // batch = two rows: DEBIT the MFS provider's clearing asset,

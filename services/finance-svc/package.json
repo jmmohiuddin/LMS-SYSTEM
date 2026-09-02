@@ -1,0 +1,16 @@
+{
+  "name": "@shikhon/finance-svc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fee heads and structures, invoice generation, ledger and receipts.",
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

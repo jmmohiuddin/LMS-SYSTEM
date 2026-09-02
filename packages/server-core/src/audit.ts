@@ -87,7 +87,13 @@ export type AuditAction =
   // P0. Exam authoring. Everything below an exam — marks, grades, GPA, rank,
   // publish — was complete and unreachable, because nothing could create one.
   | 'academic.exam.create'
-  | 'academic.exam.update';
+  | 'academic.exam.update'
+  // P0/A2. The price list. Financial configuration is sensitive: what a fee
+  // costs, when it is due and what the late charge is are all answers a
+  // parent may one day dispute.
+  | 'finance.fee_structure.create'
+  | 'finance.fee_structure.update'
+  | 'finance.fee_structure.delete';
 
 export interface AuditEntry {
   action: AuditAction;

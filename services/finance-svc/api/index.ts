@@ -26,6 +26,10 @@ import { corsHeaders, query, readJson, json, HttpError } from '../../../packages
 import { mfsPaymentsEnabled } from '../../../packages/server-core/src/go-live.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.ts';
+// P0/A2. The price list. `fee_structures` had no writer at all, so the
+// invoice run below joined an empty table and billed nothing, for every
+// school, every month.
+import feestructures from './feestructures.ts';
 
 /**
  * The purchasable service this endpoint IS (migration 051 catalogue).
@@ -465,10 +469,11 @@ const ROUTES: Record<string, (req: IncomingMessage, res: ServerResponse, cors: R
   receipts,
   generate,
   ledger,
+  feestructures,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const cors = corsHeaders();
+  const cors = corsHeaders([], 'GET, POST, PATCH, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') {
     res.writeHead(204, cors);
     res.end();
@@ -493,7 +498,23 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     await route(req, res, cors);
   } catch (err) {
     if (err instanceof HttpError) {
-      json(res, err.status, { error: err.code ?? 'error', message: err.message }, cors);
+      // `detail` carries `{ field }`, which is what lets a form put the error
+      // against the box that caused it instead of at the top of the page.
+      json(res, err.status,
+        { error: err.code ?? 'error', message: err.message, ...(err.detail ?? {}) }, cors);
+      return;
+    }
+    const e = err as { code?: string; constraint?: string };
+    // Setting the same fee twice for one class in one year is a thing an
+    // office does by accident, not a 500. The constraint is
+    // fee_structures_tenant_id_fee_head_id_academic_year_id_class_key.
+    if (e.code === '23505' && ((e.constraint ?? '').startsWith('fee_structures_tenant_id')
+      || e.constraint === 'uq_fee_structure_scope')) {
+      json(res, 409, {
+        error: 'duplicate_structure',
+        message: 'এই শিক্ষাবর্ষে এই শ্রেণির জন্য এই ফি ইতিমধ্যে নির্ধারিত আছে।',
+        field: 'feeHeadId',
+      }, cors);
       return;
     }
     console.error(`[finance/${sub}] unexpected error`, err);

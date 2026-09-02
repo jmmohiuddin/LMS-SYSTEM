@@ -1320,6 +1320,12 @@ async function authenticate(req) {
     throw new HttpError(401, "invalid or expired access token", "unauthorized");
   }
 }
+var STAFF_BLOCKLIST = /* @__PURE__ */ new Set(["student", "guardian"]);
+function requireStaff(claims) {
+  if (STAFF_BLOCKLIST.has(claims.role)) {
+    throw new HttpError(403, "this endpoint is restricted to staff", "forbidden");
+  }
+}
 function requireRole(claims, allowed) {
   if (!allowed.includes(claims.role)) {
     throw new HttpError(403, `this endpoint requires one of: ${allowed.join(", ")}`, "forbidden");
@@ -1406,9 +1412,336 @@ function sendIfRefused(res, cors, verdict) {
   return false;
 }
 
-// services/finance-svc/api/index.ts
+// packages/server-core/src/audit.ts
+async function writeAudit(client, actor, entry) {
+  const sp = `audit_${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await client.query(`SAVEPOINT ${sp}`);
+  } catch {
+  }
+  try {
+    await client.query(
+      `INSERT INTO audit.activity_log
+         (tenant_id, actor_id, actor_role, action, entity_type, entity_id,
+          before_state, after_state)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)`,
+      [
+        actor.tenantId,
+        actor.userId,
+        actor.role,
+        entry.action,
+        entry.entityType,
+        entry.entityId ?? null,
+        entry.before === void 0 ? null : JSON.stringify(entry.before),
+        entry.after === void 0 ? null : JSON.stringify(entry.after)
+      ]
+    );
+    try {
+      await client.query(`RELEASE SAVEPOINT ${sp}`);
+    } catch {
+    }
+  } catch {
+    try {
+      await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+    } catch {
+    }
+  }
+}
+
+// services/finance-svc/api/feestructures.ts
 var SERVICE = "finance";
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var FEE_ADMIN_ROLES = ["principal", "school_owner", "accountant", "it_admin"];
+var AMOUNT_MAX = 1e7;
+var DUE_DAY_MIN = 1;
+var DUE_DAY_MAX = 28;
+var DUE_DAY_MIN_BN = "\u09E7";
+var DUE_DAY_MAX_BN = "\u09E8\u09EE";
+async function handler(req, res, cors) {
+  const claims = await authenticate(req);
+  const db = await sharedDb();
+  const ctx = {
+    tenantId: claims.tid,
+    userId: claims.sub,
+    role: claims.role,
+    service: SERVICE
+  };
+  if (req.method === "GET") {
+    requireStaff(claims);
+    json(res, 200, await list(db, ctx, req, claims.role), cors);
+    return;
+  }
+  if (req.method === "POST") {
+    requireRole(claims, FEE_ADMIN_ROLES);
+    json(res, 200, await create(db, ctx, req), cors);
+    return;
+  }
+  if (req.method === "PATCH") {
+    requireRole(claims, FEE_ADMIN_ROLES);
+    json(res, 200, await update(db, ctx, req), cors);
+    return;
+  }
+  if (req.method === "DELETE") {
+    requireRole(claims, FEE_ADMIN_ROLES);
+    json(res, 200, await remove(db, ctx, req), cors);
+    return;
+  }
+  json(res, 405, { error: "method_not_allowed" }, cors);
+}
+var shape = (r) => ({
+  id: r.id,
+  feeHeadId: r.fee_head_id,
+  headBn: r.head_bn,
+  headCode: r.head_code,
+  frequency: r.frequency,
+  headActive: r.head_active,
+  academicYearId: r.academic_year_id,
+  classId: r.class_id,
+  classBn: r.class_bn,
+  amount: Number(r.amount),
+  lateFeePerDay: r.late_fee_per_day === null ? null : Number(r.late_fee_per_day),
+  lateFeeCap: r.late_fee_cap === null ? null : Number(r.late_fee_cap),
+  dueDayOfMonth: r.due_day_of_month,
+  // The honest flag. A price on a non-monthly head is stored and never
+  // invoiced by the monthly run, and the office deserves to be told on the
+  // row rather than left to wonder.
+  billedByMonthlyRun: r.frequency === "monthly" && r.head_active
+});
+async function list(db, ctx, req, role) {
+  const yearId = query(req).get("yearId") ?? "";
+  if (yearId && !UUID_RE.test(yearId)) {
+    throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_year", { field: "yearId" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const year2 = yearId || (await c.query(
+      `SELECT id FROM academic_years WHERE is_current ORDER BY starts_on DESC LIMIT 1`
+    )).rows[0]?.id || "";
+    if (!year2) {
+      return {
+        canManage: FEE_ADMIN_ROLES.includes(role),
+        academicYearId: null,
+        years: [],
+        classes: [],
+        heads: [],
+        structures: []
+      };
+    }
+    const [structures, years, classes, heads] = await Promise.all([
+      c.query(
+        `SELECT fs.id, fs.fee_head_id, fh.name_bn AS head_bn, fh.code AS head_code,
+                fh.frequency, fh.is_active AS head_active,
+                fs.academic_year_id, fs.class_id, cl.name_bn AS class_bn,
+                fs.amount, fs.late_fee_per_day, fs.late_fee_cap, fs.due_day_of_month
+           FROM fee_structures fs
+           JOIN fee_heads fh ON fh.id = fs.fee_head_id
+           LEFT JOIN classes cl ON cl.id = fs.class_id
+          WHERE fs.academic_year_id = $1
+          ORDER BY fh.frequency, fh.name_bn, cl.level_no NULLS FIRST`,
+        [year2]
+      ),
+      c.query(
+        `SELECT id, label, is_current FROM academic_years ORDER BY starts_on DESC`
+      ),
+      c.query(
+        `SELECT id, name_bn FROM classes ORDER BY level_no, name_bn`
+      ),
+      c.query(
+        `SELECT id, name_bn, code, frequency, is_active FROM fee_heads
+          ORDER BY is_active DESC, frequency, name_bn`
+      )
+    ]);
+    return {
+      canManage: FEE_ADMIN_ROLES.includes(role),
+      academicYearId: year2,
+      years: years.rows.map((y) => ({ id: y.id, label: y.label, isCurrent: y.is_current })),
+      classes: classes.rows.map((x) => ({ id: x.id, nameBn: x.name_bn })),
+      heads: heads.rows.map((h) => ({
+        id: h.id,
+        nameBn: h.name_bn,
+        code: h.code,
+        frequency: h.frequency,
+        isActive: h.is_active
+      })),
+      structures: structures.rows.map(shape)
+    };
+  });
+}
+function money(v, field, label) {
+  if (v === void 0 || v === null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new HttpError(400, `${label} \u098B\u09A3\u09BE\u09A4\u09CD\u09AE\u0995 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE\u0964`, "bad_amount", { field });
+  }
+  if (n > AMOUNT_MAX) {
+    throw new HttpError(400, `${label} \u0985\u09A8\u09C7\u0995 \u09AC\u09C7\u09B6\u09BF \u2014 \u0986\u09AC\u09BE\u09B0 \u09A6\u09C7\u0996\u09C1\u09A8\u0964`, "bad_amount", { field });
+  }
+  return Math.round(n * 100) / 100;
+}
+function validate(b) {
+  const amount = money(b.amount, "amount", "\u099F\u09BE\u0995\u09BE\u09B0 \u0985\u0999\u09CD\u0995");
+  if (amount === null) {
+    throw new HttpError(400, "\u099F\u09BE\u0995\u09BE\u09B0 \u0985\u0999\u09CD\u0995 \u09B2\u09BF\u0996\u09C1\u09A8\u0964", "bad_amount", { field: "amount" });
+  }
+  const lateFeePerDay = money(b.lateFeePerDay, "lateFeePerDay", "\u09A6\u09C8\u09A8\u09BF\u0995 \u09AC\u09BF\u09B2\u09AE\u09CD\u09AC \u09AB\u09BF") ?? 0;
+  const lateFeeCap = money(b.lateFeeCap, "lateFeeCap", "\u09AC\u09BF\u09B2\u09AE\u09CD\u09AC \u09AB\u09BF\u09B0 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A \u09B8\u09C0\u09AE\u09BE");
+  let dueDay = null;
+  if (b.dueDayOfMonth !== void 0 && b.dueDayOfMonth !== null) {
+    dueDay = Number(b.dueDayOfMonth);
+    if (!Number.isInteger(dueDay) || dueDay < DUE_DAY_MIN || dueDay > DUE_DAY_MAX) {
+      throw new HttpError(
+        400,
+        `\u09B6\u09C7\u09B7 \u09A4\u09BE\u09B0\u09BF\u0996 ${DUE_DAY_MIN_BN} \u09A5\u09C7\u0995\u09C7 ${DUE_DAY_MAX_BN}-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8\u0964`,
+        "bad_due_day",
+        { field: "dueDayOfMonth" }
+      );
+    }
+  }
+  return { amount, lateFeePerDay, lateFeeCap, dueDay };
+}
+async function create(db, ctx, req) {
+  const body = await readJson(req);
+  if (!UUID_RE.test(body.feeHeadId ?? "")) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u09AB\u09BF \u09A4\u09BE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8\u0964", "bad_head", { field: "feeHeadId" });
+  }
+  if (!UUID_RE.test(body.academicYearId ?? "")) {
+    throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8\u0964", "bad_year", { field: "academicYearId" });
+  }
+  const classId = body.classId ? String(body.classId) : null;
+  if (classId !== null && !UUID_RE.test(classId)) {
+    throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC\u0964", "bad_class", { field: "classId" });
+  }
+  const v = validate(body);
+  return db.withTenant(ctx, async (c) => {
+    const head = await c.query(
+      `SELECT name_bn, frequency FROM fee_heads WHERE id = $1`,
+      [body.feeHeadId]
+    );
+    if (head.rowCount === 0) throw new HttpError(404, "\u09AB\u09BF-\u098F\u09B0 \u0996\u09BE\u09A4\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "head_not_found");
+    const yr = await c.query(`SELECT 1 FROM academic_years WHERE id = $1`, [body.academicYearId]);
+    if (yr.rowCount === 0) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "year_not_found");
+    if (classId) {
+      const cl = await c.query(`SELECT 1 FROM classes WHERE id = $1`, [classId]);
+      if (cl.rowCount === 0) throw new HttpError(404, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "class_not_found");
+    }
+    const { rows } = await c.query(
+      `INSERT INTO fee_structures
+         (tenant_id, fee_head_id, academic_year_id, class_id, quota_category,
+          amount, late_fee_per_day, late_fee_cap, due_day_of_month)
+       VALUES (app.current_tenant(), $1, $2, $3, NULL, $4, $5, $6, $7)
+       RETURNING id, fee_head_id, academic_year_id, class_id, amount,
+                 late_fee_per_day, late_fee_cap, due_day_of_month,
+                 '' AS head_bn, '' AS head_code, '' AS frequency,
+                 true AS head_active, NULL AS class_bn`,
+      [
+        body.feeHeadId,
+        body.academicYearId,
+        classId,
+        v.amount,
+        v.lateFeePerDay,
+        v.lateFeeCap,
+        v.dueDay
+      ]
+    );
+    await writeAudit(c, ctx, {
+      action: "finance.fee_structure.create",
+      entityType: "fee_structure",
+      entityId: rows[0].id,
+      after: {
+        head: head.rows[0].name_bn,
+        frequency: head.rows[0].frequency,
+        classId,
+        amount: v.amount,
+        dueDayOfMonth: v.dueDay,
+        lateFeePerDay: v.lateFeePerDay,
+        lateFeeCap: v.lateFeeCap
+      }
+    });
+    return { id: rows[0].id, headBn: head.rows[0].name_bn, amount: v.amount };
+  }, { write: true });
+}
+async function update(db, ctx, req) {
+  const body = await readJson(req);
+  const id = (body.id ?? "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u09AB\u09BF \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "structure_required", { field: "id" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const before = await c.query(
+      `SELECT fs.amount, fs.late_fee_per_day, fs.late_fee_cap, fs.due_day_of_month,
+              fh.name_bn AS head_bn
+         FROM fee_structures fs JOIN fee_heads fh ON fh.id = fs.fee_head_id
+        WHERE fs.id = $1`,
+      [id]
+    );
+    if (before.rowCount === 0) {
+      throw new HttpError(404, "\u098F\u0987 \u09AB\u09BF-\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "structure_not_found");
+    }
+    const was = before.rows[0];
+    const v = validate({
+      amount: body.amount ?? Number(was.amount),
+      lateFeePerDay: body.lateFeePerDay !== void 0 ? body.lateFeePerDay : was.late_fee_per_day === null ? null : Number(was.late_fee_per_day),
+      lateFeeCap: body.lateFeeCap !== void 0 ? body.lateFeeCap : was.late_fee_cap === null ? null : Number(was.late_fee_cap),
+      dueDayOfMonth: body.dueDayOfMonth !== void 0 ? body.dueDayOfMonth : was.due_day_of_month
+    });
+    await c.query(
+      `UPDATE fee_structures
+          SET amount = $2, late_fee_per_day = $3, late_fee_cap = $4, due_day_of_month = $5
+        WHERE id = $1`,
+      [id, v.amount, v.lateFeePerDay, v.lateFeeCap, v.dueDay]
+    );
+    await writeAudit(c, ctx, {
+      action: "finance.fee_structure.update",
+      entityType: "fee_structure",
+      entityId: id,
+      before: {
+        head: was.head_bn,
+        amount: Number(was.amount),
+        dueDayOfMonth: was.due_day_of_month,
+        lateFeePerDay: was.late_fee_per_day === null ? null : Number(was.late_fee_per_day)
+      },
+      after: {
+        head: was.head_bn,
+        amount: v.amount,
+        dueDayOfMonth: v.dueDay,
+        lateFeePerDay: v.lateFeePerDay
+      }
+    });
+    return { id, headBn: was.head_bn, amount: v.amount };
+  }, { write: true });
+}
+async function remove(db, ctx, req) {
+  const id = query(req).get("id") ?? "";
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u09AB\u09BF \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "structure_required", { field: "id" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const before = await c.query(
+      `SELECT fs.amount, fs.class_id, fh.name_bn AS head_bn
+         FROM fee_structures fs JOIN fee_heads fh ON fh.id = fs.fee_head_id
+        WHERE fs.id = $1`,
+      [id]
+    );
+    if (before.rowCount === 0) {
+      throw new HttpError(404, "\u098F\u0987 \u09AB\u09BF-\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "structure_not_found");
+    }
+    const was = before.rows[0];
+    const del = await c.query(`DELETE FROM fee_structures WHERE id = $1`, [id]);
+    if (del.rowCount === 0) {
+      throw new HttpError(403, "\u098F\u0987 \u09AB\u09BF \u09AE\u09C1\u099B\u09C7 \u09AB\u09C7\u09B2\u09BE\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u09A8\u09C7\u0987\u0964", "forbidden");
+    }
+    await writeAudit(c, ctx, {
+      action: "finance.fee_structure.delete",
+      entityType: "fee_structure",
+      entityId: id,
+      before: { head: was.head_bn, amount: Number(was.amount), classId: was.class_id }
+    });
+    return { id, headBn: was.head_bn, issuedInvoicesUnaffected: true };
+  }, { write: true });
+}
+
+// services/finance-svc/api/index.ts
+var SERVICE2 = "finance";
+var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function invoices(req, res, cors) {
   if (req.method !== "GET") {
     json(res, 405, { error: "method_not_allowed" }, cors);
@@ -1416,12 +1749,12 @@ async function invoices(req, res, cors) {
   }
   const claims = await authenticate(req);
   const studentId = query(req).get("studentId") ?? "";
-  if (studentId && !UUID_RE.test(studentId)) {
+  if (studentId && !UUID_RE2.test(studentId)) {
     throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
   }
   const db = await sharedDb();
   const rows = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
     async (client) => {
       const r = await client.query(
         `SELECT i.id, i.invoice_no, i.student_id, i.billing_period, i.issued_on, i.due_on,
@@ -1476,7 +1809,7 @@ async function pay(req, res, cors) {
   const body = await readJson(req);
   const invoiceId = body.invoiceId ?? "";
   const provider = body.provider ?? "";
-  if (!UUID_RE.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
+  if (!UUID_RE2.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
   if (!PAY_PROVIDERS.has(provider)) {
     throw new HttpError(400, `provider must be one of ${[...PAY_PROVIDERS].join(", ")}`, "invalid_provider");
   }
@@ -1496,10 +1829,10 @@ async function receipts(req, res, cors) {
   }
   const claims = await authenticate(req);
   const invoiceId = query(req).get("invoiceId") ?? "";
-  if (!UUID_RE.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
+  if (!UUID_RE2.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
   const db = await sharedDb();
   const rows = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
     async (client) => {
       const r = await client.query(
         `SELECT pr.id, pr.receipt_no, pr.amount, pr.method, pr.issued_at,
@@ -1542,7 +1875,7 @@ async function generate(req, res, cors) {
   const periodStart = `${period}-01`;
   const db = await sharedDb();
   const result = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
     async (client) => {
       const yearRes = await client.query(
         `SELECT id FROM academic_years
@@ -1659,7 +1992,7 @@ async function ledger(req, res, cors) {
   requireRole(claims, LEDGER_ROLES);
   const db = await sharedDb();
   const payload = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
     async (client) => {
       const accountsRes = await client.query(
         `SELECT a.code, a.name_bn, a.type,
@@ -1741,10 +2074,11 @@ var ROUTES = {
   pay,
   receipts,
   generate,
-  ledger
+  ledger,
+  feestructures: handler
 };
-async function handler(req, res) {
-  const cors = corsHeaders();
+async function handler2(req, res) {
+  const cors = corsHeaders([], "GET, POST, PATCH, DELETE, OPTIONS");
   if (req.method === "OPTIONS") {
     res.writeHead(204, cors);
     res.end();
@@ -1765,7 +2099,21 @@ async function handler(req, res) {
     await route(req, res, cors);
   } catch (err) {
     if (err instanceof HttpError) {
-      json(res, err.status, { error: err.code ?? "error", message: err.message }, cors);
+      json(
+        res,
+        err.status,
+        { error: err.code ?? "error", message: err.message, ...err.detail ?? {} },
+        cors
+      );
+      return;
+    }
+    const e = err;
+    if (e.code === "23505" && ((e.constraint ?? "").startsWith("fee_structures_tenant_id") || e.constraint === "uq_fee_structure_scope")) {
+      json(res, 409, {
+        error: "duplicate_structure",
+        message: "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u098F\u0987 \u09AB\u09BF \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09BF\u09A4 \u0986\u099B\u09C7\u0964",
+        field: "feeHeadId"
+      }, cors);
       return;
     }
     console.error(`[finance/${sub}] unexpected error`, err);
@@ -1773,5 +2121,5 @@ async function handler(req, res) {
   }
 }
 export {
-  handler as default
+  handler2 as default
 };

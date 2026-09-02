@@ -30,6 +30,7 @@ import { enforceRateLimit } from '../../../packages/server-core/src/rate-limit.t
 // invoice run below joined an empty table and billed nothing, for every
 // school, every month.
 import feestructures from './feestructures.ts';
+import payments from './payments.ts';
 
 /**
  * The purchasable service this endpoint IS (migration 051 catalogue).
@@ -470,6 +471,7 @@ const ROUTES: Record<string, (req: IncomingMessage, res: ServerResponse, cors: R
   generate,
   ledger,
   feestructures,
+  payments,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

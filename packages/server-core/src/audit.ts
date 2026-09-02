@@ -99,6 +99,9 @@ export type AuditAction =
   | 'rms.slot.assign'
   | 'rms.slot.remove'
   | 'rms.routine.publish'
+  // P-writers/B-48. Money taken at the counter. The only receipt writer before
+  // this was the MFS webhook, and POST /finance/pay is kill-switched.
+  | 'finance.payment.record'
   | 'finance.fee_structure.create'
   | 'finance.fee_structure.update'
   | 'finance.fee_structure.delete';

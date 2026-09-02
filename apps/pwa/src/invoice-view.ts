@@ -34,7 +34,7 @@ import { bnMonth } from './view-states.ts';
 import {
   serverMessage, sectionHeading, buttonRow, button, dataTable, statusBadge,
   field, setFieldError, clearFieldError, permissionState, permissionMessage,
-  el, append,
+  el, append, openDrawer, setBusy, announce, type OverlayHandle,
 } from './ui/index.ts';
 
 interface InvoiceRow {
@@ -229,12 +229,164 @@ export class InvoiceView {
         // Amounts printed exactly as the server sent them: decimal strings.
         { key: 'total', header: 'মোট', mobile: 'meta', numeric: true,
           cell: (inv) => formatBdt(inv.totalAmount), width: 'minmax(0, 1.2fr)' },
+        // The balance, not just the total. Without it a clerk who has just
+        // taken ৳600 against a ৳1,500 bill sees the row unchanged and cannot
+        // tell whether the money registered — the total never moves.
+        { key: 'due', header: 'বকেয়া', mobile: 'meta', numeric: true,
+          cell: (inv) => formatBdt(inv.balanceAmount), width: 'minmax(0, 1.2fr)' },
         { key: 'state', header: 'অবস্থা', mobile: 'status', width: '130px',
           cell: (inv) => statusBadge(d, {
-            state: Number(inv.balanceAmount) <= 0 ? 'paid' : 'due',
-            label: Number(inv.balanceAmount) <= 0 ? 'পরিশোধিত' : 'বকেয়া',
+            state: Number(inv.balanceAmount) <= 0 ? 'paid'
+              : Number(inv.balanceAmount) < Number(inv.totalAmount) ? 'partial' : 'due',
+            // Three states, not two: a bill with something paid against it is
+            // neither settled nor untouched, and the office needs to see which
+            // families have started paying.
+            label: Number(inv.balanceAmount) <= 0 ? 'পরিশোধিত'
+              : Number(inv.balanceAmount) < Number(inv.totalAmount) ? 'আংশিক' : 'বকেয়া',
           }) },
+        // P-writers/B-48. Until this, an issued bill could never be marked
+        // paid: the only receipt writer in the product was the MFS webhook and
+        // POST /finance/pay is kill-switched. A school takes money at the
+        // counter, so the counter is where the control belongs.
+        ...(this.o.canGenerate ? [{
+          key: 'collect', header: 'ব্যবস্থা',
+          cell: (inv: InvoiceRow) => (Number(inv.balanceAmount) <= 0
+            ? el(d, 'span', { className: 'att-sub', text: '—' })
+            : buttonRow(d, button(d, {
+              label: 'টাকা জমা নিন', size: 'sm', variant: 'primary',
+              disabled: this.busy,
+              onClick: () => { void this.openCollect(inv); },
+            }))),
+        }] : []),
       ],
     }));
+  }
+
+  /* ------------------------------------------------------------ payment */
+
+  /**
+   * Take a payment against one bill.
+   *
+   * Opens on the server's own view of the invoice rather than the list row:
+   * the list is a snapshot and somebody else may have collected since it was
+   * drawn, so the balance shown here — and the balance the save is checked
+   * against — is read fresh.
+   */
+  private async openCollect(inv: InvoiceRow): Promise<void> {
+    const d = this.o.doc;
+    let data: {
+      invoice: { invoiceNo: string; studentBn: string; balanceAmount: number; totalAmount: number };
+      methods: { code: string; labelBn: string }[];
+      receipts: { receiptNo: string; amount: number; methodBn: string }[];
+    };
+    try {
+      const res = await this.o.auth.authedFetch(
+        `/api/v1/finance/payments?invoiceId=${encodeURIComponent(inv.id)}`);
+      if (!res.ok) throw new Error(String(res.status));
+      data = await res.json() as typeof data;
+    } catch {
+      this.error = 'বিলের তথ্য আনা যায়নি।';
+      this.render();
+      return;
+    }
+
+    const form = el(d, 'div', { className: 'ui-fieldset' });
+    const errLine = el(d, 'p', {
+      className: 'ui-field-error', attrs: { role: 'alert', hidden: 'hidden' },
+    });
+    append(form, errLine);
+
+    append(form, el(d, 'p', {
+      className: 'att-sub',
+      text: `${data.invoice.studentBn} · ${data.invoice.invoiceNo} — `
+        + `মোট ${formatBdt(String(data.invoice.totalAmount))}, `
+        + `বকেয়া ${formatBdt(String(data.invoice.balanceAmount))}`,
+    }));
+
+    const amount = field(d, {
+      label: 'কত টাকা জমা হলো', name: 'amount', kind: 'number', required: true,
+      value: String(data.invoice.balanceAmount),
+      helper: 'পুরোটা বা একাংশ — কিস্তিতে নিলে প্রতিবার আলাদা রসিদ হবে।',
+      attrs: { min: 1, max: data.invoice.balanceAmount, step: 1 },
+    });
+    const method = field(d, {
+      label: 'কীভাবে এসেছে', name: 'method', kind: 'select', required: true,
+      // Server-supplied, from the mfs_provider enum — never a hard-coded list.
+      options: data.methods.map((m) => ({ value: m.code, label: m.labelBn })),
+    });
+    const reference = field(d, {
+      label: 'রেফারেন্স', name: 'reference',
+      helper: 'ঐচ্ছিক — চেক নম্বর বা ট্রানজেকশন আইডি।',
+      attrs: { maxlength: 120 },
+    });
+    append(form, amount.root, method.root, reference.root);
+
+    if (data.receipts.length > 0) {
+      append(form, el(d, 'p', {
+        className: 'ui-field-label', text: 'আগের রসিদ',
+      }));
+      for (const r of data.receipts) {
+        append(form, el(d, 'p', {
+          className: 'att-sub',
+          text: `${r.receiptNo} — ${formatBdt(String(r.amount))} (${r.methodBn})`,
+        }));
+      }
+    }
+
+    let handle: OverlayHandle;
+    const cancel = button(d, {
+      label: 'বাতিল', variant: 'secondary', onClick: () => handle.close(),
+    });
+    const save = button(d, {
+      label: 'রসিদ দিন', variant: 'primary',
+      onClick: async () => {
+        errLine.setAttribute('hidden', 'hidden');
+        setBusy(save, true);
+        let msg = '';
+        let issued: { receiptNo?: string; ledgerPosted?: boolean } = {};
+        try {
+          const res = await this.o.auth.authedFetch('/api/v1/finance/payments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              invoiceId: inv.id,
+              amount: Number(amount.input.value),
+              method: method.input.value,
+              reference: reference.input.value.trim() || undefined,
+            }),
+          });
+          const out = await res.json().catch(() => ({})) as
+            { message?: string; receiptNo?: string; ledgerPosted?: boolean };
+          if (!res.ok) msg = out.message ?? 'টাকা জমা নেওয়া যায়নি।';
+          else issued = out;
+        } catch {
+          msg = 'সংযোগ নেই — টাকা জমা নেওয়া হয়নি।';
+        }
+        setBusy(save, false);
+        // A refusal keeps the drawer open with the amount intact: the server
+        // names the balance when it refuses an overpayment, and the clerk
+        // needs the figure they typed still in front of them (B-60).
+        if (msg) {
+          errLine.textContent = msg;
+          errLine.removeAttribute('hidden');
+          announce(d, msg, true);
+          return;
+        }
+        handle.close();
+        await this.load();
+        this.notice = `রসিদ ${issued.receiptNo ?? ''} দেওয়া হয়েছে।`
+          // Honest when the books were skipped: the receipt is valid, the
+          // ledger row is not there, and an accountant should know now rather
+          // than at reconciliation.
+          + (issued.ledgerPosted === false
+            ? ' হিসাবের খাতা এখনো তৈরি হয়নি — লেজারে ওঠেনি।' : '');
+        this.render();
+      },
+    });
+    handle = openDrawer(d, {
+      title: 'টাকা জমা নিন',
+      body: form,
+      actions: [cancel, save],
+    });
   }
 }

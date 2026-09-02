@@ -1739,9 +1739,221 @@ async function remove(db, ctx, req) {
   }, { write: true });
 }
 
-// services/finance-svc/api/index.ts
+// services/finance-svc/api/payments.ts
 var SERVICE2 = "finance";
 var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var COLLECT_ROLES = ["principal", "school_owner", "accountant"];
+var METHODS = ["cash", "cheque", "bank_transfer", "bkash", "nagad", "rocket", "upay"];
+var METHOD_BN = {
+  cash: "\u09A8\u0997\u09A6",
+  cheque: "\u099A\u09C7\u0995",
+  bank_transfer: "\u09AC\u09CD\u09AF\u09BE\u0982\u0995 \u099F\u09CD\u09B0\u09BE\u09A8\u09CD\u09B8\u09AB\u09BE\u09B0",
+  bkash: "\u09AC\u09BF\u0995\u09BE\u09B6",
+  nagad: "\u09A8\u0997\u09A6 (Nagad)",
+  rocket: "\u09B0\u0995\u09C7\u099F",
+  upay: "\u0989\u09AA\u09BE\u09AF\u09BC"
+};
+var ACCOUNT_FOR = {
+  cash: "CASH",
+  cheque: "CASH",
+  bank_transfer: "CASH",
+  bkash: "MFS-BKASH",
+  nagad: "MFS-NAGAD",
+  rocket: "MFS-ROCKET",
+  upay: "CASH"
+};
+async function handler2(req, res, cors) {
+  const claims = await authenticate(req);
+  const db = await sharedDb();
+  const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 };
+  if (req.method === "GET") {
+    requireRole(claims, COLLECT_ROLES);
+    json(res, 200, await list2(db, ctx, req), cors);
+    return;
+  }
+  if (req.method === "POST") {
+    requireRole(claims, COLLECT_ROLES);
+    json(res, 200, await record(db, ctx, req), cors);
+    return;
+  }
+  json(res, 405, { error: "method_not_allowed" }, cors);
+}
+async function list2(db, ctx, req) {
+  const invoiceId = query(req).get("invoiceId") ?? "";
+  if (!UUID_RE2.test(invoiceId)) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u09AC\u09BF\u09B2 \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "invoice_required", { field: "invoiceId" });
+  }
+  return db.withTenant(ctx, async (c) => {
+    const inv = await c.query(
+      `SELECT i.id, i.invoice_no, i.student_id, u.full_name_bn AS student_bn,
+              i.billing_period, i.total_amount, i.paid_amount, i.balance_amount,
+              i.status::text AS status, i.due_on
+         FROM invoices i
+         -- invoices.student_id is a FK to users(id) directly; there is no
+         -- separate students table in this schema.
+         JOIN users u ON u.id = i.student_id
+        WHERE i.id = $1`,
+      [invoiceId]
+    );
+    if (inv.rowCount === 0) {
+      throw new HttpError(404, "\u09AC\u09BF\u09B2\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "invoice_not_found");
+    }
+    const i = inv.rows[0];
+    const receipts2 = await c.query(
+      `SELECT r.id, r.receipt_no, r.amount, r.method::text AS method, r.issued_at,
+              u.full_name_bn AS issued_by_bn
+         FROM payment_receipts r
+         LEFT JOIN users u ON u.id = r.issued_by
+        WHERE r.invoice_id = $1
+        ORDER BY r.issued_at`,
+      [invoiceId]
+    );
+    return {
+      canCollect: COLLECT_ROLES.includes(ctx.role),
+      methods: METHODS.map((m) => ({ code: m, labelBn: METHOD_BN[m] ?? m })),
+      invoice: {
+        id: i.id,
+        invoiceNo: i.invoice_no,
+        studentId: i.student_id,
+        studentBn: i.student_bn,
+        billingPeriod: i.billing_period,
+        totalAmount: Number(i.total_amount),
+        paidAmount: Number(i.paid_amount),
+        balanceAmount: Number(i.balance_amount),
+        status: i.status,
+        dueOn: i.due_on
+      },
+      receipts: receipts2.rows.map((r) => ({
+        id: r.id,
+        receiptNo: r.receipt_no,
+        amount: Number(r.amount),
+        method: r.method,
+        methodBn: METHOD_BN[r.method] ?? r.method,
+        issuedAt: r.issued_at,
+        issuedByBn: r.issued_by_bn
+      }))
+    };
+  });
+}
+async function record(db, ctx, req) {
+  const b = await readJson(req);
+  const invoiceId = (b.invoiceId ?? "").trim();
+  if (!UUID_RE2.test(invoiceId)) {
+    throw new HttpError(400, "\u0995\u09CB\u09A8 \u09AC\u09BF\u09B2 \u09A4\u09BE \u099C\u09BE\u09A8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF\u0964", "invoice_required", { field: "invoiceId" });
+  }
+  const method = (b.method ?? "").trim();
+  if (!METHODS.includes(method)) {
+    throw new HttpError(400, "\u0995\u09C0\u09AD\u09BE\u09AC\u09C7 \u099F\u09BE\u0995\u09BE \u098F\u09B8\u09C7\u099B\u09C7 \u09A4\u09BE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8\u0964", "bad_method", { field: "method" });
+  }
+  const amount = Number(b.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new HttpError(400, "\u099F\u09BE\u0995\u09BE\u09B0 \u0985\u0999\u09CD\u0995 \u09B6\u09C2\u09A8\u09CD\u09AF\u09C7\u09B0 \u09AC\u09C7\u09B6\u09BF \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964", "bad_amount", { field: "amount" });
+  }
+  const paid = Math.round(amount * 100) / 100;
+  const reference = (b.reference ?? "").trim().slice(0, 120);
+  return db.withTenant(ctx, async (c) => {
+    const inv = await c.query(
+      `SELECT student_id, invoice_no, balance_amount, status::text AS status
+         FROM invoices WHERE id = $1`,
+      [invoiceId]
+    );
+    if (inv.rowCount === 0) {
+      throw new HttpError(404, "\u09AC\u09BF\u09B2\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "invoice_not_found");
+    }
+    const invoice = inv.rows[0];
+    if (invoice.status === "cancelled") {
+      throw new HttpError(409, "\u09AC\u09BE\u09A4\u09BF\u09B2 \u0995\u09B0\u09BE \u09AC\u09BF\u09B2\u09C7 \u099F\u09BE\u0995\u09BE \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE\u0964", "invoice_cancelled");
+    }
+    if (invoice.status === "draft") {
+      throw new HttpError(409, "\u0996\u09B8\u09A1\u09BC\u09BE \u09AC\u09BF\u09B2\u09C7 \u099F\u09BE\u0995\u09BE \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u0986\u0997\u09C7 \u09AC\u09BF\u09B2\u099F\u09BF \u099C\u09BE\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964", "invoice_draft");
+    }
+    const balance = Number(invoice.balance_amount);
+    if (balance <= 0) {
+      throw new HttpError(409, "\u098F\u0987 \u09AC\u09BF\u09B2\u09C7\u09B0 \u09B8\u09AC \u099F\u09BE\u0995\u09BE \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u09AA\u09B0\u09BF\u09B6\u09CB\u09A7\u09BF\u09A4\u0964", "already_settled");
+    }
+    if (paid > balance) {
+      throw new HttpError(
+        409,
+        `\u09AC\u0995\u09C7\u09AF\u09BC\u09BE \u09F3${balance.toFixed(2)} \u2014 \u098F\u09B0 \u09AC\u09C7\u09B6\u09BF \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964`,
+        "over_payment",
+        { field: "amount", balance }
+      );
+    }
+    const applied = await c.query(
+      `SELECT app.apply_payment_to_invoice(app.current_tenant(), $1, $2)::text AS status`,
+      [invoiceId, paid]
+    );
+    const invoiceStatus = applied.rows[0].status;
+    const receipt = await c.query(
+      `INSERT INTO payment_receipts
+         (tenant_id, receipt_no, invoice_id, student_id, amount, method, issued_by)
+       VALUES (app.current_tenant(), app.next_receipt_no(), $1, $2, $3, $4::mfs_provider, $5)
+       RETURNING id, receipt_no`,
+      [invoiceId, invoice.student_id, paid, method, ctx.userId]
+    );
+    const issued = receipt.rows[0];
+    const code = ACCOUNT_FOR[method] ?? "CASH";
+    const accounts = await c.query(
+      `SELECT code, id FROM ledger_accounts WHERE code IN ($1, 'FEE-INCOME')`,
+      [code]
+    );
+    const bank = accounts.rows.find((r) => r.code === code)?.id;
+    const income = accounts.rows.find((r) => r.code === "FEE-INCOME")?.id;
+    let ledgerBatchId = null;
+    if (bank && income) {
+      const memo = `${METHOD_BN[method] ?? method} \u2014 ${invoice.invoice_no}` + (reference ? ` (${reference})` : "");
+      const batch = await c.query(
+        `INSERT INTO ledger_entries
+           (tenant_id, batch_id, account_id, entry_date, debit, credit,
+            reference_type, reference_id, memo)
+         VALUES (app.current_tenant(), gen_random_uuid(), $1, app.today_dhaka(),
+                 $2, 0, 'payment_receipt', $3, $4)
+         RETURNING batch_id AS id`,
+        [bank, paid, issued.id, memo]
+      );
+      ledgerBatchId = batch.rows[0].id;
+      await c.query(
+        `INSERT INTO ledger_entries
+           (tenant_id, batch_id, account_id, entry_date, debit, credit,
+            reference_type, reference_id, memo)
+         VALUES (app.current_tenant(), $1, $2, app.today_dhaka(), 0, $3,
+                 'payment_receipt', $4, $5)`,
+        [ledgerBatchId, income, paid, issued.id, memo]
+      );
+    }
+    await writeAudit(c, ctx, {
+      action: "finance.payment.record",
+      entityType: "payment_receipt",
+      entityId: issued.id,
+      after: {
+        receiptNo: issued.receipt_no,
+        invoiceNo: invoice.invoice_no,
+        amount: paid,
+        method,
+        reference: reference || null,
+        invoiceStatus,
+        ledgerPosted: ledgerBatchId !== null
+      }
+    });
+    return {
+      ok: true,
+      receiptId: issued.id,
+      receiptNo: issued.receipt_no,
+      amount: paid,
+      method,
+      methodBn: METHOD_BN[method] ?? method,
+      invoiceStatus,
+      // Honest about the books: a school whose chart was never seeded gets a
+      // valid receipt and no ledger row, and the screen says so rather than
+      // letting the accountant discover it at reconciliation.
+      ledgerPosted: ledgerBatchId !== null
+    };
+  }, { write: true });
+}
+
+// services/finance-svc/api/index.ts
+var SERVICE3 = "finance";
+var UUID_RE3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function invoices(req, res, cors) {
   if (req.method !== "GET") {
     json(res, 405, { error: "method_not_allowed" }, cors);
@@ -1749,12 +1961,12 @@ async function invoices(req, res, cors) {
   }
   const claims = await authenticate(req);
   const studentId = query(req).get("studentId") ?? "";
-  if (studentId && !UUID_RE2.test(studentId)) {
+  if (studentId && !UUID_RE3.test(studentId)) {
     throw new HttpError(400, "studentId must be a valid uuid", "invalid_student_id");
   }
   const db = await sharedDb();
   const rows = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 },
     async (client) => {
       const r = await client.query(
         `SELECT i.id, i.invoice_no, i.student_id, i.billing_period, i.issued_on, i.due_on,
@@ -1809,7 +2021,7 @@ async function pay(req, res, cors) {
   const body = await readJson(req);
   const invoiceId = body.invoiceId ?? "";
   const provider = body.provider ?? "";
-  if (!UUID_RE2.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
+  if (!UUID_RE3.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
   if (!PAY_PROVIDERS.has(provider)) {
     throw new HttpError(400, `provider must be one of ${[...PAY_PROVIDERS].join(", ")}`, "invalid_provider");
   }
@@ -1829,10 +2041,10 @@ async function receipts(req, res, cors) {
   }
   const claims = await authenticate(req);
   const invoiceId = query(req).get("invoiceId") ?? "";
-  if (!UUID_RE2.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
+  if (!UUID_RE3.test(invoiceId)) throw new HttpError(400, "invoiceId must be a valid uuid", "invalid_invoice_id");
   const db = await sharedDb();
   const rows = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 },
     async (client) => {
       const r = await client.query(
         `SELECT pr.id, pr.receipt_no, pr.amount, pr.method, pr.issued_at,
@@ -1875,7 +2087,7 @@ async function generate(req, res, cors) {
   const periodStart = `${period}-01`;
   const db = await sharedDb();
   const result = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 },
     async (client) => {
       const yearRes = await client.query(
         `SELECT id FROM academic_years
@@ -1992,7 +2204,7 @@ async function ledger(req, res, cors) {
   requireRole(claims, LEDGER_ROLES);
   const db = await sharedDb();
   const payload = await db.withTenant(
-    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE2 },
+    { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE3 },
     async (client) => {
       const accountsRes = await client.query(
         `SELECT a.code, a.name_bn, a.type,
@@ -2075,9 +2287,10 @@ var ROUTES = {
   receipts,
   generate,
   ledger,
-  feestructures: handler
+  feestructures: handler,
+  payments: handler2
 };
-async function handler2(req, res) {
+async function handler3(req, res) {
   const cors = corsHeaders([], "GET, POST, PATCH, DELETE, OPTIONS");
   if (req.method === "OPTIONS") {
     res.writeHead(204, cors);
@@ -2121,5 +2334,5 @@ async function handler2(req, res) {
   }
 }
 export {
-  handler2 as default
+  handler3 as default
 };

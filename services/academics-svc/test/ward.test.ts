@@ -160,11 +160,11 @@ describe('guardian home (§9.1)', { skip }, () => {
   });
 
   test('attendance excludes excused from the denominator', async () => {
-    // ── Why these four days are not simply CURRENT_DATE - 3 … CURRENT_DATE ──
+    // ── Why these four days are not simply app.today_dhaka() - 3 … app.today_dhaka() ──
     //
     // `monthPercent` is month-to-date by design: the guardian screen renders
     // it as "এ মাসে ৯৪%", and the endpoint scopes on
-    // `taken_on >= date_trunc('month', CURRENT_DATE)`. That contract is right
+    // `taken_on >= date_trunc('month', app.today_dhaka())`. That contract is right
     // and is not what changed here.
     //
     // The fixture used to walk backwards from today, which silently assumed
@@ -183,6 +183,16 @@ describe('guardian home (§9.1)', { skip }, () => {
     //
     //   1st  → 1st–4th      15th → 12th–15th      31st → 28th–31st
     //
+    // ── And why every date below is app.today_dhaka(), not app.today_dhaka() ──
+    //
+    // The fixture used app.today_dhaka() while the endpoint reads
+    // app.today_dhaka() (migration 059). Those are the same date for 18 hours
+    // and differ for the other six: at 20:39 UTC on the 2nd it is already
+    // 02:39 on the 3rd in Dhaka. The fixture then marked "today" as the 2nd,
+    // the endpoint asked about the 3rd, and todayStatus came back as whatever
+    // the window had assigned to that day — 'absent' on the run that caught
+    // this. It failed every evening, UTC, and passed every morning.
+    //
     // Statuses are assigned relative to TODAY rather than by a fixed offset,
     // because today's position inside the window now varies: today is
     // present, then one more present, one absent, one excused — 2 of 3
@@ -192,8 +202,8 @@ describe('guardian home (§9.1)', { skip }, () => {
          (id, tenant_id, section_id, academic_year_id, taken_on, taken_by, taken_at)
        SELECT gen_random_uuid(),$1,$2,$3,d::date,$4,now()
          FROM generate_series(
-                CURRENT_DATE - LEAST(3, EXTRACT(day FROM CURRENT_DATE)::int - 1),
-                CURRENT_DATE - LEAST(3, EXTRACT(day FROM CURRENT_DATE)::int - 1) + 3,
+                app.today_dhaka() - LEAST(3, EXTRACT(day FROM app.today_dhaka())::int - 1),
+                app.today_dhaka() - LEAST(3, EXTRACT(day FROM app.today_dhaka())::int - 1) + 3,
                 interval '1 day') d`,
       [T, SEC9, YEAR, HEAD]);
     await post(
@@ -201,13 +211,13 @@ describe('guardian home (§9.1)', { skip }, () => {
          SELECT s.id, s.taken_on,
                 row_number() OVER (ORDER BY s.taken_on) AS rn
            FROM attendance_sessions s
-          WHERE s.section_id = $3 AND s.taken_on <> CURRENT_DATE
+          WHERE s.section_id = $3 AND s.taken_on <> app.today_dhaka()
        )
        INSERT INTO attendance_records
          (tenant_id, session_id, student_id, section_id, taken_on, status, marked_by, marked_at)
        SELECT $1, s.id, $2, $3, s.taken_on,
               CASE
-                WHEN s.taken_on = CURRENT_DATE THEN 'present'
+                WHEN s.taken_on = app.today_dhaka() THEN 'present'
                 WHEN o.rn = 1 THEN 'present'
                 WHEN o.rn = 2 THEN 'absent'
                 ELSE 'excused' END::attendance_status,

@@ -3848,3 +3848,19 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
   .routine-week-scroll { display: block; }
   .routine-week-stack { display: none; }
 }
+
+/* A guardian's phone number, as a call.  (P-pilot-hardening)
+   Inside `.att-sub`, which is --text-xs: a bare anchor there is a tap target
+   well under the touch floor, and this one is pressed on a phone by somebody
+   who has just seen a child marked absent. Inline-block with vertical padding
+   rather than a button, because it belongs in the sentence beside the
+   relation — and the number itself stays Latin, per the R-8 rule that
+   identifiers are not written in Bangla numerals. */
+.ui-call {
+  display: inline-block; min-height: var(--tap-min); line-height: var(--tap-min);
+  padding: 0 var(--s-1); margin: calc(var(--s-1) * -1) 0;
+  color: var(--c-link); text-decoration: underline;
+  text-underline-offset: 2px; font-variant-numeric: tabular-nums;
+}
+.ui-call:hover { color: var(--c-primary); }
+.ui-call:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }

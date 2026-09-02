@@ -30,6 +30,7 @@
     "apps/pwa/test/design-tokens.test.ts",
     "apps/pwa/test/exam-routine-view.test.ts",
     "apps/pwa/test/generation-view.test.ts",
+    "apps/pwa/test/guardian-call.test.ts",
     "apps/pwa/test/guardian-view.test.ts",
     "apps/pwa/test/homework-filter.test.ts",
     "apps/pwa/test/icon-names.test.ts",

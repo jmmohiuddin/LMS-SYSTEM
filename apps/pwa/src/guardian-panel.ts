@@ -232,12 +232,38 @@ export class GuardianPanel {
     }
     card.append(head);
 
+    // The number becomes a call, not a string to copy down.
+    //
+    // The office rings a guardian for exactly one reason and it is the reason
+    // this product exists: the child is not in class. Until now the number was
+    // printed here as inert text and read out to a second device.
+    //
+    // There is deliberately NO role check on this branch. The server decides:
+    // `ops/guardians` returns the real number to principal, school_owner and
+    // it_admin and `phone: null` to every other staff role, so `g.phone` being
+    // present IS the authorization. A client-side role test here would be a
+    // second copy of that rule, free to drift from it — and hiding a number
+    // the body still carried is the pattern D13 forbids.
     const meta = d.createElement('p');
     meta.className = 'att-sub';
-    meta.textContent =
-      `${RELATION_BN[g.relation] ?? g.relation}` +
-      (g.phone ? ` · ${g.phone}` : '') +
-      (g.otherWards > 0 ? ` · এই প্রতিষ্ঠানে আরও ${bnNum(g.otherWards)} জন সন্তান` : '');
+    meta.append(d.createTextNode(RELATION_BN[g.relation] ?? g.relation));
+    if (g.phone) {
+      meta.append(d.createTextNode(' · '));
+      const call = d.createElement('a');
+      call.className = 'ui-call';
+      // The href must be the raw E.164 the dialler understands. The visible
+      // text stays Latin too — a phone number is an identifier, and Bangla
+      // numerals in a number somebody may read aloud or retype is the R-8
+      // decision going the wrong way.
+      call.href = `tel:${g.phone}`;
+      call.textContent = g.phone;
+      call.setAttribute('aria-label', `${g.nameBn}-কে ফোন করুন — ${g.phone}`);
+      meta.append(call);
+    }
+    if (g.otherWards > 0) {
+      meta.append(d.createTextNode(
+        ` · এই প্রতিষ্ঠানে আরও ${bnNum(g.otherWards)} জন সন্তান`));
+    }
     card.append(meta);
 
     if (!this.o.canManage) {

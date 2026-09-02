@@ -677,3 +677,79 @@ still true rather than assuming.**
 - Backlog features not built: class/section edit UI, guardian unlink, audit
   export, object storage, CSV export, multi-card ID layout, attendance
   date-range filter.
+
+---
+
+## Appendix C — reconciliation after P-pilot-hardening (2026-09-02)
+
+**Append-only.** Appendix B above is left exactly as written: it is a record of
+what was believed open on the day the plan was made, and editing it would
+destroy the only evidence of what the audit was told to check. This appendix
+says what has since been established, item by item, with the phase and commit
+that established it.
+
+### Appendix B items, re-verified rather than assumed
+
+| Appendix B item | State on 2026-09-02 | Evidence |
+|---|---|---|
+| DNS/TLS not live; wildcard subdomains unverified | **Half wrong, half worse.** The apex is live with valid TLS (verified 2026-08-31, re-confirmed today: `https://sikhon.systems/` → 200, `ssl_verify_result=0`). Wildcard subdomains are not merely unverified — **there is no wildcard record.** `*.sikhon.systems` is NXDOMAIN on 8.8.8.8; arbitrary labels do not resolve | `ad2dea8`; `production-evidence.json → wildcard_dns` (`blocked`, with the ISP-resolver false positive documented) |
+| Real SMS never sent through a real aggregator | **Still true.** External blocker: no aggregator contract, no credentials. The seam and the SSL Wireless adapter exist; unset, the stub is used, and `SMS_PROVIDER` named without credentials throws rather than pretending | `real_sms_delivery: null` |
+| Real push never delivered to a real device | **Still true**, still `blocked`, obstacle unchanged | `real_push_delivery` |
+| No monitoring alert has ever reached a human | **Still true of a human. No longer true of the pipeline.** 7/7 rehearsal: a genuinely firing condition, a real POST, a real HTTPS listener, 21ms | `ad2dea8`; `scripts/alert-rehearsal.mjs`; `alert_delivered: rehearsed` |
+| No production backup or restore | **Resolved before this phase.** Both `verified` against production on 2026-08-31 (daily `pg_dump -Fc`, 14-day retention; restore drill with per-tenant counts identical). Re-drill required after the 064 catch-up — the current attestation is about a 48-migration schema | `backup_configured`, `restore_drill`; re-drill listed in `docs/13-MIGRATION-CATCHUP.md` §8 |
+| No real offline connectivity test | **Still true.** `pilot_offline: null` | — |
+| Pilot count: 0 | **Still 0** | `pilot_onboarding: null` |
+| Stale public deployment at `shikhon-lms.vercel.app` | **Still open, still an owner decision.** Not re-checked this phase | — |
+| `GET /api/v1/sync/pull` has no caller | **Still true**, still classified as an unused capability rather than a defect | — |
+| `docs/09-PRD-AUDIT.md` stale since 2026-08-12 | **Still stale** | — |
+| `student_profiles.board_registration_no` unindexed | **Still unindexed.** Not touched: 062 removed redundant indexes and adding one here was outside that migration's stated scope | — |
+| Backlog features not built | **Unchanged**, except that the attendance surface gained the *staff* register (M6); the listed student-attendance date-range filter is still absent | `e92e9cb`, `1a2e3d1` |
+
+### MUST-BEFORE-PILOT items (report §25)
+
+| | State | Evidence |
+|---|---|---|
+| **M1** deactivation revokes and refresh checks status | **CLOSED** | `0d8d32c`. Three layers, each reverted individually with the matching test going red; `scripts/m1-deactivation-probe.mjs` reproduces the audit's experiment over real HTTP and now returns 403 `account_not_active` where it returned 200 with a principal token |
+| **M2** production catch-up 049→064 | **PROCEDURE WRITTEN AND REHEARSED, NOT RUN** | `docs/13-MIGRATION-CATCHUP.md`. Locally: 64 migrations apply silently to an empty database, 26/26 SQL suites pass twice leaving zero rows, and up→down→up over 63 rollback files leaves zero objects. Production remains inaccessible from here |
+| **M3** tenant URL | **OWNER DECISION, with the facts now established** | No wildcard DNS exists. `?tid=` works and is what the console prints. Both code paths exist |
+| **M4** real SMS | **EXTERNAL BLOCKER** | No aggregator contract. Fake-aggregator tests untouched, as instructed |
+| **M5** alert reaches a human | **PIPELINE PROVED, DESTINATION MISSING** | `scripts/alert-rehearsal.mjs` 7/7 |
+| **M6** teacher attendance minimal loop | **CLOSED** | `e92e9cb`, `1a2e3d1`. Migration 063, `app.teacher_absent_on()`, `POST /api/v1/ops/staff-attendance`, and the শিক্ষক হাজিরা screen driven in a browser against the real API |
+
+### Found during this phase, not in Appendix B
+
+Three defects the audit did not catch, all of the same shape it named — a
+control that exists, is audited, returns success, and does nothing:
+
+1. **`app.set_guardian_permissions` has raised an error on every call since
+   migration 050.** 050 made the guardianships unique index partial and left
+   the function inferring it with a bare column list. The whole guardian-link
+   path — adding a guardian, changing a relation, moving `is_primary`, setting
+   `receives_sms`/`can_pay_fees`. Fixed in migration 064 (`d680570`).
+
+2. **The substitute finder's candidate query has never worked.** It passes
+   `slotId` as `$1` and never references it, so PostgreSQL refuses the
+   statement: *could not determine data type of parameter $1*. Every call was a
+   500. `rms-svc` had no substitute test at all. Fixed in `e92e9cb`; the M6
+   suite is now its regression test.
+
+3. **Why both survived: `npm test` never ran `db/tests/*.sql`.** Twenty-six SQL
+   suites, invisible to the command every phase used to declare itself green —
+   three of which had been failing since 050. CI named the suites by hand and
+   13 of the 26 had never run there either; and its rollback step globbed
+   `*.down.sql`, a suffix dropped at 049, so **every rollback file from 049
+   onward had never been executed**. All three fixed in `d680570`.
+
+Also closed: **B-43**, which the audit could only record as risk #13. Five
+suites imported `lockFixtures`, never called it, and called `unlockFixtures` —
+a no-op on a lock never taken — so they ran unfenced. `fixture-fencing.test.ts`
+now checks the rule at source level (`e92e9cb`).
+
+### Still open, recorded here rather than fixed
+
+- Seven `ui-` class names are referenced in `apps/pwa/src` and absent from
+  `app.css` (`ui-form`, `ui-status`, `ui-state-denied`, `ui-filters-extra`,
+  `ui-list-cell`, `ui-timeline-body`, `ui-upload-input`). A class name that
+  does not exist fails silently — two of my own cost a mis-rendered summary
+  row this phase. Each needs a look; a baseline of seven unexamined entries is
+  how a guard rots. See BACKLOG.

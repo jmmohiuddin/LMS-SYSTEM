@@ -59,6 +59,34 @@ function rosterFor(sectionId: string): RosterStudent[] {
 // Local fields, not UTC — see `todayLocalIso`.
 const todayIso = todayLocalIso;
 
+/**
+ * The office's exam register (`?yearId=`), which is a different shape from
+ * DEMO_EXAMS below — that one is the per-section marks feed.
+ */
+const DEMO_EXAM_REGISTER = [
+  {
+    id: 'demo-exam-half', nameBn: 'অর্ধ-বার্ষিক পরীক্ষা ২০২৬',
+    nameEn: 'Half-Yearly Exam 2026', examType: 'half_yearly', status: 'marking',
+    startsOn: '2026-06-10', endsOn: '2026-06-20',
+    weightPercent: 40, isGpaBearing: true,
+    paperCount: 24, sectionCount: 4, markCount: 312,
+  },
+  {
+    id: 'demo-exam-annual', nameBn: 'বার্ষিক পরীক্ষা ২০২৬',
+    nameEn: 'Annual Exam 2026', examType: 'annual', status: 'planned',
+    startsOn: '2026-12-05', endsOn: '2026-12-18',
+    weightPercent: 60, isGpaBearing: true,
+    paperCount: 24, sectionCount: 4, markCount: 0,
+  },
+  {
+    id: 'demo-exam-ct', nameBn: 'শ্রেণি পরীক্ষা — আগস্ট',
+    nameEn: 'Class Test August', examType: 'class_test', status: 'published',
+    startsOn: '2026-08-11', endsOn: '2026-08-11',
+    weightPercent: 10, isGpaBearing: false,
+    paperCount: 6, sectionCount: 2, markCount: 96,
+  },
+];
+
 const DEMO_EXAMS = [
   {
     id: 'demo-exam-half',
@@ -1886,8 +1914,33 @@ export class DemoAuth extends Auth {
       case '/api/v1/academics/roster':
         return ok({ roster: rosterFor(url.searchParams.get('sectionId') ?? 'demo') });
 
-      case '/api/v1/academics/exams':
+      // Two different questions share this URL, and the demo answered both
+      // with the marks feed. `?yearId=` is the office's exam register —
+      // `{canManage, examTypes, exams[]}` with paper and mark counts — and
+      // `?sectionId=` is the per-section feed the marks screen reads.
+      //
+      // It was also METHOD-BLIND: a POST returned 200 and the exam list, so
+      // the exam-management screen would have reported "তৈরি করা হয়েছে।" in
+      // the public preview while creating nothing. /demo is prospect-facing,
+      // and a fake success there is a claim about the product.
+      case '/api/v1/academics/exams': {
+        if (init.method === 'POST' || init.method === 'PATCH') {
+          return new Response(JSON.stringify({
+            error: 'demo_read_only',
+            message: 'এটি প্রদর্শনী সংস্করণ — এখানে সত্যিকারের পরীক্ষা তৈরি হয় না।',
+          }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.searchParams.get('yearId')) {
+          return ok({
+            canManage: ['principal', 'school_owner', 'academic_coordinator', 'dept_head']
+              .includes(demoRole()),
+            examTypes: ['class_test', 'monthly', 'half_yearly', 'pre_test',
+                        'test', 'annual', 'model', 'board'],
+            exams: DEMO_EXAM_REGISTER,
+          });
+        }
         return ok({ exams: DEMO_EXAMS });
+      }
 
       case '/api/v1/academics/marks':
         return ok(demoMarks());

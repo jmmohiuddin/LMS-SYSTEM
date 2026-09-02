@@ -45,6 +45,7 @@ import { UsersView } from './users-view.ts';
 import { StaffAttendanceView } from './staff-attendance-view.ts';
 import { RoomsView } from './rooms-view.ts';
 import { FeeStructuresView } from './fee-structures-view.ts';
+import { ExamsView } from './exams-view.ts';
 import { AuditView } from './audit-view.ts';
 import { CalendarView } from './calendar-view.ts';
 import { DocumentsView, type DocKind } from './documents-view.ts';
@@ -246,6 +247,7 @@ const CARD = {
   staffAtt:   { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন — বদলি শিক্ষক খোঁজায় লাগে' },
   rooms:      { path: 'rooms',      glyph: 'layers',       titleBn: 'কক্ষ ব্যবস্থাপনা',   subtitleBn: 'শ্রেণিকক্ষ ও ল্যাব — রুটিনে লাগে' },
   feeSetup:   { path: 'feestructures', glyph: 'percent',    titleBn: 'ফি নির্ধারণ',        subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
+  exams:      { path: 'exams',      glyph: 'clipboard',    titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
   adminSettings: { path: 'adminsettings', glyph: 'settings', titleBn: 'সেটিংস',          subtitleBn: 'নোটিশ এসএমএসের দৈর্ঘ্য ও খরচ' },
   audit:      { path: 'audit',      glyph: 'lock',         titleBn: 'কার্যবিবরণী',        subtitleBn: 'কে কখন কী পরিবর্তন করেছেন' },
@@ -578,6 +580,7 @@ async function main() {
               { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন, কে আসেননি' },
               { path: 'rooms', glyph: 'layers', titleBn: 'কক্ষ ব্যবস্থাপনা', subtitleBn: 'শ্রেণিকক্ষ, ল্যাব ও ধারণক্ষমতা' },
               { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
+              { path: 'exams', glyph: 'clipboard', titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
               { path: 'substitute', glyph: 'repeat', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
               { path: 'routineeditor', glyph: 'clock', titleBn: 'রুটিন সম্পাদনা', subtitleBn: 'ক্লাস সরান — সংঘর্ষ হলে কারণ জানায়' },
               { path: 'subjectchoice', glyph: 'layers', titleBn: 'বিভাগ ও বিষয় নির্বাচন', subtitleBn: 'ধর্ম শিক্ষা ও চতুর্থ বিষয় নির্ধারণ' },
@@ -801,6 +804,18 @@ async function main() {
             root: container, doc: document, auth,
             canGenerate: GENERATE_INVOICES.has(auth.role),
           });
+        },
+      },
+      {
+        // P0/A1. The exam register. `exams` had a complete writer and no
+        // screen, so marks, grades, GPA, rank, publish and the progress
+        // report were all built on something nothing could create.
+        path: 'exams',
+        labelBn: 'পরীক্ষা ব্যবস্থাপনা',
+        glyph: 'clipboard',
+        hidden: true,
+        mount: (container) => {
+          new ExamsView({ root: container, doc: document, auth });
         },
       },
       {

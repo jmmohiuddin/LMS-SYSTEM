@@ -722,6 +722,7 @@ function smsTestRecipients(env = process.env) {
 }
 
 // services/sms-svc/src/dispatch.ts
+var STALE_SMS_DAYS = 3;
 function nonWorkingReasonFor(isoDay, weekendDays, overrides) {
   if (overrides.has("holiday")) return "holiday";
   const dow = (/* @__PURE__ */ new Date(`${isoDay}T00:00:00Z`)).getUTCDay();
@@ -1050,6 +1051,18 @@ var SmsDispatchWorker = class {
     );
     let dispatched = 0;
     for (const row of queued.rows) {
+      const createdMs = Date.parse(`${String(row.created_on).slice(0, 10)}T00:00:00Z`);
+      const ageDays = Number.isNaN(createdMs) ? 0 : Math.floor((Date.now() - createdMs) / 864e5);
+      if (ageDays > STALE_SMS_DAYS) {
+        await client.query(
+          `UPDATE sms_outbox
+              SET status = 'suppressed', error_code = 'too_old_to_send'
+            WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
+          [tenantId, row.created_on, row.id]
+        );
+        withheld += 1;
+        continue;
+      }
       if (this.allowlist && !this.allowlist.has(row.msisdn)) {
         await client.query(
           `UPDATE sms_outbox

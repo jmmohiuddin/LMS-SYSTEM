@@ -120,10 +120,40 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // parallelism was imaginary: the driver serialised them anyway. Found
       // by the deprecation warning while measuring, not by a failing test,
       // which is the argument for reading warnings.
+      // ── B-53. A disabled service's data, served by an un-gated sibling ──
+      //
+      // This endpoint carries no `service:` key, because it is not ONE
+      // service — it is a composite of four. That meant a school whose
+      // `finance` was switched off got a 403 from /finance/invoices and this
+      // endpoint's `fees` block regardless, billed, paid, due and every
+      // receipt. Reproduced against a running stack before this was written.
+      //
+      // Gating the whole endpoint would be the wrong fix: a school that never
+      // bought finance still legitimately wants a child's attendance history.
+      // So each BLOCK is gated on its own service, and an off service returns
+      // null exactly as an unauthorised role already does — the caller
+      // already handles that shape.
+      //
+      // `not_in_plan` counts as off. It is a different remedy for the office
+      // (buy it, rather than ask the operator to switch it on), and the
+      // console says so differently, but from here both mean "do not serve
+      // this".
+      const serviceOn = async (code: string): Promise<boolean> => {
+        const r = await c.query<{ state: string }>(
+          'SELECT app.tenant_service_state(app.current_tenant(), $1) AS state', [code]);
+        return r.rows[0]?.state === 'enabled' || r.rows[0]?.state === 'limited';
+      };
+      const [attendanceOn, resultsOn, financeOn] = [
+        await serviceOn('attendance'),
+        await serviceOn('results'),
+        await serviceOn('finance'),
+      ];
+
       const enrolments = await loadEnrolments(c, studentId);
-      const attendance = await loadAttendance(c, studentId);
-      const results = await loadResults(c, studentId);
-      const fees = MAY_SEE_FEES.includes(role) ? await loadFees(c, studentId) : null;
+      const attendance = attendanceOn ? await loadAttendance(c, studentId) : null;
+      const results = resultsOn ? await loadResults(c, studentId) : null;
+      const fees = MAY_SEE_FEES.includes(role) && financeOn
+        ? await loadFees(c, studentId) : null;
 
       const printable = Object.entries(DOCUMENT_ACCESS)
         .filter(([, roles]) => roles.includes(role))
@@ -141,12 +171,24 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         // tab that is empty because there is nothing and a tab that is empty
         // because this person may not see it are different sentences.
         permissions: { fees: MAY_SEE_FEES.includes(role), contact: MAY_SEE_CONTACT.includes(role) },
+        // Which blocks are missing because the SCHOOL does not have that
+        // service, as opposed to missing because this person may not see them
+        // or because there is nothing there. Three different sentences for a
+        // screen to say, and it cannot tell them apart from a null alone.
+        services: { attendance: attendanceOn, results: resultsOn, finance: financeOn },
       };
     });
 
     json(res, 200, payload, cors);
   } catch (err) {
     const e = err instanceof HttpError ? err : new HttpError(500, 'internal_error', 'internal_error');
+    // An unexpected failure here used to be discarded: the caller got
+    // `internal_error` and the server kept no record of what actually broke,
+    // so the only way to diagnose one was to reproduce it by hand. The
+    // response stays deliberately opaque — this endpoint returns a child's
+    // record and a leaked SQL message names columns — but the server must be
+    // able to say what it was.
+    if (!(err instanceof HttpError)) console.error('[students/history]', err);
     json(res, e.status, { error: e.code, message: e.message, ...(e.detail ?? {}) }, cors);
   }
 }

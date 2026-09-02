@@ -155,7 +155,7 @@ type Header = {
 async function loadChoices(client: Client): Promise<Array<{ examSubjectId: string; label: string }>> {
   const { rows } = await client.query<{ id: string; label: string }>(
     `SELECT es.id,
-            cl.name_bn || '-' || s.name_bn || ' · ' || sub.name_bn || ' · ' || e.name_bn AS label
+            cl.name_bn || '-' || s.name || ' · ' || sub.name_bn || ' · ' || e.name_bn AS label
        FROM exam_subjects es
        JOIN exams    e   ON e.id   = es.exam_id
        JOIN sections s   ON s.id   = es.section_id
@@ -164,7 +164,7 @@ async function loadChoices(client: Client): Promise<Array<{ examSubjectId: strin
       -- Analysing an exam nobody has marked yet shows a screen of zeroes
       -- and teaches the teacher to distrust the screen.
       WHERE EXISTS (SELECT 1 FROM exam_marks m WHERE m.exam_subject_id = es.id)
-      ORDER BY e.starts_on DESC NULLS LAST, cl.level_no, s.name_bn
+      ORDER BY e.starts_on DESC NULLS LAST, cl.level_no, s.name
       LIMIT 60`,
   );
   return rows.map((r) => ({ examSubjectId: r.id, label: r.label }));
@@ -175,7 +175,7 @@ async function loadHeader(client: Client, id: string): Promise<Header | null> {
     `SELECT es.id            AS "examSubjectId",
             es.section_id    AS "sectionId",
             es.subject_id    AS "subjectId",
-            cl.name_bn || '-' || s.name_bn || ' · ' || sub.name_bn || ' · ' || e.name_bn AS label,
+            cl.name_bn || '-' || s.name || ' · ' || sub.name_bn || ' · ' || e.name_bn AS label,
             es.cq_max        AS "cqMax",
             es.mcq_max       AS "mcqMax",
             es.practical_max AS "practicalMax",

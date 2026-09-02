@@ -2671,8 +2671,12 @@ async function handler8(req, res) {
              AS students_without_section`,
         [year2.id]
       );
+      const { rows: fs } = await c.query(
+        `SELECT app.tenant_service_state(app.current_tenant(), 'finance') AS state`
+      );
+      const financeEntitled = fs[0]?.state === "enabled" || fs[0]?.state === "limited";
       let finance = null;
-      if (showFinance) {
+      if (showFinance && financeEntitled) {
         const { rows: fin } = await c.query(
           `SELECT COALESCE(sum(i.total_amount),   0)::text AS invoiced,
                   COALESCE(sum(i.paid_amount),    0)::text AS collected,
@@ -2737,7 +2741,12 @@ async function handler8(req, res) {
           examsAwaitingPublication: pending[0]?.exams_awaiting_publication ?? 0,
           studentsWithoutSection: pending[0]?.students_without_section ?? 0
         },
-        finance
+        finance,
+        // Why the block is absent, when it is. A principal who may see money
+        // at a school that has no finance module needs a different sentence
+        // from a coordinator who may not see money at all, and the card
+        // cannot tell those apart from a null.
+        financeAvailable: financeEntitled
       };
     });
     json(res, 200, body, cors);
@@ -5263,6 +5272,12 @@ var ACCESS = {
     "subject_teacher"
   ]
 };
+var CONTENT_SERVICE = {
+  fee_receipt: "finance",
+  report_card: "results",
+  admit_card: "results",
+  attendance_sheet: "attendance"
+};
 var MAX_BULK = 120;
 var MONTHS_BN = [
   "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
@@ -5307,6 +5322,22 @@ async function handler18(req, res) {
         `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding FROM tenants`
       );
       const branding = parseBranding(brandRows[0]?.branding ?? {});
+      const contentService = CONTENT_SERVICE[type];
+      if (contentService) {
+        const { rows: st } = await c.query(
+          "SELECT app.tenant_service_state(app.current_tenant(), $1) AS state",
+          [contentService]
+        );
+        const state = st[0]?.state;
+        if (state !== "enabled" && state !== "limited") {
+          throw new HttpError(
+            403,
+            state === "not_in_plan" ? "\u098F\u0987 \u09A8\u09A5\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09B8\u09C7\u09AC\u09BE \u0986\u09AA\u09A8\u09BE\u09B0 \u09AA\u09CD\u09AF\u09BE\u0995\u09C7\u099C\u09C7 \u09A8\u09C7\u0987" : "\u098F\u0987 \u09A8\u09A5\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09B8\u09C7\u09AC\u09BE \u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0986\u09AA\u09BE\u09A4\u09A4 \u09AC\u09A8\u09CD\u09A7 \u09B0\u09AF\u09BC\u09C7\u099B\u09C7",
+            "service_unavailable",
+            { service: contentService }
+          );
+        }
+      }
       const sections = await build(c, ctx, type, q, branding);
       if (sections.length === 0) {
         throw new HttpError(404, "\u09A8\u09A5\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09A4\u09A5\u09CD\u09AF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "no_data");

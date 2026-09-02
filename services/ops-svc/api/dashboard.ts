@@ -27,6 +27,21 @@
  * absent for a coordinator. Sending the numbers and hiding the card would be
  * the frontend-hiding pattern D13 and R-1 both rule out — the data would still
  * be in the response body, one devtools tab away.
+ *
+ * ── …and only for schools that HAVE finance (B-53) ──────────────────────
+ * Role was the only test until P-ops. This handler declares no `service:`
+ * key — correctly, since a dashboard is a summary of every service a school
+ * runs and gating the whole page on one of them would blank the page for a
+ * school that simply never bought that one. But the finance block was then
+ * governed by role alone, so a `starter` school, whose plan has no finance
+ * key at all, was served its own invoiced, collected and outstanding totals
+ * on the front page while `/finance/invoices` refused it. Reproduced against
+ * a running stack: `{"invoiced":"1300.00","collected":"1300.00",...}`.
+ *
+ * So the block now needs the ROLE and the ENTITLEMENT, and the two are
+ * reported separately: a principal at a school without finance is not being
+ * told they lack permission, they are being told the school does not have
+ * the module.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
@@ -190,8 +205,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         [year.id],
       );
 
+      // `enabled` and `limited` both serve; `disabled`, `maintenance` and
+      // `not_in_plan` do not. A school mid-migration must not be quoted a
+      // total read from a half-moved ledger, and one that never bought the
+      // module must not see the module.
+      const { rows: fs } = await c.query<{ state: string }>(
+        `SELECT app.tenant_service_state(app.current_tenant(), 'finance') AS state`);
+      const financeEntitled = fs[0]?.state === 'enabled' || fs[0]?.state === 'limited';
+
       let finance: { invoiced: string; collected: string; outstanding: string; unpaidCount: number } | null = null;
-      if (showFinance) {
+      if (showFinance && financeEntitled) {
         // Money stays a string the whole way out: these are numeric(12,2),
         // and the outstanding total is summed BY POSTGRES rather than
         // subtracted in JS. A school's fee balance must not round-trip
@@ -258,6 +281,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           studentsWithoutSection: pending[0]?.students_without_section ?? 0,
         },
         finance,
+        // Why the block is absent, when it is. A principal who may see money
+        // at a school that has no finance module needs a different sentence
+        // from a coordinator who may not see money at all, and the card
+        // cannot tell those apart from a null.
+        financeAvailable: financeEntitled,
       };
     });
 

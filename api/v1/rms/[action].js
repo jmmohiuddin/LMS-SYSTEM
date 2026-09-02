@@ -2524,6 +2524,7 @@ function isoDate(v) {
   }
   return String(v).slice(0, 10);
 }
+var SERVICE = "results";
 async function handler4(req, res) {
   const cors = corsHeaders();
   if (req.method === "OPTIONS") {
@@ -2559,7 +2560,7 @@ async function handler4(req, res) {
       return;
     }
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
     if (req.method === "GET" && examId === "") {
       const exams = await db.withTenant(ctx, async (client) => {
         const r = await client.query(

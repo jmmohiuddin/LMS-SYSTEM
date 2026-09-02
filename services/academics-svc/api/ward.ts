@@ -137,14 +137,38 @@ async function loadHome(client: Client, ward: Ward) {
   // transaction, and firing three queries at it concurrently is not
   // something node-postgres promises to handle — the wins would be
   // imaginary anyway, since they queue on the same socket regardless.
-  const attendance = await loadAttendance(client, ward.studentId);
-  const fees = await loadFees(client, ward.studentId);
-  const result = await loadLatestResult(client, ward.studentId);
+  // ── B-53. Each card is a separate purchase ────────────────────────────
+  // This endpoint declares no `service:` key, and correctly so: a guardian's
+  // home is a composite of three services, and refusing the whole page
+  // because one of them is off would take away the two that are on. But the
+  // three blocks were then served unconditionally, so a school on a plan
+  // without finance still sent every guardian an outstanding balance and an
+  // overdue count. Reproduced against a running stack.
+  //
+  // `limited` still serves: a school in billing arrears is exactly the one
+  // whose guardians must be able to see what is owed. `not_in_plan`,
+  // `disabled` and `maintenance` do not.
+  const stateOf = async (code: string): Promise<boolean> => {
+    const { rows } = await client.query<{ state: string }>(
+      'SELECT app.tenant_service_state(app.current_tenant(), $1) AS state', [code]);
+    return rows[0]?.state === 'enabled' || rows[0]?.state === 'limited';
+  };
+  const attendanceOn = await stateOf('attendance');
+  const financeOn = await stateOf('finance');
+  const resultsOn = await stateOf('results');
+
+  const attendance = attendanceOn ? await loadAttendance(client, ward.studentId) : null;
+  const fees = financeOn ? await loadFees(client, ward.studentId) : null;
+  const result = resultsOn ? await loadLatestResult(client, ward.studentId) : null;
   // §9.1 also draws a "স্কুলের বিজ্ঞপ্তি" list. There is no notices table
   // in this schema — not an empty one, none — so the field is absent
   // rather than an array that is always empty. A screen that renders an
   // empty notices card teaches a guardian the school never posts anything.
-  return { ...ward, attendance, fees, result };
+  // A card that is absent because the school does not have the module reads
+  // differently from one that is absent because there is nothing in it yet.
+  // The guardian app needs to be able to tell those apart.
+  return { ...ward, attendance, fees, result,
+    services: { attendance: attendanceOn, finance: financeOn, results: resultsOn } };
 }
 
 async function loadAttendance(client: Client, studentId: string) {

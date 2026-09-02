@@ -50,12 +50,19 @@ export interface WardSummary {
 }
 
 export interface WardHome extends WardSummary {
+  /**
+   * `null` when the SCHOOL does not have that module (B-53), as opposed to
+   * the inner fields being null when the school has it and there is nothing
+   * in it yet. A guardian is never told which modules their school bought —
+   * that is a commercial fact between the school and us — so an absent block
+   * simply means an absent card.
+   */
   attendance: {
     todayStatus: string | null;
     monthPercent: number | null;
     present: number; absent: number; late: number; halfDay: number; excused: number;
-  };
-  fees: { outstanding: number; earliestDue: string | null; overdueCount: number };
+  } | null;
+  fees: { outstanding: number; earliestDue: string | null; overdueCount: number } | null;
   result: {
     examNameBn: string; gpa: number | null;
     rankInSection: number | null; sectionSize: number | null;
@@ -248,40 +255,51 @@ export class GuardianView {
       this.payCta(this.home));
   }
 
-  private cards(h: WardHome): HTMLElement {
+  private cards(h: WardHome): HTMLElement | null {
     const d = this.o.doc;
-    const state = TODAY[h.attendance.todayStatus ?? ''] ?? null;
-    const owed = h.fees.outstanding;
+    const cards: HTMLElement[] = [];
 
     // Two numbers, in the order §9.1 draws them. Never a bare glyph:
     // somebody opening this four times a year does not remember what a green
     // tick meant, so the word is the message and the glyph is the echo.
-    return statRow(d,
-      statCard(d, {
+    //
+    // Either card is omitted entirely when the school does not run that
+    // module. Rendering "০ দিন" or "✓ বকেয়া নেই" instead would be a claim
+    // about the child, made out of the absence of a purchase.
+    if (h.attendance) {
+      const state = TODAY[h.attendance.todayStatus ?? ''] ?? null;
+      const monthPercent = h.attendance.monthPercent;
+      cards.push(statCard(d, {
         label: 'আজকের হাজিরা',
         value: state ? `${state.glyph} ${state.labelBn}` : 'আজ হাজিরা নেওয়া হয়নি',
-        note: h.attendance.monthPercent === null
-          ? 'এ মাসের হিসাব নেই'
-          : `এ মাসে ${bn(h.attendance.monthPercent)}%`,
+        note: monthPercent === null ? 'এ মাসের হিসাব নেই' : `এ মাসে ${bn(monthPercent)}%`,
         glyph: 'check-square',
         tone: state?.tone === 'ok' ? 'success'
           : state?.tone === 'danger' ? 'warn'
           : state?.tone === 'warn' ? 'warn' : 'info',
-      }),
-      statCard(d, {
+      }));
+    }
+
+    if (h.fees) {
+      const fees = h.fees;
+      const owed = fees.outstanding;
+      cards.push(statCard(d, {
         label: 'বকেয়া ফি',
         value: owed === 0 ? '✓ বকেয়া নেই' : formatBdt(owed),
         note: owed === 0
           ? 'সব পরিশোধিত'
-          : h.fees.overdueCount > 0
-            ? `${bn(h.fees.overdueCount)}টি বিল সময় পেরিয়েছে`
-            : h.fees.earliestDue
-              ? `${formatDayMonth(h.fees.earliestDue, 'bn')} শেষ তারিখ`
+          : fees.overdueCount > 0
+            ? `${bn(fees.overdueCount)}টি বিল সময় পেরিয়েছে`
+            : fees.earliestDue
+              ? `${formatDayMonth(fees.earliestDue, 'bn')} শেষ তারিখ`
               : '',
         glyph: 'wallet',
-        tone: owed === 0 ? 'success' : h.fees.overdueCount > 0 ? 'warn' : 'accent2',
+        tone: owed === 0 ? 'success' : fees.overdueCount > 0 ? 'warn' : 'accent2',
         onClick: this.o.onOpenFees ? () => this.o.onOpenFees?.(h.studentId) : undefined,
       }));
+    }
+
+    return cards.length ? statRow(d, ...cards) : null;
   }
 
   private resultCard(h: WardHome): HTMLElement {
@@ -314,15 +332,21 @@ export class GuardianView {
     });
   }
 
-  private payCta(h: WardHome): HTMLElement {
+  private payCta(h: WardHome): HTMLElement | null {
     const d = this.o.doc;
+    // No finance module, no fee button. It would open a screen the server
+    // refuses, and a guardian tapping "ফি পরিশোধ করুন" and reaching an error
+    // learns that the app is broken rather than that their school does not
+    // use this part of it.
+    if (!h.fees) return null;
+    const fees = h.fees;
     // §9.1 labels this "বিকাশে ফি পরিশোধ করুন". MFS checkout (F-1005) is not
     // built, so naming bKash here would promise a flow that does not exist.
     // This opens the fee screen, which does — one tap from home, as §9.1
     // requires, without the lie.
     return el(d, 'div', { className: 'ward-cta' },
       button(d, {
-        label: h.fees.outstanding > 0 ? 'ফি পরিশোধ করুন' : 'ফি ও রসিদ দেখুন',
+        label: fees.outstanding > 0 ? 'ফি পরিশোধ করুন' : 'ফি ও রসিদ দেখুন',
         variant: 'primary', block: true, glyph: 'wallet',
         disabled: !this.o.onOpenFees,
         onClick: () => this.o.onOpenFees?.(h.studentId),

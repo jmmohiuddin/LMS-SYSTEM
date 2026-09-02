@@ -1593,6 +1593,20 @@ heartbeat alert plus a webhook that reaches a person; the `rowCount` guard on th
 platform endpoints; close the service-disable sibling bypass; make tenant suspension revoke
 sessions. B-50 … B-54.
 
+*Revised in flight, 2026-09-03.* "Small" was wrong about one item. `B-53`'s
+sibling bypass was three endpoints in the row and **six** on the running
+stack, and the worst of them issued branded, printable fee receipts and report
+cards for services a school had never bought. Following the same gate into the
+SMS worker then found `B-83`: the dispatch run was opened with
+`service: 'sms'`, and since `pilot` and `madrasa_basic` carry `push: true` and
+no `sms` key, **no school on the pilot plan had ever received a push
+notification** — silently, because a refused run reports a blocked tenant and
+not a missing feature. Two unrelated defects fell out of the same audit
+(`B-82`, a screen that 500'd on every request it had ever received; `B-86`, a
+handler that discarded the cause of its own 500s). The scheduling half was
+small; the entitlement half was not, and the estimate is corrected here rather
+than in retrospect.
+
 **P9 — Smart Routine.** After P-writers, because P9 has four unmet prerequisites: no room
 write path (0 rooms in 112 tenants), no routine-creation API, a Ramadan swap that
 `uq_routine_active` structurally forbids, and a routine-editor query selecting a column

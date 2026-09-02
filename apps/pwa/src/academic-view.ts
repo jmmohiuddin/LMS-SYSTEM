@@ -97,7 +97,8 @@ interface StudentDetail {
     section: string; rollNo: number; status: string; enrolledOn: string; endedOn: string | null;
   }[];
   guardians: { nameBn: string; relation: string; isPrimary: boolean; canPayFees: boolean }[];
-  attendance90d: { present: number; total: number };
+  /** `null` when the school does not run the attendance module (B-53). */
+  attendance90d: { present: number; total: number } | null;
 }
 
 interface Candidates {
@@ -1050,14 +1051,24 @@ export class AcademicView {
     // ৯০ days of attendance, as a figure rather than a sentence — and `null`
     // when nobody has taken any, because ০% is a claim about the child.
     const att = stu.attendance90d;
+    // Three states, not two. "No register has been taken" is a fact about the
+    // school's term; "this school does not run attendance" is a fact about
+    // its subscription, and staff CAN act on the second — it is the office
+    // that asks for the module. So they get told, plainly, rather than shown
+    // a card that reads as though no teacher has marked a register all term.
     root.append(card(d, { title: 'গত ৯০ দিনের হাজিরা', glyph: 'check-square', tone: 'info' },
-      att.total > 0
+      att === null
         ? el(d, 'p', {
-            className: 'ui-card-lead',
-            text: `${bnNum(Math.round((att.present / att.total) * 100))}% · ` +
-                  `${bnNum(att.present)} / ${bnNum(att.total)} দিন`,
+            className: 'ui-card-note',
+            text: 'এই প্রতিষ্ঠানে হাজিরা সেবা চালু নেই।',
           })
-        : el(d, 'p', { className: 'ui-card-note', text: 'এই সময়ে কোনো হাজিরা নেওয়া হয়নি।' }),
+        : att.total > 0
+          ? el(d, 'p', {
+              className: 'ui-card-lead',
+              text: `${bnNum(Math.round((att.present / att.total) * 100))}% · ` +
+                    `${bnNum(att.present)} / ${bnNum(att.total)} দিন`,
+            })
+          : el(d, 'p', { className: 'ui-card-note', text: 'এই সময়ে কোনো হাজিরা নেওয়া হয়নি।' }),
     ));
 
     // R-3 completion: the guardian block is a live panel — linking,

@@ -30,6 +30,16 @@
  */
 import type pg from 'pg';
 import type { Db, TenantContext } from '../../../packages/server-core/src/db.ts';
+
+/**
+ * How stale an unsent message may be before it is suppressed instead.
+ *
+ * Three days: long enough that a dispatcher which missed a weekend still
+ * delivers on Monday, short enough that nothing from a previous suspension
+ * reaches a parent. An absence notice is about one specific school day and
+ * loses its meaning quickly — see the guard in `dispatch()`.
+ */
+export const STALE_SMS_DAYS = 3;
 import { randomOpaqueToken } from '../../../packages/server-core/src/crypto.ts';
 import { resolveProvider, type SmsProvider } from './provider.ts';
 // R-9 — the cheaper transport, tried before the paid one.
@@ -281,21 +291,51 @@ export class SmsDispatchWorker {
   }
 
   async run(tenantId: string): Promise<DispatchResult> {
-    // `service: 'sms'` — the gate refuses the whole run when this school has
-    // SMS off, in maintenance, or absent from its plan. Every message here
+    // ── One run, TWO transports, and they are not the same entitlement ────
+    //
+    // This carried `service: 'sms'`, which refused the whole run when a
+    // school had SMS off. The reasoning was about money — "every message here
     // costs the school money, so an off switch that still sent would be the
-    // most expensive kind of inert control.
-    const ctx: TenantContext = {
-      tenantId, userId: '', role: 'system_ingest', service: 'sms',
-    };
+    // most expensive kind of inert control" — and that reasoning is still
+    // right about SMS and was never right about push, which is free and rides
+    // inside the same run.
+    //
+    // The consequence was not hypothetical. `pilot` and `madrasa_basic` have
+    // no `sms` key at all and `push: true`. Every school on those plans
+    // therefore had `sms = not_in_plan`, the gate refused the run before it
+    // began, and the push stage never executed — so **no school on the pilot
+    // plan has ever received a push notification**, while its subscribe
+    // endpoint worked, its devices registered, and nothing anywhere reported
+    // a failure. Verified against a running stack across four pilot tenants.
+    //
+    // So the run is now gated on tenant ACCESS only — a suspended school
+    // still sends nothing, which is the part that must not move — and each
+    // transport is gated on its own service inside.
+    const ctx: TenantContext = { tenantId, userId: '', role: 'system_ingest' };
     return this.db.withTenant(ctx, async (client) => {
+      const smsOn = await this.serviceEnabled(client, 'sms');
+      const pushOn = await this.serviceEnabled(client, 'push');
+
       // One shared budget for the whole run. Attendance and notices are two
       // senders drawing on ONE daily cap — reading it twice would let a busy
       // notice day and a busy absence day each spend the whole allowance.
       const budget = await this.loadTenantBudget(client, tenantId);
 
-      const attendance = await this.enqueue(client, tenantId, budget);
-      const notices = await this.enqueueNotices(client, tenantId, budget);
+      // Enqueueing is what costs money: a row in `sms_outbox` is a message
+      // this school will be billed for. With SMS off, nothing is queued —
+      // which also means a push-only school pushes only what the notice and
+      // attendance stages would have queued, and there is nothing to push.
+      //
+      // That is the honest limit of this change and it is recorded rather
+      // than papered over: push here is a cheaper transport for SMS traffic,
+      // not an independent channel. Giving a push-only school its own queue
+      // is a product decision, not a bug fix, and it is in the backlog.
+      const attendance = smsOn
+        ? await this.enqueue(client, tenantId, budget)
+        : { eventsConsidered: 0, smsQueued: 0, suppressed: {} as Record<string, number> };
+      const notices = smsOn
+        ? await this.enqueueNotices(client, tenantId, budget)
+        : { eventsConsidered: 0, smsQueued: 0, suppressed: {} as Record<string, number> };
 
       const suppressed = { ...attendance.suppressed };
       for (const [k, v] of Object.entries(notices.suppressed)) {
@@ -307,13 +347,32 @@ export class SmsDispatchWorker {
       // Deliberately after BOTH enqueue stages, so one query covers attendance
       // and notices together, and before dispatch, so a suppressed row is
       // never handed to the SMS provider.
-      const push = this.pushSender
+      // B-53, the half the backlog row named and nothing had closed:
+      // "disabling `push` does not stop push at all — only the subscribe
+      // endpoint is gated, not the sending path."
+      //
+      // That is exactly the shape. `ops-svc/api/push.ts` declares
+      // `service: 'push'`, so a school with push switched off cannot REGISTER
+      // a new device — and every device registered before the switch went on
+      // kept receiving notifications, because this run is gated on `sms` and
+      // the push stage rides inside it.
+      //
+      // Checked here rather than in `PushSender`: the sender's job is to
+      // deliver to the subscriptions it is given, and a transport that also
+      // decides whether it is allowed to run is a transport nobody can reason
+      // about. `replacesSms` makes the consequence sharper than a missing
+      // notification — a school that told us push replaces SMS would have had
+      // its paid fallback cancelled by a transport it had switched off.
+      const push = this.pushSender && pushOn
         ? await this.pushSender.run(client, tenantId, {
             replacesSms: budget.pushReplacesSms, orgName: budget.orgName,
           })
         : { ...EMPTY_PUSH_RESULT };
 
-      const dispatched = await this.dispatch(client, tenantId);
+      // Handing a queued row to the provider is the billable act. A school
+      // whose SMS is off has nothing queued from this run, but may still have
+      // rows from before the switch — and those must not go.
+      const dispatched = smsOn ? await this.dispatch(client, tenantId) : 0;
       return {
         tenantId,
         eventsConsidered: attendance.eventsConsidered + notices.eventsConsidered,
@@ -363,6 +422,19 @@ export class SmsDispatchWorker {
       noticeMaxChars: noticeSmsMaxChars(row?.settings),
       pushReplacesSms: pushReplacesSms(row?.settings),
     };
+  }
+
+  /**
+   * Is one catalogue service on for the tenant this transaction is scoped to?
+   *
+   * `limited` counts as on: a school in billing arrears still has children
+   * whose guardians need to be told they were absent, and push is the free
+   * transport — withholding it would push the school onto the paid one.
+   */
+  private async serviceEnabled(client: pg.PoolClient, code: string): Promise<boolean> {
+    const { rows } = await client.query<{ state: string }>(
+      'SELECT app.tenant_service_state(app.current_tenant(), $1) AS state', [code]);
+    return rows[0]?.state === 'enabled' || rows[0]?.state === 'limited';
   }
 
   private async enqueue(
@@ -646,6 +718,41 @@ export class SmsDispatchWorker {
       //
       // Checking at enqueue would have hidden the message entirely, which
       // tests a different system than the one that will run in production.
+      // ── P-ops §6. A message too old to be worth sending ──────────────
+      //
+      // The claim query has no age bound, so every `queued` row is eventually
+      // sent no matter how long it waited. That is fine for a dispatcher that
+      // missed a night. It is not fine after a suspension: a school stopped
+      // for non-payment accumulates absence notices for as long as it is
+      // stopped, and the first run after it is restored would text every
+      // parent about a day months in the past.
+      //
+      // Telling a guardian their child was absent on a day they cannot
+      // remember is worse than silence — it reads as a system that has lost
+      // track of their child. So a stale row is SUPPRESSED, with a reason,
+      // rather than sent or deleted: the school can still see what was queued
+      // and why it never went, which is what an office needs when a parent
+      // asks.
+      //
+      // Bounded against created_on, the school day the message is ABOUT, not
+      // queued_at — a row re-queued by a retry is still about its own day.
+      const createdMs = Date.parse(`${String(row.created_on).slice(0, 10)}T00:00:00Z`);
+      // Number.isNaN, not `=== NaN`: NaN is the one value not equal to itself,
+      // so the comparison is always false and an unparseable date would have
+      // been treated as age zero and sent.
+      const ageDays = Number.isNaN(createdMs)
+        ? 0
+        : Math.floor((Date.now() - createdMs) / 86_400_000);
+      if (ageDays > STALE_SMS_DAYS) {
+        await client.query(
+          `UPDATE sms_outbox
+              SET status = 'suppressed', error_code = 'too_old_to_send'
+            WHERE tenant_id = $1 AND created_on = $2 AND id = $3`,
+          [tenantId, row.created_on, row.id]);
+        withheld += 1;
+        continue;
+      }
+
       if (this.allowlist && !this.allowlist.has(row.msisdn)) {
         await client.query(
           `UPDATE sms_outbox

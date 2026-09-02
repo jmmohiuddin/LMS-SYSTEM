@@ -180,8 +180,34 @@ describe('P5 — no English backend sentence reaches a Bangla screen', () => {
     assert.match(serverMessage({ error: 'not_found' }, 404, 'হয়নি।'), /খুঁজে পাওয়া যায়নি/);
   });
 
-  test('401 and 403 never use the server’s words, in any language', () => {
+  test('a ROLE refusal never uses the server’s words, in any language', () => {
+    // What a refused person needs is what they may do next, and an endpoint
+    // that only knows "your role is not on the list" cannot say it.
     assert.equal(serverMessage({ message: 'সেশন শেষ' }, 403, 'হয়নি।'), permissionMessage());
+    assert.equal(
+      serverMessage({ error: 'forbidden', message: 'না' }, 403, 'হয়নি।'),
+      permissionMessage());
+  });
+
+  test('an ENTITLEMENT refusal does — the endpoint knows what happens next', () => {
+    // B-53. Every entitlement refusal used to come out as "…দেখার অনুমতি
+    // আপনার নেই। প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন", so a
+    // guardian at a school with no finance module was told they were
+    // distrusted and sent to a head teacher who would tell them the school
+    // does not use that part of the product. Observed in a browser.
+    const bn = 'ফি ও হিসাব এই প্রতিষ্ঠানের জন্য আপাতত বন্ধ রয়েছে';
+    assert.equal(serverMessage({ error: 'tenant_blocked', message: bn }, 403, 'হয়নি।'), bn);
+    assert.equal(
+      serverMessage({ error: 'service_unavailable', message: bn }, 403, 'হয়নি।'), bn);
+  });
+
+  test('…but an English one still does not reach a parent’s phone', () => {
+    // The Bangla rule is not relaxed by the exception. A gate that answered
+    // in English wrote that sentence for a log, whatever its status code.
+    assert.equal(
+      serverMessage({ error: 'tenant_blocked', message: 'tenant is suspended' },
+        403, 'হয়নি।'),
+      permissionMessage());
   });
 });
 

@@ -55,8 +55,14 @@ async function seed(): Promise<void> {
   await dropFixtures();
   await asBootstrap(db, asHead, async (c) => {
     await c.query(
-      `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
-       VALUES ($1,'f1001','অভিভাবক','Guardian School','bangla_medium','secondary')`, [T]);
+      // `complete`, not the `starter` default. The fee assertions below are
+      // about a school that HAS the finance module; on `starter` the plan
+      // carries no finance key at all and the guardian home correctly returns
+      // no fees block (B-53). Before that gate existed these tests passed on
+      // a starter school, which meant they were exercising a path that school
+      // could never legitimately reach.
+      `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, plan_code)
+       VALUES ($1,'f1001','অভিভাবক','Guardian School','bangla_medium','secondary','complete')`, [T]);
     await c.query(
       `INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status) VALUES
          ($1,$7,'প্রধান শিক্ষক','Head','+8801794100001','active'),

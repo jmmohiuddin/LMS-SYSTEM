@@ -4494,10 +4494,26 @@ async function loadWards(client) {
   }));
 }
 async function loadHome(client, ward) {
-  const attendance = await loadAttendance(client, ward.studentId);
-  const fees = await loadFees(client, ward.studentId);
-  const result = await loadLatestResult(client, ward.studentId);
-  return { ...ward, attendance, fees, result };
+  const stateOf = async (code) => {
+    const { rows } = await client.query(
+      "SELECT app.tenant_service_state(app.current_tenant(), $1) AS state",
+      [code]
+    );
+    return rows[0]?.state === "enabled" || rows[0]?.state === "limited";
+  };
+  const attendanceOn = await stateOf("attendance");
+  const financeOn = await stateOf("finance");
+  const resultsOn = await stateOf("results");
+  const attendance = attendanceOn ? await loadAttendance(client, ward.studentId) : null;
+  const fees = financeOn ? await loadFees(client, ward.studentId) : null;
+  const result = resultsOn ? await loadLatestResult(client, ward.studentId) : null;
+  return {
+    ...ward,
+    attendance,
+    fees,
+    result,
+    services: { attendance: attendanceOn, finance: financeOn, results: resultsOn }
+  };
 }
 async function loadAttendance(client, studentId) {
   const { rows } = await client.query(
@@ -4802,7 +4818,7 @@ async function handler18(req, res) {
 async function loadChoices(client) {
   const { rows } = await client.query(
     `SELECT es.id,
-            cl.name_bn || '-' || s.name_bn || ' \xB7 ' || sub.name_bn || ' \xB7 ' || e.name_bn AS label
+            cl.name_bn || '-' || s.name || ' \xB7 ' || sub.name_bn || ' \xB7 ' || e.name_bn AS label
        FROM exam_subjects es
        JOIN exams    e   ON e.id   = es.exam_id
        JOIN sections s   ON s.id   = es.section_id
@@ -4811,7 +4827,7 @@ async function loadChoices(client) {
       -- Analysing an exam nobody has marked yet shows a screen of zeroes
       -- and teaches the teacher to distrust the screen.
       WHERE EXISTS (SELECT 1 FROM exam_marks m WHERE m.exam_subject_id = es.id)
-      ORDER BY e.starts_on DESC NULLS LAST, cl.level_no, s.name_bn
+      ORDER BY e.starts_on DESC NULLS LAST, cl.level_no, s.name
       LIMIT 60`
   );
   return rows.map((r) => ({ examSubjectId: r.id, label: r.label }));
@@ -4821,7 +4837,7 @@ async function loadHeader(client, id) {
     `SELECT es.id            AS "examSubjectId",
             es.section_id    AS "sectionId",
             es.subject_id    AS "subjectId",
-            cl.name_bn || '-' || s.name_bn || ' \xB7 ' || sub.name_bn || ' \xB7 ' || e.name_bn AS label,
+            cl.name_bn || '-' || s.name || ' \xB7 ' || sub.name_bn || ' \xB7 ' || e.name_bn AS label,
             es.cq_max        AS "cqMax",
             es.mcq_max       AS "mcqMax",
             es.practical_max AS "practicalMax",
@@ -5321,17 +5337,21 @@ async function studentDetail(db, ctx, studentId) {
         ORDER BY gs.is_primary DESC`,
       [studentId]
     );
-    const { rows: att } = await c.query(
+    const { rows: svc } = await c.query(
+      `SELECT app.tenant_service_state(app.current_tenant(), 'attendance') AS state`
+    );
+    const attendanceOn = svc[0]?.state === "enabled" || svc[0]?.state === "limited";
+    const { rows: att } = attendanceOn ? await c.query(
       // 'late' and 'half_day' count as attended: a child who arrived is not
       // absent, and a 90-day figure that says otherwise would have a teacher
       // chasing a guardian about a child who was in the room.
       `SELECT count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
-              count(*)::int AS total
-         FROM attendance_records ar
-        WHERE ar.student_id = $1
-          AND ar.taken_on >= app.today_dhaka() - INTERVAL '90 days'`,
+                count(*)::int AS total
+           FROM attendance_records ar
+          WHERE ar.student_id = $1
+            AND ar.taken_on >= app.today_dhaka() - INTERVAL '90 days'`,
       [studentId]
-    );
+    ) : { rows: [] };
     return {
       student: {
         id: u.id,
@@ -5370,10 +5390,10 @@ async function studentDetail(db, ctx, studentId) {
         isPrimary: g.is_primary,
         canPayFees: g.can_pay
       })),
-      attendance90d: {
-        present: att[0]?.present ?? 0,
-        total: att[0]?.total ?? 0
-      }
+      // null, not a zeroed object: "this school does not run attendance" and
+      // "nobody has taken a register in 90 days" are different facts, and a
+      // 0/0 would render as the second.
+      attendance90d: attendanceOn ? { present: att[0]?.present ?? 0, total: att[0]?.total ?? 0 } : null
     };
   });
 }
@@ -5645,10 +5665,22 @@ async function handler21(req, res) {
     const payload = await db.withTenant(ctx, async (c) => {
       const profile = await loadProfile(c, studentId, MAY_SEE_CONTACT.includes(role));
       if (!profile) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+      const serviceOn = async (code) => {
+        const r = await c.query(
+          "SELECT app.tenant_service_state(app.current_tenant(), $1) AS state",
+          [code]
+        );
+        return r.rows[0]?.state === "enabled" || r.rows[0]?.state === "limited";
+      };
+      const [attendanceOn, resultsOn, financeOn] = [
+        await serviceOn("attendance"),
+        await serviceOn("results"),
+        await serviceOn("finance")
+      ];
       const enrolments = await loadEnrolments(c, studentId);
-      const attendance = await loadAttendance2(c, studentId);
-      const results = await loadResults(c, studentId);
-      const fees = MAY_SEE_FEES.includes(role) ? await loadFees2(c, studentId) : null;
+      const attendance = attendanceOn ? await loadAttendance2(c, studentId) : null;
+      const results = resultsOn ? await loadResults(c, studentId) : null;
+      const fees = MAY_SEE_FEES.includes(role) && financeOn ? await loadFees2(c, studentId) : null;
       const printable = Object.entries(DOCUMENT_ACCESS).filter(([, roles]) => roles.includes(role)).map(([type]) => type);
       return {
         student: profile,
@@ -5661,12 +5693,18 @@ async function handler21(req, res) {
         // Said plainly rather than left for the UI to infer from a null: a
         // tab that is empty because there is nothing and a tab that is empty
         // because this person may not see it are different sentences.
-        permissions: { fees: MAY_SEE_FEES.includes(role), contact: MAY_SEE_CONTACT.includes(role) }
+        permissions: { fees: MAY_SEE_FEES.includes(role), contact: MAY_SEE_CONTACT.includes(role) },
+        // Which blocks are missing because the SCHOOL does not have that
+        // service, as opposed to missing because this person may not see them
+        // or because there is nothing there. Three different sentences for a
+        // screen to say, and it cannot tell them apart from a null alone.
+        services: { attendance: attendanceOn, results: resultsOn, finance: financeOn }
       };
     });
     json(res, 200, payload, cors);
   } catch (err) {
     const e = err instanceof HttpError ? err : new HttpError(500, "internal_error", "internal_error");
+    if (!(err instanceof HttpError)) console.error("[students/history]", err);
     json(res, e.status, { error: e.code, message: e.message, ...e.detail ?? {} }, cors);
   }
 }

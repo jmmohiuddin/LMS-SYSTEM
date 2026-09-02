@@ -291,20 +291,41 @@ export function humanError(
  * person, and "addressed to a person" is decided by whether it is written in
  * the language the reader is reading.
  *
- * A 403 never uses the server's words at all, whatever language they are in:
- * what a refused person needs is what they may do next, and the endpoint does
- * not know that.
+ * A 403 for a ROLE never uses the server's words at all, whatever language
+ * they are in: what a refused person needs is what they may do next, and the
+ * endpoint does not know that.
+ *
+ * ── The exception, and why it is not a hole in that rule ───────────────────
+ * `HttpError`'s own comment says a blocked TENANT is not a refused role —
+ * "a refused ROLE needs a different person, a blocked TENANT needs a payment
+ * or a call to us — and the screen has to say which". The screen was not
+ * saying which. Every entitlement refusal came out as "…দেখার অনুমতি আপনার
+ * নেই। প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন", so a guardian at a
+ * school with no finance module was told they were distrusted and sent to a
+ * head teacher who would tell them the school does not use that part.
+ * Observed in a browser against a running stack.
+ *
+ * For those two codes the endpoint DOES know what happens next, and it wrote
+ * the sentence in Bangla for exactly this reader — so it is used. The Bangla
+ * check still applies: a server that answered in English still gets the
+ * generic sentence rather than printing a log line onto a parent's phone.
  */
+const ENTITLEMENT_CODES = new Set(['tenant_blocked', 'service_unavailable']);
 export function serverMessage(
   body: { message?: unknown; error?: unknown } | null | undefined,
   status: number,
   fallback: string,
   subject?: string,
 ): string {
-  if (status === 401 || status === 403) return permissionMessage(subject);
   const raw = typeof body?.message === 'string' ? body.message.trim() : '';
+  const isBangla = Boolean(raw) && /[ঀ-৿]/.test(raw);
+  if (status === 401 || status === 403) {
+    const code = typeof body?.error === 'string' ? body.error : '';
+    if (ENTITLEMENT_CODES.has(code) && isBangla) return raw;
+    return permissionMessage(subject);
+  }
   // Bangla block. A message with no Bangla in it was written for a log.
-  if (raw && /[ঀ-৿]/.test(raw)) return raw;
+  if (isBangla) return raw;
   const code = typeof body?.error === 'string' ? body.error : null;
   if (code) {
     const mapped = humanError(code, status, subject);

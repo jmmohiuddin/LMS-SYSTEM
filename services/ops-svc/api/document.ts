@@ -91,6 +91,36 @@ const ACCESS: Record<DocumentType, string[]> = {
                      'dept_head', 'class_teacher', 'subject_teacher'],
 };
 
+/**
+ * Which SERVICE each document's content belongs to (B-53).
+ *
+ * The handler declares `service: 'documents'`, and that is right for the
+ * printing machinery itself — the letterhead, the branding, the page set.
+ * But the machinery is not the content. A fee receipt is the finance
+ * module's data on a school's letterhead, a report card is the results
+ * module's, an attendance sheet the attendance module's. Verified against a
+ * running stack: with each of those services switched off, this endpoint
+ * still returned a complete, branded, printable document.
+ *
+ * That is worse than an API leak. These are pages a school hands to a parent
+ * or files with a board — a fee receipt printed by a school that has no
+ * finance module is a document nobody in the office can reconcile, and an
+ * attendance sheet issued while attendance is mid-migration is a signed
+ * statement about children built from a half-moved table.
+ *
+ * `id_card` and `transfer_certificate` map to nothing: an identity card is
+ * the roster, and a transfer certificate is an administrative act about
+ * enrolment. Both belong to the school as such and survive every service
+ * being off, which is exactly what a school closing its finance module still
+ * needs in order to send a child elsewhere.
+ */
+const CONTENT_SERVICE: Partial<Record<DocumentType, string>> = {
+  fee_receipt: 'finance',
+  report_card: 'results',
+  admit_card: 'results',
+  attendance_sheet: 'attendance',
+};
+
 /** A batch is a section, and a section is at most a large classroom. */
 const MAX_BULK = 120;
 
@@ -133,6 +163,27 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding FROM tenants`,
       );
       const branding = parseBranding(brandRows[0]?.branding ?? {});
+
+      // The content's own entitlement, checked before a single row of it is
+      // read. `limited` still prints: a school in billing arrears is the one
+      // whose parents most need a receipt for what they have paid.
+      const contentService = CONTENT_SERVICE[type];
+      if (contentService) {
+        const { rows: st } = await c.query<{ state: string }>(
+          'SELECT app.tenant_service_state(app.current_tenant(), $1) AS state',
+          [contentService]);
+        const state = st[0]?.state;
+        if (state !== 'enabled' && state !== 'limited') {
+          // 403 and not an empty document: a blank page reads as "this child
+          // has no record", which is a different and more alarming claim than
+          // "this school does not run that module".
+          throw new HttpError(403,
+            state === 'not_in_plan'
+              ? 'এই নথির জন্য প্রয়োজনীয় সেবা আপনার প্যাকেজে নেই'
+              : 'এই নথির জন্য প্রয়োজনীয় সেবা এই প্রতিষ্ঠানের জন্য আপাতত বন্ধ রয়েছে',
+            'service_unavailable', { service: contentService });
+        }
+      }
 
       const sections = await build(c, ctx, type, q, branding);
       if (sections.length === 0) {

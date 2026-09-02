@@ -424,17 +424,27 @@ async function studentDetail(db: Db, ctx: Ctx, studentId: string) {
       [studentId],
     );
 
-    const { rows: att } = await c.query<{ present: number; total: number }>(
-      // 'late' and 'half_day' count as attended: a child who arrived is not
-      // absent, and a 90-day figure that says otherwise would have a teacher
-      // chasing a guardian about a child who was in the room.
-      `SELECT count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
-              count(*)::int AS total
-         FROM attendance_records ar
-        WHERE ar.student_id = $1
-          AND ar.taken_on >= app.today_dhaka() - INTERVAL '90 days'`,
-      [studentId],
-    );
+    // B-53. This endpoint declares no `service:` key — the student record it
+    // returns is not the attendance service — but the 90-day figure below IS,
+    // and it was served whatever the school's entitlement said. A one-line
+    // summary is still the attendance module's data.
+    const { rows: svc } = await c.query<{ state: string }>(
+      `SELECT app.tenant_service_state(app.current_tenant(), 'attendance') AS state`);
+    const attendanceOn = svc[0]?.state === 'enabled' || svc[0]?.state === 'limited';
+
+    const { rows: att } = attendanceOn
+      ? await c.query<{ present: number; total: number }>(
+        // 'late' and 'half_day' count as attended: a child who arrived is not
+        // absent, and a 90-day figure that says otherwise would have a teacher
+        // chasing a guardian about a child who was in the room.
+        `SELECT count(*) FILTER (WHERE ar.status IN ('present','late','half_day'))::int AS present,
+                count(*)::int AS total
+           FROM attendance_records ar
+          WHERE ar.student_id = $1
+            AND ar.taken_on >= app.today_dhaka() - INTERVAL '90 days'`,
+        [studentId],
+      )
+      : { rows: [] };
 
     return {
       student: {
@@ -476,10 +486,12 @@ async function studentDetail(db: Db, ctx: Ctx, studentId: string) {
         isPrimary: g.is_primary,
         canPayFees: g.can_pay,
       })),
-      attendance90d: {
-        present: att[0]?.present ?? 0,
-        total: att[0]?.total ?? 0,
-      },
+      // null, not a zeroed object: "this school does not run attendance" and
+      // "nobody has taken a register in 90 days" are different facts, and a
+      // 0/0 would render as the second.
+      attendance90d: attendanceOn
+        ? { present: att[0]?.present ?? 0, total: att[0]?.total ?? 0 }
+        : null,
     };
   });
 }

@@ -112,6 +112,9 @@ function isoDate(v: unknown): string | null {
   return String(v).slice(0, 10);
 }
 
+/** The catalogue service these tables belong to. See ctx below. */
+const SERVICE = 'results';
+
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const cors = corsHeaders();
   if (req.method === 'OPTIONS') {
@@ -151,7 +154,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     const db = await sharedDb();
-    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    // B-53. Everything this endpoint reads — exams, exam_subjects — is the
+    // results module's, and `academics/exams.ts` gates exactly those tables
+    // on `results`. This one declared no service at all, so a school whose
+    // results module was off could still read and print its whole exam
+    // timetable from here. Verified against a running stack before the key
+    // was added; the gate now lives in `tenant_guard`, one place, rather than
+    // being re-implemented per query.
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE };
 
     // No examId on a GET means "which exams are there?". The screen needs
     // that list to put a selector above the routine, and giving it its own

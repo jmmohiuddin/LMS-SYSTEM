@@ -11059,3 +11059,177 @@ the service worker caches. B-8's fix is real; no user can reach that state.
 `B-46` exam creation · `B-47` fee amounts · `B-48` payment/receipt ·
 `B-49` routine/room creation — all four closed, each with a UI and browser
 evidence. Next in the roadmap order is **P-ops**.
+
+---
+
+# P-ops — C: entitlements that were never enforced (2026-09-03)
+
+P-ops A and B (`54610ce`) gave production a schedule and a heartbeat. C is
+§5 of the brief: **the entitlement bypass audit**. Its rule was one sentence —
+*the control MUST hold server-side; do not rely on hidden UI* — and the
+starting point was `B-53`, an owner-audit row that named three endpoints.
+
+## What was reproduced before anything was written
+
+A school on the `starter` plan. Not "finance switched off" — **`not_in_plan`**,
+a plan with no finance key at all, a school that never bought the module:
+
+```
+finance state = not_in_plan
+gated   /finance/invoices            -> 403 ফি ও হিসাব এই প্রতিষ্ঠানের জন্য …
+sibling /academics/students/history  -> 200
+  >>> fees : {"years":[{"invoices":1,"billed":"1300.00","paid":"1300.00", …
+sibling /ops/dashboard               -> 200
+  >>> finance: {"invoiced":"1300.00","collected":"1300.00","outstanding":"0.00"}
+```
+
+The commercial gate and the privacy gate were the same gate, and both were
+bypassed by asking a different URL.
+
+## The shape, and why the obvious fix was the wrong one
+
+An endpoint declares `service:` in its `TenantContext` and `tenant_guard`
+refuses the request. Six endpoints declared nothing — correctly, because each
+is a *composite*: a student's history is enrolments **and** attendance **and**
+results **and** fees, four separate purchases on one page.
+
+Gating those endpoints as a whole would have been the wrong fix. A school that
+never bought finance still legitimately wants a child's attendance record, and
+a 403 for the page takes away something they do have. So **each block is gated
+on its own service**, and an off service yields `null` — the same shape an
+unauthorised role already produced, which every caller already handled.
+
+`limited` still serves throughout: it is the billing-arrears state, and which
+services survive it is `service_catalogue.in_limited`'s decision, not a
+handler's. Two tests were rewritten mid-flight when they asserted my opinion
+against that table — the catalogue says finance does *not* survive arrears and
+documents do not either, and pinning the endpoint to the policy is worth more
+than pinning it to what I assumed the policy should be.
+
+## Six sites
+
+| Endpoint | Was leaking | Now |
+|---|---|---|
+| `academics/studenthistory` | attendance, results, fees | per-block, `services:{}` says which |
+| `academics/ward` | the guardian's own three cards | per-block; no card for a module the school lacks |
+| `academics/hierarchy` | the 90-day attendance summary | `null`, not a zeroed object |
+| `ops/dashboard` | the finance tile, gated on ROLE alone | role **and** entitlement; `financeAvailable` says why |
+| `ops/document` | printable receipts, report cards, admit cards, attendance sheets | `CONTENT_SERVICE` per document type |
+| `rms/examroutine` | the whole exam timetable | declares `service: 'results'`, like `academics/exams` |
+
+**`ops/document` was the worst of them.** These are not API responses; they are
+branded, letterheaded pages a school hands to a parent or files with a board.
+A fee receipt printed by a school with no finance module is paper nobody in
+that office can reconcile against anything. It refuses with 403 rather than an
+empty page: a blank sheet reads as *this child has no record*, a different and
+more alarming claim than *this school does not run that module*.
+
+`id_card` and `transfer_certificate` map to no content service and still
+print — the counter-assertion, and the one that would catch an over-correction.
+A school closing its finance module has not stopped having students, and still
+needs to send a child elsewhere.
+
+## The push half, which the row named and nobody had closed
+
+> *"Disabling `push` does not stop push at all — only the subscribe endpoint
+> is gated, not the sending path."*
+
+Exactly right, and the cause was worse than the row knew.
+`SmsDispatchWorker.run` opened its transaction with `service: 'sms'`, and the
+push stage runs *inside* that transaction. Two consequences, opposite in
+direction:
+
+1. **Push off did not stop push.** A device registered before the switch kept
+   receiving notifications. With `pushReplacesSms` on, an accepted push
+   *cancels* the queued SMS — so a school that disabled push and left that
+   setting on had its paid fallback cancelled by a transport it had switched
+   off. The guardian got neither. Silence in both channels.
+
+2. **`B-83`: no school on the `pilot` plan has ever received a push.**
+   `pilot` and `madrasa_basic` carry `push: true` and no `sms` key at all, so
+   `sms = not_in_plan`, the gate refused the run before its first statement,
+   and the push stage never executed. Verified across four live pilot tenants,
+   every one reporting `push_state = enabled`. Their subscribe endpoint
+   answered 200 and their devices registered. `pilot` is the plan real pilot
+   schools are on.
+
+The original comment justified the `sms` gate by cost — *"every message here
+costs the school money"* — and that reasoning is right about SMS and was never
+right about push, which is free. The run is now gated on tenant **access**
+only, so a suspended school still sends nothing, and each transport is gated
+on its own service inside.
+
+`B-85` is the honest limit and is recorded rather than half-built: enqueueing
+is the billable act, so a push-only school now pushes correctly and pushes
+*nothing*, because push is a cheaper transport for SMS traffic and not yet an
+independent channel. Giving it its own queue is design work, not a bug fix.
+
+## Two bugs the audit was not looking for
+
+**`B-82` — the class-performance screen had never rendered.** `classperf.ts`
+selected `s.name_bn` from `sections`, whose column is `name`; `subjects` is
+the table with `name_bn` and is aliased `sub` two lines away. SQLSTATE 42703
+at parse time — unconditional, needing no data. Every request that endpoint
+ever received was a 500.
+
+It was found because of **`B-86`**: `studenthistory`'s `catch` discarded the
+error entirely, and adding a `console.error` to it (the response left
+deliberately opaque — that endpoint returns a child's record and a leaked SQL
+message names columns) paid for itself within the hour by printing the cause
+of a *different* endpoint's failure.
+
+## Browser acceptance
+
+Guardian session, real API, `starter` school. The guardian home renders the
+identity, the attendance card and the result card, **no fees card and no pay
+button** — screenshot in the session. It crashed on the first attempt with
+`Cannot read properties of null (reading 'outstanding')`, which is the browser
+confirming the API change was real and that three view consumers had to move
+with it: `guardian-view` (cards and CTA), `academic-view` (three states for
+the 90-day card, not two), and `payCta`, which I had missed. `principal-home-view`
+already handled `finance: null` correctly and needed nothing.
+
+Tapping "বেতন" refuses cleanly and leaks nothing — but says *"বেতন ও ফি দেখার
+অনুমতি আপনার নেই। প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন"*, which is a
+permission sentence for what is an entitlement fact. `HttpError`'s own comment
+had already drawn that distinction — *"the screen has to say which"* — and the
+screen was not saying which. `serverMessage` now keeps the server's Bangla
+sentence for `tenant_blocked` and `service_unavailable`. The screens refusing
+through `refuseUnlessOk` still cannot, because `HttpStatus(status)` discards
+the body before any view sees it; that is **`B-84`**, left open with its reason
+rather than threaded through every denied state inside this phase.
+
+## Recorded honestly
+
+**A pre-existing suite was passing for the wrong reason.** `ward.test.ts`
+seeded its school without a `plan_code`, taking the `starter` default — a plan
+with no finance. Its three fee assertions were exercising a path that school
+could never legitimately reach, and only passed because the entitlement was
+never checked. The fixture now says `complete`.
+
+**Two of my own tests asserted an opinion, not the policy.** Both claimed a
+school in arrears should keep something `service_catalogue.in_limited` says it
+loses. Rewritten to pin the catalogue's decision, with the note that changing
+it is a row in that table and not an `if` in a handler.
+
+**An invalid curve point looked exactly like a working gate.** The push
+fixture's `p256dh` was base64 of the right length and not a P-256 point, so
+encryption failed inside `web-push`, the spy transport was never contacted,
+and three tests "passed". The baseline assertion — *with push ON, the device
+IS contacted* — is what caught it, and is why it is there.
+
+**A failing test poisoned the ones after it.** A test that asserts and then
+restores never restores when it fails, so the next run saw a school still in
+`limited` and reported a second, unrelated failure. State is reset in
+`beforeEach` now.
+
+## Evidence
+
+- 1744 tests across 13 workspaces, all passing. 24 new, in three suites.
+- Every new suite proven **red first** against the un-fixed code: academics
+  4/11 red, ops 4/7 red, sms 5/6 red, and the original seven 5/7 red.
+- `tsc --noEmit` clean at every step.
+- Live reproduction and live re-verification of all six endpoints on a running
+  stack, before and after, plus four pilot tenants inspected for `B-83`.
+- `db/tests (sql)` **did not run** — `psql` is not on PATH in this
+  environment. 26 files, unexecuted, and not counted as passing.

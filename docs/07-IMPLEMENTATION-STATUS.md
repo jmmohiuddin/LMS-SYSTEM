@@ -938,6 +938,23 @@ print-first stance, and it is why R-5 needed no object storage and puts
 nothing large in PostgreSQL. When an R2/S3 credential lands, this endpoint's
 markup is what gets rendered server-side; it does not change.
 
+**The document's SERVICE is not the same as `documents` (P-ops, B-53).**
+The handler declares `service: 'documents'`, which is right for the printing
+machinery — the letterhead, the branding, the page set — and wrong for the
+content. A fee receipt is the finance module's data on a school's letterhead;
+a report card and an admit card are the results module's; an attendance sheet
+is the attendance module's. With each of those switched off, this endpoint
+still returned a complete, branded, printable page — verified against a
+running stack. `CONTENT_SERVICE` now maps each type to the service its content
+belongs to and the gate is checked before a row of it is read.
+
+It answers **403, not an empty document**: a blank sheet reads as "this child
+has no record", which is a different and more alarming claim than "this school
+does not run that module". `id_card` and `transfer_certificate` map to nothing
+and still print — an identity card is the roster and a transfer certificate is
+an administrative act about enrolment, and a school closing its finance module
+still needs to send a child elsewhere.
+
 **The tenant is not a parameter.** Branding comes from
 `tenants.settings->'branding'` — R-1's source, no second table — read inside
 `withTenant()` with no `WHERE` clause, because a session sees exactly one

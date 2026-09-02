@@ -725,7 +725,7 @@ in development.
 
 | | Repository | Production |
 |---|---|---|
-| Migration | **067** | **048** (unverified from outside — see below) |
+| Migration | **068** | **048** (unverified from outside — see below) |
 | Landing page | `496199bd` | `496199bd` — **byte-identical, confirmed today** |
 | `ops/staff-attendance` | present | **404** |
 
@@ -759,8 +759,27 @@ An empty result is the precondition. If it returns rows, the index will fail
 to build and the duplicates must be reconciled by the school — **not deleted**,
 since a fee structure is financial configuration a past invoice may reference.
 
-Each has a rollback in `db/rollback/`. Rolling back 065–067 **re-opens the
+**068 also REPAIRS DATA**, which none of the others do. It separates
+`exams.routine_published_at` (the timetable was announced) from `status` /
+`published_at` (the results are out); conflating them meant that publishing an
+exam routine set the exam to `published`, after which no mark could ever be
+entered and no result could ever be published. Before applying it, count how
+many production exams are already in that state:
+
+```bash
+docker exec -i shikhon-r5 psql -U shikhon_owner -d shikhon_lms -tAc "SELECT count(*) FROM exams WHERE status = 'published' AND published_at IS NULL"
+```
+
+Every row that returns is an exam a school can no longer mark. 068 moves them
+back to `planned` and records the routine announcement instead — that is a
+repair, not a loss, but the count is worth recording before and after.
+
+Each has a rollback in `db/rollback/`. Rolling back 065–068 **re-opens the
 write hole** rather than restoring a safe state; the rollback headers say so.
+068's rollback additionally drops `routine_published_at` and re-points the two
+routine guards at `status`, so `services/rms-svc/api/examroutine.ts` must be
+reverted with it or routine publication will run neither the clash check nor
+the invigilator check.
 
 ### Monitoring — what changed
 

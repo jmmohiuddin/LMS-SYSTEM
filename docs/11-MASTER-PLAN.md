@@ -1604,7 +1604,7 @@ can do it**.
 
 | Workstream | Backend | UI | Status | What is not done |
 |---|---|---|---|---|
-| **A1** exam creation | **COMPLETE** — `academics-svc/api/exams.ts`, POST + PATCH, routed, migration 066 | **DOES NOT EXIST** | **PARTIAL** | No screen calls `/api/v1/academics/exams`. Its only PWA callers are `marks-view` and `scripts-view`, both read-only with `?sectionId=`; `exam-routine-view` posts to `/api/v1/rms/examroutine`, which *schedules* an exam that already exists. **An admin cannot create an exam through the product.** |
+| **A1** exam creation | **COMPLETE** — `academics-svc/api/exams.ts`, migrations 066 + 068 | **COMPLETE** — `exams-view.ts` | **COMPLETE** 2026-09-02 | Browser-verified create · edit · duplicate-refusal · persistence · marks compatibility · routine compatibility · 26/26 role and cross-tenant checks · three viewports. The audit also found that publishing an exam ROUTINE wrote the RESULTS status and permanently bricked the exam (`B-68`), and that 066 had left `exam_marks` and `exam_results` writes on tenant-match alone (`B-67`); both fixed in migration 068. Ten further exam-domain defects are recorded OPEN as `B-70` |
 | **A2** fee structures | **COMPLETE** — `finance-svc/api/feestructures.ts`, migration 067 | **COMPLETE** — `fee-structures-view.ts` | **COMPLETE** | Browser-verified create · edit · delete · duplicate-refusal · reload-persistence · cross-tenant · four roles. Payment capture is A3's, not this |
 | **A3** rooms | **COMPLETE** — migration 065 | **COMPLETE** | **COMPLETE** | Regression re-verified 2026-09-02: Room A → visible → survives reload → Room B |
 | **A4** routine authoring | NOT STARTED | NOT STARTED | **NOT STARTED** | P9's largest prerequisite |
@@ -1613,10 +1613,14 @@ can do it**.
 | **D** entitlement bypasses | NOT STARTED | — | **NOT STARTED** | — |
 | **E** fresh-tenant E2E | NOT STARTED | — | **NOT STARTED** | — |
 
-**The recurring finding, now three for three.** Every writer this phase has
+**The recurring finding, now four for four.** Every writer this phase has
 touched was missing beneath a complete downstream: `rooms` fed an empty
 solver, `exams` fed a marks pipeline nothing could start, `fee_structures`
-fed an invoice run that billed nothing. A2 added a fourth variant — a control
-that *did* run, was refused correctly by the database, and told nobody
-(`B-60`). "Backend complete" has not once meant "a school can do it".
+fed an invoice run that billed nothing. A2 added a variant — a control that
+*did* run, was refused correctly by the database, and told nobody (`B-60`).
+A1 added the sharpest one yet: a control that ran, succeeded, and destroyed
+the feature it belonged to. Publishing an exam timetable — the ordinary act
+it exists for — made that exam permanently unmarkable (`B-68`), and four
+tests asserted that this was correct. "Backend complete" has not once meant
+"a school can do it", and a green suite has not once meant "this works".
 

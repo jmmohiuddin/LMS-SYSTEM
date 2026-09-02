@@ -10713,3 +10713,115 @@ leftovers are cleared. 26/26 was reached that way.
 A4 routine authoring · B production scheduling · C alerting and the deadman ·
 D entitlement bypasses · E fresh-tenant E2E. **And the A1 exam UI**, without
 which A1 is not a feature a school can use.
+
+# P0 checkpoint 5 — A1 exam management
+
+`62b6146` the lifecycle fix and migration 068 · `660afed` the exam register UI
+
+## What A1 was
+
+The inverse of A2. A2 had a screen with no writer beneath it; A1 had a
+complete writer — POST and PATCH since migration 066 — that no screen had ever
+called. Marks, grades, GPA, rank, publish, the progress report and the admit
+card were all built on something no school could create.
+
+The screen asks for **sections**, not subjects: the server writes `exams` and
+`exam_subjects` in one transaction, one paper per (section × subject the class
+teaches), maxima copied from `class_subjects` and frozen. Two sections in a
+real school produced 24 papers, and the exam then appeared in the marks-entry
+picker with all twelve of its subjects — OBSERVED in a browser.
+
+## The finding that mattered more than the screen
+
+**Publishing an exam routine permanently bricked the exam.** Proved end to end
+against the real HTTP API, in the order a school works:
+
+| Step | Before 068 |
+|---|---|
+| create the exam | planned, 12 papers |
+| publish the exam **routine** | `status` becomes `published` |
+| correct a typo in the name | **409** already published |
+| a teacher enters a mark | **conflict** `published_marks_immutable` |
+| the office publishes the **results** | **409** already published |
+
+`exams.status` is the RESULTS lifecycle — `published` means a parent has been
+shown a grade, which is why `exams.ts`, `publish.ts` and
+`sync-svc/appliers.ts` all treat it as final. `POST /rms/examroutine
+{publish:true}` publishes the SCHEDULE, weeks before anyone sits a paper, and
+wrote that same value. Nothing anywhere moves status backwards, so there was
+no recovery inside the product.
+
+The routine wrote `status` because both routine guards hang off it. They are
+guards about the timetable — `assert_exam_halls_staffed` says so in its own
+HINT — so **migration 068** moves them to `exams.routine_published_at` along
+with the fact they were guarding, and repairs any row already wearing the
+wrong status.
+
+**Four tests asserted the conflation**, which is why a green suite never
+noticed it: `examroutine.test.ts` asserted `exam.status === 'published'` after
+a routine publish, `exam-routine-view.test.ts` built its fixture with
+`status: 'published'`, and `db/tests/exam_clash.sql` and `seat_plan.sql`
+published the same way. All four now assert that announcing a timetable does
+**not** move `exams.status`, so the correction is itself a guard.
+
+## What 066 had stopped short of
+
+066 scoped writes on `exams` and `exam_subjects`, and left `exam_marks`
+restricted on INSERT and SELECT only and `exam_results` on SELECT only.
+Everything else fell through to the PERMISSIVE `tenant_isolation`, which asks
+only "same school?". Proved live as `dept_head`, a role that cannot enter a
+mark at all:
+
+```
+DELETE FROM exam_marks   -> 1 row, on an exam whose results were PUBLISHED
+DELETE FROM exam_results -> 1 row
+DELETE FROM exams        -> 0 rows   (066 holds — the control)
+```
+
+`trg_marks_immutable` does not save it: it is `BEFORE UPDATE OF` the four
+component columns and never fires on DELETE. `subjects` and `academic_years`
+had no DELETE policy either and both cascade into the exam tables — as
+`subject_teacher`, `DELETE FROM exam_subjects` was refused and
+`DELETE FROM subjects` took the paper and its marks anyway. All five closed;
+the `principal` publish path re-verified working afterwards.
+
+## Gate at checkpoint 5
+
+| Check | Result |
+|---|---|
+| Full suite | **1,675 passing**, 13 workspaces |
+| SQL suites | **26/26** (via `docker exec`, `psql` is not on this host's PATH) |
+| TypeScript — all three CI configs | 0 errors, baseline 70 → 71 taken deliberately |
+| Build | `app.js` + `sw.js` + 11 API bundles |
+| Browser — create/edit | done through the real UI; 24 papers from 2 sections |
+| Browser — duplicate refused | 409 in the drawer, typed values kept, no row written |
+| Browser — persistence | survives reload |
+| Browser — **exam → marks** | the exam is selectable in the marks picker with 12 papers |
+| Browser — **exam → routine** | selectable, routine published, and the exam **stayed markable** |
+| Role matrix | 26/26 through the live API, using the project's real role codes |
+| Responsive | 375×812, 768×1024, desktop — no horizontal overflow at any width |
+| `index.html` | `496199bd` |
+
+## Recorded honestly
+
+**There is no role named `teacher`.** The codes are `subject_teacher`,
+`class_teacher`, `dept_head`, `academic_coordinator`, … A probe that invents
+one tests nothing; the first version of this phase's probe did exactly that
+and its "refused" result was meaningless.
+
+**A second instance of B-58's signature.** During the first full-suite run
+`services/platform-svc/test/nonexistent-tenant.test.ts` failed as a
+WHOLE FILE — `test at …:1:1`, `'test failed'`, empty stderr — the signature of
+a hook throwing rather than an assertion failing, which is exactly what B-58
+records for `ops-svc/branding.test.ts`. It did not reproduce: 6/6 in
+isolation, 4/4 running that workspace as the runner does, and the next full
+suite was 1,675/1,675. **B-58 stays OPEN**, now with two observed instances
+rather than one. Recorded in BACKLOG as B-66.
+
+**A1 is now end-to-end complete. A2 and A3 are unaffected** — both writers'
+regression suites and the network-only cache rules were re-run green.
+
+## Still to do in P0
+
+A4 routine authoring · B production scheduling · C alerting and the deadman ·
+D entitlement bypasses · E fresh-tenant E2E.

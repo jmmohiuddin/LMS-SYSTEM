@@ -36,11 +36,24 @@
  */
 import type { Auth } from './auth.ts';
 import { emptyState, errorState } from './view-states.ts';
-import { pageHeader, field, statusBadge, listSkeleton } from './ui/index.ts';
+import {
+  pageHeader, field, statusBadge, listSkeleton, openDrawer, button, buttonRow,
+  el, append, setBusy, announce, confirmOverlay, type OverlayHandle,
+} from './ui/index.ts';
 import { formatCount } from '../../../packages/ui-core/src/format.ts';
 
-/** রবি–বৃহঃ. The teaching week the wireframe draws; day_of_week 0 = Sunday. */
-const DAYS: Array<{ dow: number; bn: string }> = [
+/**
+ * The teaching week comes from the SERVER, which reads `tenants.weekend_days`.
+ *
+ * This file used to hard-code রবি–বৃহঃ — Sunday to Thursday, five fixed
+ * columns. `weekend_days` defaults to {5,6} so that matched most schools, but
+ * it is per-institution and the live data already varies: one school in this
+ * database keeps only Friday, which makes Saturday a teaching day the grid had
+ * no column for. Lessons there would have been invisible and unplaceable.
+ *
+ * The fallback is used only before the first response arrives.
+ */
+const FALLBACK_DAYS: Array<{ dow: number; bn: string }> = [
   { dow: 0, bn: 'রবি' }, { dow: 1, bn: 'সোম' }, { dow: 2, bn: 'মঙ্গল' },
   { dow: 3, bn: 'বুধ' }, { dow: 4, bn: 'বৃহঃ' },
 ];
@@ -58,7 +71,27 @@ interface RoutineMeta {
   id: string; nameBn: string; shift: string; status: string; version: number;
   publishedAt: string | null; editable: boolean; sectionLabel: string;
 }
-interface Grid { sectionId: string; routine: RoutineMeta | null; periods: Period[]; slots: Slot[] }
+interface Day { dow: number; bn: string }
+interface PickSubject { id: string; nameBn: string; periodsPerWeek: number }
+interface PickTeacher { subjectId: string; id: string; nameBn: string }
+interface PickRoom { id: string; label: string; capacity: number | null }
+/** What a section needs before a routine can exist for it. */
+interface Setup {
+  academicYearId: string; yearLabel: string; shift: string;
+  periodTemplateId: string | null; periodTemplateName: string | null;
+  sectionLabel: string; effectiveFrom: string;
+}
+interface Grid {
+  sectionId: string;
+  routine: RoutineMeta | null;
+  periods: Period[];
+  slots: Slot[];
+  days?: Day[];
+  setup?: Setup | null;
+  subjects?: PickSubject[];
+  teachers?: PickTeacher[];
+  rooms?: PickRoom[];
+}
 
 export interface SectionOption { id: string; label: string }
 
@@ -137,7 +170,35 @@ export class RoutineEditorView {
     this.render();
   }
 
-  /* ------------------------------------------------------------- moving */
+  /* ------------------------------------------------------------ writing */
+
+  /** The institution's own teaching days, never a constant. */
+  private days(): Day[] {
+    return this.grid?.days?.length ? this.grid.days : FALLBACK_DAYS;
+  }
+
+  /**
+   * One POST, one shape of failure.
+   *
+   * Returns '' when accepted, otherwise the server's own sentence — which for
+   * a clash names the teacher, the room or the class already in that hour.
+   * Callers decide where to put it: a drawer keeps it inside the form beside
+   * the values that caused it, the grid raises it as a notice.
+   */
+  private async send(body: Record<string, unknown>): Promise<string> {
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/rms/editor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const out = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (res.ok && out.ok) return '';
+      return out.message ?? 'কাজটি সম্পন্ন হয়নি।';
+    } catch {
+      return 'সংযোগ নেই — পরিবর্তন সংরক্ষণ হয়নি।';
+    }
+  }
 
   private slotAt(dow: number, periodNo: number): Slot | undefined {
     return this.grid?.slots.find((s) => s.dayOfWeek === dow && s.periodNo === periodNo);
@@ -275,9 +336,30 @@ export class RoutineEditorView {
     }
 
     if (!this.grid?.routine) {
+      const setup = this.grid?.setup ?? null;
+      if (!setup) {
+        root.append(emptyState(d, {
+          glyph: 'clock',
+          message: 'এই শাখার জন্য কোনো রুটিন তৈরি হয়নি।',
+        }));
+        return;
+      }
+      if (!setup.periodTemplateId) {
+        // provision_tenant clones a bell schedule per shift from
+        // period_template_defaults, which carries only `day` and `morning`
+        // rows — an evening shift is provisioned with an empty template.
+        root.append(emptyState(d, {
+          glyph: 'clock',
+          message: 'এই শিফটের জন্য ঘণ্টার সময়সূচি (পিরিয়ড টেমপ্লেট) নেই — '
+            + 'আগে সেটি তৈরি করতে হবে, তারপর রুটিন বানানো যাবে।',
+        }));
+        return;
+      }
       root.append(emptyState(d, {
         glyph: 'clock',
-        message: 'এই শাখার জন্য কোনো রুটিন তৈরি হয়নি। আগে রুটিন তৈরি করুন।',
+        message: `${setup.sectionLabel} · ${setup.yearLabel} শিক্ষাবর্ষের জন্য এখনো কোনো রুটিন নেই। `
+          + 'রুটিন তৈরি করলে সপ্তাহের ছক খুলবে এবং ক্লাস বসানো যাবে।',
+        action: { label: 'রুটিন তৈরি করুন', onClick: () => this.openCreate(setup) },
       }));
       return;
     }
@@ -295,12 +377,20 @@ export class RoutineEditorView {
       const how = d.createElement('p');
       how.className = 'editor-holding-how';
       how.textContent = 'যে ঘরে বসাতে চান সেই খালি ঘরে চাপ দিন।';
-      const cancel = d.createElement('button');
-      cancel.type = 'button';
-      cancel.className = 'btn-secondary btn-small';
-      cancel.textContent = 'বাতিল';
-      cancel.addEventListener('click', () => { this.selected = null; this.render(); });
-      bar.append(what, how, cancel);
+      const acts = buttonRow(d,
+        button(d, {
+          label: 'সম্পাদনা', size: 'sm', variant: 'secondary', disabled: this.busy,
+          onClick: () => { if (held) this.openLesson(held); },
+        }),
+        button(d, {
+          label: 'সরান', size: 'sm', variant: 'danger', disabled: this.busy,
+          onClick: () => { if (held) this.confirmRemove(held); },
+        }),
+        button(d, {
+          label: 'বাতিল', size: 'sm', variant: 'secondary',
+          onClick: () => { this.selected = null; this.render(); },
+        }));
+      bar.append(what, how, acts);
       root.append(bar);
     }
 
@@ -321,6 +411,197 @@ export class RoutineEditorView {
     }
   }
 
+  /* ------------------------------------------------------------ drawers */
+
+  /** Name the routine, and create the draft the grid hangs off. */
+  private openCreate(setup: Setup): void {
+    const d = this.o.doc;
+    const form = el(d, 'div', { className: 'ui-fieldset' });
+    const errLine = el(d, 'p', {
+      className: 'ui-field-error', attrs: { role: 'alert', hidden: 'hidden' },
+    });
+    const name = field(d, {
+      label: 'রুটিনের নাম', name: 'nameBn', required: true,
+      value: `নিয়মিত রুটিন ${setup.yearLabel}`,
+      helper: `${SHIFT_BN[setup.shift] ?? setup.shift} শিফট · ঘণ্টার সময়সূচি: ${setup.periodTemplateName ?? '—'}`,
+      attrs: { maxlength: 120 },
+    });
+    append(form, errLine, name.root);
+    append(form, el(d, 'p', {
+      className: 'att-sub',
+      text: 'খসড়া হিসেবে তৈরি হবে। ক্লাস বসানো শেষ হলে প্রকাশ করতে পারবেন।',
+    }));
+
+    let handle: OverlayHandle;
+    const cancel = button(d, {
+      label: 'বাতিল', variant: 'secondary', onClick: () => handle.close(),
+    });
+    const save = button(d, {
+      label: 'তৈরি করুন', variant: 'primary',
+      onClick: async () => {
+        errLine.setAttribute('hidden', 'hidden');
+        setBusy(save, true);
+        const msg = await this.send({
+          action: 'create-routine', sectionId: this.grid?.sectionId, nameBn: name.input.value.trim(),
+        });
+        setBusy(save, false);
+        if (msg) {
+          errLine.textContent = msg;
+          errLine.removeAttribute('hidden');
+          announce(d, msg, true);
+          return;
+        }
+        handle.close();
+        await this.loadGrid(this.grid!.sectionId);
+        this.notice = { text: 'রুটিন তৈরি হয়েছে — এখন ক্লাস বসান।', tone: 'ok' };
+        this.render();
+      },
+    });
+    handle = openDrawer(d, { title: 'নতুন রুটিন', body: form, actions: [cancel, save] });
+  }
+
+  /**
+   * Place a lesson in an empty cell, or change the one already there.
+   *
+   * The teacher list narrows to the people actually assigned to teach the
+   * chosen subject in THIS section — `section_subject_teachers` — so the form
+   * cannot propose a timetable the school never staffed.
+   */
+  private openLesson(existing: Slot | null, dow?: number, periodNo?: number): void {
+    const d = this.o.doc;
+    const g = this.grid;
+    if (!g?.routine) return;
+    const subjects = g.subjects ?? [];
+    const allTeachers = g.teachers ?? [];
+    const rooms = g.rooms ?? [];
+
+    const form = el(d, 'div', { className: 'ui-fieldset' });
+    const errLine = el(d, 'p', {
+      className: 'ui-field-error', attrs: { role: 'alert', hidden: 'hidden' },
+    });
+    append(form, errLine);
+
+    if (subjects.length === 0) {
+      append(form, el(d, 'p', {
+        className: 'att-sub',
+        text: 'এই শ্রেণির পাঠ্যসূচিতে কোনো বিষয় নেই — আগে বিষয় নির্ধারণ করুন।',
+      }));
+    }
+
+    // Reconstruct the current subject from its Bangla name: the grid payload
+    // carries names for display, not ids, and widening it is a server change
+    // this screen does not need.
+    const currentSubject = existing
+      ? subjects.find((x) => x.nameBn === existing.subjectBn)?.id ?? ''
+      : '';
+
+    const subject = field(d, {
+      label: 'বিষয়', name: 'subjectId', kind: 'select', required: true,
+      value: currentSubject,
+      options: subjects.map((x) => ({ value: x.id, label: x.nameBn })),
+    });
+    const teacher = field(d, {
+      label: 'শিক্ষক', name: 'teacherId', kind: 'select', required: true,
+      options: [], helper: 'কেবল এই সেকশনে এই বিষয়ের জন্য দায়িত্বপ্রাপ্ত শিক্ষক।',
+    });
+    const room = field(d, {
+      label: 'কক্ষ', name: 'roomId', kind: 'select',
+      options: [{ value: '', label: 'নির্দিষ্ট নয়' },
+        ...rooms.map((r) => ({ value: r.id, label: r.label }))],
+      helper: 'ঐচ্ছিক।',
+    });
+
+    const fillTeachers = (): void => {
+      const sel = teacher.input as HTMLSelectElement;
+      const chosen = subject.input.value;
+      const opts = allTeachers.filter((t) => t.subjectId === chosen);
+      sel.textContent = '';
+      for (const t of opts) {
+        const o = d.createElement('option');
+        o.value = t.id;
+        o.textContent = t.nameBn;
+        sel.append(o);
+      }
+      if (opts.length === 0) {
+        const o = d.createElement('option');
+        o.value = '';
+        o.textContent = 'এই বিষয়ে কোনো শিক্ষক নিযুক্ত নন';
+        sel.append(o);
+      }
+      const match = opts.find((t) => t.nameBn === existing?.teacherName);
+      if (match) sel.value = match.id;
+    };
+    subject.input.addEventListener('change', fillTeachers);
+    fillTeachers();
+
+    if (existing?.roomName) {
+      const r = rooms.find((x) => x.label === existing.roomName);
+      if (r) (room.input as HTMLSelectElement).value = r.id;
+    }
+    append(form, subject.root, teacher.root, room.root);
+
+    let handle: OverlayHandle;
+    const cancel = button(d, {
+      label: 'বাতিল', variant: 'secondary', onClick: () => handle.close(),
+    });
+    const save = button(d, {
+      label: existing ? 'সংরক্ষণ করুন' : 'বসান', variant: 'primary',
+      onClick: async () => {
+        errLine.setAttribute('hidden', 'hidden');
+        setBusy(save, true);
+        const roomId = (room.input as HTMLSelectElement).value || null;
+        const msg = existing
+          ? await this.send({
+            action: 'assign', slotId: existing.id,
+            subjectId: subject.input.value, teacherId: teacher.input.value, roomId,
+          })
+          : await this.send({
+            action: 'place', routineId: g.routine!.id, sectionId: g.sectionId,
+            dayOfWeek: dow, periodNo,
+            subjectId: subject.input.value, teacherId: teacher.input.value, roomId,
+          });
+        setBusy(save, false);
+        // The drawer stays open on a refusal and the typed choices survive, so
+        // a coordinator told "রফিক ইসলাম তখন নবম-খ-তে গণিত পড়াচ্ছেন" can pick a
+        // different teacher without rebuilding the form (B-60).
+        if (msg) {
+          errLine.textContent = msg;
+          errLine.removeAttribute('hidden');
+          announce(d, msg, true);
+          return;
+        }
+        handle.close();
+        this.selected = null;
+        await this.loadGrid(g.sectionId);
+        this.notice = { text: existing ? 'হালনাগাদ হয়েছে।' : 'ক্লাস বসানো হয়েছে।', tone: 'ok' };
+        this.render();
+      },
+    });
+    handle = openDrawer(d, {
+      title: existing ? 'ক্লাস সম্পাদনা' : 'ক্লাস বসান',
+      body: form,
+      actions: [cancel, save],
+    });
+  }
+
+  private confirmRemove(slot: Slot): void {
+    confirmOverlay(this.o.doc, {
+      title: `${slot.subjectBn ?? 'ক্লাস'} সরাবেন?`,
+      // A soft delete: routine_slots.status becomes 'removed', the row stays.
+      body: 'ঘরটি খালি হয়ে যাবে এবং ওই সময়ে অন্য ক্লাস বসানো যাবে। '
+        + 'রেকর্ড মুছে যাবে না — কী ছিল তা সংরক্ষিত থাকবে।',
+      confirmLabel: 'সরান',
+      danger: true,
+      onConfirm: async () => {
+        const msg = await this.send({ action: 'remove', slotId: slot.id });
+        this.selected = null;
+        await this.loadGrid(this.grid!.sectionId);
+        this.notice = msg ? { text: msg, tone: 'warn' } : { text: 'সরানো হয়েছে।', tone: 'ok' };
+        this.render();
+      },
+    });
+  }
+
   private buildGrid(): HTMLElement {
     const d = this.o.doc;
     const grid = this.grid!;
@@ -337,7 +618,7 @@ export class RoutineEditorView {
     const corner = d.createElement('th');
     corner.textContent = 'পিরিয়ড';
     hr.append(corner);
-    for (const day of DAYS) {
+    for (const day of this.days()) {
       const th = d.createElement('th');
       th.textContent = day.bn;
       hr.append(th);
@@ -363,14 +644,14 @@ export class RoutineEditorView {
         // The break spans the week as one band, exactly as §8.1 draws it.
         const td = d.createElement('td');
         td.className = 'routine-break';
-        td.colSpan = DAYS.length;
+        td.colSpan = this.days().length;
         td.textContent = p.labelBn;
         tr.append(td);
         tbody.append(tr);
         continue;
       }
 
-      for (const day of DAYS) {
+      for (const day of this.days()) {
         tr.append(this.buildCell(day.dow, p));
       }
       tbody.append(tr);
@@ -385,7 +666,7 @@ export class RoutineEditorView {
     const td = d.createElement('td');
     td.className = 'routine-cell';
     const slot = this.slotAt(dow, p.periodNo);
-    const dayBn = DAYS.find((x) => x.dow === dow)?.bn ?? '';
+    const dayBn = this.days().find((x) => x.dow === dow)?.bn ?? '';
 
     const btn = d.createElement('button');
     btn.type = 'button';
@@ -430,14 +711,15 @@ export class RoutineEditorView {
       btn.append(empty);
       btn.setAttribute('aria-label',
         `${dayBn}, পিরিয়ড ${formatCount(p.periodNo, 'bn')}, খালি`
-        + (this.selected ? ' — এখানে বসাতে চাপ দিন' : ''));
-      // Only a held class makes an empty cell actionable; otherwise tapping
-      // one does nothing, and the disabled state says so honestly.
+        + (this.selected ? ' — এখানে বসাতে চাপ দিন' : ' — নতুন ক্লাস বসাতে চাপ দিন'));
+      // Holding a class makes this a drop target. Holding nothing, it is now
+      // where a NEW lesson is placed — until A4 an empty cell was inert,
+      // because nothing in the product could create a slot to put in it.
       if (this.selected) {
         btn.dataset.target = 'true';
         btn.addEventListener('click', () => { void this.place(dow, p.periodNo); });
       } else {
-        btn.disabled = true;
+        btn.addEventListener('click', () => this.openLesson(null, dow, p.periodNo));
       }
     }
     td.append(btn);

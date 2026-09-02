@@ -228,6 +228,10 @@ describe('authoring registers are network-only', () => {
       'https://x.test/api/v1/rms/rooms',
       'https://x.test/api/v1/academics/exams?yearId=abc',
       'https://x.test/api/v1/finance/feestructures',
+      // A4. The routine editor is read immediately before a placement and
+      // re-read immediately after one; a stale grid would show a coordinator
+      // an empty cell they just filled.
+      'https://x.test/api/v1/rms/editor?sectionId=abc',
     ]) {
       const r = get(url);
       assert.equal(r.strategy, 'network-only', `${url} -> ${r.strategy} (${r.reason})`);

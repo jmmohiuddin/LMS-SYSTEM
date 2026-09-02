@@ -200,6 +200,7 @@ export function route(request: { url: string; method: string; mode?: string }): 
   // published timetable is exactly the reference data that rule was written
   // for, and reading it in a corridor on a dead link is the offline story.
   if (path.startsWith('/api/v1/rms/rooms')
+    || path.startsWith('/api/v1/rms/editor')
     || path.startsWith('/api/v1/academics/exams')
     || path.startsWith('/api/v1/finance/feestructures')) {
     return {

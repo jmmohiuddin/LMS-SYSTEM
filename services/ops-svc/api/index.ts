@@ -39,6 +39,9 @@ import push from './push.ts';
 // R-8 §7 — the scheduled alert evaluator. Service-credentialled like
 // maintenance, and like maintenance it carries its own limiter.
 import monitor from './monitor.ts';
+// M6 — the staff register the substitute finder had been filtering on
+// since 006, with nothing able to write it.
+import staffAttendance from './staff-attendance.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -46,6 +49,7 @@ const ROUTES: Record<string, Handler> = {
   maintenance, events, branding, brand, manifest, notices, inbox,
   dashboard, assign, enrol, rollover, settings, users,
   structure, guardians, audit, calendar, document, push, monitor,
+  'staff-attendance': staffAttendance,
 };
 
 /**
@@ -80,7 +84,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     // school. They belong in the mutation bucket without exception.
     const WRITE_ROUTES = new Set(['events', 'notices', 'inbox', 'branding',
       'assign', 'enrol', 'rollover', 'settings', 'users',
-      'structure', 'guardians', 'calendar', 'push']);
+      'structure', 'guardians', 'calendar', 'push', 'staff-attendance']);
     const bucket = WRITE_ROUTES.has(sub) && isWrite ? 'mutation' : 'read';
     if (!(await enforceRateLimit(req, res, corsHeaders(), bucket))) return;
   }

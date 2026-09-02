@@ -69,7 +69,11 @@ export type AuditAction =
   | 'academic.section.update'
   // B-7. A guardianship ENDED. Never a delete — the row and every record that
   // references the period it covered stay exactly where they are.
-  | 'ops.guardian.revoke';
+  | 'ops.guardian.revoke'
+  // M6. A teacher marked present, absent or on leave for a day. Re-marking
+  // overwrites the row, so the correction history lives here and nowhere
+  // else — which is why `before` carries the previous status.
+  | 'ops.staff_attendance.mark';
 
 export interface AuditEntry {
   action: AuditAction;

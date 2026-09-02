@@ -135,7 +135,14 @@ async function fillMorning(): Promise<void> {
 }
 
 describe('routine solver across shifts (F-506)', { skip }, () => {
-  before(async () => { db = createDb(DATABASE_URL as string); await seed(); });
+  before(async () => {
+    // B-43. Without this the suite runs unfenced: node --test executes files
+    // in parallel, and two DB suites sharing the schema interleave. It only
+    // called unlockFixtures(), which is a no-op on a lock never taken.
+    await lockFixtures(DATABASE_URL as string);
+    db = createDb(DATABASE_URL as string);
+    await seed();
+  });
   after(async () => { if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); } });
 
   beforeEach(async () => {

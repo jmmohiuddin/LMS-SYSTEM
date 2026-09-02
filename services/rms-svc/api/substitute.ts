@@ -107,7 +107,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         subs_last_30d: number;
       }>(
         `WITH slot_ctx AS (
-           SELECT $2::uuid AS subject_id, $3::timerange AS tr, $4::smallint AS dow, $5::date AS d
+           SELECT $1::uuid AS subject_id, $2::timerange AS tr, $3::smallint AS dow, $4::date AS d
          ),
          teachers AS (
            SELECT DISTINCT u.id, u.full_name_bn, u.full_name_en
@@ -115,7 +115,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
              JOIN user_roles ur ON ur.user_id = u.id
             WHERE ur.role_code IN ('class_teacher','subject_teacher','dept_head','academic_coordinator')
               AND u.status = 'active'
-              AND u.id <> $6
+              AND u.id <> $5
          )
          SELECT t.id AS teacher_id, t.full_name_bn, t.full_name_en,
                 EXISTS (SELECT 1 FROM routine_slots rs2
@@ -151,6 +151,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                    WHERE tl.teacher_id = t.id
                      AND tl.status IN ('approved','taken')
                      AND (SELECT d FROM slot_ctx) BETWEEN tl.starts_on AND tl.ends_on)
+            -- M6. Marked away on the day's staff register. Of the four
+            -- filters here this is the only one a school fills in daily; the
+            -- other three had no writer at all until migration 063, which is
+            -- why the finder used to offer the teacher everyone knew was out.
+            AND NOT app.teacher_absent_on(t.id, (SELECT d FROM slot_ctx))
             AND NOT EXISTS (              -- marked unavailable in that window
                   SELECT 1 FROM teacher_availability ta
                    WHERE ta.teacher_id = t.id
@@ -161,7 +166,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
                      AND (ta.effective_to IS NULL OR ta.effective_to >= (SELECT d FROM slot_ctx)))
           ORDER BY teaches_subject DESC, load_today ASC, subs_last_30d ASC, t.full_name_bn
           LIMIT 10`,
-        [slotId, s.subject_id, s.time_range, s.day_of_week, date, s.teacher_id],
+        [s.subject_id, s.time_range, s.day_of_week, date, s.teacher_id],
       );
 
       return r.rows.map((row, i) => ({

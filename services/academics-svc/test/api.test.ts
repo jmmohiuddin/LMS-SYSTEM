@@ -150,6 +150,10 @@ async function seed(): Promise<void> {
 before(async () => {
   if (skip) return;
   await installTestKeys();
+  // B-43. Without this the suite runs unfenced: node --test executes files in
+  // parallel, and two DB suites sharing the schema interleave. It only called
+  // unlockFixtures(), which is a no-op on a lock never taken.
+  await lockFixtures(DATABASE_URL!);
   db = createDb(DATABASE_URL!);
 
   const { signAccessToken } = await import('../../../packages/server-core/src/jwt.ts');

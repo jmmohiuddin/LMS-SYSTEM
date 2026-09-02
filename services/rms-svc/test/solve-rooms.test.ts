@@ -137,7 +137,14 @@ async function roomsUsed(): Promise<Array<{ subject: string; room: string | null
 }
 
 describe('room matching (F-504)', { skip }, () => {
-  before(async () => { db = createDb(DATABASE_URL as string); await seed(); });
+  before(async () => {
+    // B-43. Without this the suite runs unfenced: node --test executes files
+    // in parallel, and two DB suites sharing the schema interleave. It only
+    // called unlockFixtures(), which is a no-op on a lock never taken.
+    await lockFixtures(DATABASE_URL as string);
+    db = createDb(DATABASE_URL as string);
+    await seed();
+  });
   after(async () => { if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); } });
   beforeEach(async () => {
     await db.withTenant(asCoord, async (c) => { await c.query('DELETE FROM routine_slots'); });
@@ -196,7 +203,14 @@ describe('room matching (F-504)', { skip }, () => {
 });
 
 describe('the infeasibility diagnosis (F-503, §8.2)', { skip }, () => {
-  before(async () => { db = createDb(DATABASE_URL as string); await seed(); });
+  before(async () => {
+    // B-43. Without this the suite runs unfenced: node --test executes files
+    // in parallel, and two DB suites sharing the schema interleave. It only
+    // called unlockFixtures(), which is a no-op on a lock never taken.
+    await lockFixtures(DATABASE_URL as string);
+    db = createDb(DATABASE_URL as string);
+    await seed();
+  });
   after(async () => { if (db) { await dropFixtures(); await db.end(); await unlockFixtures(); } });
   beforeEach(async () => {
     await db.withTenant(asCoord, async (c) => { await c.query('DELETE FROM routine_slots'); });

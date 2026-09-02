@@ -144,6 +144,10 @@ const SENTINELS = [
   ['062_drop_redundant_indexes',       'rows',
    "(SELECT 1) t WHERE NOT EXISTS (SELECT 1 FROM pg_indexes " +
    "WHERE indexname IN ('ix_practice_options','ix_blocks_topic'))"],
+  // The table alone would be a weak sentinel here: 063's whole point is that
+  // two readers now consult it. So probe the ranker's BODY for the call,
+  // which is the part a half-applied 063 would leave behind.
+  ['063_teacher_attendance',           'function_body', 'app.rank_invigilators', 'teacher_absent_on'],
 ];
 
 /**
@@ -213,6 +217,7 @@ const MEANING = {
   '060_explicit_grace_is_authoritative': 'P8 — an operator can end a grace period, instead of being overruled by the plan default',
   '061_p7_schema_lint_repairs':      'P8 — the two tables P7 left with RLS enabled but NOT forced, plus the two platform tables the lint asked us to declare',
   '062_drop_redundant_indexes':      'P8 — two indexes that duplicated the UNIQUE index beside them and cost a write on every insert',
+  '063_teacher_attendance':          'M6 — the staff register that the substitute finder and the invigilator ranker had both been filtering on since 006, with nothing in the product able to write it',
 };
 
 const QUERIES = {

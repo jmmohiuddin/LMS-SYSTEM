@@ -58,6 +58,7 @@
     "apps/pwa/test/track.test.ts",
     "apps/pwa/test/ui-core.test.ts",
     "apps/pwa/test/ui-data.test.ts",
+    "apps/pwa/test/writer-save-errors.test.ts",
     "packages/offline/test/store.test.ts",
     "packages/offline/test/sync-engine.test.ts",
     "packages/ui-core/test/attendance-grid.test.ts",

@@ -1300,3 +1300,58 @@ needs no collapse.
 `aria-label` naming its subject and section — a screen reader landing in a
 grid cell announces neither its column nor its row header. No raw uuid reaches
 any accessible name, asserted by test.
+
+## P9-3 — routine generation (2026-09-06)
+
+One new screen, `routine-generate-view.ts`, on the canonical components
+(`pageHeader`, `card`, `statCard`/`statRow`, `statusBadge`, `button`,
+`buttonRow`, `inlineLoader`, `permissionState`, `listSkeleton`, `announce`).
+No new design language, no new primitives, no charting.
+
+**Nine states, and the two that are usually skipped.** ready · not-ready ·
+generating · generated · generated-with-warnings · partially-generated ·
+validation-failure · server-error · permission-denied. The two that matter:
+
+*not-ready* keeps the button visible and disabled, because its state IS the
+message — hiding it would leave a coordinator wondering where the feature
+went — and lists the blocked steps with the counts that will clear them.
+
+*partially-generated* is not an error. A routine with 19 unplaced demands is a
+usable routine with work left, and it is presented as a to-do list: class,
+subject, teacher, how many periods are missing, and the reason in a sentence.
+"Generation failed." never appears anywhere, alone or otherwise.
+
+**The wait is honest.** `POST /rms/generate` is one blocking request with no
+stream and no job id, so there is nothing true to put in a progress bar. The
+screen shows a spinner, an elapsed second count, and a sentence saying the
+server is doing the whole job at once. `ui/feedback.ts:progress` is
+deliberately not imported; a test asserts no `role="progressbar"` renders.
+
+**The verdict is the server's sentence**, rendered verbatim and never
+recomposed in the browser. A hard conflict outranks it: a routine that
+publish would refuse must not be announced as "all 2,360 periods placed".
+
+**Responsive**: verified at 360, 375, 390, 768, 1024, 1280, 1440 and 1600 —
+no horizontal overflow at any width, and no tap target under 44px. The stat
+row wraps from two columns to auto-fit; every card is a card at every width.
+
+**Dark**: `data-theme="dark"`. Body `#1B1714`, card `#241E1A`, card text
+`#EDE7DA`, the quiet `.ui-card-note` at `#BFB3A4` — about 8:1 for the
+quietest pair on the screen.
+
+**Accessibility**: the wait is a live `role="status"` and the result is
+announced with the verdict sentence, so a screen-reader user is told the
+answer rather than left to hunt for it. Heading order H1 → H2 → H3 → H2, no
+level skipped. No raw uuid reaches the page, asserted by test.
+
+**CSS repaired, not added to.** `.ui-stack`, `.ui-cell-line`, `.ui-cell-meta`
+and `.setup-period-row` had been used as layout hooks since P9-1 and P9-2 with
+no rule behind them; on a 360px phone the bell-times editor was five
+full-width inputs touching each other. They are now defined in `app.css`
+beside `.ui-card-lead`, with a phone-first two-column grid for the period row.
+
+**Navigation.** The academic coordinator's second dashboard tile is now
+"রুটিন তৈরি করুন" in place of "আজকের রুটিন" — the same slot, the same shape,
+but this is the role that builds the timetable. Reading today's routine is a
+teacher's need and remains a tab and a More entry. Every other role reaches
+the screen from More.

@@ -488,9 +488,22 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
     if (typeof v === 'string' && v !== '') clean[key] = v;
   }
 
+  // P-ops §4. B-52's sixth site, found by generalising its own regression
+  // test from "the five endpoints the row named" to "every mutation that
+  // takes a tenantId". This one answered **200** for a uuid with no row in
+  // `tenants`, wrote `R-7 branding / set branding` into
+  // `audit.platform_access`, and changed nothing — the operator saw their
+  // colour echoed back, because the response is built from `clean` and a
+  // SELECT that also matched nothing.
+  //
+  // It is the same lesson B-52 already taught and did not finish teaching:
+  // `/status` had the guard and five siblings did not, so five were fixed and
+  // this sixth was never looked at.
+  await requireExistingTenant(db, tenantId);
+
   const ctx = { tenantId, userId: op.id, role: 'principal' };
   return db.withTenant(ctx, async (c) => {
-    await c.query(
+    const { rowCount } = await c.query(
       `UPDATE tenants SET settings = jsonb_set(COALESCE(settings,'{}'::jsonb),
                                                '{branding}',
                                                COALESCE(settings->'branding','{}'::jsonb)
@@ -500,6 +513,13 @@ async function setBranding(db: Db, op: Operator, req: IncomingMessage) {
         WHERE id = app.current_tenant()`,
       [JSON.stringify(clean)],
     );
+    // Belt and braces, and not redundant: the check above proves the school
+    // exists, this proves THIS statement reached it. A policy change that
+    // hid the row from the console would otherwise land here as a silent
+    // success again, which is the failure mode being closed.
+    if (rowCount === 0) {
+      throw new HttpError(404, 'no such tenant', 'not_found');
+    }
     await c.query(
       `SELECT app.log_platform_action($1, $2, 'R-7 branding', 'set branding')`,
       [op.id, tenantId]);
@@ -555,6 +575,16 @@ async function createAdmin(db: Db, op: Operator, req: IncomingMessage) {
     throw new HttpError(400, 'ভূমিকা প্রধান শিক্ষক, পরিচালক বা আইটি অ্যাডমিন হতে পারে',
       'invalid_role', { field: 'roleCode' });
   }
+
+  // P-ops §4. B-52's seventh site. Against a uuid with no row in `tenants`
+  // this answered **500 platform_error** — the school's `users` INSERT
+  // violates its foreign key and the handler had nothing to say about it.
+  //
+  // That is the same wrong answer this console's `/status` used to give, and
+  // `nonexistent-tenant.test.ts` names it in its own header: "we are broken"
+  // where the truth is "that school is not here". An operator reading a 500
+  // pages an engineer; an operator reading a 404 checks the id they pasted.
+  await requireExistingTenant(db, tenantId);
 
   const ctx = { tenantId, userId: op.id, role: 'principal' };
   return db.withTenant(ctx, async (c) => {
@@ -1469,6 +1499,14 @@ async function recordPayment(db: Db, op: { id: string }, req: IncomingMessage) {
   const note = typeof body.note === 'string' ? body.note.trim() : null;
   const coversUntil = typeof body.coversUntil === 'string' && body.coversUntil
     ? body.coversUntil : null;
+
+  // P-ops §4. B-52's eighth site, and the one with money on it: against a
+  // uuid with no row in `tenants` the INSERT below violated
+  // `tenant_payments`'s foreign key and came back as **500 platform_error**.
+  // An operator recording a school's bank transfer against a mistyped id got
+  // "the platform is broken" instead of "that school is not here", and the
+  // payment they were entering went nowhere while they chased an engineer.
+  await requireExistingTenant(db, id);
 
   try {
     await db.pool.query(

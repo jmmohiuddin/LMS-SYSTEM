@@ -185,13 +185,54 @@ if (sqlFiles.length) {
     try { execSync('psql --version', { stdio: 'ignore' }); psqlOk = true; } catch { /* below */ }
   }
 
-  if (!url) {
+  // ── The Docker fallback (P-ops D) ──────────────────────────────────────
+  //
+  // "psql is not on PATH" was true and was also 26 suites nobody ran — on
+  // every developer machine without a local PostgreSQL client install, which
+  // is most of them, because the database this project develops against runs
+  // in a container. The client was never missing; it was inside that
+  // container the whole time.
+  //
+  // `scripts/sql-tests.mjs` pipes each file into the container's own psql. It
+  // is a real execution path, not a shim: ON_ERROR_STOP stays on, a raising
+  // suite still fails the run, and it refuses any file using `\i` or `\copy`
+  // rather than running it with a path that cannot resolve.
+  //
+  // Preferred only when there is no local psql, so CI — which has one — keeps
+  // taking the direct path it already uses.
+  let dockerOk = false;
+  if (!psqlOk) {
+    try {
+      execSync(`docker exec ${process.env.PG_CONTAINER ?? 'shikhon-r5'} psql --version`,
+        { stdio: 'ignore' });
+      dockerOk = true;
+    } catch { /* reported below */ }
+  }
+
+  if (dockerOk) {
+    try {
+      const out = execSync(`node "${join(ROOT, 'scripts', 'sql-tests.mjs')}"`,
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const m = /(\d+)\/(\d+) SQL suite\(s\) passed/.exec(out);
+      console.log(`ok  ${m ? m[1] : sqlFiles.length} suites (via docker psql)`);
+    } catch (err) {
+      const out = String(err.stdout ?? '') + String(err.stderr ?? '');
+      const m = /(\d+)\/(\d+) SQL suite\(s\) passed/.exec(out);
+      const passed = m ? Number(m[1]) : 0;
+      failed += sqlFiles.length - passed;
+      console.log(`FAIL  ${passed}/${sqlFiles.length} passed (via docker psql)`);
+      for (const line of out.split('\n').filter((l) => l.startsWith('  FAIL'))) {
+        console.log(`  ${line.trim()}`);
+      }
+      console.log('    run `node scripts/sql-tests.mjs` for the psql output');
+    }
+  } else if (!url) {
     // Not a failure: most local runs have no owner credential. But it says
     // NOTHING RAN, in the same words the workspace loop uses, because a tick
     // beside twenty-six unrun files is what caused this in the first place.
-    console.log(`0 of ${sqlFiles.length} — NOTHING RAN (set DATABASE_MIGRATION_URL to the owner role)`);
+    console.log(`0 of ${sqlFiles.length} — NOTHING RAN (no DATABASE_MIGRATION_URL, and no docker psql)`);
   } else if (!psqlOk) {
-    console.log(`0 of ${sqlFiles.length} — NOTHING RAN (psql is not on PATH; these files use \\set and :variables)`);
+    console.log(`0 of ${sqlFiles.length} — NOTHING RAN (no psql on PATH, and no docker container to borrow one from)`);
   } else {
     let sqlPass = 0;
     const sqlFailed = [];

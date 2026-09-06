@@ -70,6 +70,9 @@ export {
   toast, announce, inlineLoader, progress, tooltip,
   listSkeleton, permissionState, humanError, permissionMessage, serverMessage,
   permissionMessageWithContact,
+  // B-84. The four-way refusal reader, for screens that catch an HttpStatus
+  // rather than holding a parsed body.
+  deniedMessage, deniedContact,
   skeleton, emptyState, errorState, successNote,
 } from './feedback.ts';
 export type { ToastTone } from './feedback.ts';

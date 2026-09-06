@@ -44,6 +44,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (!oldRefreshToken) throw new HttpError(400, 'refreshToken is required', 'refresh_token_required');
 
     const db = await sharedDb();
+    // `sessionWrite` — B-54. Rotating a refresh token is a write, and a
+    // school in billing arrears is `read_only`, so this whole transaction was
+    // being refused: everyone signed out within one access-token lifetime,
+    // nobody able to sign back in, and the arrears state indistinguishable
+    // from suspension. A SUSPENDED school is still refused above this, by the
+    // `access = 'none'` check the option deliberately sits below.
     const result = await db.withTenant({ tenantId, userId: '', role: 'system_ingest' }, async (client) => {
       const oldHash = sha256Buf(oldRefreshToken);
       const sessionRes = await client.query<{ id: string; user_id: string; device_label: string | null }>(
@@ -103,7 +109,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       );
 
       return { accessToken, refreshToken: newRefreshToken, expiresIn: 900 };
-    });
+    }, { sessionWrite: true });
 
     json(res, 200, result, cors);
   } catch (err) {

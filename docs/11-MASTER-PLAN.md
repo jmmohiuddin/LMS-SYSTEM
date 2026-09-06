@@ -1607,6 +1607,16 @@ handler that discarded the cause of its own 500s). The scheduling half was
 small; the entitlement half was not, and the estimate is corrected here rather
 than in retrospect.
 
+*P-ops closed, 2026-09-06.* A+B (`54610ce`) schedules and heartbeat; C
+(`73ce8ec`) the entitlement leaks; D and E the deadman, the platform row-count
+guard, the full state × surface matrix, suspension, and a fresh-tenant walk.
+Closed on the way: `B-50` `B-51` `B-52` `B-53` `B-54` `B-82` `B-83` `B-84`
+`B-86` `B-87` `B-88`, with `B-81` materially corrected and `B-80` classified
+into a finance phase rather than absorbed. **One item remains BLOCKED and is
+not counted as anything else**: the human alert needs a real
+`ALERT_WEBHOOK_URL` and a person confirming receipt — a configured transport
+is not a human receipt. P9 has not been started.
+
 **P9 — Smart Routine.** After P-writers, because P9 has four unmet prerequisites: no room
 write path (0 rooms in 112 tenants), no routine-creation API, a Ramadan swap that
 `uq_routine_active` structurally forbids, and a routine-editor query selecting a column

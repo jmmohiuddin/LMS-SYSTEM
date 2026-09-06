@@ -352,4 +352,61 @@ export function permissionMessageWithContact(subject?: string): string {
   return `${permissionMessage(subject)} প্রয়োজন হলে প্রধান শিক্ষকের সাথে যোগাযোগ করুন।`;
 }
 
+/**
+ * B-84. The sentence for a refusal a screen caught rather than read.
+ *
+ * `serverMessage` handles the views that still hold the parsed body. The
+ * other half of the app refuses through `refuseUnlessOk`, catches an
+ * `HttpStatus`, and had nothing but a number — so it said "you do not have
+ * permission" for all four kinds of refusal. This reads the code the server
+ * sent and picks between them.
+ *
+ * The four, and why each needs its own words:
+ *
+ *   forbidden                    the ROLE is wrong. A different PERSON can do
+ *                                this — ask the head teacher.
+ *   tenant_blocked               the SCHOOL is suspended or in arrears. No
+ *                                colleague can help; it is a payment or a
+ *                                call to us. The server wrote that sentence
+ *                                and it is used verbatim.
+ *   tenant_blocked:not_in_plan   the school never BOUGHT this module. Nobody
+ *                                is being distrusted and nothing is broken.
+ *   tenant_blocked:disabled      it is off or being worked on. Waiting is the
+ *   tenant_blocked:maintenance   remedy, not asking anyone.
+ */
+export function deniedMessage(err: unknown, subject?: string): string {
+  const e = err as { code?: unknown; reasonBn?: unknown } | null;
+  const code = typeof e?.code === 'string' ? e.code : '';
+  const reason = typeof e?.reasonBn === 'string' ? e.reasonBn : '';
+
+  // A gate refusal: the endpoint knows what happens next and wrote it in
+  // Bangla for this reader. `serverMessage` makes the same call for the
+  // views that still hold a body, and the two must not diverge.
+  if (reason && (code.startsWith('tenant_blocked') || code.startsWith('service_unavailable'))) {
+    return reason;
+  }
+  if (code.endsWith(':not_in_plan')) {
+    return `${subject ? subject + ' ' : ''}এই প্রতিষ্ঠানের প্যাকেজে নেই।`;
+  }
+  if (code.endsWith(':maintenance')) {
+    return `${subject ? subject + ' ' : ''}আপাতত রক্ষণাবেক্ষণে আছে। একটু পরে আবার দেখুন।`;
+  }
+  if (code.endsWith(':disabled')) {
+    return `${subject ? subject + ' ' : ''}এই প্রতিষ্ঠানের জন্য আপাতত বন্ধ রয়েছে।`;
+  }
+  return permissionMessage(subject);
+}
+
+/**
+ * Who to ask, if anyone. A role refusal has a person behind it; an
+ * entitlement refusal does not, and offering one sends the reader to
+ * somebody who cannot help and does not know why they were asked.
+ */
+export function deniedContact(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && (code.startsWith('tenant_blocked')
+    || code.startsWith('service_unavailable'))) return undefined;
+  return 'প্রধান শিক্ষক';
+}
+
 /** A full-screen first-load skeleton. Re-exported name for discoverability. */

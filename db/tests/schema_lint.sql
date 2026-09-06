@@ -47,7 +47,21 @@ INSERT INTO lint_global_exempt VALUES
   -- The lint caught both the day P7 shipped and was not run until P8, which
   -- is the argument for running it: an un-scoped table is either deliberate
   -- or serious, and only a person can say which.
-  ('plans'), ('service_catalogue');
+  ('plans'), ('service_catalogue'),
+  -- P-ops A (migration 071). One row per run of a SCHEDULED JOB — the SMS
+  -- dispatcher, the maintenance job, the monitor. A job is a property of the
+  -- deployment, not of a school: `sms_dispatch` runs once for the host and
+  -- walks every tenant inside itself, so there is no tenant whose id this row
+  -- could carry. The heartbeat alerts read it through `app.job_run_status()`,
+  -- a SECURITY DEFINER function, and migration 071 REVOKEs the table from
+  -- shikhon_app, shikhon_readonly and PUBLIC — the blanket grant in migration
+  -- 010 would otherwise have carried write access to it by default.
+  --
+  -- This lint caught it, in P-ops D, two commits after the table shipped —
+  -- exactly as it caught `plans` and `service_catalogue` above and for the
+  -- same reason: the SQL suites were not being run. That is now fixed by
+  -- `scripts/sql-tests.mjs`.
+  ('ops_job_runs');
 
 -- ---------------------------------------------------------------------
 -- Tables whose tenant_id is nullable BY DESIGN (written before a tenant

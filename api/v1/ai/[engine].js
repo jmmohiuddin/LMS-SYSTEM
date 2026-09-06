@@ -12677,7 +12677,12 @@ var TenantBlocked = class extends HttpError {
         access: access2.access,
         opsState: access2.opsState,
         billingState: access2.billingState,
-        until: access2.until
+        until: access2.until,
+        // B-84. Present only when a service was named. `not_in_plan` means
+        // buy it; `disabled` and `maintenance` mean wait or ring us. Those
+        // are different errands for the office and the screen must be able
+        // to send them on the right one.
+        ...access2.serviceState ? { serviceState: access2.serviceState } : {}
       }
     );
     this.access = access2;
@@ -12741,8 +12746,19 @@ function createDb(connectionString, opts = {}) {
         );
         if (opts2?.skipGate) return;
         const access2 = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
-        if (access2.access === "none") throw new TenantBlocked(access2);
+        if (access2.access === "none") {
+          if (ctx.service) {
+            const { rows } = await c.query(
+              "SELECT app.tenant_service_state($1, $2) AS state",
+              [ctx.tenantId, ctx.service]
+            );
+            const state = rows[0]?.state;
+            if (state) throw new TenantBlocked({ ...access2, serviceState: state });
+          }
+          throw new TenantBlocked(access2);
+        }
         if (access2.access === "read_only") {
+          if (opts2?.sessionWrite) return { blocked: void 0 };
           await c.query("SET LOCAL transaction_read_only = on");
           blocked = access2;
           if (opts2?.write) throw new TenantBlocked(access2);

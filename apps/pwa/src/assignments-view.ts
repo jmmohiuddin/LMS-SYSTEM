@@ -22,7 +22,7 @@ import {
 import { pageHeader } from './ui/page-header.ts';
 import { emptyState } from './view-states.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage, dataTable, statusBadge, tabs, listSkeleton, el,} from './ui/index.ts';
+import { permissionState, permissionMessage, deniedMessage, deniedContact, dataTable, statusBadge, tabs, listSkeleton, el,} from './ui/index.ts';
 
 /**
  * F-902 kill switch. Mirrors SUBMISSION_MEDIA_ENABLED in the sync applier
@@ -141,6 +141,8 @@ export class AssignmentsView {
    * so this state offers no retry and shows no cached data (B-30).
    */
   private denied = false;
+  /** B-84. The refusal itself, so the screen can say which kind it was. */
+  private deniedErr: unknown = null;
   private notice: string | null = '';
   private draft = '';
   private draftStatusEl: HTMLElement | null = null;
@@ -175,14 +177,15 @@ export class AssignmentsView {
 
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/assignments');
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       const body = (await res.json()) as { assignments: Assignment[] };
       this.list = body.assignments;
       this.offline = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.list)); } catch { /* ignore */ }
     } catch (err) {
       if (isDenied(err)) {
-        this.denied = true; this.list = []; this.offline = false;
+        this.denied = true;
+        this.deniedErr = err; this.list = []; this.offline = false;
         try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
         this.loading = false; this.render(); return;
       }
@@ -491,8 +494,8 @@ export class AssignmentsView {
     // calling it "offline" is the lie this item exists to remove.
     if (this.denied) {
       root.append(permissionState(d, {
-        message: permissionMessage('বাড়ির কাজ'),
-        contact: 'প্রধান শিক্ষক',
+        message: deniedMessage(this.deniedErr, 'বাড়ির কাজ'),
+        contact: deniedContact(this.deniedErr),
       }));
       return;
     }

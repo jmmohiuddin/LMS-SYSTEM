@@ -20,7 +20,8 @@ import { LedgerView } from '../src/ledger-view.ts';
 import { UsersView } from '../src/users-view.ts';
 import { InvoiceView } from '../src/invoice-view.ts';
 import { AcademicView } from '../src/academic-view.ts';
-import { serverMessage, permissionMessage } from '../src/ui/feedback.ts';
+import { serverMessage, permissionMessage, deniedMessage, deniedContact } from '../src/ui/feedback.ts';
+import { HttpStatus } from '../src/http-status.ts';
 import { bnMonth } from '../src/view-states.ts';
 
 let dom: JSDOM;
@@ -460,5 +461,58 @@ describe('P5 — the academic hierarchy is a table at every depth', () => {
     assert.match(text(), /অনুমতি/);
     assert.doesNotMatch(text(), /নবম শ্রেণি/);
     assert.equal(root().querySelectorAll('table.ui-table').length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+describe('B-84 — four refusals, four sentences', () => {
+  // The four are genuinely different errands for the reader, and saying
+  // "you do not have permission — ask the head teacher" for all of them
+  // sends three of them to somebody who cannot help.
+
+  test('a ROLE refusal keeps the ask-a-colleague wording', () => {
+    const err = new HttpStatus(403, 'forbidden');
+    assert.equal(deniedMessage(err, 'ফলাফল'), permissionMessage('ফলাফল'));
+    assert.equal(deniedContact(err), 'প্রধান শিক্ষক',
+      'a different person really can do this one');
+  });
+
+  test('a BLOCKED SCHOOL uses the server’s own sentence, and offers nobody', () => {
+    const bn = 'বকেয়া পরিশোধ না হওয়া পর্যন্ত শুধু দেখা যাবে।';
+    const err = new HttpStatus(403, 'tenant_blocked', bn);
+    assert.equal(deniedMessage(err, 'বেতন ও ফি'), bn);
+    assert.equal(deniedContact(err), undefined,
+      'no colleague can clear an arrears block; offering one wastes a trip');
+  });
+
+  test('NOT PURCHASED says so, rather than implying distrust', () => {
+    const err = new HttpStatus(403, 'tenant_blocked:not_in_plan');
+    assert.match(deniedMessage(err, 'বেতন ও ফি'), /প্যাকেজে নেই/);
+    assert.doesNotMatch(deniedMessage(err, 'বেতন ও ফি'), /অনুমতি/,
+      'a guardian at a school without the module is not being refused permission');
+    assert.equal(deniedContact(err), undefined);
+  });
+
+  test('MAINTENANCE and DISABLED are told apart from each other', () => {
+    const maint = new HttpStatus(403, 'tenant_blocked:maintenance');
+    const off = new HttpStatus(403, 'tenant_blocked:disabled');
+    assert.match(deniedMessage(maint, 'ফলাফল'), /রক্ষণাবেক্ষণ/);
+    assert.match(deniedMessage(off, 'ফলাফল'), /বন্ধ/);
+    assert.notEqual(deniedMessage(maint, 'ফলাফল'), deniedMessage(off, 'ফলাফল'));
+  });
+
+  test('an unknown or absent code falls back to the safe wording', () => {
+    // A refusal with no readable body is still a refusal, and the screen must
+    // not go blank or guess.
+    assert.equal(deniedMessage(new HttpStatus(403), 'ফলাফল'), permissionMessage('ফলাফল'));
+    assert.equal(deniedMessage(null, 'ফলাফল'), permissionMessage('ফলাফল'));
+  });
+
+  test('an English server sentence never reaches the screen', () => {
+    // `refuseUnlessOk` only keeps a Bangla `message`, so this shape cannot
+    // arise from the wire — asserted anyway, because the guard belongs to the
+    // reader and not to the transport.
+    const err = new HttpStatus(403, 'tenant_blocked');
+    assert.equal(deniedMessage(err, 'ফলাফল'), permissionMessage('ফলাফল'));
   });
 });

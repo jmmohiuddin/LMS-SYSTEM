@@ -37,11 +37,30 @@
  */
 export class HttpStatus extends Error {
   status: number;
+  /**
+   * B-84. The server's own error code and Bangla sentence, when the response
+   * carried them.
+   *
+   * Without these a 403 is just a number, and every screen that refuses
+   * through this class said the same thing for four different situations: a
+   * role the person does not have, a school that is suspended, a service the
+   * school never bought, and a service that is temporarily off. A guardian at
+   * a school with no finance module was told "you do not have permission —
+   * contact the head teacher", who would tell them the school does not use
+   * that part of the product. The remedy was wrong because the sentence was.
+   *
+   * Optional, so every existing `new HttpStatus(status)` still compiles and
+   * still behaves exactly as before.
+   */
+  code?: string;
+  reasonBn?: string;
 
-  constructor(status: number) {
+  constructor(status: number, code?: string, reasonBn?: string) {
     super(String(status));
     this.name = 'HttpStatus';
     this.status = status;
+    this.code = code;
+    this.reasonBn = reasonBn;
   }
 }
 
@@ -84,6 +103,27 @@ export function isDenied(err: unknown): boolean {
  * Named for what it protects rather than what it does: every call site reads
  * `await refuseUnlessOk(res)` and the reason is in this file.
  */
-export function refuseUnlessOk(res: { ok: boolean; status: number }): void {
-  if (!res.ok) throw new HttpStatus(res.status);
+export async function refuseUnlessOk(
+  res: { ok: boolean; status: number; json?: () => Promise<unknown> },
+): Promise<void> {
+  if (res.ok) return;
+  // The body is read only on the failure path, and only for a refusal — the
+  // one case where the server wrote a sentence for a person. Anything that
+  // throws while reading it (an empty body, HTML from a proxy) leaves the
+  // status alone, which is the behaviour every caller had before.
+  let code: string | undefined;
+  let reasonBn: string | undefined;
+  if (res.status === 403 && typeof res.json === 'function') {
+    try {
+      const body = await res.json() as { error?: unknown; message?: unknown; serviceState?: unknown };
+      if (typeof body?.error === 'string') code = body.error;
+      if (typeof body?.message === 'string' && /[ঀ-৿]/.test(body.message)) {
+        reasonBn = body.message;
+      }
+      // `not_in_plan` is a commercial fact and reads differently from an
+      // operational one; the server sends it alongside `tenant_blocked`.
+      if (typeof body?.serviceState === 'string') code = `${code}:${body.serviceState}`;
+    } catch { /* a refusal with no readable body is still a refusal */ }
+  }
+  throw new HttpStatus(res.status, code, reasonBn);
 }

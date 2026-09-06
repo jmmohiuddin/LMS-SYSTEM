@@ -938,6 +938,16 @@ print-first stance, and it is why R-5 needed no object storage and puts
 nothing large in PostgreSQL. When an R2/S3 credential lands, this endpoint's
 markup is what gets rendered server-side; it does not change.
 
+**Four refusals, four sentences (P-ops, B-84).** A 403 from any endpoint is
+one of four different things, and support and the UI both have to tell them
+apart: `forbidden` (this ROLE may not — a different person can), plain
+`tenant_blocked` (the SCHOOL is suspended or in arrears — a payment, not a
+colleague), and `tenant_blocked` carrying `serviceState: not_in_plan` (never
+bought) or `disabled`/`maintenance` (switched off). The gate attaches
+`serviceState` when the request named a service, on the refusal path only.
+`refuseUnlessOk` reads it into `HttpStatus`, and `deniedMessage` /
+`deniedContact` choose the wording and whether to offer a colleague at all.
+
 **The document's SERVICE is not the same as `documents` (P-ops, B-53).**
 The handler declares `service: 'documents'`, which is right for the printing
 machinery — the letterhead, the branding, the page set — and wrong for the

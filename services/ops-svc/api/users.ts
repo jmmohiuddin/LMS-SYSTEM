@@ -71,6 +71,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       json(res, err.status, { error: err.code, message: err.message, ...(err.detail ?? {}) }, cors);
       return;
     }
+    // B-86's pattern. A 500 that leaves no trace can only be diagnosed by
+    // reproducing it, and this one hid a real defect until an onboarding walk
+    // happened to hit it. The response stays opaque — this endpoint handles
+    // staff records — but the server must be able to say what broke.
+    console.error('[ops/users]', err);
     json(res, 500, { error: 'internal_error' }, cors);
   }
 }
@@ -160,6 +165,25 @@ async function create(db: Db, ctx: Ctx, req: IncomingMessage) {
   }
   const phone = normalisePhone(body.phone ?? '');
 
+  // P-ops §E. `staff_profiles.employee_code` is NOT NULL, and this endpoint
+  // passed `|| null` into it — so a principal who left the staff-ID box empty
+  // got `{"error":"internal_error"}`. The box was marked OPTIONAL in the form,
+  // so that was not an edge case: it was the default path for any school that
+  // does not number its staff, and adding staff is among the first things a
+  // new school does. Found by the §E onboarding walk, invisible to every unit
+  // test because they all supply the field.
+  //
+  // Refused with the field named, rather than generating a code here. The
+  // schema's NOT NULL is a business statement — every staff member has an
+  // employee code — and inventing one silently would put a number in a
+  // school's paperwork that the school never issued. The form now marks the
+  // field required, which is what the database has always said.
+  const employeeCode = (body.employeeCode ?? '').trim();
+  const isStaffRole = roleCode !== 'student' && roleCode !== 'guardian';
+  if (isStaffRole && !employeeCode) {
+    throw new HttpError(400, 'কর্মচারী আইডি দিন', 'bad_request', { field: 'employeeCode' });
+  }
+
   return db.withTenant(ctx, async (c) => {
     const { rows: dupe } = await c.query<{ id: string; name_bn: string }>(
       `SELECT id, full_name_bn AS name_bn FROM users
@@ -204,7 +228,7 @@ async function create(db: Db, ctx: Ctx, req: IncomingMessage) {
       `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id) DO NOTHING`,
-      [userId, ctx.tenantId, (body.employeeCode ?? '').trim() || null,
+      [userId, ctx.tenantId, employeeCode,
        (body.designationBn ?? '').trim() || null],
     );
 

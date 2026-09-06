@@ -119,7 +119,7 @@ export class PrincipalHomeView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/ops/dashboard');
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       this.data = (await res.json()) as DashboardPayload;
       this.denied = false;
       this.errText = '';

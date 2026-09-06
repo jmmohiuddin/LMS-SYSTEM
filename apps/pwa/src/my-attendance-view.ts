@@ -21,7 +21,7 @@ import { iconSvg } from './icon.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 import { pageHeader } from './ui/page-header.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage, card as uiCard, sectionHeading, dataTable, statusBadge,} from './ui/index.ts';
+import { permissionState, permissionMessage, deniedMessage, deniedContact, card as uiCard, sectionHeading, dataTable, statusBadge,} from './ui/index.ts';
 
 const bn = (n: number): string => formatCount(n, 'bn');
 
@@ -78,6 +78,8 @@ export class MyAttendanceView {
   private offline = false;
   private error = false;
   private denied = false;
+  /** B-84. The refusal itself, so the screen can say which kind it was. */
+  private deniedErr: unknown = null;
 
   constructor(options: MyAttendanceViewOptions) {
     this.o = options;
@@ -97,13 +99,14 @@ export class MyAttendanceView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/attendance');
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       this.data = (await res.json()) as Payload;
       this.offline = false; this.error = false;
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.data)); } catch { /* quota */ }
     } catch (err) {
       if (isDenied(err)) {
-        this.denied = true; this.data = null; this.offline = false;
+        this.denied = true;
+        this.deniedErr = err; this.data = null; this.offline = false;
         try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
         return;
       }
@@ -138,8 +141,8 @@ export class MyAttendanceView {
     // calling it "offline" is the lie this item exists to remove.
     if (this.denied) {
       root.append(permissionState(d, {
-        message: permissionMessage('আমার হাজিরা'),
-        contact: 'প্রধান শিক্ষক',
+        message: deniedMessage(this.deniedErr, 'আমার হাজিরা'),
+        contact: deniedContact(this.deniedErr),
       }));
       return;
     }

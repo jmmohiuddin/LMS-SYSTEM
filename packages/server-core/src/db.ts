@@ -58,11 +58,28 @@ export interface Db {
    * two callers that legitimately must run against a school the gate would
    * stop: the platform console (which has to inspect a suspended school in
    * order to un-suspend it) and the nightly maintenance cron.
+   *
+   * `sessionWrite` is narrower than either, and exists because of B-54.
+   * `read_only` is the BILLING-ARREARS state: a school behind on fees may
+   * still read its own records, which is the entire point of having a state
+   * between "paid" and "suspended". But `refresh` ROTATES the refresh token,
+   * so renewing a session is a write, so it landed inside
+   * `transaction_read_only = on` and failed — and every user was signed out
+   * within one access-token lifetime with no way back in. Read-only became
+   * suspension by accident, and the softer state was useless.
+   *
+   * A `user_sessions` row is not the school's business data. It is the
+   * platform's record of who is signed in, and withholding it does not
+   * protect a single fee. So this option lets the session write through while
+   * keeping every other rule: `access = 'none'` is still refused, so a
+   * SUSPENDED school still cannot renew anything, and no business table
+   * becomes writable — the caller only gets its read-only lock lifted, not
+   * its gate.
    */
   withTenant<T>(
     ctx: TenantContext,
     fn: (c: pg.PoolClient) => Promise<T>,
-    opts?: { write?: boolean; skipGate?: boolean },
+    opts?: { write?: boolean; skipGate?: boolean; sessionWrite?: boolean },
   ): Promise<T>;
   /** What this school may do right now, without opening a transaction. */
   tenantAccess(tenantId: string): Promise<TenantAccess>;
@@ -144,8 +161,32 @@ export function createDb(connectionString: string, opts: pg.PoolConfig = {}): Db
         // stop.
         if (opts?.skipGate) return;
         const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
-        if (access.access === 'none') throw new TenantBlocked(access);
+        if (access.access === 'none') {
+          // B-84. Four refusals reach a screen and they need four different
+          // sentences: a ROLE the person does not have, a school that is
+          // SUSPENDED, a service the school never BOUGHT, and a service that
+          // is temporarily OFF. The first is `forbidden`; the other three all
+          // arrive as `tenant_blocked`, and until now the only thing telling
+          // them apart was Bangla prose the client had no way to branch on.
+          //
+          // So when a service was named, its state rides along. One extra
+          // query, on the refusal path only — refusals are rare and a wrong
+          // remedy is expensive: "ask your head teacher" sends a guardian to
+          // someone who will tell them the school does not use that module.
+          if (ctx.service) {
+            const { rows } = await c.query<{ state: string }>(
+              'SELECT app.tenant_service_state($1, $2) AS state',
+              [ctx.tenantId, ctx.service]);
+            const state = rows[0]?.state;
+            if (state) throw new TenantBlocked({ ...access, serviceState: state });
+          }
+          throw new TenantBlocked(access);
+        }
         if (access.access === 'read_only') {
+          // B-54. The one write a school in arrears must still be allowed:
+          // renewing its own sessions. Deliberately BELOW the `none` check
+          // above, so this cannot reopen a suspended school.
+          if (opts?.sessionWrite) return { blocked: undefined };
           // POSTGRES enforces it, not a flag every endpoint has to remember.
           // After this, any INSERT/UPDATE/DELETE in this transaction fails
           // with SQLSTATE 25006, which `inTx` turns back into this same

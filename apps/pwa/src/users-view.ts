@@ -335,7 +335,11 @@ export class UsersView {
     const nameBn = mk('নাম (বাংলা)', 'text', true);
     const nameEn = mk('নাম (ইংরেজি)', 'text', false);
     const phone = mk('মোবাইল', 'tel', true, '01XXXXXXXXX');
-    const employeeCode = mk('কর্মচারী আইডি', 'text', false);
+    // Required, because `staff_profiles.employee_code` is NOT NULL and has
+    // been since the schema was written. Marked optional here, the form let a
+    // principal submit a blank and receive `internal_error` — the constraint
+    // was real and only the message was missing.
+    const employeeCode = mk('কর্মচারী আইডি', 'text', true);
 
     const roleField = d.createElement('label');
     roleField.className = 'field';

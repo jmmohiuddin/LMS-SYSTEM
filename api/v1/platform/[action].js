@@ -100,7 +100,12 @@ var TenantBlocked = class extends HttpError {
         access: access.access,
         opsState: access.opsState,
         billingState: access.billingState,
-        until: access.until
+        until: access.until,
+        // B-84. Present only when a service was named. `not_in_plan` means
+        // buy it; `disabled` and `maintenance` mean wait or ring us. Those
+        // are different errands for the office and the screen must be able
+        // to send them on the right one.
+        ...access.serviceState ? { serviceState: access.serviceState } : {}
       }
     );
     this.access = access;
@@ -164,8 +169,19 @@ function createDb(connectionString, opts = {}) {
         );
         if (opts2?.skipGate) return;
         const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
-        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "none") {
+          if (ctx.service) {
+            const { rows } = await c.query(
+              "SELECT app.tenant_service_state($1, $2) AS state",
+              [ctx.tenantId, ctx.service]
+            );
+            const state = rows[0]?.state;
+            if (state) throw new TenantBlocked({ ...access, serviceState: state });
+          }
+          throw new TenantBlocked(access);
+        }
         if (access.access === "read_only") {
+          if (opts2?.sessionWrite) return { blocked: void 0 };
           await c.query("SET LOCAL transaction_read_only = on");
           blocked = access;
           if (opts2?.write) throw new TenantBlocked(access);
@@ -3004,9 +3020,10 @@ async function setBranding(db, op, req) {
     const v = parsed[key];
     if (typeof v === "string" && v !== "") clean[key] = v;
   }
+  await requireExistingTenant(db, tenantId);
   const ctx = { tenantId, userId: op.id, role: "principal" };
   return db.withTenant(ctx, async (c) => {
-    await c.query(
+    const { rowCount } = await c.query(
       `UPDATE tenants SET settings = jsonb_set(COALESCE(settings,'{}'::jsonb),
                                                '{branding}',
                                                COALESCE(settings->'branding','{}'::jsonb)
@@ -3016,6 +3033,9 @@ async function setBranding(db, op, req) {
         WHERE id = app.current_tenant()`,
       [JSON.stringify(clean)]
     );
+    if (rowCount === 0) {
+      throw new HttpError(404, "no such tenant", "not_found");
+    }
     await c.query(
       `SELECT app.log_platform_action($1, $2, 'R-7 branding', 'set branding')`,
       [op.id, tenantId]
@@ -3052,6 +3072,7 @@ async function createAdmin(db, op, req) {
       { field: "roleCode" }
     );
   }
+  await requireExistingTenant(db, tenantId);
   const ctx = { tenantId, userId: op.id, role: "principal" };
   return db.withTenant(ctx, async (c) => {
     const existing = await c.query(
@@ -3772,6 +3793,7 @@ async function recordPayment(db, op, req) {
   const reference = typeof body.reference === "string" ? body.reference.trim() : "";
   const note = typeof body.note === "string" ? body.note.trim() : null;
   const coversUntil = typeof body.coversUntil === "string" && body.coversUntil ? body.coversUntil : null;
+  await requireExistingTenant(db, id);
   try {
     await db.pool.query(
       `INSERT INTO tenant_payments

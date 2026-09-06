@@ -11233,3 +11233,278 @@ restores never restores when it fails, so the next run saw a school still in
   stack, before and after, plus four pilot tenants inspected for `B-83`.
 - `db/tests (sql)` **did not run** — `psql` is not on PATH in this
   environment. 26 files, unexecuted, and not counted as passing.
+
+---
+
+# P-ops — D and E: the deadman, the guard, the matrix, and a school built from nothing (2026-09-06)
+
+A and B gave production a schedule and a heartbeat. C closed the entitlement
+leaks. D and E are the sections that ask whether any of it actually holds.
+
+## The SQL suites, which had not run (`B-88`)
+
+Before anything else, because it changed what everything else was standing on.
+
+`test-all.mjs` reported `db/tests (sql) 0 of 26 — NOTHING RAN (psql is not on
+PATH)`. Honest, and useless: those 26 files are the only tests that exercise
+RLS, the RESTRICTIVE write scopes, the GiST EXCLUDE constraints and the
+SECURITY DEFINER functions as PostgreSQL actually enforces them. A Node test
+can only check what a handler did with the rows it was given.
+
+The database this project develops against is a Docker container **that has
+psql inside it**. The client was never missing; only the PATH was.
+`scripts/sql-tests.mjs` pipes each file into the container's own psql, with
+`ON_ERROR_STOP` kept and a refusal for any file using `\i` or `\copy` (whose
+paths cannot resolve from inside the container). `test-all.mjs` falls back to
+it only when there is no local psql, so CI keeps the direct path it already
+uses.
+
+**The very first run failed.** `schema_lint.sql` had been red since P-ops A,
+because `ops_job_runs` — my own table, from migration 071, two commits earlier
+— was not in its exempt list. Nothing had said so for two commits. The lint's
+own comment records the identical thing happening to `plans` and
+`service_catalogue` in P7: *"The lint caught both the day P7 shipped and was
+not run until P8, which is the argument for running it."*
+
+**26/26 now execute. 52/52 across two consecutive runs.**
+
+## §3 — the deadman, through the database rather than around it
+
+`alerts.test.ts` pinned `evaluateAlerts` as a pure function, which is right
+for the rules and proves nothing about the loop they sit in. Between a rule
+and an operator there are three more links — `record_job_run` writing,
+`job_run_status()` reading, `gatherSignals` shaping — and a break in any of
+them produces the exact failure the section exists to prevent: a deployment
+that is not running and an alert list that is empty.
+
+`packages/server-core/test/deadman.test.ts` writes real rows as the real jobs
+do and asserts on what comes out the far end. Never-run fires. A stale
+heartbeat is caught against each job's **own** interval — one global threshold
+would either page on a healthy daily dispatcher or miss a dead 15-minute
+monitor for a day. A failing job names its recorded error. **Recovery clears
+it**, which is the half that decides whether anyone trusts the alert: one that
+never clears is one people learn to ignore, and then the real one is ignored
+too. `shikhon_app` cannot forge a heartbeat.
+
+### Business silence is not job silence
+
+The distinction the whole section turns on, and the one that made five of
+seven alerts unable to fire on a total outage (`B-51`).
+
+**Business silence** — no SMS sent, no register taken, nobody logged in.
+Legitimate: a holiday, a small school, a quiet week. The correct number of
+alerts is zero, and every ratio-shaped condition correctly says nothing.
+
+**Job silence** — the dispatcher did not run. Not legitimate, and *invisible
+to any ratio*, because the producer of the rows a ratio would read is the very
+thing that stopped. `sms_queue_stalled` needs `smsQueuedNow > 0`, and the only
+writer of those rows is the dead worker.
+
+So job silence is measured against the **clock** and each job's own schedule,
+never against volume. Two tests state it directly: an idle deployment with
+dead crons fires three criticals; the same idle deployment with its schedules
+alive is silent.
+
+### The limit, asserted rather than hidden
+
+The monitor cannot report its own death. `job_silent` for the monitor is only
+ever *evaluated by* the monitor, so if the monitor is what stopped, nothing
+computes the alert that would name it. What the heartbeat does buy is that the
+gap is recorded and fires on its first run back — an outage is never silently
+swallowed after the fact. Catching it *during* needs a check outside the box.
+There is a test whose only job is to keep that sentence true.
+
+## §4 — the row-count guard, generalised past the row that named it
+
+`B-52` named `/opsstate`, `/portal`, `/service`, `/grace` and `/status`. Five
+were fixed. The generalisation — "every POST that takes a `tenantId`", derived
+from the dispatcher's own case list rather than from memory — found **three
+more**:
+
+| endpoint | answered, for a uuid that is not a school |
+|---|---|
+| `/branding` | **200**, echoing the colour back, plus an audit row |
+| `/admin` | **500** `platform_error` |
+| `/payment` | **500** `platform_error` |
+
+`/payment` is the one with money on it: an operator recording a school's bank
+transfer against a mistyped id got "the platform is broken" instead of "that
+school is not here", and went to find an engineer while the payment sat
+unentered.
+
+The 500s deserve their own note, because `nonexistent-tenant.test.ts` already
+had the sentence in its header for `/status`: *"we are broken" where the truth
+is "that school is not here"*. A 404 makes an operator check what they pasted;
+a 500 makes them escalate.
+
+§4's third case — cross-tenant — now keeps a **bystander school** and asserts
+that no mutation aimed at one changes another, or writes into its trail. For a
+tenant-facing endpoint RLS makes that structural; the platform console is the
+one surface deliberately allowed across schools, so nothing but a test can
+know.
+
+## §D — the whole matrix, derived rather than restated
+
+C fixed six composite endpoints one at a time. Six files each asserting its
+own corner cannot answer "is there a state, on any surface, that still serves
+what it should not?"
+
+`entitlement-matrix.test.ts` walks `{active, limited, maintenance, suspended}`
+× seven surfaces, plus the per-service switch on top of `active` — which is
+the `B-53` case and is *not* an ops_state at all. Every expectation is read
+from `service_catalogue` and `app.tenant_service_state` **at run time**, so a
+deliberate policy change moves the tests with it and an accidental one fails
+them. Hard-coding the matrix would only be the policy written twice.
+
+Two structural assertions beyond the cells: a 5xx is never a correct answer to
+"may this school see this", and a suspended school is refused **before** the
+service is consulted.
+
+## §E — a school built from nothing, 24 steps
+
+Every other suite starts from a fixture built by direct INSERT. That is cheap
+and it is why nobody ever walks the road a real school walks — and the gaps in
+that road are exactly the ones this project keeps finding late.
+
+`fresh-tenant-e2e.test.ts` creates a school through the console and then drives
+the product's own endpoints, in the order an office would, with **no direct
+INSERT in the happy path**:
+
+> create → operations row → provision → plan → branding → principal → it admin
+> → activation + login → dashboard → structure → teacher → room → notice →
+> calendar → academic year → sections → fee heads seeded → fee structure →
+> student import preview → students imported → roster → guardian linked →
+> routine created → exam
+
+It found `B-87` on its first attempt: **a school could not add its first
+teacher.** `staff_profiles.employee_code` is NOT NULL, the handler passed
+`|| null` into it, and the form marked the field *optional* — so a principal
+who left the staff-ID box empty got `internal_error`. Not an edge case: it is
+the default path for any school that does not number its staff, and adding
+staff is among the first things a new school does. Every unit test supplied the
+field, so nothing had ever seen it.
+
+It also **corrected `B-81`**, which claimed the chart of accounts is never
+seeded. `app.provision_tenant` inlines it — 15 `ledger_accounts` at migration
+012 §8, and the fee heads at §7. The real gap is narrower and is recorded as
+such: a school created and never provisioned has neither, and no endpoint
+writes those tables.
+
+### What still needs manual SQL
+
+Two things, and the test asserts the list so it can only change deliberately:
+
+1. **Renaming a school**, or fixing its slug, EIIN, district or address
+   (`B-55`). A school registered with a typo needs psql.
+2. **Giving an UNPROVISIONED school its chart of accounts and fee heads**
+   (`B-81`, revised).
+
+Attendance is deliberately absent and is **not** a gap: `/academics/attendance`
+is GET-only because a register is written through the offline sync queue — a
+teacher marks it on a phone in a room with no signal. Walking it here would
+test the queue rather than the road, and `packages/offline` and `sync-svc` own
+that.
+
+## §9 — suspension, and the state that had quietly become suspension
+
+Suspension needs no revocation sweep, and finding that out is worth more than
+building one: every request opens through `withTenant`, which asks
+`app.tenant_access` on the connection it already holds. A suspended school
+stops being honoured on the *next request*, which is stronger than a
+revocation list that can go stale. Verified against a token minted before the
+switch was thrown.
+
+`B-54`'s second sentence turned out to be real and serious. A school in
+`limited` — billing arrears — could read but **could not refresh**, because
+rotating a refresh token is a write inside `transaction_read_only = on`. Every
+user was signed out within one access-token lifetime and could not get back
+in. Read-only had become suspension by accident, which makes the softer state
+useless: its entire purpose is that a school behind on fees can still read its
+own records.
+
+`withTenant` gained `sessionWrite`, placed deliberately **below** the
+`access = 'none'` check so a suspended school still cannot renew. A
+`user_sessions` row is not the school's business data; it is the platform's
+record of who is signed in, and withholding it protects no fee.
+
+## §4 (UI) — four refusals, four sentences (`B-84`)
+
+`HttpError`'s own comment had already drawn the line: *"a refused ROLE needs a
+different person, a blocked TENANT needs a payment or a call to us — and the
+screen has to say which."* The screen was not saying which.
+
+Server: on a gate refusal that named a service, `app.tenant_service_state`
+rides along as `serviceState`, so **not purchased** is machine-distinguishable
+from **switched off** — different errands for the office. One extra query, on
+the refusal path only.
+
+Client: `refuseUnlessOk` became async and reads the server's code and Bangla
+sentence into `HttpStatus`; `deniedMessage` and `deniedContact` choose the
+wording *and whether to offer a colleague at all*. An arrears block has nobody
+to ask, and offering one wastes a trip.
+
+Browser-verified on a `starter` school: the fees screen now reads
+*"ফি ও হিসাব এই প্রতিষ্ঠানের প্ল্যানে নেই। প্ল্যান পরিবর্তনের জন্য shikhonBD-এর
+সঙ্গে যোগাযোগ করুন।"* — with no head-teacher line.
+
+## §12 — B-80 and B-81, classified rather than absorbed
+
+Neither is taken into P-ops, and the reasons are stated so the decision can be
+argued with rather than merely trusted.
+
+**`B-80`** is a finance phase. `invoices.late_fee` is read and never written,
+so the column is always 0 — the invoice is internally consistent and simply
+under-bills; a **missing feature**, not a broken one. `invoice_no` from
+`count(*)` looks like `B-78`, but `invoices` carries
+`UNIQUE (tenant_id, invoice_no)`, so a reused number **raises 23505** rather
+than producing two invoices sharing a number. No book is ever wrong. It does
+not block a real institution's finance lifecycle — billing, collection,
+receipts and ledger posting all work — it blocks *late-fee* billing only, and
+it waits on a product decision about when a late fee accrues.
+
+**`B-81`** is corrected above and reduced to the unprovisioned-tenant case.
+
+## Recorded honestly
+
+**I was running the wrong typecheck.** `tsc -p tsconfig.json` **excludes
+`apps/pwa`**, so three views used `deniedMessage` without importing it and
+passed my check; the esbuild bundle caught it. The repository has
+`scripts/typecheck.mjs`, which runs all three CI configs and compares its
+scope against `.github/workflows/security.yml`. That is the gate; the bare
+`tsc` I had been using is not.
+
+**Two of my own tests asserted an opinion again.** The arrears case for push,
+and the console-reachability check. Both rewritten to pin
+`service_catalogue.in_limited` and the real function signature.
+
+**A failing test poisoned the ones after it, twice.** A test that asserts and
+then restores never restores when it fails. State is reset in `beforeEach` in
+both suites now.
+
+**A guarded `if` nearly hid a step.** The E2E's guardian link was wrapped in
+`if (students.length > 0)`, so an import that committed nothing would have
+produced a silently shorter walk. It asserts instead — and immediately showed
+that the roster returns `roster`/`studentId`, not `students`/`id`.
+
+## Evidence
+
+- **1775 tests across 13 workspaces, all passing**, plus **26/26 SQL suites
+  executed** (52/52 over two runs).
+- 40 new tests this segment: deadman 9, row-count guard 8 (2 new), matrix 7,
+  suspension 6, fresh-tenant 2, B-84 6.
+- `node scripts/typecheck.mjs` — three CI configs, 0 errors, coverage
+  267/338 with the unchecked baseline unmoved at 71.
+- `node scripts/build.mjs` — clean.
+- Browser acceptance for `B-84` on a live stack, screenshot in session.
+- Landing page byte-identical: `apps/pwa/public/index.html` @ `496199bd`.
+
+## Still BLOCKED, and not counted as anything else
+
+**The human alert (§2).** The delivery path is proven — the monitor built
+three real alerts from real signals, `alertText` rendered a readable message,
+and the transport returned `delivered: true`. It went to a stubbed `fetch`.
+A configured URL, a fake webhook, a local sink and a POST without a human
+receipt are all **not** a pass, and this is a rehearsal. It needs a real
+`ALERT_WEBHOOK_URL` and a person confirming the message arrived.
+
+**REHEARSED. Not OBSERVED IN PRODUCTION. Not PASS.**

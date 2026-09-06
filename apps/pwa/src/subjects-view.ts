@@ -56,6 +56,8 @@ export class SubjectsView {
   private error = false;
   /** The server refused. Not an outage; no retry helps; drop the cache. */
   private denied = false;
+  /** B-84. The refusal itself, so the screen can say which kind it was. */
+  private deniedErr: unknown = null;
 
   constructor(options: SubjectsViewOptions) {
     this.o = options;
@@ -81,7 +83,7 @@ export class SubjectsView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/subjects');
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       const body = (await res.json()) as { subjects?: SubjectRow[] };
       this.subjects = body.subjects ?? [];
       this.offline = false;
@@ -93,6 +95,7 @@ export class SubjectsView {
         // allowed to see it, or by somebody else on a shared device, and the
         // server has now said no — so the screen must stop saying yes. B-30.
         this.denied = true;
+        this.deniedErr = err;
         this.subjects = [];
         this.offline = false;
         this.error = false;

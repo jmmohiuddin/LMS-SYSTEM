@@ -90,7 +90,12 @@ var TenantBlocked = class extends HttpError {
         access: access.access,
         opsState: access.opsState,
         billingState: access.billingState,
-        until: access.until
+        until: access.until,
+        // B-84. Present only when a service was named. `not_in_plan` means
+        // buy it; `disabled` and `maintenance` mean wait or ring us. Those
+        // are different errands for the office and the screen must be able
+        // to send them on the right one.
+        ...access.serviceState ? { serviceState: access.serviceState } : {}
       }
     );
     this.access = access;
@@ -155,8 +160,19 @@ function createDb(connectionString, opts = {}) {
         );
         if (opts2?.skipGate) return;
         const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
-        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "none") {
+          if (ctx.service) {
+            const { rows } = await c.query(
+              "SELECT app.tenant_service_state($1, $2) AS state",
+              [ctx.tenantId, ctx.service]
+            );
+            const state = rows[0]?.state;
+            if (state) throw new TenantBlocked({ ...access, serviceState: state });
+          }
+          throw new TenantBlocked(access);
+        }
         if (access.access === "read_only") {
+          if (opts2?.sessionWrite) return { blocked: void 0 };
           await c.query("SET LOCAL transaction_read_only = on");
           blocked = access;
           if (opts2?.write) throw new TenantBlocked(access);
@@ -1926,7 +1942,7 @@ async function handler3(req, res) {
         ACCESS_TTL2
       );
       return { accessToken, refreshToken: newRefreshToken, expiresIn: 900 };
-    });
+    }, { sessionWrite: true });
     json(res, 200, result, cors);
   } catch (err) {
     if (err instanceof HttpError) {

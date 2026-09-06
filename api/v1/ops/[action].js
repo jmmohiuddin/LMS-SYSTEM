@@ -94,7 +94,12 @@ var TenantBlocked = class extends HttpError {
         access: access.access,
         opsState: access.opsState,
         billingState: access.billingState,
-        until: access.until
+        until: access.until,
+        // B-84. Present only when a service was named. `not_in_plan` means
+        // buy it; `disabled` and `maintenance` mean wait or ring us. Those
+        // are different errands for the office and the screen must be able
+        // to send them on the right one.
+        ...access.serviceState ? { serviceState: access.serviceState } : {}
       }
     );
     this.access = access;
@@ -159,8 +164,19 @@ function createDb(connectionString, opts = {}) {
         );
         if (opts2?.skipGate) return;
         const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
-        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "none") {
+          if (ctx.service) {
+            const { rows } = await c.query(
+              "SELECT app.tenant_service_state($1, $2) AS state",
+              [ctx.tenantId, ctx.service]
+            );
+            const state = rows[0]?.state;
+            if (state) throw new TenantBlocked({ ...access, serviceState: state });
+          }
+          throw new TenantBlocked(access);
+        }
         if (access.access === "read_only") {
+          if (opts2?.sessionWrite) return { blocked: void 0 };
           await c.query("SET LOCAL transaction_read_only = on");
           blocked = access;
           if (opts2?.write) throw new TenantBlocked(access);
@@ -3490,6 +3506,7 @@ async function handler13(req, res) {
       json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
       return;
     }
+    console.error("[ops/users]", err);
     json(res, 500, { error: "internal_error" }, cors);
   }
 }
@@ -3561,6 +3578,11 @@ async function create(db, ctx, req) {
     throw new HttpError(400, "\u098F\u0987 \u09AD\u09C2\u09AE\u09BF\u0995\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE", "bad_role", { field: "roleCode" });
   }
   const phone = normalisePhone(body.phone ?? "");
+  const employeeCode = (body.employeeCode ?? "").trim();
+  const isStaffRole = roleCode !== "student" && roleCode !== "guardian";
+  if (isStaffRole && !employeeCode) {
+    throw new HttpError(400, "\u0995\u09B0\u09CD\u09AE\u099A\u09BE\u09B0\u09C0 \u0986\u0987\u09A1\u09BF \u09A6\u09BF\u09A8", "bad_request", { field: "employeeCode" });
+  }
   return db.withTenant(ctx, async (c) => {
     const { rows: dupe } = await c.query(
       `SELECT id, full_name_bn AS name_bn FROM users
@@ -3594,7 +3616,7 @@ async function create(db, ctx, req) {
       [
         userId,
         ctx.tenantId,
-        (body.employeeCode ?? "").trim() || null,
+        employeeCode,
         (body.designationBn ?? "").trim() || null
       ]
     );

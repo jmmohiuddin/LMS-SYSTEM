@@ -841,3 +841,140 @@ There is **no wildcard DNS record**. `*.sikhon.systems` is NXDOMAIN and
 arbitrary labels do not resolve. Both product code paths exist and work; the
 missing pieces are a wildcard A record and a DNS-01-validated certificate.
 Recorded as `blocked` in `production-evidence.json` with what was tried.
+
+---
+
+## Update — P-ops, 2026-09-06
+
+### The deadman, and what it can and cannot tell you
+
+Migration 071 added `ops_job_runs`: one row per scheduled job, written by the
+job itself through `app.record_job_run`. Three alert conditions read it, and
+they are the only ones that can fire on a **totally idle** deployment.
+
+| condition | fires when | means |
+|---|---|---|
+| `job_never_ran` | no row at all | the timers were never installed |
+| `job_silent` | last success older than that job's own limit | the schedule stopped |
+| `job_failing` | 3 consecutive failures | the schedule is fine, the work is not |
+
+The limits are **per job** (`monitor` 90 min; `sms_dispatch` and `maintenance`
+26 h), because one global threshold would either page every night on a healthy
+daily job or miss a dead 15-minute one for a day.
+
+**Business silence is not job silence.** A school that sent no SMS today is
+normal — a holiday, a small school, a quiet week — and every ratio-shaped
+alert correctly says nothing. A dispatcher that did not RUN is not normal, and
+no ratio can see it, because the producer of the rows a ratio would read is
+the thing that stopped. That is why these three measure the clock, never the
+volume. Do not "fix" a noisy ratio by adding a floor; that is how B-51 was
+created.
+
+```bash
+curl -s -H "Authorization: Bearer $CRON_SECRET" \
+  https://sikhon.systems/api/v1/ops/monitor | jq '.signals.jobs'
+```
+
+`minutesSinceSuccess: null` means the job has never run **on this
+deployment**, whatever `systemctl` says about the timer.
+
+**What it cannot do.** The monitor cannot report its own death: `job_silent`
+for the monitor is only evaluated *by* the monitor. If the monitor is what
+stopped, nothing computes the alert. It fires on the first run back, so an
+outage is never silently swallowed after the fact — but catching it *during*
+needs a check from outside the box (an uptime monitor on a public endpoint, or
+the host provider's alerting). This is unchanged from §7 and is deliberately
+not simulated.
+
+### Running the SQL suites without psql on PATH
+
+`db/tests/*.sql` are the only tests that exercise RLS, the RESTRICTIVE write
+scopes, the EXCLUDE constraints and the SECURITY DEFINER functions as
+PostgreSQL actually enforces them. They were reporting `0 of 26 — NOTHING RAN`
+on any machine without a local PostgreSQL client — which is most, because the
+development database is a container that has psql inside it.
+
+```bash
+node scripts/sql-tests.mjs                    # all 26
+node scripts/sql-tests.mjs invariants         # one, by name fragment
+SQL_TEST_REPEAT=2 node scripts/sql-tests.mjs  # each suite twice
+```
+
+`scripts/test-all.mjs` uses this automatically when there is no local psql, so
+CI (which has one) keeps its direct path. `PG_CONTAINER` overrides the
+container name.
+
+This is a real execution path, not a shim: `ON_ERROR_STOP` stays on, a raising
+suite fails the run, and a file using `\i` or `\copy` is refused rather than
+run with a path that cannot resolve from inside the container.
+
+### Onboarding a school: what the product does, and what still needs psql
+
+`services/platform-svc/test/fresh-tenant-e2e.test.ts` walks the whole road and
+is the current answer. **24 steps run through the product's own API**, with no
+direct INSERT:
+
+> create → operations row → provision → **plan** → branding → principal → IT
+> admin → activation + login → dashboard → structure → teacher → room →
+> notice → calendar → academic year → sections → fee heads → fee structure →
+> student import (preview, then commit) → roster → guardian → routine → exam
+
+**Do not skip `POST /platform/plan`.** A new school defaults to `starter`,
+which has no `finance` key at all, so its fee screens are correctly refused
+until the plan it actually bought is set. A school onboarded without this step
+silently has no fees module and the office will not know why.
+
+Two steps still need psql, and the E2E asserts this list so it cannot grow
+unnoticed:
+
+1. **Renaming a school**, or fixing its slug, EIIN, district, upazila or
+   address — no endpoint writes them after creation (`B-55`).
+2. **Giving an UNPROVISIONED school its chart of accounts and fee heads.**
+   `app.provision_tenant` seeds both inline (migration 012 §7 and §8), so a
+   provisioned school has them; a school created through `POST /tenants` and
+   never provisioned has neither, and nothing but `/provision` will supply
+   them (`B-81`, revised — the earlier claim that the chart is *never* seeded
+   was wrong).
+
+Attendance is not on the list and is not a gap: registers are written through
+the offline sync queue, because a teacher marks them on a phone in a room with
+no signal.
+
+### Suspension, arrears, and sessions
+
+| operator action | what a signed-in user sees |
+|---|---|
+| `ops_state = suspended` | the **next request** 403s with `tenant_blocked`; refresh is refused too |
+| `ops_state = limited` (arrears) | reads continue for services with `in_limited`; **sessions still renew** |
+| back to `active` | service resumes immediately; no re-issue needed |
+
+There is no revocation sweep and none is needed: every request asks
+`app.tenant_access` on the connection it already holds, so a suspended school
+stops being honoured immediately rather than being listed somewhere that can
+go stale.
+
+`limited` used to lock everyone out, because rotating a refresh token is a
+write and the gate had set the transaction read-only — so every user was
+signed out within one access-token lifetime with no way back in. Fixed
+(`sessionWrite`, `B-54`), and worth knowing: if that ever regresses, the
+symptom is "the whole school was logged out an hour after we marked them in
+arrears", not an error anyone reports.
+
+**A suspended school stays visible to the console** (`app.platform_operations`
+is SECURITY DEFINER), which is how it gets un-suspended. If that regresses,
+every suspension becomes permanent.
+
+### Reading a 403 correctly
+
+Four different refusals, and support should not treat them alike:
+
+| `error` | means | remedy |
+|---|---|---|
+| `forbidden` | this ROLE may not | a different person in the school |
+| `tenant_blocked` | the SCHOOL is suspended or in arrears | payment, or a call to us |
+| `tenant_blocked` + `serviceState: not_in_plan` | never bought | change the plan |
+| `tenant_blocked` + `serviceState: disabled` / `maintenance` | switched off | wait, or ask us |
+
+The app now says which (`B-84`). If a school reports "it says we do not have
+permission" for something they clearly should, check `serviceState` before
+looking at roles.

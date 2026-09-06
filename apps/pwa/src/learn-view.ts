@@ -19,7 +19,7 @@ import { formatCount } from '../../../packages/ui-core/src/format.ts';
 import { PracticeView, type PracticeQuestion } from './practice-view.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
 import {
-  permissionState, permissionMessage, pageHeader, sectionHeading, listSkeleton,
+  permissionState, permissionMessage, deniedMessage, deniedContact, pageHeader, sectionHeading, listSkeleton,
 } from './ui/index.ts';
 
 export interface Chapter {
@@ -88,6 +88,8 @@ export class LearnView {
    * so this state offers no retry and shows no cached data (B-30).
    */
   private denied = false;
+  /** B-84. The refusal itself, so the screen can say which kind it was. */
+  private deniedErr: unknown = null;
   private loading = true;
   private readingSince = 0;
   private lastBlockSeen = 0;
@@ -150,14 +152,15 @@ export class LearnView {
       const res = await this.o.auth.authedFetch(
         `/api/v1/academics/chapters?classId=${encodeURIComponent(classId)}`,
       );
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       const body = (await res.json()) as { chapters: Chapter[] };
       this.chapters = body.chapters;
       this.offline = false;
       this.cacheSet(CHAPTERS_CACHE, this.chapters);
     } catch (err) {
       if (isDenied(err)) {
-        this.denied = true; this.chapters = []; this.offline = false;
+        this.denied = true;
+        this.deniedErr = err; this.chapters = []; this.offline = false;
         try { localStorage.removeItem(CHAPTERS_CACHE); } catch { /* private mode */ }
         // These two have no `finally { render() }`, so a bare return
         // computed the denied state and never painted it.
@@ -288,8 +291,8 @@ export class LearnView {
     // calling it "offline" is the lie this item exists to remove.
     if (this.denied) {
       root.append(permissionState(d, {
-        message: permissionMessage('পড়াশোনার বিষয়বস্তু'),
-        contact: 'প্রধান শিক্ষক',
+        message: deniedMessage(this.deniedErr, 'পড়াশোনার বিষয়বস্তু'),
+        contact: deniedContact(this.deniedErr),
       }));
       return;
     }

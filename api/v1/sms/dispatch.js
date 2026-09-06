@@ -85,7 +85,12 @@ var TenantBlocked = class extends HttpError {
         access: access.access,
         opsState: access.opsState,
         billingState: access.billingState,
-        until: access.until
+        until: access.until,
+        // B-84. Present only when a service was named. `not_in_plan` means
+        // buy it; `disabled` and `maintenance` mean wait or ring us. Those
+        // are different errands for the office and the screen must be able
+        // to send them on the right one.
+        ...access.serviceState ? { serviceState: access.serviceState } : {}
       }
     );
     this.access = access;
@@ -149,8 +154,19 @@ function createDb(connectionString, opts = {}) {
         );
         if (opts2?.skipGate) return;
         const access = await readAccess(c, ctx.tenantId, ctx.role, ctx.service);
-        if (access.access === "none") throw new TenantBlocked(access);
+        if (access.access === "none") {
+          if (ctx.service) {
+            const { rows } = await c.query(
+              "SELECT app.tenant_service_state($1, $2) AS state",
+              [ctx.tenantId, ctx.service]
+            );
+            const state = rows[0]?.state;
+            if (state) throw new TenantBlocked({ ...access, serviceState: state });
+          }
+          throw new TenantBlocked(access);
+        }
         if (access.access === "read_only") {
+          if (opts2?.sessionWrite) return { blocked: void 0 };
           await c.query("SET LOCAL transaction_read_only = on");
           blocked = access;
           if (opts2?.write) throw new TenantBlocked(access);
@@ -776,25 +792,22 @@ var SmsDispatchWorker = class {
     this.pushSender = vapid ? new PushSender(vapid, { fetchImpl: opts.fetchImpl }) : null;
   }
   async run(tenantId) {
-    const ctx = {
-      tenantId,
-      userId: "",
-      role: "system_ingest",
-      service: "sms"
-    };
+    const ctx = { tenantId, userId: "", role: "system_ingest" };
     return this.db.withTenant(ctx, async (client) => {
+      const smsOn = await this.serviceEnabled(client, "sms");
+      const pushOn = await this.serviceEnabled(client, "push");
       const budget = await this.loadTenantBudget(client, tenantId);
-      const attendance = await this.enqueue(client, tenantId, budget);
-      const notices = await this.enqueueNotices(client, tenantId, budget);
+      const attendance = smsOn ? await this.enqueue(client, tenantId, budget) : { eventsConsidered: 0, smsQueued: 0, suppressed: {} };
+      const notices = smsOn ? await this.enqueueNotices(client, tenantId, budget) : { eventsConsidered: 0, smsQueued: 0, suppressed: {} };
       const suppressed = { ...attendance.suppressed };
       for (const [k, v] of Object.entries(notices.suppressed)) {
         suppressed[k] = (suppressed[k] ?? 0) + v;
       }
-      const push = this.pushSender ? await this.pushSender.run(client, tenantId, {
+      const push = this.pushSender && pushOn ? await this.pushSender.run(client, tenantId, {
         replacesSms: budget.pushReplacesSms,
         orgName: budget.orgName
       }) : { ...EMPTY_PUSH_RESULT };
-      const dispatched = await this.dispatch(client, tenantId);
+      const dispatched = smsOn ? await this.dispatch(client, tenantId) : 0;
       return {
         tenantId,
         eventsConsidered: attendance.eventsConsidered + notices.eventsConsidered,
@@ -833,6 +846,20 @@ var SmsDispatchWorker = class {
       noticeMaxChars: noticeSmsMaxChars(row?.settings),
       pushReplacesSms: pushReplacesSms(row?.settings)
     };
+  }
+  /**
+   * Is one catalogue service on for the tenant this transaction is scoped to?
+   *
+   * `limited` counts as on: a school in billing arrears still has children
+   * whose guardians need to be told they were absent, and push is the free
+   * transport — withholding it would push the school onto the paid one.
+   */
+  async serviceEnabled(client, code) {
+    const { rows } = await client.query(
+      "SELECT app.tenant_service_state(app.current_tenant(), $1) AS state",
+      [code]
+    );
+    return rows[0]?.state === "enabled" || rows[0]?.state === "limited";
   }
   async enqueue(client, tenantId, budget) {
     const suppressed = {};

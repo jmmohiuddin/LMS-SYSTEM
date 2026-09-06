@@ -24,7 +24,7 @@ import type { Auth } from './auth.ts';
 import { iconSvg } from './icon.ts';
 import { formatCount, formatIdentifier } from '../../../packages/ui-core/src/format.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
-import { permissionState, permissionMessage, pageHeader, field, statusBadge,} from './ui/index.ts';
+import { permissionState, permissionMessage, deniedMessage, deniedContact, pageHeader, field, statusBadge,} from './ui/index.ts';
 
 interface SubjectRow {
   subjectBn: string;
@@ -83,6 +83,8 @@ export class ResultsView {
    * so this state offers no retry and shows no cached data (B-30).
    */
   private denied = false;
+  /** B-84. The refusal itself, so the screen can say which kind it was. */
+  private deniedErr: unknown = null;
 
   constructor(options: ResultsViewOptions) {
     this.o = options;
@@ -104,7 +106,7 @@ export class ResultsView {
   private async load(): Promise<void> {
     try {
       const res = await this.o.auth.authedFetch('/api/v1/academics/results');
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       const body = (await res.json()) as { results?: Result[] };
       this.results = body.results ?? [];
       this.selected = this.selected && this.results.some((r) => r.examId === this.selected)
@@ -114,7 +116,8 @@ export class ResultsView {
       try { localStorage.setItem(CACHE_KEY, JSON.stringify(this.results)); } catch { /* quota */ }
     } catch (err) {
       if (isDenied(err)) {
-        this.denied = true; this.results = []; this.offline = false;
+        this.denied = true;
+        this.deniedErr = err; this.results = []; this.offline = false;
         try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
         return;
       }
@@ -162,8 +165,8 @@ export class ResultsView {
     // calling it "offline" is the lie this item exists to remove.
     if (this.denied) {
       root.append(permissionState(d, {
-        message: permissionMessage('ফলাফল'),
-        contact: 'প্রধান শিক্ষক',
+        message: deniedMessage(this.deniedErr, 'ফলাফল'),
+        contact: deniedContact(this.deniedErr),
       }));
       return;
     }

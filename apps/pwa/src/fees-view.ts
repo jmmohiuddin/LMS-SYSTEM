@@ -15,7 +15,7 @@ import { formatBdt } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
 import {
-  permissionState, permissionMessage, pageHeader, dataTable, statusBadge,
+  permissionState, permissionMessage, deniedMessage, deniedContact, pageHeader, dataTable, statusBadge,
   openDrawer, setOverlayBody, listSkeleton, el, append, type OverlayHandle,
 } from './ui/index.ts';
 import { bnDate, bnMonth } from './view-states.ts';
@@ -99,6 +99,8 @@ export class FeesView {
    * so this state offers no retry and shows no cached data (B-30).
    */
   private denied = false;
+  /** B-84. The refusal itself, so the screen can say which kind it was. */
+  private deniedErr: unknown = null;
   private loading = true;
 
   constructor(options: FeesViewOptions) {
@@ -118,7 +120,7 @@ export class FeesView {
 
     try {
       const res = await this.o.auth.authedFetch('/api/v1/finance/invoices');
-      refuseUnlessOk(res);
+      await refuseUnlessOk(res);
       const body = (await res.json()) as { invoices: Invoice[] };
       this.invoices = body.invoices;
       this.offline = false;
@@ -128,7 +130,8 @@ export class FeesView {
         // Fees are the most sensitive thing on a student's phone after
         // results: a stale invoice list left on screen after a refusal is
         // somebody's money.
-        this.denied = true; this.invoices = []; this.offline = false;
+        this.denied = true;
+        this.deniedErr = err; this.invoices = []; this.offline = false;
         try { localStorage.removeItem(CACHE_KEY); } catch { /* private mode */ }
         // These two have no `finally { render() }`, so a bare return
         // computed the denied state and never painted it.
@@ -241,8 +244,8 @@ export class FeesView {
     if (this.denied) {
       root.append(pageHeader(d, { title: 'বেতন ও ফি' }));
       root.append(permissionState(d, {
-        message: permissionMessage('বেতন ও ফি'),
-        contact: 'প্রধান শিক্ষক',
+        message: deniedMessage(this.deniedErr, 'বেতন ও ফি'),
+        contact: deniedContact(this.deniedErr),
       }));
       return;
     }

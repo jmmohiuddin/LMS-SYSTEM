@@ -129,6 +129,14 @@ export interface TenantAccess {
   /** Bangla, for the person. Null when there is nothing to explain. */
   reasonBn: string | null;
   until: string | null;
+  /**
+   * B-84. `app.tenant_service_state` for the service this request named, set
+   * only on a refusal that named one. `not_in_plan` is a commercial fact —
+   * the school never bought it — and `disabled` / `maintenance` are
+   * operational ones. The remedies differ (ring sales, or wait), so the
+   * screen has to be able to tell them apart without parsing Bangla prose.
+   */
+  serviceState?: string;
 }
 
 /**
@@ -169,6 +177,11 @@ export class TenantBlocked extends HttpError {
         opsState: access.opsState,
         billingState: access.billingState,
         until: access.until,
+        // B-84. Present only when a service was named. `not_in_plan` means
+        // buy it; `disabled` and `maintenance` mean wait or ring us. Those
+        // are different errands for the office and the screen must be able
+        // to send them on the right one.
+        ...(access.serviceState ? { serviceState: access.serviceState } : {}),
       },
     );
     this.access = access;

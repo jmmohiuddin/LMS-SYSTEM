@@ -83,7 +83,7 @@ describe('B-30 — the canonical pattern', () => {
     assert.notEqual(humanError('offline'), permissionMessage());
   });
 
-  test('the status survives the throw — the bug in one assertion', () => {
+  test('the status survives the throw — the bug in one assertion', async () => {
     // `new Error(String(res.status))` typechecks, reads fine, and loses the
     // one fact the catch needs. This is the replacement.
     const err = new HttpStatus(403);
@@ -92,8 +92,11 @@ describe('B-30 — the canonical pattern', () => {
     assert.ok(!isDenied(new Error('403')), 'a plain Error carries nothing');
     assert.ok(!isDenied(new HttpStatus(401)),
       '401 is recoverable by signing in again and is not a lockout');
-    assert.throws(() => refuseUnlessOk({ ok: false, status: 403 }), HttpStatus);
-    assert.doesNotThrow(() => refuseUnlessOk({ ok: true, status: 200 }));
+    // B-84 made this async: on a 403 it reads the body for the server's own
+    // error code, so a screen can tell a role refusal from an unbought
+    // module. The rejection is the same `HttpStatus` it always was.
+    await assert.rejects(() => refuseUnlessOk({ ok: false, status: 403 }), HttpStatus);
+    await assert.doesNotReject(() => refuseUnlessOk({ ok: true, status: 200 }));
   });
 });
 

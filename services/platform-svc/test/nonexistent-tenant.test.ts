@@ -45,6 +45,9 @@ const skip = !PLATFORM_URL || !DATABASE_URL ? 'PLATFORM_DATABASE_URL / DATABASE_
 const KEY = 'test-platform-key-nx';
 const OPERATOR = '7a900000-0000-4000-8000-0000000000aa';
 const SLUG = 'p0-nx-school';
+/** A bystander. Every mutation below is aimed at the first school; this one
+ *  exists only to be checked afterwards for damage. */
+const SLUG_B = 'p0-nx-bystander';
 
 /** A syntactically perfect uuid that is not, and never was, a school. */
 const GHOST = '11111111-1111-4111-8111-111111111111';
@@ -53,6 +56,7 @@ let db: Db;
 let platform: typeof import('../api/index.ts').default;
 let opToken = '';
 let realTenant = '';
+let bystander = '';
 
 const asOperator = (url: string, body?: unknown) =>
   call(platform, {
@@ -71,7 +75,7 @@ async function auditRows(tenantId: string): Promise<number> {
 
 async function dropFixture(): Promise<void> {
   const { rows } = await db.pool.query<{ id: string }>(
-    `SELECT id FROM app.platform_tenants() WHERE slug = $1`, [SLUG]);
+    `SELECT id FROM app.platform_tenants() WHERE slug = ANY($1)`, [[SLUG, SLUG_B]]);
   for (const r of rows) {
     // From inside the tenant's own context: migration 045 took BYPASSRLS off
     // the platform role, so a bare DELETE matches nothing at all — silently.
@@ -85,6 +89,9 @@ describe('an operations endpoint refuses a school that does not exist', { skip }
   before(async () => {
     await installTestKeys();
     process.env.PLATFORM_API_KEY = KEY;
+    // `/admin` mints an activation code and refuses without this, so the
+    // cross-tenant test below would never reach the write it is checking.
+    process.env.ACTIVATION_PEPPER ??= 'test-pepper-32-bytes-of-entropy!';
     await lockFixtures(DATABASE_URL as string);
     db = createDb(PLATFORM_URL as string);
     platform = (await import('../api/index.ts')).default;
@@ -100,6 +107,13 @@ describe('an operations endpoint refuses a school that does not exist', { skip }
     });
     assert.equal(made.status, 200, JSON.stringify(made.body));
     realTenant = (made.body as { tenant: { id: string } }).tenant.id;
+
+    const other = await asOperator('/api/v1/platform/tenants', {
+      slug: SLUG_B, nameBn: 'পাশের বিদ্যালয়', nameEn: 'Bystander School',
+      stream: 'bangla_medium', level: 'secondary',
+    });
+    assert.equal(other.status, 200, JSON.stringify(other.body));
+    bystander = (other.body as { tenant: { id: string } }).tenant.id;
   });
 
   after(async () => { if (db) { await dropFixture(); await db.end(); await unlockFixtures(); } });
@@ -113,6 +127,33 @@ describe('an operations endpoint refuses a school that does not exist', { skip }
     ['service', (id) => ({ tenantId: id, service: 'attendance', state: 'disabled', reason: 'regression test' })],
     ['grace', (id) => ({ tenantId: id, until: '2026-12-31', reason: 'regression test' })],
     ['status', (id) => ({ tenantId: id, status: 'suspended', reason: 'regression test' })],
+  ];
+
+  /**
+   * P-ops §4. The five above are the ones B-52 named. They are not the only
+   * mutations this console offers, and "the four we know about are guarded"
+   * is exactly the shape of assurance that produced B-52 in the first place —
+   * `/status` had the fix and five siblings did not.
+   *
+   * So this is EVERY remaining POST that takes a `tenantId`, derived from the
+   * dispatcher's own case list rather than from memory. `plans` is absent
+   * because it edits the platform-wide price list and names no school;
+   * `provision` and `tenants` are absent because they CREATE, and an id that
+   * is not there yet is their normal input rather than an error.
+   */
+  const MORE_CALLS: Array<[string, (id: string) => Record<string, unknown>]> = [
+    ['plan', (id) => ({ tenantId: id, planCode: 'starter', reason: 'regression test' })],
+    ['cap', (id) => ({ tenantId: id, studentCap: 500, reason: 'regression test' })],
+    ['branding', (id) => ({ tenantId: id, branding: { primaryColor: '#D23B2E' }, reason: 'regression test' })],
+    // `nameBn` / `roleCode`, the names the handler actually reads. Getting
+    // these wrong made the call 400 on body validation before the tenant was
+    // ever looked at — which still counts as a refusal, and proves nothing
+    // about the guard.
+    ['admin', (id) => ({ tenantId: id, nameBn: 'পরীক্ষা', phone: '+8801799440001',
+                        roleCode: 'principal', reason: 'regression test' })],
+    ['payment', (id) => ({ tenantId: id, amountBdt: 1000, method: 'bkash',
+                           paidOn: '2026-09-03', reference: 'RT-1',
+                           reason: 'regression test' })],
   ];
 
   test('THE ONE THAT MATTERS — every endpoint 404s, and writes nothing', async () => {
@@ -131,6 +172,27 @@ describe('an operations endpoint refuses a school that does not exist', { skip }
       'a refused operation must not write an audit row');
   });
 
+  test('P-ops §4 — the OTHER mutations refuse a ghost too, and write nothing', async () => {
+    // The generalisation of B-52. Each of these takes a tenantId and, if
+    // unguarded, would report success for a school that does not exist.
+    const before = await auditRows(GHOST);
+    const wrong: string[] = [];
+
+    for (const [route, body] of MORE_CALLS) {
+      const r = await asOperator(`/api/v1/platform/${route}`, body(GHOST));
+      // 404 is the right answer; any 4xx that names the tenant is defensible.
+      // A 2xx is not, and neither is a 500 — "we are broken" where the truth
+      // is "that school is not here" is the exact mistake `/status` made.
+      if (r.status < 400 || r.status >= 500) {
+        wrong.push(`${route} -> ${r.status} ${JSON.stringify(r.body)}`);
+      }
+    }
+    assert.deepEqual(wrong, [], 'a mutation reported success (or 500) for a ghost school');
+
+    assert.equal(await auditRows(GHOST), before,
+      'a refused operation must not leave a trail saying it happened');
+  });
+
   test('the same calls still work on a real school', async () => {
     // Without this the test above would pass on an endpoint that 404s at
     // everything, which is a different outage wearing the same status code.
@@ -141,6 +203,35 @@ describe('an operations endpoint refuses a school that does not exist', { skip }
         `${route} must still work: ${JSON.stringify(r.body)}`);
     }
     assert.ok(await auditRows(realTenant) >= 4, 'real operations must be audited');
+  });
+
+  test('P-ops §4 — a mutation aimed at one school does not reach another', async () => {
+    // The third case the section asks for, after valid and nonexistent.
+    //
+    // For a TENANT-facing endpoint this is RLS's job and 227 policies do it.
+    // The platform console is the one surface deliberately allowed across
+    // schools, so nothing structural stops a missing or mistyped WHERE from
+    // writing every row — `app.set_student_cap`'s header records exactly that
+    // class of mistake. The only way to know is to keep a bystander and look
+    // at it afterwards.
+    const snapshot = async (id: string) => {
+      const r = await asOperator(`/api/v1/platform/tenant?id=${id}`);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      return JSON.stringify(r.body);
+    };
+    const beforeB = await snapshot(bystander);
+    const auditBeforeB = await auditRows(bystander);
+
+    for (const [route, body] of [...CALLS, ...MORE_CALLS]) {
+      if (route === 'status') continue;      // it suspends, and is asserted below
+      const r = await asOperator(`/api/v1/platform/${route}`, body(realTenant));
+      assert.ok(r.status < 400, `${route} on a real school: ${JSON.stringify(r.body)}`);
+    }
+
+    assert.equal(await snapshot(bystander), beforeB,
+      'a mutation aimed at one school changed another');
+    assert.equal(await auditRows(bystander), auditBeforeB,
+      'and it must not have been written into the bystander’s trail either');
   });
 
   test('a suspended school is FOUND, not refused', async () => {

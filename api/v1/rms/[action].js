@@ -4110,6 +4110,7 @@ async function update(db, ctx, req) {
 var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ASSIGN_ROLES = ["principal", "school_owner", "academic_coordinator"];
 var MAX_CHANGES = 500;
+var bn2 = (n) => String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
 async function loadGrid2(c, yearId, classId) {
   const { rows: classes } = await c.query(
     `SELECT DISTINCT cl.id, cl.name_bn, cl.level_no
@@ -4318,7 +4319,7 @@ async function handler8(req, res) {
       if (changes.length > MAX_CHANGES) {
         throw new HttpError(
           400,
-          `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_CHANGES}\u099F\u09BF \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC`,
+          `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn2(MAX_CHANGES)}\u099F\u09BF \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC`,
           "too_many_changes"
         );
       }

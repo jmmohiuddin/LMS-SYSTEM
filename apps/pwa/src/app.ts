@@ -27,6 +27,7 @@ import { ShikhoView } from './shikho-view.ts';
 import { SubstituteView } from './substitute-view.ts';
 import { ExamRoutineView } from './exam-routine-view.ts';
 import { RoutineEditorView } from './routine-editor-view.ts';
+import { TeachingAssignmentsView } from './teaching-assignments-view.ts';
 import { SubjectChoiceView } from './subject-choice-view.ts';
 import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
@@ -246,6 +247,7 @@ const CARD = {
   users:      { path: 'users',      glyph: 'users',        titleBn: 'ব্যবহারকারী',        subtitleBn: 'শিক্ষক ও কর্মীর অ্যাকাউন্ট' },
   staffAtt:   { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন — বদলি শিক্ষক খোঁজায় লাগে' },
   rooms:      { path: 'rooms',      glyph: 'layers',       titleBn: 'কক্ষ ব্যবস্থাপনা',   subtitleBn: 'শ্রেণিকক্ষ ও ল্যাব — রুটিনে লাগে' },
+  teachAssign:{ path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
   feeSetup:   { path: 'feestructures', glyph: 'percent',    titleBn: 'ফি নির্ধারণ',        subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
   exams:      { path: 'exams',      glyph: 'clipboard',    titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
@@ -579,6 +581,7 @@ async function main() {
               { path: 'fees', glyph: 'wallet', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
               { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন, কে আসেননি' },
               { path: 'rooms', glyph: 'layers', titleBn: 'কক্ষ ব্যবস্থাপনা', subtitleBn: 'শ্রেণিকক্ষ, ল্যাব ও ধারণক্ষমতা' },
+              { path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
               { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
               { path: 'exams', glyph: 'clipboard', titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
               { path: 'substitute', glyph: 'repeat', titleBn: 'বদলি শিক্ষক', subtitleBn: 'ফাঁকা ও বিষয়-মিল শিক্ষক নির্ধারণ' },
@@ -838,6 +841,18 @@ async function main() {
         hidden: true,
         mount: (container) => {
           new RoomsView({ root: container, doc: document, auth });
+        },
+      },
+      {
+        // P9-1. section_subject_teachers is what solve.ts:loadDemand reads —
+        // and nothing else — to decide what a timetable must contain, and it
+        // held six rows across 183 schools because nothing could write it.
+        path: 'teachingassignments',
+        labelBn: 'কে কোন বিষয় পড়ান',
+        glyph: 'users',
+        hidden: true,
+        mount: (container) => {
+          new TeachingAssignmentsView({ root: container, doc: document, auth });
         },
       },
       {

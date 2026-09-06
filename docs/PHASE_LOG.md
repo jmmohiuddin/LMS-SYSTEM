@@ -11797,3 +11797,117 @@ COMPLETE verdict: the bell-times editor (`period_definitions`), the subject
 demand editor (`class_subjects.periods_per_week`), teacher availability, and
 working days (`tenants.weekend_days`, which migration 069 makes platform-owned
 — a decision P9-1 deliberately did not pre-empt).
+
+---
+
+# P9-2 — the setup wizard, and the last SQL-only routine inputs (2026-09-06)
+
+P9-0 concluded the solver was built and its inputs were unreachable. P9-1 gave
+the biggest one a writer. This closes the rest.
+
+## Ownership, recorded once so it stops being re-litigated
+
+| input | who manages it | required? | how it is set |
+|---|---|---|---|
+| working days (`tenants.weekend_days`) | **PLATFORM** | required | migration 069's trigger refuses it from a school account. The wizard shows it read-only and names shikhonBD |
+| shifts (`tenants.shifts`) | **PLATFORM** | required | same trigger, same reason |
+| bell times (`period_definitions`) | institution | **required** | **new in P9-2** — `POST /rms/setup {step:'periods'}` |
+| subject demand (`class_subjects.periods_per_week`) | institution | **required** | **new in P9-2** — seeded by provisioning, now editable |
+| teacher availability (`teacher_availability`) | institution | optional | **new in P9-2** — supports `unavailable`, `preferred`, `admin_duty` |
+| teaching assignments (`section_subject_teachers`) | institution | **required** | P9-1 |
+| rooms | institution | **required** | A4 / B-49 |
+| classes, sections | institution | **required** | `ops-svc/api/structure.ts` |
+| subjects | derived | required | seeded from the NCTB catalogue by `provision_tenant` |
+| teacher competencies | institution | optional | still SQL-only — used only as a HINT in the assignment picker, never as a filter, so it blocks nothing |
+
+## Two more of the same security hole
+
+`class_subjects` and `teacher_availability` carried `tenant_isolation` and
+nothing else. Proved live as `app.role='student'`:
+
+```
+UPDATE class_subjects SET periods_per_week = 20   ->  UPDATE 12
+INSERT INTO teacher_availability … 'unavailable'  ->  INSERT 0 1
+```
+
+Twelve rows of a real school's curriculum, rewritten by a student. Between
+these two tables the school's timetable size and its forbidden hours are
+decided, so a student setting every subject to twenty periods a week would
+make the week unsolvable — and the failure would read as the solver's fault.
+Migration 073 (`B-92`).
+
+That is **four for four** — B-53, B-77, B-89, B-92 — so `B-91` now records the
+mechanism instead of the instance: a table gets per-command scopes when a
+phase finally writes to it, which means the tables nobody could write were
+never examined, and those were exactly the ones that most needed scoping. The
+sweep belongs in `schema_lint.sql` once triaged.
+
+**`B-93`**: `period_definitions` had nothing stopping period 3 running
+10:00–11:00 while period 4 ran 10:30–11:30. The solver books by TIME INTERVAL
+(F-506), so two overlapping definitions in one template are mutually exclusive
+for every teacher — an unfillable timetable from a bell schedule that looked
+fine. A GiST EXCLUDE now refuses it, partitioned by template so a morning and
+a day shift may still overlap each other. A4's fixture had been *relying* on
+the gap; it now uses a real consecutive schedule and reaches its three clashes
+in the SAME period, which is the real-world shape of each.
+
+## The wizard is a checklist, and that is the design
+
+The brief proposes step → review → complete → next. A school's data does not
+arrive in that order: the rooms are from last year, the curriculum was seeded
+at provisioning, and the thing genuinely missing is usually the assignments. A
+linear flow would march a coordinator through five correct screens to reach
+the sixth.
+
+So: every step, its state, and one sentence saying what would fix it. The step
+order is still the dependency order, so top-to-bottom remains valid for a
+school starting from nothing.
+
+**Three states, not two.** `warn` is what makes the one-minute promise honest.
+No availability recorded means "everyone is free all week" — the right default
+for a first run. Making it a blocker would send a school off to do an
+afternoon of optional data entry before seeing anything work.
+
+**Readiness is computed server-side, once.** Two people editing at once would
+make a browser count disagree with the database, and being trusted about what
+is missing is this screen's only job.
+
+**Three steps open inline** (the ones that had no screen at all); the rest link
+out to screens that already exist. A wizard copy of the assignment matrix
+would be a second implementation, and the second one is always the one that
+rots.
+
+## Validation says what happened
+
+Browser-verified, and this is the §10 example working:
+
+> "সমাবেশ" (08:00–08:30) এবং "১ম" (08:20–09:00) একই সময়ে পড়ছে
+
+Both periods, both times, in Bangla — and ten rows of bell times still on
+screen to correct, because a refused save must never cost an afternoon.
+
+## Evidence
+
+- **1834 tests, all passing** — 16 API (incl. cross-tenant), 10 view
+- 26/26 SQL suites · typecheck 0/0/0 across three CI configs · 73/73 migrations
+- Browser, real school: 5 working days · 7 teaching periods · 12 subjects /
+  48 weekly periods · assignments **3 of 12 BLOCKED** · availability WARN ·
+  rooms BLOCKED · `canGenerate false`
+- **Nine widths 360–1600**: no horizontal scroll at any of them, all 8 cards
+  render
+- **Dark** via `data-theme`: card text 13.36:1, status badges 6.11:1 and
+  6.41:1 — AA with room
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**An open editor's unsaved rows are lost on navigate.** Each step saves to the
+server and readiness is server truth, so leaving and returning is safe — but
+the periods editor holds its rows in memory until Save, and there is no
+before-unload guard on this screen (`teaching-assignments-view` has
+`hasUnsavedChanges()`; this one does not). Recorded rather than claimed.
+
+**`teacher_competencies` remains SQL-only.** It is used as a HINT in the
+assignment picker — a teacher known to take a subject is marked ✓ and every
+other teacher stays choosable — so it gates nothing and blocks no generation.
+A writer for it is a P9-3-or-later convenience, not a gap in the input path.

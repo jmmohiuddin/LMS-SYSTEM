@@ -50,11 +50,17 @@ const MATHS   = '7c920000-0000-4000-8000-0000000000f1';
 const CHEM    = '7c920000-0000-4000-8000-0000000000f2';
 const TEMPLATE = '7c920000-0000-4000-8000-00000000ab01';
 const ROOM    = '7c920000-0000-4000-8000-00000000ab02';
+/** A second school, so cross-tenant is a real question rather than a hope. */
+const T_B     = '7c920000-0000-4000-8000-0000000000b0';
+const HEAD_B  = '7c920000-0000-4000-8000-0000000000b1';
+const YEAR_B  = '7c920000-0000-4000-8000-0000000000b2';
+const TPL_B   = '7c920000-0000-4000-8000-0000000000b3';
 
 let db: Db;
 let headToken = '';
 let studentToken = '';
 let deptToken = '';
+let headBToken = '';
 let setup: Parameters<typeof call>[0];
 
 const head: TenantContext = { tenantId: T, userId: HEAD, role: 'principal' };
@@ -129,8 +135,34 @@ describe('P9-2 — the routine setup wizard, server side', { skip }, () => {
          VALUES ($1,$2,'R-1','কক্ষ ১',40,'{}',true)`, [ROOM, T]);
     });
 
+    // The neighbour. Everything below aims at the first school; this one
+    // exists only to be checked afterwards for damage.
+    await asBootstrap(db, { tenantId: T_B, userId: HEAD_B, role: 'principal' }, async (c) => {
+      await c.query('DELETE FROM tenants WHERE id = $1', [T_B]);
+      await c.query(
+        `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level)
+         VALUES ($1,'p92-other','পাশের','Other','bangla_medium','secondary')`, [T_B]);
+      await c.query(
+        `INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status)
+         VALUES ($1,$2,'অন্য প্রধান','Head B','+8801799920009','active')`, [HEAD_B, T_B]);
+      await c.query(
+        `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES ($1,$2,'principal')`,
+        [T_B, HEAD_B]);
+      await c.query(
+        `INSERT INTO academic_years (id, tenant_id, label, starts_on, ends_on, is_current)
+         VALUES ($1,$2,'2026','2026-01-01','2026-12-31',true)`, [YEAR_B, T_B]);
+      await c.query(
+        `INSERT INTO period_templates (id, tenant_id, name_bn, shift, effective_from, is_active)
+         VALUES ($1,$2,'সকাল','morning','2026-01-01',true)`, [TPL_B, T_B]);
+      await c.query(
+        `INSERT INTO period_definitions (tenant_id, template_id, period_no, label_bn, starts_at, ends_at)
+         VALUES ($1,$2,1,'প্রতিবেশীর ১ম','07:00','07:45')`, [T_B, TPL_B]);
+    });
+
     const { signAccessToken } = await import('../../../packages/server-core/src/jwt.ts');
     headToken = await signAccessToken({ sub: HEAD, tid: T, role: 'principal', roles: ['principal'] });
+    headBToken = await signAccessToken({
+      sub: HEAD_B, tid: T_B, role: 'principal', roles: ['principal'] });
     studentToken = await signAccessToken({ sub: STUDENT, tid: T, role: 'student', roles: ['student'] });
     deptToken = await signAccessToken({ sub: DEPT, tid: T, role: 'dept_head', roles: ['dept_head'] });
     setup = (await import('../api/setup.ts')).default;
@@ -139,6 +171,8 @@ describe('P9-2 — the routine setup wizard, server side', { skip }, () => {
   after(async () => {
     if (!db) return;
     await asBootstrap(db, head, (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
+    await asBootstrap(db, { tenantId: T_B, userId: HEAD_B, role: 'principal' },
+      (c) => c.query('DELETE FROM tenants WHERE id = $1', [T_B]));
     await db.end(); await unlockFixtures();
   });
 
@@ -366,5 +400,30 @@ describe('P9-2 — the routine setup wizard, server side', { skip }, () => {
     assert.equal(r.by('assignments').state, 'ok');
     assert.equal(r.canGenerate, true,
       'warnings must not hold a school back — only blockers do');
+  });
+
+  test('TENANT ISOLATION — one school cannot see or touch another’s setup', async () => {
+    // A principal is fully trusted INSIDE their school and must be nobody at
+    // all outside it. Asking with a real token and another school's year is
+    // the shape a copied URL takes.
+    const cross = await get(`yearId=${YEAR}`, headBToken);
+    assert.equal(cross.status, 200, 'the endpoint answers — about the CALLER’s school');
+    const b = cross.body as { steps: Array<{ id: string; detailBn: string }> };
+    const periods = b.steps.find((x) => x.id === 'periods');
+    assert.match(periods?.detailBn ?? '', /প্রতিদিন ১টি ক্লাস পিরিয়ড/,
+      'it must report the neighbour’s own single period, not this school’s seven');
+
+    // And a write aimed at this school's period template, sent by the
+    // neighbour, must reach nothing. RLS hides the row, so the endpoint
+    // cannot find the template to replace.
+    const write = await post({ step: 'periods', templateId: TEMPLATE, periods: [
+      { periodNo: 1, labelBn: 'দখল', startsAt: '06:00', endsAt: '06:45', kind: 'teaching' },
+    ] }, headBToken);
+    assert.equal(write.status, 404, 'another school’s template must not be addressable');
+
+    const mine = await get(`yearId=${YEAR}&step=periods`, headToken);
+    const labels = (mine.body as { periods: Array<{ labelBn: string }> }).periods
+      .map((x) => x.labelBn);
+    assert.ok(!labels.includes('দখল'), 'and nothing of theirs may appear in our schedule');
   });
 });

@@ -1627,11 +1627,16 @@ is not a human receipt. P9 has not been started.
 inventory found the solver, its six soft constraints, the three GiST clash
 constraints and the §8.2 explainability all built — and eleven of `solve.ts`'s
 inputs unreachable by any school. P9 is therefore the input path and the
-screens over it, not a solver rewrite. P9-1 (teaching assignments) is
-delivered end to end; the wizard, generation UI, scoped re-solve, publish
-lifecycle, role outputs and print remain. Closed on the way: `B-89` (a student
-could name themselves the teacher of any section) and `B-90` (the solver read
-closed assignments as live demand).
+screens over it, not a solver rewrite. P9-1 (teaching assignments) and
+P9-2 (the setup wizard) are delivered end to end, and **no required solver
+input is SQL-only any more** — bell times, subject demand and teacher
+availability all gained institution-facing writers, with working days
+deliberately left platform-owned and shown read-only. The generation UI,
+scoped re-solve, publish lifecycle, role outputs and print remain. Closed on the way: `B-89` (a student
+could name themselves the teacher of any section), `B-90` (the solver read
+closed assignments as live demand), `B-92` (a student could rewrite the
+curriculum and block any teacher) and `B-93` (a bell schedule could contain
+overlapping periods). `B-91` records the mechanism behind all four.
 
 The original note stands as written:
 

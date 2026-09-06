@@ -1259,3 +1259,44 @@ table (inline `colSpan` reschedule row) · routineeditor's grid (already correct
 
 **0 failures.** The P5 sweep was re-run in full because the `.ui-card` change
 touches every card in the product.
+
+---
+
+## P9-2 — routine setup (2026-09-06)
+
+Two new screens, both on the canonical components (`pageHeader`, `card`,
+`statusBadge`, `field`, `button`, `emptyState`, `errorState`,
+`permissionState`, `listSkeleton`, `toast`, `announce`). No new design
+language, no new primitives.
+
+**`routine-setup-view.ts` — the checklist.** One card per input, a status
+badge, one sentence of detail, and one action. Deliberately not a linear
+wizard: a school's data does not arrive in step order, so marching a
+coordinator through five correct screens to reach the sixth would be worse
+than a list they can scan. Three states — সম্পূর্ণ / ঐচ্ছিক / প্রয়োজন — with
+the middle one carrying real weight, because a wizard that called an optional
+gap "incomplete" would send a school off to do an afternoon of unnecessary
+data entry.
+
+Three steps open an editor inline (bell times, subject demand, teacher
+availability — the ones with no screen before P9-2). The rest link out to the
+screens that already own them.
+
+**`teaching-assignments-view.ts` — the matrix.** Subjects down, sections
+across, one class at a time: the sheet already pinned up in the office. Both
+layouts render and CSS chooses, so each cell exists twice — the change handler
+moves both, which a browser found and a test now pins.
+
+**Responsive**: verified at 360, 375, 390, 640, 768, 1024, 1280, 1440 and
+1600, no horizontal scroll at any width. The matrix collapses to one card per
+subject below the table breakpoint; the checklist is cards at every width and
+needs no collapse.
+
+**Dark**: `data-theme="dark"` (this design system's explicit attribute, not
+`prefers-color-scheme`). Card text 13.36:1; the প্রয়োজন and ঐচ্ছিক badges at
+6.11:1 and 6.41:1.
+
+**Accessibility**: every grid cell and every time box carries an explicit
+`aria-label` naming its subject and section — a screen reader landing in a
+grid cell announces neither its column nor its row header. No raw uuid reaches
+any accessible name, asserted by test.

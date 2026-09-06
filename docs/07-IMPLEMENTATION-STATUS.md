@@ -938,6 +938,19 @@ print-first stance, and it is why R-5 needed no object storage and puts
 nothing large in PostgreSQL. When an R2/S3 credential lands, this endpoint's
 markup is what gets rendered server-side; it does not change.
 
+**Routine input ownership (P9-2).** `solve.ts` reads eleven tables and every
+one of them now has a path a school can reach, except two that are
+platform-owned on purpose. Institution-managed: bell times
+(`period_definitions`), subject demand (`class_subjects.periods_per_week`),
+teacher availability, teaching assignments, rooms, classes and sections.
+Platform-managed: `tenants.weekend_days` and `tenants.shifts` — migration 069's
+trigger refuses both from a school account, and the wizard shows the value
+read-only and names shikhonBD rather than growing a control that would be
+refused. Derived: `subjects`, seeded from the NCTB catalogue by
+`provision_tenant`. Optional and still SQL-only: `teacher_competencies`, which
+is a HINT in the assignment picker (a known teacher is marked, everyone else
+stays choosable) and therefore gates nothing.
+
 **Two identifier contracts, and they are deliberately different (B-87).**
 `student_profiles.student_code` is **generated** — `studentCodeFor(userId)` in
 `import-run.ts`, `STU-` plus eight hex of the user's uuid — because a child

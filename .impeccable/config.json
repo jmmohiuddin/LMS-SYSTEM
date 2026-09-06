@@ -8,6 +8,14 @@
         "value": "inter",
         "createdAt": "2026-08-22T11:58:44.153Z",
         "reason": "user confirmed: imported from Ata Ekta LMS design system handoff (tokens/typography.css), Inter is the design's canonical Latin face paired with Hind Siliguri for Bangla"
+      },
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "apps/pwa/public/**"
+        ],
+        "createdAt": "2026-09-06T09:43:43.580Z"
       }
     ]
   }

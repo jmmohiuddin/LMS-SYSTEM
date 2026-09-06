@@ -1631,12 +1631,25 @@ screens over it, not a solver rewrite. P9-1 (teaching assignments) and
 P9-2 (the setup wizard) are delivered end to end, and **no required solver
 input is SQL-only any more** — bell times, subject demand and teacher
 availability all gained institution-facing writers, with working days
-deliberately left platform-owned and shown read-only. The generation UI,
-scoped re-solve, publish lifecycle, role outputs and print remain. Closed on the way: `B-89` (a student
-could name themselves the teacher of any section), `B-90` (the solver read
-closed assignments as live demand), `B-92` (a student could rewrite the
-curriculum and block any teacher) and `B-93` (a bell schedule could contain
-overlapping periods). `B-91` records the mechanism behind all four.
+deliberately left platform-owned and shown read-only.
+
+P9-3 (generation) is delivered: one press produces a draft routine for every
+shift the school runs, from the readiness gate the wizard displays, using the
+existing solver unchanged. **Measured on five realistic institutions** —
+20/40/80/120 sections across school, college and madrasa shapes — a
+120-section two-shift college finishes at **6.4s p95** server-side. That is
+LOCAL only: network, TLS and browser render are excluded, so the product's
+one-minute promise is not yet proven end to end and is not claimed to be.
+
+Scoped re-solve, publish lifecycle, role outputs and print remain. Closed on
+the way: `B-89` (a student could name themselves the teacher of any section),
+`B-90` (the solver read closed assignments as live demand), `B-92` (a student
+could rewrite the curriculum and block any teacher), `B-93` (a bell schedule
+could contain overlapping periods), `B-94` (in a two-shift school the second
+shift's solve could not see the first, producing routines that publish would
+refuse, while the summary reported zero conflicts) and `B-95` (the routine
+authoring screens were stale-served by the service worker). `B-91` records
+the mechanism behind the RLS-scope family.
 
 The original note stands as written:
 

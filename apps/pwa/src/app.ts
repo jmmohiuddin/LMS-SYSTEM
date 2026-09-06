@@ -29,6 +29,7 @@ import { ExamRoutineView } from './exam-routine-view.ts';
 import { RoutineEditorView } from './routine-editor-view.ts';
 import { TeachingAssignmentsView } from './teaching-assignments-view.ts';
 import { RoutineSetupView } from './routine-setup-view.ts';
+import { RoutineGenerateView } from './routine-generate-view.ts';
 import { SubjectChoiceView } from './subject-choice-view.ts';
 import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
@@ -250,6 +251,7 @@ const CARD = {
   rooms:      { path: 'rooms',      glyph: 'layers',       titleBn: 'কক্ষ ব্যবস্থাপনা',   subtitleBn: 'শ্রেণিকক্ষ ও ল্যাব — রুটিনে লাগে' },
   teachAssign:{ path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
   routineSetup:{ path: 'routinesetup', glyph: 'check-square', titleBn: 'রুটিন তৈরির প্রস্তুতি', subtitleBn: 'কী কী বাকি আছে — এক নজরে' },
+  routineGen:{ path: 'routinegenerate', glyph: 'clock', titleBn: 'রুটিন তৈরি করুন', subtitleBn: 'পুরো প্রতিষ্ঠানের রুটিন — এক ধাপে' },
   feeSetup:   { path: 'feestructures', glyph: 'percent',    titleBn: 'ফি নির্ধারণ',        subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
   exams:      { path: 'exams',      glyph: 'clipboard',    titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
@@ -309,8 +311,14 @@ function dashboardFor(role: string): DashCards {
     case 'academic_coordinator':
       // Between the two: owns the academic programme and the timetable, does
       // not own money or accounts.
+      //
+      // P9-3 swapped the second primary from "আজকের রুটিন" to "রুটিন তৈরি
+      // করুন". Both are routine-shaped and sit in the same slot, but this is
+      // the role that BUILDS the timetable — reading today's is a teacher's
+      // need, and it is still a tab and still in More. A one-press promise
+      // that begins with a hunt through the More menu is not one.
       return {
-        primary: [CARD.academic, CARD.routine],
+        primary: [CARD.academic, CARD.routineGen],
         secondary: [CARD.students, CARD.publish, CARD.calendar, CARD.documents],
       };
     default:
@@ -584,6 +592,7 @@ async function main() {
               { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন, কে আসেননি' },
               { path: 'rooms', glyph: 'layers', titleBn: 'কক্ষ ব্যবস্থাপনা', subtitleBn: 'শ্রেণিকক্ষ, ল্যাব ও ধারণক্ষমতা' },
               { path: 'routinesetup', glyph: 'check-square', titleBn: 'রুটিন তৈরির প্রস্তুতি', subtitleBn: 'কী কী বাকি আছে — এক নজরে' },
+              { path: 'routinegenerate', glyph: 'clock', titleBn: 'রুটিন তৈরি করুন', subtitleBn: 'পুরো প্রতিষ্ঠানের রুটিন — এক ধাপে' },
               { path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
               { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
               { path: 'exams', glyph: 'clipboard', titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
@@ -856,6 +865,21 @@ async function main() {
         hidden: true,
         mount: (container) => {
           new TeachingAssignmentsView({ root: container, doc: document, auth });
+        },
+      },
+      {
+        // P9-3. One press, one timetable. The readiness gate is re-checked
+        // server-side before anything is written, so a stale `canGenerate`
+        // in this browser cannot start a run.
+        path: 'routinegenerate',
+        labelBn: 'রুটিন তৈরি করুন',
+        glyph: 'clock',
+        hidden: true,
+        mount: (container) => {
+          new RoutineGenerateView({
+            root: container, doc: document, auth,
+            onNavigate: (path) => { location.hash = `#/${path}`; },
+          });
         },
       },
       {

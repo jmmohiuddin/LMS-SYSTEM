@@ -11911,3 +11911,187 @@ before-unload guard on this screen (`teaching-assignments-view` has
 assignment picker — a teacher known to take a subject is marked ✓ and every
 other teacher stays choosable — so it gates nothing and blocks no generation.
 A writer for it is a P9-3-or-later convenience, not a gap in the input path.
+
+---
+
+# P9-3 — the one press, and the shift that could not see the other (2026-09-06)
+
+P9-0 found the solver built and its inputs unreachable. P9-1 and P9-2 gave the
+inputs writers. This is READY → GENERATE → RESULT: a coordinator presses one
+button and the institution has a timetable.
+
+`POST /api/v1/rms/generate { yearId }` runs the readiness gate the wizard
+shows, finds or makes a draft per shift, calls `RmsSolver` unchanged once per
+shift, and returns one summary. `GET` re-reads it from the database so a
+refresh is not an empty page. No second solver was written, and the existing
+one changed by one optional parameter.
+
+## The benchmark found a defect the tests could not
+
+§8 made a realistic benchmark mandatory, so `scripts/routine-benchmark.mjs`
+seeds five institutions — a village secondary, an urban school, an 80-section
+two-shift school, a 120-section two-shift college, a dakhil madrasa — and
+drives the real handler over each.
+
+The first full run reported **40 stored room double-bookings** in the large
+school and 4 in the college, while the API's summary said `hardConflicts: 0`.
+Every one was a morning slot and a day slot in the same room at the shift
+handover. Three things had lined up:
+
+**The solver books against ACTIVE routines only.** F-506's cross-shift
+awareness was written when the only way to have a second shift was to publish
+it first. P9-3 creates a draft for every shift in one action, so the day shift
+could not see the morning shift.
+
+**The database did not object, and was right not to.** Read the three
+predicates and they do not say the same thing:
+
+```
+rs_no_section_double_booking  … WHERE status='active'
+rs_no_teacher_double_booking  … WHERE status='active' AND routine_status='active'
+rs_no_room_double_booking     … ditto
+```
+
+A section is protected inside its own routine at every status; teacher and
+room only once the routine is ACTIVE. That gap is deliberate — two rival
+drafts of one shift must not block each other — and `editor.ts:findClash`
+already compensates for exactly it in manual authoring, with a comment saying
+so. The solver had no such compensation.
+
+**And `hardConflicts` was a hard-coded `0`** with a comment explaining why it
+could never be anything else. It was wrong for a draft, and it was the number
+on the screen.
+
+Three fixes, one per cause:
+
+- `solve()` gained `opts.alsoBookedAgainst` — the sibling drafts of this run.
+  Deliberately a parameter and not "every draft in the year": a year
+  accumulates abandoned drafts, and booking against all of them would have
+  the solver believe the school is full.
+- `generate.ts` counts hard conflicts by querying the stored rows, and a
+  non-zero count outranks everything else in the verdict sentence, because a
+  routine carrying one cannot be published.
+- A test plants a real conflict in a draft and requires the counter to find
+  it. A zero from a detector that can only return zero is worth nothing.
+
+## The alphabet was making a scheduling decision
+
+`shiftsOf` selected `shift::text` and ordered by it, so `day` was solved
+before `morning` and won every contended room — the morning shift lost its
+last period to a shift that had not started yet. `shift_code` is declared
+`morning, day, evening, single`, which is clock order, so it now orders by the
+enum.
+
+The output column is no longer called `shift`: `ORDER BY` resolves an output
+alias before an input column, and `SELECT shift::text AS shift … ORDER BY
+shift` silently restored the bug once already.
+
+## Measured, not claimed
+
+Local container. No network, no TLS, no browser render — the split §9 asks
+for exists so the missing piece stays visible.
+
+| profile | sections | teachers | rooms | shifts | demand | placed | p50 | p95 | hard |
+|---|---|---|---|---|---|---|---|---|---|
+| small school | 20 | 23 | 22 | 1 | 580 | 560 | 1.04s | 1.06s | 0 |
+| medium school | 40 | 45 | 43 | 1 | 1160 | 1125 | 2.11s | 2.21s | 0 |
+| large school | 80 | 92 | 43 | 2 | 2360 | 2319 | 4.23s | 4.26s | 0 |
+| college | 120 | 139 | 77 | 2 | 3600 | 3470 | 6.43s | 6.43s | 0 |
+| madrasa | 30 | 41 | 30 | 1 | 1050 | 1050 | 2.00s | 2.03s | 0 |
+
+Three repeats each, every one from an empty routine — the solver is
+idempotent, so re-running over a full one places nothing and returns in
+milliseconds, which would be a lovely number and a lie.
+
+**The 60-second target is met locally and is NOT yet proven end to end.**
+These numbers exclude network latency to a VPS, TLS, and the browser's render.
+No claim about the product's real one-minute promise is made here.
+
+The verification query was itself the bottleneck: the obvious pairwise
+self-join cost **4.3 of the college's 12.5 seconds**, because the partial GiST
+indexes carry `routine_status = 'active'` and these are drafts. A window
+function over each (resource, day) does it in one pass, and the college run
+dropped to 6.4s. The benchmark still runs the pairwise form as an independent
+check.
+
+## The screen
+
+**No fabricated progress.** `POST /rms/generate` is one blocking request with
+no stream and no job id, so the wait shows a spinner, a true elapsed second
+count, and a sentence saying why there is no percentage.
+`ui/feedback.ts:progress` is deliberately not imported, and a test asserts
+there is no `role="progressbar"` on the page.
+
+**A hard conflict outranks "all periods placed".** Leading with the cheerful
+number would send someone to publish a routine that publish will refuse.
+
+**Unplaced demand is a to-do list.** Every row names the class, the subject,
+the teacher, how many periods are missing, and the reason in a sentence,
+because the four solver reasons are four different errands —
+`no_capable_room` (the school has no such room) and `no_free_capable_room`
+(it has one and it is full) send a coordinator to opposite ends of the
+building.
+
+**No machine code reaches a person.** The browser showed
+`"computer_lab" কক্ষে ৮০টি পিরিয়ড দরকার` — the raw capability string, which
+is whatever an IT admin typed into `subjects.requires_capability`, so no
+lookup table could translate it. What can be said is which subjects asked for
+it, and the endpoint now says that instead. The solver's own `detailBn` is
+untouched; other screens read it.
+
+## Two things the browser found that reading would not have
+
+**The routine screens were being served from cache.** `/api/v1/rms/` as a
+whole is `stale-while-revalidate`, which is right for a published timetable
+and wrong for a register read immediately before a write and re-read after
+it. P0 already carved out `/rms/rooms` and `/rms/editor` for that exact
+reason, in those words. `/rms/setup`, `/rms/generate` and `/rms/assignments`
+are the same shape and are now carved out too — a stale readiness checklist
+tells a school it is ready after someone emptied the room list, and the person
+believes it until the server refuses.
+
+Recorded honestly: one stale render was observed in the browser and the
+carve-out is justified by the P0 precedent, but the observation was not
+cleanly isolated to the service worker (navigating to an identical hash URL is
+a no-op, which confounded one reading). What IS verified: with the carve-out
+in place, a routine deleted from the database behind the browser's back
+disappears from the screen on the next load.
+
+**Three CSS classes had no rule behind them.** `.ui-stack` (P9-1),
+`.ui-cell-line`, `.ui-cell-meta` and `.setup-period-row` (P9-2) were layout
+hooks that rendered as bare block elements — on a phone, five bell-time inputs
+became five full-width boxes with no gap. Added to `app.css` with the
+360px-first grid the period editor needed.
+
+## Evidence
+
+- **1850 tests, all passing** across 13 workspaces — 13 new API (incl. the
+  two-shift regression, the planted-conflict detector, cross-tenant), 11 new
+  view
+- 26/26 SQL suites · typecheck 0/0/0 across three CI configs
+- **Security probe 29/29** against a running deployment (`local-docker-p9-3`)
+- Browser, real 40-section school through the real API: READY → the generating
+  state with a live elapsed counter → `১১৬০টির মধ্যে ১১২৫টি বসানো হয়েছে`,
+  19 named unplaced demands, `কঠিন শর্ত লঙ্ঘন ০`
+- **Eight widths 360–1600**: no horizontal overflow, no tap target under 44px,
+  no raw uuid, no Latin numeral before a Bangla counter, heading order
+  H1→H2→H3→H2
+- **Dark** via `data-theme`: body `#1B1714`, card `#241E1A`, text `#EDE7DA`,
+  quiet text `#BFB3A4` — ~8:1 for the quietest pair
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**The one-minute promise is proven locally only.** Network, TLS and render are
+not in any number above. What is proven: the server side of a 120-section
+two-shift college finishes in 6.4 seconds at p95, which leaves the whole
+remaining budget to the parts not measured.
+
+**`hardConflicts` is counted over the drafts this run touched**, not over the
+whole year. That is the right scope for the sentence it produces — "this
+generation left a conflict" — but it is not a school-wide audit, and a
+conflict between a draft and an unrelated ACTIVE routine would be caught by
+the database at publish rather than by this number.
+
+**Publish, scoped re-solve and the printed grid remain P9-4 through P9-9.**
+Generation writes draft slots. Nothing here activates a routine.

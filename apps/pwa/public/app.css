@@ -2973,6 +2973,30 @@ input.ui-sr-only, select.ui-sr-only, textarea.ui-sr-only {
   color: var(--c-ink-3); }
 .ui-card-lead + .ui-card-note { margin-top: var(--s-1); }
 
+/* P9. Three layout hooks the routine screens had been using with no rule
+   behind them — `.ui-stack` since P9-1, `.setup-period-row` since P9-2. They
+   rendered as bare block elements: legible, touching each other, and wrong on
+   a phone, where a row of five bell-time inputs became five full-width boxes
+   with no gap. Named `ui-` because they are generic and three views share
+   them; a fourth would otherwise invent a fourth margin. */
+.ui-stack { display: flex; flex-direction: column; gap: var(--s-2); }
+/* A badge, a fact and a control on one line, wrapping rather than
+   overflowing — 360px cannot hold all three side by side. */
+.ui-cell-line { display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--s-2); }
+.ui-cell-meta { font-size: var(--text-2xs); color: var(--c-ink-3);
+  font-variant-numeric: tabular-nums; }
+/* Name, start, end, kind, remove. On a phone the name takes the full width
+   and the two times share the next line, because a 45-minute period is read
+   as a pair and splitting it across rows loses that. */
+.setup-period-row { display: grid; gap: var(--s-1);
+  grid-template-columns: 1fr 1fr; align-items: center; }
+.setup-period-row > :first-child { grid-column: 1 / -1; }
+@media (min-width: 640px) {
+  .setup-period-row { grid-template-columns: 2fr 1fr 1fr 1.5fr auto; }
+  .setup-period-row > :first-child { grid-column: auto; }
+}
+
 /* A <dl> of label/value pairs. Stacks on a phone, pairs up from 480px — the
    width at which a label and its value both fit on one line without either
    wrapping, measured rather than guessed. */

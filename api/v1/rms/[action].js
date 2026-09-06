@@ -1719,8 +1719,30 @@ var RmsSolver = class {
     this.db = db;
     this.now = opts.now ?? Date.now;
   }
-  async solve(routineId, ctx) {
+  /**
+   * @param opts.alsoBookedAgainst
+   *   Other DRAFT routines whose teachers and rooms are already spoken for.
+   *
+   *   F-506 books against every ACTIVE routine in the year, which was the
+   *   whole story while the only way to get a second shift was to publish it
+   *   first. P9-3 changed that: one press of Generate produces a draft for
+   *   every shift the school runs, and the second solve could not see the
+   *   first — so the morning's last period and the day's first booked the
+   *   same classroom. `scripts/routine-benchmark.mjs` found forty of them in
+   *   an 80-section two-shift school, and the database did not object,
+   *   because the teacher and room exclusion constraints are predicated on
+   *   `routine_status = 'active'` (see `editor.ts:findClash`, which
+   *   compensates for the same gap in manual authoring).
+   *
+   *   Deliberately a parameter and not "every draft in the year". A year
+   *   accumulates abandoned drafts — v1, v2, a rejected experiment — and
+   *   booking against all of them would have the solver believe the school
+   *   is full. Only the caller knows which drafts are meant to run side by
+   *   side, so only the caller may say.
+   */
+  async solve(routineId, ctx, opts = {}) {
     const startedAt = this.now();
+    const siblings = [...new Set(opts.alsoBookedAgainst ?? [])].filter((id) => id !== routineId);
     return this.db.withTenant(ctx, async (client) => {
       const routine = await this.loadRoutine(client, routineId);
       const teachingDays2 = this.teachingDays(routine.weekendDays);
@@ -1730,7 +1752,12 @@ var RmsSolver = class {
       }
       const sections = await this.loadSections(client, routine.academicYearId, routine.shift);
       const demand = await this.loadDemand(client, routine.academicYearId, routine.shift);
-      const existing = await this.loadExistingSlots(client, routineId, routine.academicYearId);
+      const existing = await this.loadExistingSlots(
+        client,
+        routineId,
+        routine.academicYearId,
+        siblings
+      );
       const unavailability = await this.loadUnavailability(client, [...new Set(demand.map((d) => d.teacherId))]);
       const teacherBusy = new IntervalBook();
       const roomBusy = new IntervalBook();
@@ -2309,12 +2336,18 @@ var RmsSolver = class {
       requiresCapability: r.requires_capability
     }));
   }
-  async loadExistingSlots(client, routineId, academicYearId) {
+  async loadExistingSlots(client, routineId, academicYearId, siblingRoutineIds = []) {
     const { rows } = await client.query(
       // F-506. This routine's own slots, PLUS every slot in any other
       // ACTIVE routine for the same year — which is the other shift. A
       // teacher booked in the morning is not free in the afternoon just
       // because a different routine_id owns that hour.
+      //
+      // `$3` adds the sibling DRAFTS the caller named: the other shifts of
+      // the same generation run, which are not active yet and would
+      // otherwise be invisible. `is_mine` stays keyed to $1 alone, so a
+      // sibling books teachers and rooms without its sections counting
+      // toward our demand.
       `SELECT rs.primary_section_id, rs.subject_id, rs.teacher_id, rs.day_of_week,
               rs.period_no, rs.starts_at, rs.ends_at, rs.room_id, rs.double_group_id,
               (rs.routine_id = $1) AS is_mine
@@ -2322,8 +2355,9 @@ var RmsSolver = class {
         WHERE rs.academic_year_id = $2
           AND rs.status = 'active'
           AND rs.slot_kind = 'teaching'
-          AND (rs.routine_id = $1 OR rs.routine_status = 'active')`,
-      [routineId, academicYearId]
+          AND (rs.routine_id = $1 OR rs.routine_status = 'active'
+               OR rs.routine_id = ANY($3::uuid[]))`,
+      [routineId, academicYearId, siblingRoutineIds]
     );
     return rows;
   }
@@ -4826,6 +4860,337 @@ async function handler9(req, res) {
   }
 }
 
+// services/rms-svc/api/generate.ts
+var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var GENERATE_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn4 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS5[Number(d)]);
+async function nameShortages(c, yearId, shortages) {
+  if (shortages.length === 0) return [];
+  const caps = shortages.map((s) => s.capability);
+  const { rows } = await c.query(
+    `SELECT sub.requires_capability AS capability,
+            array_agg(DISTINCT sub.name_bn ORDER BY sub.name_bn) AS subjects
+       FROM class_subjects cs
+       JOIN subjects sub ON sub.id = cs.subject_id
+      WHERE cs.academic_year_id = $1 AND sub.requires_capability = ANY($2::text[])
+      GROUP BY 1`,
+    [yearId, caps]
+  );
+  const byCap = new Map(rows.map((r) => [r.capability, r.subjects]));
+  return shortages.map((s) => {
+    const subjects = byCap.get(s.capability) ?? [];
+    return {
+      ...s,
+      subjectsBn: subjects,
+      // Rewritten around the subject, so no machine code reaches a person.
+      // Where the school named a capability no subject uses any more, the
+      // code is all there is — and saying so is better than saying nothing.
+      detailBn: subjects.length > 0 ? `${subjects.join(", ")} \u2014 ${bn4(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0; \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 ${bn4(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 ${bn4(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2` : s.detailBn
+    };
+  });
+}
+var REASON_BN = {
+  no_free_slot: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0993 \u09B6\u09BE\u0996\u09BE \u2014 \u09A6\u09C1\u099C\u09A8\u09C7\u09B0\u0987 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AB\u09BE\u0981\u0995\u09BE \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+  no_capable_room: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09B8\u09CD\u0995\u09C1\u09B2\u09C7 \u09A8\u09C7\u0987",
+  no_free_capable_room: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u0986\u099B\u09C7, \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B8\u09C7\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u09A8\u09C7\u0987",
+  no_contiguous_pair: "\u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF \u2014 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7"
+};
+async function nameUnplaced(c, routineId, yearId, unplaced) {
+  if (unplaced.length === 0) return [];
+  const sectionIds = [...new Set(unplaced.map((u) => u.sectionId))];
+  const subjectIds = [...new Set(unplaced.map((u) => u.subjectId))];
+  const { rows } = await c.query(
+    `SELECT sec.id AS section_id, sub.id AS subject_id,
+            sec.name AS section_name, cl.name_bn AS class_bn,
+            sub.name_bn AS subject_bn,
+            t.full_name_bn AS teacher_bn,
+            COALESCE(cs.periods_per_week, 0) AS required,
+            (SELECT count(*) FROM routine_slots rs
+              WHERE rs.routine_id = $1 AND rs.primary_section_id = sec.id
+                AND rs.subject_id = sub.id AND rs.status <> 'removed')::text AS placed
+       FROM sections sec
+       JOIN classes cl ON cl.id = sec.class_id
+       CROSS JOIN subjects sub
+       LEFT JOIN class_subjects cs
+              ON cs.class_id = sec.class_id AND cs.subject_id = sub.id
+             AND cs.academic_year_id = $2
+       LEFT JOIN section_subject_teachers sst
+              ON sst.section_id = sec.id AND sst.subject_id = sub.id
+             AND sst.academic_year_id = $2 AND sst.ended_on IS NULL
+       LEFT JOIN users t ON t.id = sst.teacher_id
+      WHERE sec.id = ANY($3::uuid[]) AND sub.id = ANY($4::uuid[])`,
+    [routineId, yearId, sectionIds, subjectIds]
+  );
+  const key = (s, j) => `${s}|${j}`;
+  const byPair = new Map(rows.map((r) => [key(r.section_id, r.subject_id), r]));
+  return unplaced.map((u) => {
+    const r = byPair.get(key(u.sectionId, u.subjectId));
+    return {
+      sectionId: u.sectionId,
+      subjectId: u.subjectId,
+      // "৯ম — ক" reads as a place in a school; a uuid does not.
+      sectionName: r ? `${r.class_bn} \u2014 ${r.section_name}` : "\u2014",
+      subjectBn: r?.subject_bn ?? "\u2014",
+      teacherBn: r?.teacher_bn ?? null,
+      required: Number(r?.required ?? u.missing),
+      placed: Number(r?.placed ?? 0),
+      missing: u.missing,
+      reason: u.reason,
+      reasonBn: REASON_BN[u.reason] ?? "\u0995\u09BE\u09B0\u09A3 \u099C\u09BE\u09A8\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+      ...u.capability ? { capability: u.capability } : {}
+    };
+  });
+}
+async function draftFor(c, ctx, yearId, shift) {
+  const { rows: existing } = await c.query(
+    `SELECT id, version FROM routines
+      WHERE academic_year_id = $1 AND shift = $2::shift_code AND status = 'draft'
+      ORDER BY version DESC LIMIT 1`,
+    [yearId, shift]
+  );
+  if (existing[0]) {
+    return { routineId: existing[0].id, version: existing[0].version, created: false };
+  }
+  const { rows: tpl } = await c.query(
+    `SELECT pt.id AS template_id, y.starts_on::text AS year_starts
+       FROM academic_years y
+       LEFT JOIN period_templates pt
+              ON pt.shift = $2::shift_code AND pt.is_active
+      WHERE y.id = $1
+      ORDER BY pt.effective_from DESC
+      LIMIT 1`,
+    [yearId, shift]
+  );
+  if (!tpl[0]?.template_id) {
+    throw new HttpError(
+      409,
+      `\u098F\u0987 \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u099F\u09C7\u09AE\u09AA\u09CD\u09B2\u09C7\u099F \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09B8\u09AE\u09AF\u09BC\u09B8\u09C2\u099A\u09BF \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964`,
+      "no_period_template",
+      { shift }
+    );
+  }
+  const { rows: v } = await c.query(
+    `SELECT COALESCE(max(version), 0) + 1 AS next
+       FROM routines WHERE academic_year_id = $1 AND shift = $2::shift_code`,
+    [yearId, shift]
+  );
+  const { rows: ins } = await c.query(
+    `INSERT INTO routines (tenant_id, academic_year_id, period_template_id, shift,
+                           name_bn, version, effective_from, generated_by, created_by)
+     VALUES (app.current_tenant(), $1, $2, $3::shift_code, $4, $5, $6::date, 'solver', $7)
+     RETURNING id, version`,
+    [
+      yearId,
+      tpl[0].template_id,
+      shift,
+      `\u09B8\u09CD\u09AC\u09AF\u09BC\u0982\u0995\u09CD\u09B0\u09BF\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 v${bn4(v[0].next)}`,
+      v[0].next,
+      tpl[0].year_starts,
+      ctx.userId
+    ]
+  );
+  return { routineId: ins[0].id, version: ins[0].version, created: true };
+}
+async function shiftsOf(c, yearId) {
+  const { rows } = await c.query(
+    `SELECT shift::text AS code FROM sections
+      WHERE academic_year_id = $1
+      GROUP BY shift ORDER BY shift`,
+    [yearId]
+  );
+  return rows.map((r) => r.code);
+}
+async function countHardConflicts(c, routineIds) {
+  if (routineIds.length === 0) return 0;
+  const clash = (partition, where) => `
+    SELECT count(*) FROM (
+      SELECT starts_at < max(ends_at) OVER (
+               PARTITION BY ${partition} ORDER BY starts_at, ends_at
+               ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+        FROM mine WHERE ${where}) q
+     WHERE hit`;
+  const { rows } = await c.query(
+    `WITH mine AS (
+       SELECT routine_id, teacher_id, room_id, primary_section_id, parallel_pool,
+              day_of_week, starts_at, ends_at, slot_kind
+         FROM routine_slots
+        WHERE routine_id = ANY($1::uuid[]) AND status = 'active'
+     )
+     SELECT (
+        (${clash(
+      "teacher_id, day_of_week",
+      `teacher_id IS NOT NULL AND slot_kind IN ('teaching','exam')`
+    )})
+      + (${clash(
+      "room_id, day_of_week",
+      `room_id IS NOT NULL AND slot_kind IN ('teaching','exam')`
+    )})
+      + (${clash(
+      "routine_id, primary_section_id, day_of_week",
+      "primary_section_id IS NOT NULL AND parallel_pool IS NULL"
+    )})
+     )::text AS n`,
+    [routineIds]
+  );
+  return Number(rows[0].n);
+}
+function summarise(results, hardConflicts, ms) {
+  const totalDemand = results.reduce((n, r) => n + r.totalDemand, 0);
+  const placed = results.reduce((n, r) => n + r.placed, 0);
+  const unplacedPeriods = results.reduce(
+    (n, r) => n + r.unplaced.reduce((m, u) => m + (u.missing ?? 0), 0),
+    0
+  );
+  const softCount = results.reduce((n, r) => n + (r.soft?.violations?.length ?? 0), 0);
+  return {
+    totalDemand,
+    placed,
+    unplacedPeriods,
+    unplacedDemands: results.reduce((n, r) => n + r.unplaced.length, 0),
+    softViolations: softCount,
+    hardConflicts,
+    shortages: results.flatMap((r) => r.shortages),
+    solverSeconds: Number(results.reduce((n, r) => n + r.solverSeconds, 0).toFixed(3)),
+    totalSeconds: Number((ms / 1e3).toFixed(3)),
+    // The one sentence the summary exists for. A hard conflict outranks
+    // everything else in it: a routine carrying one cannot be published, so
+    // saying "all 2,360 periods placed" would be true and useless.
+    verdictBn: hardConflicts > 0 ? `${bn4(hardConflicts)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09B8\u0982\u0998\u09BE\u09A4 \u09B0\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7 \u2014 \u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE` : unplacedPeriods === 0 ? `\u09B8\u09AC ${bn4(totalDemand)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7` : `${bn4(totalDemand)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn4(placed)}\u099F\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn4(unplacedPeriods)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`
+  };
+}
+async function lastResult(c, yearId) {
+  const { rows } = await c.query(
+    `SELECT r.id, r.shift::text AS shift, r.version, r.status::text AS status,
+            r.soft_violations, r.solver_seconds::text,
+            r.updated_at::text AS generated_at,
+            (SELECT count(*) FROM routine_slots s
+              WHERE s.routine_id = r.id AND s.status <> 'removed')::text AS slots
+       FROM routines r
+      WHERE r.academic_year_id = $1 AND r.generated_by = 'solver'
+      ORDER BY r.updated_at DESC`,
+    [yearId]
+  );
+  return {
+    runs: rows.map((r) => ({
+      routineId: r.id,
+      shift: r.shift,
+      version: r.version,
+      status: r.status,
+      slots: Number(r.slots),
+      solverSeconds: r.solver_seconds === null ? null : Number(r.solver_seconds),
+      generatedAt: r.generated_at,
+      soft: r.soft_violations
+    }))
+  };
+}
+async function handler10(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, GENERATE_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const yearId2 = new URL(req.url ?? "/", "http://internal").searchParams.get("yearId") ?? "";
+      if (!UUID_RE9.test(yearId2)) {
+        throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
+      }
+      json(
+        res,
+        200,
+        await db.withTenant(ctx, (c) => lastResult(c, yearId2)),
+        cors
+      );
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    const body = await readJson(req);
+    const yearId = String(body.yearId ?? "");
+    if (!UUID_RE9.test(yearId)) {
+      throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
+    }
+    const ready = await db.withTenant(ctx, (c) => readiness(c, yearId));
+    if (!ready.canGenerate) {
+      const blocked = ready.steps.filter((s) => s.state === "blocked");
+      throw new HttpError(
+        409,
+        `\u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 ${blocked.map((s) => s.titleBn).join(", ")} \u09AC\u09BE\u0995\u09BF \u0986\u099B\u09C7`,
+        "not_ready",
+        { steps: blocked }
+      );
+    }
+    const startedAt = Date.now();
+    const shifts = await db.withTenant(ctx, (c) => shiftsOf(c, yearId));
+    if (shifts.length === 0) {
+      throw new HttpError(409, "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE \u09A8\u09C7\u0987", "no_sections");
+    }
+    const results = [];
+    for (const shift of shifts) {
+      const draft = await db.withTenant(
+        ctx,
+        (c) => draftFor(c, ctx, yearId, shift),
+        { write: true }
+      );
+      const solved = await new RmsSolver(db).solve(
+        draft.routineId,
+        ctx,
+        { alsoBookedAgainst: results.map((r) => r.routineId) }
+      );
+      const [named, shortages] = await db.withTenant(ctx, async (c) => [
+        await nameUnplaced(c, draft.routineId, yearId, solved.unplaced),
+        await nameShortages(c, yearId, solved.shortages)
+      ]);
+      results.push({
+        shift,
+        routineId: draft.routineId,
+        version: draft.version,
+        created: draft.created,
+        totalDemand: solved.totalDemand,
+        placed: solved.placed,
+        unplaced: named,
+        soft: solved.soft,
+        shortages,
+        solverSeconds: solved.solverSeconds
+      });
+    }
+    const hardConflicts = await db.withTenant(
+      ctx,
+      (c) => countHardConflicts(c, results.map((r) => r.routineId))
+    );
+    json(res, 200, {
+      ok: true,
+      yearId,
+      shifts: results,
+      summary: summarise(results, hardConflicts, Date.now() - startedAt)
+    }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    const code = err.code;
+    if (code === "ROUTINE_NOT_FOUND") {
+      json(res, 404, { error: code, message: "\u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF" }, cors);
+      return;
+    }
+    if (code === "ROUTINE_NOT_DRAFT" || code === "NO_TEACHING_PERIODS") {
+      json(res, 409, { error: code, message: err.message }, cors);
+      return;
+    }
+    console.error("[rms/generate]", err);
+    json(res, 500, { error: "internal_error", message: "\u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF" }, cors);
+  }
+}
+
 // services/rms-svc/api/index.ts
 var ROUTES = {
   routine: handler,
@@ -4839,9 +5204,11 @@ var ROUTES = {
   assignments: handler8,
   // P9-2. The wizard's readiness check and the three writers that stop
   // bell times, subject demand and teacher availability being SQL-only.
-  setup: handler9
+  setup: handler9,
+  // P9-3. READY -> GENERATE -> RESULT, orchestrating the existing solver.
+  generate: handler10
 };
-async function handler10(req, res) {
+async function handler11(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -4856,5 +5223,5 @@ async function handler10(req, res) {
   return route(req, res);
 }
 export {
-  handler10 as default
+  handler11 as default
 };

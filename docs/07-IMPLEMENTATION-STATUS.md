@@ -951,6 +951,31 @@ refused. Derived: `subjects`, seeded from the NCTB catalogue by
 is a HINT in the assignment picker (a known teacher is marked, everyone else
 stays choosable) and therefore gates nothing.
 
+**Institution-wide generation (P9-3).** `POST /api/v1/rms/generate { yearId }`
+is an ORCHESTRATOR, not a second solver: it runs the same `readiness()` the
+wizard displays, finds or creates one DRAFT routine per shift the school's
+sections actually run, and calls `RmsSolver` unchanged for each. Pressing
+Generate twice is safe by two mechanisms — the newest draft is reused rather
+than versioned up, and the solver tops up `periodsPerWeek − alreadyPlaced`.
+`GET` re-reads prior runs from `routines`, so a refresh is not an empty page.
+
+`hardConflicts` is **counted from the stored rows**, never assumed. The three
+GiST EXCLUDE constraints make a clash unstorable only in an ACTIVE routine —
+`rs_no_teacher_double_booking` and `rs_no_room_double_booking` both carry
+`WHERE … routine_status = 'active'` — so a draft is protected on sections
+alone. That gap is deliberate (two rival drafts of one shift must not block
+each other) and `editor.ts:findClash` compensates for it in manual authoring;
+`generate.ts` compensates for it here, with a window-function scan of the
+drafts it just wrote.
+
+**Measured, and the limit stated.** `scripts/routine-benchmark.mjs` seeds five
+realistic institutions (20/40/80/120 sections; school, two-shift school,
+college, madrasa) and drives the real handler. p95 server-side: 1.06s / 2.21s
+/ 4.26s / 6.43s / 2.03s, zero hard conflicts in every one. These are LOCAL
+container numbers — no network, no TLS, no browser render — so the product's
+"roughly one minute" promise is **not** proven end to end by them and is not
+claimed to be.
+
 **Two identifier contracts, and they are deliberately different (B-87).**
 `student_profiles.student_code` is **generated** — `studentCodeFor(userId)` in
 `import-run.ts`, `STU-` plus eight hex of the user's uuid — because a child

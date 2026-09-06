@@ -232,6 +232,14 @@ describe('authoring registers are network-only', () => {
       // re-read immediately after one; a stale grid would show a coordinator
       // an empty cell they just filled.
       'https://x.test/api/v1/rms/editor?sectionId=abc',
+      // P9-3, found the same way and one step worse. The generate screen
+      // offered "আগের ফলাফল — ১১২৫টি পিরিয়ড বসানো আছে" for a routine deleted
+      // from the database minutes before, with a button into a 404. The
+      // readiness checklist is the same read: stale, it tells a school it is
+      // ready after someone emptied the room list.
+      'https://x.test/api/v1/rms/setup?yearId=abc',
+      'https://x.test/api/v1/rms/generate?yearId=abc',
+      'https://x.test/api/v1/rms/assignments?yearId=abc&classId=def',
     ]) {
       const r = get(url);
       assert.equal(r.strategy, 'network-only', `${url} -> ${r.strategy} (${r.reason})`);

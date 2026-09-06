@@ -199,8 +199,20 @@ export function route(request: { url: string; method: string; mode?: string }): 
   // `/rms/routine` and the rest of `/academics/` stay cached below: a
   // published timetable is exactly the reference data that rule was written
   // for, and reading it in a corridor on a dead link is the offline story.
+  // P9 adds three of the same shape, and the third was found the same way:
+  // the generate screen showed "আগের ফলাফল — ১১২৫টি পিরিয়ড বসানো আছে" for a
+  // routine that had been deleted from the database minutes earlier, and its
+  // "বিস্তারিত" button led to a 404. `/rms/setup` is read immediately BEFORE
+  // the run and again after it; `/rms/generate`'s GET is the run's result;
+  // `/rms/assignments` is the matrix a coordinator edits cell by cell. A
+  // stale readiness checklist is worse than a slow one — it says a school is
+  // ready when the rooms were emptied a minute ago, and the person believes
+  // it until the server refuses.
   if (path.startsWith('/api/v1/rms/rooms')
     || path.startsWith('/api/v1/rms/editor')
+    || path.startsWith('/api/v1/rms/setup')
+    || path.startsWith('/api/v1/rms/generate')
+    || path.startsWith('/api/v1/rms/assignments')
     || path.startsWith('/api/v1/academics/exams')
     || path.startsWith('/api/v1/finance/feestructures')) {
     return {

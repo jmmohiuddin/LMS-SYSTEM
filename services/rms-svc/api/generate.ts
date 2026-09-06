@@ -81,6 +81,28 @@ interface NamedUnplaced {
   capability?: string;
 }
 
+/**
+ * A capability shortage with the subject that wanted it.
+ *
+ * `solve.ts` writes "'computer_lab' কক্ষে ৮০টি পিরিয়ড দরকার" — the raw
+ * capability code, in the middle of a Bangla sentence, on the screen a head
+ * teacher reads. The code is whatever an IT admin typed into
+ * `subjects.requires_capability`, so there is no lookup table that could
+ * translate it; what CAN be said is which subjects asked for it, and that is
+ * the sentence a person can act on.
+ *
+ * The solver's own `detailBn` is left untouched — other screens read it, and
+ * F-503's shortage text is theirs.
+ */
+interface NamedShortage {
+  capability: string;
+  subjectsBn: string[];
+  demandedPeriods: number;
+  capableRooms: number;
+  freePeriods: number;
+  detailBn: string;
+}
+
 interface ShiftResult {
   shift: string;
   routineId: string;
@@ -90,8 +112,39 @@ interface ShiftResult {
   placed: number;
   unplaced: NamedUnplaced[];
   soft: SolveResult['soft'];
-  shortages: SolveResult['shortages'];
+  shortages: NamedShortage[];
   solverSeconds: number;
+}
+
+/** Which subjects asked for each capability that ran short. */
+async function nameShortages(
+  c: Client, yearId: string, shortages: SolveResult['shortages'],
+): Promise<NamedShortage[]> {
+  if (shortages.length === 0) return [];
+  const caps = shortages.map((s) => s.capability);
+  const { rows } = await c.query<{ capability: string; subjects: string[] }>(
+    `SELECT sub.requires_capability AS capability,
+            array_agg(DISTINCT sub.name_bn ORDER BY sub.name_bn) AS subjects
+       FROM class_subjects cs
+       JOIN subjects sub ON sub.id = cs.subject_id
+      WHERE cs.academic_year_id = $1 AND sub.requires_capability = ANY($2::text[])
+      GROUP BY 1`,
+    [yearId, caps]);
+  const byCap = new Map(rows.map((r) => [r.capability, r.subjects]));
+  return shortages.map((s) => {
+    const subjects = byCap.get(s.capability) ?? [];
+    return {
+      ...s,
+      subjectsBn: subjects,
+      // Rewritten around the subject, so no machine code reaches a person.
+      // Where the school named a capability no subject uses any more, the
+      // code is all there is — and saying so is better than saying nothing.
+      detailBn: subjects.length > 0
+        ? `${subjects.join(', ')} — ${bn(s.demandedPeriods)}টি পিরিয়ড দরকার; `
+          + `উপযুক্ত ${bn(s.capableRooms)}টি কক্ষে ${bn(s.freePeriods)}টি সময় খালি ছিল`
+        : s.detailBn,
+    };
+  });
 }
 
 /**
@@ -428,8 +481,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // database will not object until publish.
       const solved = await new RmsSolver(db).solve(draft.routineId, ctx,
         { alsoBookedAgainst: results.map((r) => r.routineId) });
-      const named = await db.withTenant(
-        ctx, (c) => nameUnplaced(c as Client, draft.routineId, yearId, solved.unplaced));
+      const [named, shortages] = await db.withTenant(ctx, async (c) => [
+        await nameUnplaced(c as Client, draft.routineId, yearId, solved.unplaced),
+        await nameShortages(c as Client, yearId, solved.shortages),
+      ] as const);
       results.push({
         shift,
         routineId: draft.routineId,
@@ -439,7 +494,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         placed: solved.placed,
         unplaced: named,
         soft: solved.soft,
-        shortages: solved.shortages,
+        shortages,
         solverSeconds: solved.solverSeconds,
       });
     }

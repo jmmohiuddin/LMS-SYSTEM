@@ -226,7 +226,10 @@ describe('parallel blocks (F-504)', { skip }, () => {
                     `${religionSlot.day}|${religionSlot.period}`);
 
     await db.withTenant(asCoord, async (c) => {
-      await c.query('DELETE FROM section_subject_teachers WHERE subject_id = $1', [BANGLA]);
+      // Closed, not deleted — migration 072. See solve-rooms.test.ts.
+      await c.query(`UPDATE section_subject_teachers
+                        SET ended_on = started_on, end_reason = 'fixture reset'
+                      WHERE subject_id = $1 AND ended_on IS NULL`, [BANGLA]);
       await c.query('DELETE FROM class_subjects WHERE subject_id = $1', [BANGLA]);
     });
   });

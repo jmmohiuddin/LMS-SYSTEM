@@ -154,6 +154,28 @@ const SENTINELS = [
   // and not the scope would report applied while a subject teacher could
   // still create an exam, which is the thing it exists to stop.
   ['066_exam_authoring_scope',         'policy',        'exams_insert_scope'],
+  // 067–072 were unregistered until P9-0, and the script's own warning says
+  // why that matters: "an unchecked migration reports as neither applied nor
+  // pending, which is the worst answer." Six of them shipped real security
+  // scopes.
+  ['067_fee_authoring_scope',          'policy',        'fee_structures_insert_scope'],
+  // The COLUMN, not a policy: 068's point is that `routine_published_at` is a
+  // different fact from `published_at`, and conflating them made a published
+  // routine permanently unmarkable (B-68).
+  ['068_exam_lifecycle_and_result_scope', 'column',     'exams.routine_published_at'],
+  // The TRIGGER, not one of the six scope policies: a half-applied 069 that
+  // left the scopes and not the trigger would let a school account raise its
+  // own plan and student cap (B-71).
+  ['069_routine_authoring_scope',      'trigger',       'trg_tenants_platform_columns'],
+  // The function, not a policy: without `app.next_receipt_no` a concurrent
+  // payment is applied with no receipt at all (B-78), which is the failure
+  // 070 exists to prevent.
+  ['070_money_write_scope',            'function',      'app.next_receipt_no'],
+  ['071_job_heartbeat',                'function',      'app.job_run_status'],
+  // The DELETE scope specifically. A half-applied 072 that left INSERT and
+  // UPDATE would still let anyone erase the record of who taught a class,
+  // and this is a history table (B-89).
+  ['072_teaching_assignment_scope',    'policy',        'sst_delete_scope'],
 ];
 
 /**
@@ -243,6 +265,17 @@ const QUERIES = {
                      AND p.prosrc LIKE '%' || $2 || '%'`,
   policy: `SELECT 1 FROM pg_policy WHERE polname = $1`,
   constraint: `SELECT 1 FROM pg_constraint WHERE conname = $1`,
+  // `table.column`. The natural sentinel for a migration whose whole point is
+  // a new column — 068 added `exams.routine_published_at` and creates no
+  // function, index or policy that is uniquely its own.
+  column: `SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = split_part($1,'.',1)
+              AND column_name = split_part($1,'.',2)`,
+  // A trigger by name. 069's scopes are six policies, but the thing that
+  // would be missed by a half-application is the trigger that refuses a
+  // school raising its own plan and cap.
+  trigger: `SELECT 1 FROM pg_trigger WHERE tgname = $1 AND NOT tgisinternal`,
   // For a migration that seeds REFERENCE DATA and creates no object. The
   // sentinel is a table name plus a WHERE clause; it is interpolated rather
   // than bound because a predicate cannot be a parameter, so the sentinels

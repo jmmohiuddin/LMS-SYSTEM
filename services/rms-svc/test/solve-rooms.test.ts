@@ -106,7 +106,15 @@ async function seed(): Promise<void> {
 async function setDemand(rows: Array<[string, string, string, number]>): Promise<void> {
   await db.withTenant(asCoord, async (c) => {
     await c.query('DELETE FROM routine_slots');
-    await c.query('DELETE FROM section_subject_teachers');
+    // Migration 072 refuses DELETE on this table — it is teaching HISTORY, and
+    // erasing a row erases the fact that somebody taught a class. Resetting
+    // demand means CLOSING the open assignments, which is also what a school
+    // does when a subject changes hands, so the fixture and the product take
+    // the same path. `ended_on = started_on` because
+    // `sst_period_is_ordered` refuses a row that ended before it began.
+    await c.query(`UPDATE section_subject_teachers
+                      SET ended_on = started_on, end_reason = 'fixture reset'
+                    WHERE ended_on IS NULL`);
     await c.query('DELETE FROM class_subjects');
     for (const [sectionId, subjectId, teacherId, perWeek] of rows) {
       await c.query(

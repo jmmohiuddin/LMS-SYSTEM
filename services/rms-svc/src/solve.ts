@@ -983,7 +983,24 @@ export class RmsSolver {
          JOIN subjects sub ON sub.id = sst.subject_id
          JOIN class_subjects cs ON cs.class_id = s.class_id
           AND cs.subject_id = sst.subject_id AND cs.academic_year_id = sst.academic_year_id
-        WHERE sst.academic_year_id = $1 AND s.shift = $2`,
+        WHERE sst.academic_year_id = $1 AND s.shift = $2
+          -- CURRENT assignments only. section_subject_teachers is a HISTORY
+          -- table: reassigning a subject closes one row and opens another, so
+          -- last term's teacher is still there with ended_on set. Without
+          -- this the solver reads every assignment the school has ever made
+          -- and places periods_per_week once per historical teacher -- a
+          -- routine with three Bangla periods for every year the subject has
+          -- changed hands.
+          --
+          -- (No backticks in this comment on purpose: it lives inside a JS
+          -- template literal, and a backtick here ends the string. Same
+          -- mistake as A4's editor.ts.)
+          --
+          -- Invisible until P9-0 gave the table a DELETE ban (migration 072)
+          -- and the fixtures had to start closing rows rather than deleting
+          -- them. Before that nothing in this repository had ever produced a
+          -- closed row, so the filter had never been needed.
+          AND sst.ended_on IS NULL`,
       [academicYearId, shift],
     );
     return rows.map((r) => ({

@@ -33,8 +33,15 @@
  * rather than "no solution found".
  *
  * Deliberately out of scope for this MVP pass (documented, not accidental):
- *   - class_subjects.double_periods_per_week — every placement is single.
  *   - teacher_leaves — date-specific, doesn't apply to a weekly template.
+ *
+ * `class_subjects.double_periods_per_week` WAS on that list and is not any
+ * more: contiguous pairs are placed, linked by `double_group_id`, and a
+ * required pair that had to run as scattered singles is reported as the
+ * `no_contiguous_pair` violation. The stale line was found by P9-0's
+ * inventory, which is the sort of thing an inventory is for — a header that
+ * disclaims a feature the file implements sends the next reader to build it
+ * twice.
  *
  * Clash-freedom is guaranteed by routine_slots' three GiST exclusion
  * constraints (teacher/room/section double-booking, see

@@ -11611,3 +11611,87 @@ to a stubbed `fetch`. A configured transport is not a human receipt.
 commands exist in `deploy/shikhon-cron.md`; nothing here has run on the
 production host. Until they are installed the heartbeat correctly reports
 `job_never_ran`, which is the honest answer rather than a failure.
+
+---
+
+# P9-0 — Routine inventory, before any code (2026-09-06)
+
+The brief says "do not rebuild existing solver functionality unnecessarily",
+and that turns out to be the most important sentence in it. **The solver is
+built.** What is missing is everything that would let a school feed it.
+
+## READY — built, reachable, and exercised by tests
+
+| piece | where | what it already does |
+|---|---|---|
+| Routine schema | migration 006 + 032 + 069 | `routines` (version, `supersedes_id`, `status`, solver provenance: `solver_run_id`, `solver_seconds`, `objective_score`, `soft_violations`, `constraint_weights`), `routine_slots` (day/period, real `time_range`, `slot_kind`, section/subject/teacher/room, `is_double` + `double_group_id`, `is_pinned`, `parallel_pool`) |
+| **Hard clash prevention** | 3 GiST `EXCLUDE` constraints | teacher, room and section double-booking, enforced by PostgreSQL. A hard violation is **unstorable**, not merely detected |
+| Solver | `rms-svc/src/solve.ts`, 1046 lines | greedy deterministic pass, **idempotent** (tops up `periodsPerWeek − alreadyPlaced`, so re-running fills gaps rather than duplicating), **cross-shift aware** (books teacher and room against the whole academic year and compares *time intervals*, not period numbers — F-506), **room capability matching** (F-504), **double periods** |
+| Soft constraints | `rms-svc/src/soft-constraints.ts`, 311 lines | `teacher_weekly_cap`, `teacher_daily_cap`, `subject_consecutive_days`, `subject_twice_in_one_day`, `teacher_room_churn`, `teacher_no_free_day` |
+| Solve endpoint | `POST /rms/solve` | runs the solver against an existing draft, writes slots + provenance |
+| Explainability | `GET /rms/generation`, 314 lines + `generation-view.ts`, 460 lines | §8.2's two counters, per-slot "why this teacher, this room", soft trades listed. **Already refuses to narrate an unverified claim** — "একমাত্র যোগ্য ও মুক্ত শিক্ষক" is checked against the competency register and the rest of the timetable before it is said |
+| Editor | `rms-svc/api/editor.ts`, 1043 lines (A4) | `create-routine`, `place`, `assign`, `move`, `remove`, `publish`, with conflict detection and 409s |
+| Editor UI | `routine-editor-view.ts` | the week grid, drawers, teaching days from `tenants.weekend_days` |
+| Rooms | `rms-svc/api/rooms.ts` (A4/B-49) | capacity, type, capability — a real writer |
+| Substitutions | `rms-svc/api/substitute.ts` | day-to-day cover |
+| Student/teacher view | `routine.ts` + `routine-view.ts` | "আজকের রুটিন" |
+
+## The finding: 11 solver inputs, and how many a school can actually set
+
+`solve.ts` reads eleven tables. This is what a school can do about each:
+
+| input | rows on this box | writer | verdict |
+|---|---|---|---|
+| `sections`, `classes` | many | `ops-svc/api/structure.ts` | **READY** |
+| `rooms` | 5 | `rms-svc/api/rooms.ts` | **READY** |
+| `staff_profiles` (load caps) | many | `ops-svc/api/users.ts`, import | **READY** — but `max_periods_per_day/week` are not on any form |
+| `subjects` | many | seeded from `subject_catalogue` by `provision_tenant` | **PARTIAL** — cannot be edited |
+| `class_subjects` (**periods per week**, double periods) | 375, values 2–6 | seeded by `provision_tenant` | **PARTIAL** — *the single most important solver input, and no school can change it* |
+| `period_templates` / `period_definitions` (bell times, breaks) | 11 / 105 | seeded by `provision_tenant` | **PARTIAL** — a school whose day differs from the default cannot say so |
+| `tenants.weekend_days` | 183 (defaulted) | **none** — and migration 069 makes it *platform-owned*, refused to school accounts | **MISSING for the school** |
+| `tenants.shifts` | — | **none**, also platform-owned | **MISSING for the school** |
+| `section_subject_teachers` | **6 rows across 183 tenants** | **none** | **MISSING** — who teaches what, where |
+| `teacher_competencies` | **0** | **none** | **MISSING** |
+| `teacher_availability` | **0** | **none** | **MISSING** — blocked/preferred slots (B-45) |
+| `teacher_leaves` | — | **none** | **MISSING** (B-45) |
+
+`routines` = 1 and `routine_slots` = 2 on this box, both from A4's own test.
+
+## What that means
+
+The solver cannot produce a useful routine today, and not because of the
+solver. Its two central teacher inputs — *who teaches what* and *when they
+are free* — are empty tables with no writer, so a generation run would place
+nothing and correctly report everything unplaced.
+
+And **there is no generate button anywhere.** `POST /rms/solve` has no UI; its
+own header has been saying so since it was written: *"Creating the draft
+routine row itself (period template, academic year, shift setup) has no admin
+UI yet."* `generation-view.ts` is routed `hidden: true` and reachable only
+with a `?routineId=` that nothing hands out.
+
+This is the same shape as `B-46`/`B-47`/`B-49` and the whole of P-writers: a
+capability that exists, is audited, is tested, and that no school can reach.
+
+## So P9 is not "build a solver"
+
+It is, in order:
+
+1. **the input path** — writers and screens for the six missing/partial
+   inputs, which is where most of the work is;
+2. **the wizard** that walks a coordinator through them and refuses to reach
+   Generate while anything required is missing;
+3. **wiring generation to a UI**, which mostly means routing what already
+   exists;
+4. **the outputs** — class, section, group, teacher, room, student — all read
+   from `routine_slots`, never copied.
+
+Two things are also worth fixing where they are found, because they mislead
+the next reader:
+
+- `solve.ts`'s header says double periods are "deliberately out of scope",
+  and lines 65–223 implement them. The comment is stale.
+- `tenants.weekend_days` and `shifts` are platform-owned by migration 069.
+  Working days are a P9-1 input, so either the school gets a writer for them
+  or the wizard has to say the operator sets them. That is a decision, not an
+  oversight, and it is taken in P9-1 rather than assumed here.

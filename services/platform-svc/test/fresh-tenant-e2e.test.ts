@@ -51,9 +51,15 @@ const SLUG = 'pops-e2e-school';
  */
 const MANUAL: Array<{ step: string; why: string; backlog: string }> = [
   {
-    step: 'rename the school, fix its slug, EIIN, district or address',
-    why: 'no endpoint writes tenants.name_bn/name_en/slug/eiin/district/upazila/address_bn '
-       + 'after creation. A school registered with a typo needs psql.',
+    step: 'correct a school’s name, EIIN, district, upazila or address',
+    why: 'no endpoint writes tenants.name_bn/name_en/eiin/district/upazila/address_bn after '
+       + 'creation, and there is no deliberate lock on them — they simply have no writer. '
+       + 'Classified (A), a normal platform-admin need: a school registered with a typo, an '
+       + 'EIIN issued after onboarding, a district corrected. `slug` is NOT in this list and '
+       + 'is classified (B): migration 069 refuses it from school accounts on purpose, and '
+       + 'changing it after launch moves the school’s URLs. Note the branding screen sets a '
+       + 'DISPLAY name in settings->branding, so a school’s documents can be right while the '
+       + 'operator console still shows the typo — which hides the gap rather than closing it.',
     backlog: 'B-55',
   },
   {
@@ -412,7 +418,7 @@ describe('P-ops §E — a fresh school, end to end, through its own API', { skip
 
     // B-55 — is there any endpoint that renames a school?
     const rename = await asOperator('/api/v1/platform/tenant', { tenantId, nameBn: 'নতুন নাম' });
-    if (rename.status >= 400) stillManual.push('rename the school, fix its slug, EIIN, district or address');
+    if (rename.status >= 400) stillManual.push('correct a school’s name, EIIN, district, upazila or address');
 
     // B-81, revised. The claim to check is no longer "the chart is never
     // seeded" — provisioning seeds it — but "can a school get one WITHOUT

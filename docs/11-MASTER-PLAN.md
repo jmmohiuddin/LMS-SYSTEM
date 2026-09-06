@@ -1612,7 +1612,13 @@ than in retrospect.
 guard, the full state × surface matrix, suspension, and a fresh-tenant walk.
 Closed on the way: `B-50` `B-51` `B-52` `B-53` `B-54` `B-82` `B-83` `B-84`
 `B-86` `B-87` `B-88`, with `B-81` materially corrected and `B-80` classified
-into a finance phase rather than absorbed. **One item remains BLOCKED and is
+into a finance phase rather than absorbed. The closure patch finished `B-87`
+(the staff ID is REQUIRED, matching the CSV importer, and a duplicate is now a
+409 rather than the second 500 nobody had found) and **classified `B-55` as two
+items**: `slug` is (B) intentional platform-only, refused by migration 069 with
+its reason recorded; name/EIIN/district/upazila/address are (A) a normal
+platform-admin need with no writer at all — reported per D13 as UI-pending, not
+complete, and disclosed in the runbook. **One item remains BLOCKED and is
 not counted as anything else**: the human alert needs a real
 `ALERT_WEBHOOK_URL` and a person confirming receipt — a configured transport
 is not a human receipt. P9 has not been started.

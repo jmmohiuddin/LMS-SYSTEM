@@ -165,22 +165,33 @@ async function create(db: Db, ctx: Ctx, req: IncomingMessage) {
   }
   const phone = normalisePhone(body.phone ?? '');
 
-  // P-ops §E. `staff_profiles.employee_code` is NOT NULL, and this endpoint
-  // passed `|| null` into it — so a principal who left the staff-ID box empty
-  // got `{"error":"internal_error"}`. The box was marked OPTIONAL in the form,
-  // so that was not an edge case: it was the default path for any school that
-  // does not number its staff, and adding staff is among the first things a
-  // new school does. Found by the §E onboarding walk, invisible to every unit
-  // test because they all supply the field.
+  // ── B-87. The staff ID, which the form treated as optional ────────────
   //
-  // Refused with the field named, rather than generating a code here. The
-  // schema's NOT NULL is a business statement — every staff member has an
-  // employee code — and inventing one silently would put a number in a
-  // school's paperwork that the school never issued. The form now marks the
-  // field required, which is what the database has always said.
+  // `staff_profiles.employee_code` is NOT NULL and UNIQUE per tenant. This
+  // endpoint passed `|| null` into it and the form marked the box OPTIONAL,
+  // so a principal who left it empty got `{"error":"internal_error"}` while
+  // adding their first teacher. Not an edge case — it was the default path
+  // for any school that does not number its staff. Found by the §E
+  // onboarding walk; invisible to every unit test because they all supply it.
+  //
+  // REQUIRED, not generated, and the product had already decided this twice:
+  //
+  //   student_code   is GENERATED (`studentCodeFor`, import-run.ts) — a child
+  //                  does not arrive holding a student number.
+  //   employee_code  is SUPPLIED — `teacher-import.ts` refuses a CSV with no
+  //                  `employee_code` column and fails any row whose cell is
+  //                  blank. It is the school's own staff number, already on
+  //                  their paperwork.
+  //
+  // Generating one here would give the same teacher one code typed into this
+  // form and a different one imported from the school's spreadsheet, and the
+  // app would disagree with the office's own records.
+  //
+  // Every role this endpoint can grant is staff — GRANTABLE holds no student
+  // or guardian — so there is no non-staff branch to guard, and pretending
+  // otherwise would suggest one exists.
   const employeeCode = (body.employeeCode ?? '').trim();
-  const isStaffRole = roleCode !== 'student' && roleCode !== 'guardian';
-  if (isStaffRole && !employeeCode) {
+  if (!employeeCode) {
     throw new HttpError(400, 'কর্মচারী আইডি দিন', 'bad_request', { field: 'employeeCode' });
   }
 
@@ -224,13 +235,34 @@ async function create(db: Db, ctx: Ctx, req: IncomingMessage) {
 
     // Staff get a staff profile; the employee code is what a school's own
     // paperwork uses and the assignment screens display.
-    await c.query(
-      `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [userId, ctx.tenantId, employeeCode,
-       (body.designationBn ?? '').trim() || null],
-    );
+    //
+    // B-87, second half. `ON CONFLICT (user_id)` covers the primary key and
+    // NOT `UNIQUE (tenant_id, employee_code)`, so re-adding a teacher — or
+    // simply typing a number already in use — raised 23505 and came back as
+    // a 500. That is the likelier of the two mistakes by a wide margin, and
+    // an office cannot act on "internal error" the way it can act on "that
+    // staff ID is already taken".
+    //
+    // The whole handler runs in one transaction, so the `users` row inserted
+    // above rolls back with it: a refused duplicate must not leave a person
+    // holding a login and a role with no staff record, invisible on the staff
+    // screen and present in the roll.
+    try {
+      await c.query(
+        `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId, ctx.tenantId, employeeCode,
+         (body.designationBn ?? '').trim() || null],
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') {
+        throw new HttpError(409,
+          `এই কর্মচারী আইডি (${employeeCode}) আগেই ব্যবহার করা হয়েছে`,
+          'duplicate_employee_code', { field: 'employeeCode' });
+      }
+      throw err;
+    }
 
     await writeAudit(c, ctx, {
       action: 'ops.user.create',

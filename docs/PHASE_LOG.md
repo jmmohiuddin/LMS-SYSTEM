@@ -11508,3 +11508,106 @@ receipt are all **not** a pass, and this is a rehearsal. It needs a real
 `ALERT_WEBHOOK_URL` and a person confirming the message arrived.
 
 **REHEARSED. Not OBSERVED IN PRODUCTION. Not PASS.**
+
+---
+
+# P-ops — closure patch: B-87 fixed, B-55 classified (2026-09-06)
+
+Two loose ends from D and E, closed rather than carried.
+
+## B-87 — the staff ID, and the second 500 behind it
+
+The §E walk could not add a teacher. `staff_profiles.employee_code` is NOT
+NULL **and** `UNIQUE (tenant_id, employee_code)`; the handler passed
+`|| null` into it and the form marked the box optional, so an empty staff ID
+produced `internal_error`.
+
+### The decision, which the product had already made twice
+
+Required, not generated, and the two sibling contracts say why they differ:
+
+| column | how it is set | why |
+|---|---|---|
+| `student_profiles.student_code` | **generated** — `studentCodeFor(userId)`, `STU-` + 8 hex of the uuid | a child does not arrive holding a student number; deriving it from the id cannot collide |
+| `staff_profiles.employee_code` | **supplied** — `teacher-import.ts` refuses a CSV with no `employee_code` column (L121) and fails a blank cell (L159), de-duplicating within the file | it is the school's own staff number, already on their paperwork |
+
+Generating one in the form would give the same teacher one code when typed and
+a different one when imported from the school's own spreadsheet, and the app
+would disagree with the office's records. So the form was brought in line with
+the importer, not the other way round.
+
+"Safely optional" was considered and rejected: it means dropping a NOT NULL
+that has stood since migration 002 and that the CSV path actively enforces —
+the largest change of the three, and one that weakens a constraint to avoid
+writing an error message.
+
+### The second 500, which is the likelier one
+
+`ON CONFLICT (user_id) DO NOTHING` covers the primary key and **not** the
+`(tenant_id, employee_code)` unique. A school re-adding a teacher, or typing a
+number already in use, raised 23505 and came back as a 500 — a far more
+ordinary mistake than a blank box, and one an office cannot act on. Now a 409
+naming the field. The handler runs in one transaction, so a refused duplicate
+leaves no `users` row behind holding a login and a role with no staff record.
+
+The dead `isStaffRole` branch went with it: `GRANTABLE` contains no student or
+guardian, so the condition implied a path that cannot exist.
+
+**Browser-verified** on a live stack: created রফিক স্যার with `EMP-777`, then
+submitted a second person with the same ID and read *"এই কর্মচারী আইডি
+(EMP-777) আগেই ব্যবহার করা হয়েছে"* with the form still open on the wrong
+value. Test data removed from the demo tenant afterwards.
+
+## B-55 — classified, and it is two things
+
+**(B) intentional platform-only — `slug`.** Migration 069's trigger refuses it
+from `shikhon_app` by name, with its reason written down: *"plan, cap,
+lifecycle, slug, weekend, shifts and key material are set by the platform, not
+by a school account."* A slug lives in the install link and the PWA
+`start_url`; changing it after launch moves every device's entry point. Not a
+gap and needs no screen.
+
+**(A) required platform-admin UI — `name_bn`, `name_en`, `eiin`, `district`,
+`upazila`, `address_bn`.** No lock exists on these. They are absent from the
+069 trigger's list and simply have no writer anywhere. They are routine
+operator corrections — a typo at registration, an EIIN issued later, a
+district fixed — and at a hundred schools that is a weekly errand.
+
+**What sharpened the classification.** The school's own branding screen writes
+a DISPLAY name into `settings->branding`, so a school's documents and app shell
+can carry the corrected name while `app.platform_overview()` and the operator
+console still show the typo. The gap looks closed from inside the school and is
+not, which is worse than an obvious hole — and it is exactly why this needed
+classifying rather than leaving as "SQL-only".
+
+**Not built here.** P-ops is operational hardening; a new console screen is
+feature work. Recorded per D13 as *"no writer — UI and endpoint both pending"*,
+never as complete, and written into the runbook so the SQL-only behaviour is
+disclosed rather than discovered.
+
+## Verification, re-run from scratch after the fix
+
+- **1781 tests across 13 workspaces, all passing** (5 new for B-87)
+- **26/26 SQL suites executed; 52/52 over two consecutive runs**
+- `scripts/typecheck.mjs` — three CI configs, **0/0/0**, coverage 268/339,
+  unchecked baseline unmoved at 71
+- `scripts/build.mjs` — clean
+- `scripts/security-probe.mjs` — **29 checks, 29 pass, 0 fail** over 12 areas
+- **D11** both directions: no platform brand in tenant surfaces; `index.html`
+  (12) and `platform.ts` (5) keep theirs
+- **D13**: B-87 verified by a person using the screen; B-55 reported as
+  UI-pending rather than complete
+- entitlement matrix 7 · surfaces 7 · blocks 11 · suspension 6 · push-only 7 ·
+  row-count guard 8 · deadman 9 · tenant isolation 11 · staff create 5
+- **§E re-run from scratch: 24 steps, 2/2**
+- `apps/pwa/public/index.html` byte-identical at `496199bd`
+
+## The two external blockers, unchanged and not upgraded
+
+**Human alert receipt — BLOCKED.** The path is proven end to end and delivered
+to a stubbed `fetch`. A configured transport is not a human receipt.
+
+**VPS timer installation — NOT OBSERVED.** The units and the verification
+commands exist in `deploy/shikhon-cron.md`; nothing here has run on the
+production host. Until they are installed the heartbeat correctly reports
+`job_never_ran`, which is the honest answer rather than a failure.

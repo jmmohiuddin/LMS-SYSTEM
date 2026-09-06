@@ -978,3 +978,44 @@ Four different refusals, and support should not treat them alike:
 The app now says which (`B-84`). If a school reports "it says we do not have
 permission" for something they clearly should, check `serviceState` before
 looking at roles.
+
+### Adding staff, and the two identifier rules
+
+A staff member's **employee code is supplied by the school** — it is their own
+staff number and the CSV importer has always refused a file without it. It is
+not generated, deliberately: a generated code would put a number in a school's
+paperwork that the school never issued, and the same teacher would carry one
+code if typed into the form and another if imported from the office's
+spreadsheet.
+
+| what support sees | what it means |
+|---|---|
+| 400, `field: employeeCode` | the staff ID box was left empty |
+| 409, `duplicate_employee_code` | that staff ID is already used at this school |
+| the same ID at another school | fine — the UNIQUE is per tenant |
+
+A **student** code is the opposite and is generated (`STU-` plus eight hex of
+the student's id), because a child does not arrive holding one.
+
+### SQL-only today: correcting a school's identity (B-55)
+
+Disclosed rather than left to be discovered. Two different situations:
+
+**`slug` — platform-only on purpose.** Migration 069 refuses it from a school
+account by name. It lives in the install link and the PWA `start_url`, so
+changing it after launch moves every device's entry point. If it genuinely must
+change, that is a platform operation with a device-relink plan, not a form.
+
+**Name, EIIN, district, upazila, address — no writer at all.** There is no
+endpoint and no screen. Correcting a school registered with a typo, or adding
+an EIIN issued after onboarding, currently needs psql:
+
+```bash
+docker exec -i -e PGPASSWORD="$PGPASSWORD" "$PG_CONTAINER"   psql -U shikhon_owner -d "$PGDATABASE"   -c "UPDATE tenants SET name_bn = 'সঠিক নাম', eiin = '123456' WHERE slug = 'the-school'"
+```
+
+**A trap worth knowing.** The school's own branding screen writes a *display*
+name into `settings->branding`, which is what appears on its documents and app
+shell. So a school can look correct to itself while the operator console still
+shows the typo. If a school says "we already fixed our name", check
+`tenants.name_bn` and not only the branding.

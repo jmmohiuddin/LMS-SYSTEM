@@ -3579,8 +3579,7 @@ async function create(db, ctx, req) {
   }
   const phone = normalisePhone(body.phone ?? "");
   const employeeCode = (body.employeeCode ?? "").trim();
-  const isStaffRole = roleCode !== "student" && roleCode !== "guardian";
-  if (isStaffRole && !employeeCode) {
+  if (!employeeCode) {
     throw new HttpError(400, "\u0995\u09B0\u09CD\u09AE\u099A\u09BE\u09B0\u09C0 \u0986\u0987\u09A1\u09BF \u09A6\u09BF\u09A8", "bad_request", { field: "employeeCode" });
   }
   return db.withTenant(ctx, async (c) => {
@@ -3609,17 +3608,29 @@ async function create(db, ctx, req) {
       `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES ($1, $2, $3)`,
       [ctx.tenantId, userId, roleCode]
     );
-    await c.query(
-      `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [
-        userId,
-        ctx.tenantId,
-        employeeCode,
-        (body.designationBn ?? "").trim() || null
-      ]
-    );
+    try {
+      await c.query(
+        `INSERT INTO staff_profiles (user_id, tenant_id, employee_code, designation_bn)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [
+          userId,
+          ctx.tenantId,
+          employeeCode,
+          (body.designationBn ?? "").trim() || null
+        ]
+      );
+    } catch (err) {
+      if (err.code === "23505") {
+        throw new HttpError(
+          409,
+          `\u098F\u0987 \u0995\u09B0\u09CD\u09AE\u099A\u09BE\u09B0\u09C0 \u0986\u0987\u09A1\u09BF (${employeeCode}) \u0986\u0997\u09C7\u0987 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7`,
+          "duplicate_employee_code",
+          { field: "employeeCode" }
+        );
+      }
+      throw err;
+    }
     await writeAudit(c, ctx, {
       action: "ops.user.create",
       entityType: "user",

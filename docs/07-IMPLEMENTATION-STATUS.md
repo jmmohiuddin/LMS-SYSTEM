@@ -938,6 +938,18 @@ print-first stance, and it is why R-5 needed no object storage and puts
 nothing large in PostgreSQL. When an R2/S3 credential lands, this endpoint's
 markup is what gets rendered server-side; it does not change.
 
+**Two identifier contracts, and they are deliberately different (B-87).**
+`student_profiles.student_code` is **generated** — `studentCodeFor(userId)` in
+`import-run.ts`, `STU-` plus eight hex of the user's uuid — because a child
+does not arrive holding a student number and a code derived from the id cannot
+collide. `staff_profiles.employee_code` is **supplied**: the teacher CSV
+importer refuses a file with no `employee_code` column and fails any row whose
+cell is blank, because it is the school's own staff number and is already on
+their paperwork. `POST /ops/users` now matches the importer — a blank code is a
+400 naming the field, a duplicate is a 409 naming the field, and neither is a
+500. Generating one would have given the same teacher two different codes
+depending on whether they were typed or imported.
+
 **Four refusals, four sentences (P-ops, B-84).** A 403 from any endpoint is
 one of four different things, and support and the UI both have to tell them
 apart: `forbidden` (this ROLE may not — a different person can), plain

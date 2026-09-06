@@ -43,6 +43,21 @@ const MUM = '9d530000-0000-4000-8000-0000000000a1';
 const PHONE = '+8801799530001';
 const ORG = 'পুশ পরীক্ষা';
 /**
+ * A second school, genuinely on the `pilot` plan.
+ *
+ * The pilot-bug test below can be reached by switching `sms` off on the first
+ * school, and that is a simulation: the state it produces is `disabled` where
+ * a real pilot school has `not_in_plan`. Both fail the same check today, and
+ * "both fail the same check today" is precisely the assumption a plan-shaped
+ * bug hides behind — `tenant_service_state` has separate branches for them and
+ * nothing stops those branches diverging.
+ *
+ * `pilot` is the plan real pilot schools are on, so it is worth a real school.
+ */
+const T_PILOT   = '9d530000-0000-4000-8000-00000000000b';
+const MUM_PILOT = '9d530000-0000-4000-8000-0000000000b1';
+const PHONE_PILOT = '+8801799530002';
+/**
  * A real P-256 point, shared with `push-send.test.ts`.
  *
  * Not any base64 of the right length: the payload is genuinely encrypted
@@ -103,6 +118,27 @@ describe('P-ops §5 — a school that switched push off is not still pushed to',
         `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES ($1,$2,'guardian')`,
         [T, MUM]);
     });
+    await asBootstrap(db, { tenantId: T_PILOT, userId: MUM_PILOT, role: 'principal' }, async (c) => {
+      await c.query('DELETE FROM push_subscriptions WHERE tenant_id = $1', [T_PILOT]);
+      await c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [T_PILOT]);
+      await c.query('DELETE FROM tenants WHERE id = $1', [T_PILOT]);
+      await c.query(
+        `INSERT INTO tenants (id, slug, name_bn, name_en, stream, level, plan_code, settings)
+         VALUES ($1,'b83-pilot','পাইলট','Pilot','bangla_medium','secondary','pilot',
+                 '{"push":{"replacesSms":true}}'::jsonb)`, [T_PILOT]);
+      await c.query(
+        `INSERT INTO users (id, tenant_id, full_name_bn, full_name_en, phone_e164, status)
+         VALUES ($1,$2,'মা','Mum',$3,'active')`, [MUM_PILOT, T_PILOT, PHONE_PILOT]);
+      await c.query(
+        `INSERT INTO user_roles (tenant_id, user_id, role_code) VALUES ($1,$2,'guardian')`,
+        [T_PILOT, MUM_PILOT]);
+    });
+    await plat.pool.query(
+      `INSERT INTO tenant_operations (tenant_id, ops_state, services)
+       VALUES ($1,'active','{}'::jsonb)
+       ON CONFLICT (tenant_id) DO UPDATE SET ops_state='active', services='{}'::jsonb`,
+      [T_PILOT]);
+
     await setServices('{}');
   });
 
@@ -114,6 +150,12 @@ describe('P-ops §5 — a school that switched push off is not still pushed to',
     });
     await asBootstrap(db, { tenantId: T, userId: MUM, role: 'principal' },
       (c) => c.query('DELETE FROM tenants WHERE id = $1', [T]));
+    await db.withTenant({ tenantId: T_PILOT, userId: '', role: 'system_ingest' }, async (c) => {
+      await c.query('DELETE FROM push_subscriptions WHERE tenant_id = $1', [T_PILOT]);
+      await c.query('DELETE FROM sms_outbox WHERE tenant_id = $1', [T_PILOT]);
+    }, { skipGate: true });
+    await asBootstrap(db, { tenantId: T_PILOT, userId: MUM_PILOT, role: 'principal' },
+      (c) => c.query('DELETE FROM tenants WHERE id = $1', [T_PILOT]));
     await db.end(); await plat.end(); await unlockFixtures();
   });
 
@@ -214,5 +256,48 @@ describe('P-ops §5 — a school that switched push off is not still pushed to',
       'a school whose plan has push but not SMS got no push at all');
     assert.deepEqual(sent, [],
       'and its SMS must still not go — that is the part that costs money');
+  });
+
+  test('B-83 ON A REAL PILOT SCHOOL — not_in_plan, not a simulated disable', async () => {
+    // The plan itself, not a switch: `pilot` carries `push: true` and no `sms`
+    // key at all, so `tenant_service_state` returns `not_in_plan` for sms and
+    // `enabled` for push. That is the exact configuration every real pilot
+    // school is in, and the one under which none of them had ever received a
+    // notification.
+    const state = async (svc: string) => {
+      const { rows } = await plat.pool.query<{ s: string }>(
+        'SELECT app.tenant_service_state($1,$2) AS s', [T_PILOT, svc]);
+      return rows[0].s;
+    };
+    assert.equal(await state('sms'), 'not_in_plan',
+      'the fixture must be a genuine pilot school, or this proves nothing');
+    assert.equal(await state('push'), 'enabled');
+
+    const hits: string[] = [];
+    // One line: node's type-stripper cannot parse an `as` cast that starts on
+    // a continuation line after a parenthesised arrow.
+    const spy = (async (url: string) => { hits.push(url); return { status: 201, ok: true }; }) as unknown as typeof fetch;
+    const sentHere: string[] = [];
+    const provider: SmsProvider = {
+      name: 'spy', live: true,
+      async send(m) { sentHere.push(m); return { provider: 'spy', providerMsgId: 'x', costBdt: null }; },
+    };
+
+    await db.withTenant({ tenantId: T_PILOT, userId: MUM_PILOT, role: 'guardian' }, (c) =>
+      c.query('SELECT app.claim_push_subscription($1,$2,$3,$4)',
+        ['https://fcm.googleapis.com/fcm/send/pilot', KEYS.p256dh, KEYS.auth, 'মোবাইল']));
+    await db.withTenant({ tenantId: T_PILOT, userId: '', role: 'system_ingest' }, (c) =>
+      c.query(
+        `INSERT INTO sms_outbox (tenant_id, recipient_id, msisdn, template_code, body,
+                                 dedupe_key, context)
+         VALUES ($1,$2,$3,'notice.published.v1','বার্তা — পাইলট','pilot-1','{"noticeId":"n1"}'::jsonb)`,
+        [T_PILOT, MUM_PILOT, PHONE_PILOT]), { skipGate: true });
+
+    await new SmsDispatchWorker(db, { provider, vapid, fetchImpl: spy }).run(T_PILOT);
+
+    assert.equal(hits.length, 1,
+      'a real pilot school still received no push — B-83 is not closed');
+    assert.deepEqual(sentHere, [],
+      'and its SMS must not go: the plan does not include it, and that costs money');
   });
 });

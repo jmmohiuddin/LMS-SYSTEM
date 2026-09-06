@@ -11695,3 +11695,105 @@ the next reader:
   Working days are a P9-1 input, so either the school gets a writer for them
   or the wizard has to say the operator sets them. That is a decision, not an
   oversight, and it is taken in P9-1 rather than assumed here.
+
+---
+
+# P9-1 — the input the generator could not work without (2026-09-06)
+
+P9-0 concluded that P9 is the input path, not a solver rewrite. This is the
+first and largest piece of that path.
+
+## Two defects the inventory found before any wizard existed
+
+**`B-89` — a student could name themselves the teacher of any section.**
+`section_subject_teachers` carried one policy: `tenant_isolation`, PERMISSIVE,
+FOR ALL. Tenant-match was the entire test, proved live as `app.role='student'`
+(`INSERT 0 1`, then `DELETE 1`). Load-bearing rather than theoretical, because
+`solve.ts:loadDemand` reads that table **and nothing else** to decide what a
+timetable must contain.
+
+Migration 072 gives it per-command scopes: INSERT and UPDATE for the three
+roles that may author a routine, DELETE for **nobody** — it is a history table
+and erasing a row erases the fact that somebody taught a class. `dept_head` is
+deliberately excluded: the table has no department column to scope them by, so
+admitting them would admit them to every subject in the school.
+
+**`B-90` — and the DELETE ban immediately exposed a second one.** `loadDemand`
+filtered on year and shift and not on `ended_on IS NULL`, so every teacher who
+had ever held a subject was still returned as live demand. A school in its
+third year would get three sets of Bangla periods, one per reassignment.
+
+It had never fired because **nothing in this repository had ever produced a
+closed row** — every fixture DELETEd instead of closing, so the history table
+had no history and the missing filter could not be wrong. Forcing the fixtures
+to close rows surfaced it within minutes. A guard that makes a latent defect
+reachable is doing its job.
+
+Separately: migrations 067–072 were unregistered in the migration-status
+probe, whose own warning says an unchecked migration "reports as neither
+applied nor pending, which is the worst answer". Six shipped security scopes.
+All registered; the probe gained `column` and `trigger` sentinel kinds. 72/72.
+
+## The writer, and why it is a matrix
+
+`GET/POST /api/v1/rms/assignments`. A coordinator holds one class in their
+head — "class 9: who takes maths in ক, in খ?" — not "assignment 41 of 800".
+So the grid is subjects down and sections across, one class at a time, which
+is the sheet already pinned up in the office. Eighty sections by ten subjects
+is eight hundred decisions; one request each would be the difference between
+an afternoon and a week.
+
+The grid is built from the **curriculum** (`class_subjects`), not from the
+assignments that exist, so the subjects nobody teaches yet are the visible
+thing. `progress {required, assigned}` is computed server-side, because P9-2's
+rule is that nobody reaches Generate without knowing what is missing, and a
+count computed in the browser can drift from the truth.
+
+Editing **closes and reopens** rather than overwriting. Clearing a cell closes
+without reopening: the class still studies the subject, nobody holds it, and
+the generator reports it as unplaced demand rather than skipping it silently.
+Saving an unchanged grid writes nothing, or re-saving would fill the history
+with churn that means nothing to whoever reads it later.
+
+## The screen, and the bug only a browser could show
+
+Both layouts are rendered and CSS picks one — a matrix does not survive 360px,
+so the narrow shape is a card per subject. That means **every cell exists
+twice**, and editing one left its twin showing the old teacher: invisible on a
+phone, invisible on a desktop, and wrong the moment a tablet crosses the
+breakpoint. Found by driving the real screen. The change handler now moves
+both, and a test pins it.
+
+`assignments-view.ts` is HOMEWORK (বাড়ির কাজ) and has been since R-2, which I
+discovered by overwriting it. Restored from git immediately; nothing was lost,
+and the collision is recorded in the new file's header.
+
+## Evidence
+
+- **1809 tests, all passing** — 11 API, 10 view, 7 scope
+- 26/26 SQL suites · typecheck 0/0/0 across three CI configs · 72/72 migrations
+- Browser: 12 cells, three teachers assigned and saved, progress ০ → ৩ / ১২,
+  rows verified in the database; at 375px the matrix hides, the cards show,
+  and nothing scrolls sideways
+- The typecheck guard refused the commit until the new test file was
+  re-baselined deliberately (`apps/pwa/test` is covered by no tsconfig — B-32).
+  71 → 72, recorded rather than waved through
+- Landing page byte-identical at `496199bd`
+
+## P9 is PARTIAL, and this is what remains
+
+Delivered: P9-0 (inventory), the security and correctness fixes it found, and
+P9-1's input model end to end.
+
+Not started: the wizard (P9-2), wiring generation to a UI (P9-3, plus the
+one-minute measurement at six scales), surfacing explainability (P9-4 — the
+API and view exist and are reachable only by a `?routineId=` nothing hands
+out), editor locking and undo (P9-5), scoped re-solve (P9-6), the publish
+lifecycle UI (P9-7), the class/group/section/teacher/room outputs (P9-8), and
+print (P9-9).
+
+Still SQL-only among the solver's other inputs, and therefore still blocking a
+COMPLETE verdict: the bell-times editor (`period_definitions`), the subject
+demand editor (`class_subjects.periods_per_week`), teacher availability, and
+working days (`tenants.weekend_days`, which migration 069 makes platform-owned
+— a decision P9-1 deliberately did not pre-empt).

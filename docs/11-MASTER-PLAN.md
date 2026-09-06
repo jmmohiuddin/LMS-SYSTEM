@@ -1623,6 +1623,18 @@ not counted as anything else**: the human alert needs a real
 `ALERT_WEBHOOK_URL` and a person confirming receipt — a configured transport
 is not a human receipt. P9 has not been started.
 
+**P9 — Smart Routine.** *In progress, PARTIAL as of 2026-09-06.* P9-0's
+inventory found the solver, its six soft constraints, the three GiST clash
+constraints and the §8.2 explainability all built — and eleven of `solve.ts`'s
+inputs unreachable by any school. P9 is therefore the input path and the
+screens over it, not a solver rewrite. P9-1 (teaching assignments) is
+delivered end to end; the wizard, generation UI, scoped re-solve, publish
+lifecycle, role outputs and print remain. Closed on the way: `B-89` (a student
+could name themselves the teacher of any section) and `B-90` (the solver read
+closed assignments as live demand).
+
+The original note stands as written:
+
 **P9 — Smart Routine.** After P-writers, because P9 has four unmet prerequisites: no room
 write path (0 rooms in 112 tenants), no routine-creation API, a Ramadan swap that
 `uq_routine_active` structurally forbids, and a routine-editor query selecting a column

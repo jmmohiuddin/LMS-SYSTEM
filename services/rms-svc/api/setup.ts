@@ -78,7 +78,12 @@ interface StepReport {
 
 /* ─────────────────────────────── readiness ──────────────────────────── */
 
-async function readiness(c: Client, yearId: string): Promise<{
+/**
+ * Exported so `generate.ts` enforces the SAME gate the wizard displays.
+ * A second implementation of "is this school ready" would drift, and the
+ * drift would show up as a generation the wizard said was fine.
+ */
+export async function readiness(c: Client, yearId: string): Promise<{
   steps: StepReport[]; canGenerate: boolean; weekend: { days: number[]; managedBy: string };
 }> {
   const steps: StepReport[] = [];

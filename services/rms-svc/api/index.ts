@@ -17,6 +17,7 @@ import editor from './editor.ts';
 import rooms from './rooms.ts';
 import assignments from './assignments.ts';
 import setup from './setup.ts';
+import generate from './generate.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -27,6 +28,8 @@ const ROUTES: Record<string, Handler> = {
   // P9-2. The wizard's readiness check and the three writers that stop
   // bell times, subject demand and teacher availability being SQL-only.
   setup,
+  // P9-3. READY -> GENERATE -> RESULT, orchestrating the existing solver.
+  generate,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

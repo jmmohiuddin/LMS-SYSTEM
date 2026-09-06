@@ -267,8 +267,33 @@ export class RmsSolver {
     this.now = opts.now ?? Date.now;
   }
 
-  async solve(routineId: string, ctx: TenantContext): Promise<SolveResult> {
+  /**
+   * @param opts.alsoBookedAgainst
+   *   Other DRAFT routines whose teachers and rooms are already spoken for.
+   *
+   *   F-506 books against every ACTIVE routine in the year, which was the
+   *   whole story while the only way to get a second shift was to publish it
+   *   first. P9-3 changed that: one press of Generate produces a draft for
+   *   every shift the school runs, and the second solve could not see the
+   *   first — so the morning's last period and the day's first booked the
+   *   same classroom. `scripts/routine-benchmark.mjs` found forty of them in
+   *   an 80-section two-shift school, and the database did not object,
+   *   because the teacher and room exclusion constraints are predicated on
+   *   `routine_status = 'active'` (see `editor.ts:findClash`, which
+   *   compensates for the same gap in manual authoring).
+   *
+   *   Deliberately a parameter and not "every draft in the year". A year
+   *   accumulates abandoned drafts — v1, v2, a rejected experiment — and
+   *   booking against all of them would have the solver believe the school
+   *   is full. Only the caller knows which drafts are meant to run side by
+   *   side, so only the caller may say.
+   */
+  async solve(
+    routineId: string, ctx: TenantContext,
+    opts: { alsoBookedAgainst?: readonly string[] } = {},
+  ): Promise<SolveResult> {
     const startedAt = this.now();
+    const siblings = [...new Set(opts.alsoBookedAgainst ?? [])].filter((id) => id !== routineId);
     return this.db.withTenant(ctx, async (client) => {
       const routine = await this.loadRoutine(client, routineId);
       const teachingDays = this.teachingDays(routine.weekendDays);
@@ -280,7 +305,8 @@ export class RmsSolver {
 
       const sections = await this.loadSections(client, routine.academicYearId, routine.shift);
       const demand = await this.loadDemand(client, routine.academicYearId, routine.shift);
-      const existing = await this.loadExistingSlots(client, routineId, routine.academicYearId);
+      const existing = await this.loadExistingSlots(
+        client, routineId, routine.academicYearId, siblings);
       const unavailability = await this.loadUnavailability(client, [...new Set(demand.map((d) => d.teacherId))]);
 
       // F-506. Bookings are held as TIME INTERVALS per (resource, day), not
@@ -1015,6 +1041,7 @@ export class RmsSolver {
 
   private async loadExistingSlots(
     client: pg.PoolClient, routineId: string, academicYearId: string,
+    siblingRoutineIds: readonly string[] = [],
   ) {
     const { rows } = await client.query<{
       primary_section_id: string;
@@ -1032,6 +1059,12 @@ export class RmsSolver {
       // ACTIVE routine for the same year — which is the other shift. A
       // teacher booked in the morning is not free in the afternoon just
       // because a different routine_id owns that hour.
+      //
+      // `$3` adds the sibling DRAFTS the caller named: the other shifts of
+      // the same generation run, which are not active yet and would
+      // otherwise be invisible. `is_mine` stays keyed to $1 alone, so a
+      // sibling books teachers and rooms without its sections counting
+      // toward our demand.
       `SELECT rs.primary_section_id, rs.subject_id, rs.teacher_id, rs.day_of_week,
               rs.period_no, rs.starts_at, rs.ends_at, rs.room_id, rs.double_group_id,
               (rs.routine_id = $1) AS is_mine
@@ -1039,8 +1072,9 @@ export class RmsSolver {
         WHERE rs.academic_year_id = $2
           AND rs.status = 'active'
           AND rs.slot_kind = 'teaching'
-          AND (rs.routine_id = $1 OR rs.routine_status = 'active')`,
-      [routineId, academicYearId],
+          AND (rs.routine_id = $1 OR rs.routine_status = 'active'
+               OR rs.routine_id = ANY($3::uuid[]))`,
+      [routineId, academicYearId, siblingRoutineIds],
     );
     return rows;
   }

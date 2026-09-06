@@ -4342,6 +4342,490 @@ async function handler8(req, res) {
   }
 }
 
+// services/rms-svc/api/setup.ts
+var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var TIME_RE2 = /^([01]\d|2[0-3]):[0-5]\d$/;
+var SETUP_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var AVAILABILITY_ROLES = [...SETUP_ROLES, "dept_head"];
+var BN_DIGITS4 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn3 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS4[Number(d)]);
+var PERIOD_KINDS = ["teaching", "assembly", "tiffin", "prayer", "games", "study", "break"];
+var AVAILABILITY_KINDS = ["unavailable", "preferred", "admin_duty"];
+var DAY_BN3 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+async function readiness(c, yearId) {
+  const steps = [];
+  const { rows: ten } = await c.query(
+    "SELECT weekend_days FROM tenants WHERE id = app.current_tenant()"
+  );
+  const weekendDays = ten[0]?.weekend_days ?? [5, 6];
+  const teaching = [0, 1, 2, 3, 4, 5, 6].filter((d) => !weekendDays.includes(d));
+  steps.push({
+    id: "workingdays",
+    titleBn: "\u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u0995\u09B0\u09CD\u09AE\u09A6\u09BF\u09AC\u09B8",
+    state: teaching.length > 0 ? "ok" : "blocked",
+    detailBn: teaching.length > 0 ? `\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn3(teaching.length)} \u09A6\u09BF\u09A8 \u0995\u09CD\u09B2\u09BE\u09B8 \u2014 ${teaching.map((d) => DAY_BN3[d]).join(", ")}` : "\u0995\u09CB\u09A8\u09CB \u0995\u09B0\u09CD\u09AE\u09A6\u09BF\u09AC\u09B8 \u09A8\u09C7\u0987 \u2014 shikhonBD-\u098F\u09B0 \u09B8\u0999\u09CD\u0997\u09C7 \u09AF\u09CB\u0997\u09BE\u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8",
+    done: teaching.length,
+    total: 7
+  });
+  const { rows: periods } = await c.query(
+    `SELECT pt.id AS template_id, pt.name_bn,
+            count(*) FILTER (WHERE pd.kind = 'teaching')::text AS teaching_periods,
+            count(*)::text AS total_periods
+       FROM period_templates pt
+       LEFT JOIN period_definitions pd ON pd.template_id = pt.id
+      WHERE pt.is_active
+      GROUP BY pt.id, pt.name_bn
+      ORDER BY pt.name_bn`
+  );
+  const teachingPeriods = periods.reduce((n, r) => n + Number(r.teaching_periods), 0);
+  steps.push({
+    id: "periods",
+    titleBn: "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0993 \u09AC\u09BF\u09B0\u09A4\u09BF",
+    state: teachingPeriods > 0 ? "ok" : "blocked",
+    detailBn: teachingPeriods > 0 ? `\u09AA\u09CD\u09B0\u09A4\u09BF\u09A6\u09BF\u09A8 ${bn3(Number(periods[0]?.teaching_periods ?? 0))}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1` + (periods.length > 1 ? ` \xB7 ${bn3(periods.length)}\u099F\u09BF \u09B6\u09BF\u09AB\u099F` : "") : "\u0995\u09CB\u09A8\u09CB \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE",
+    done: teachingPeriods,
+    total: teachingPeriods || 1
+  });
+  const { rows: struct } = await c.query(
+    `SELECT count(DISTINCT s.class_id)::text AS classes, count(*)::text AS sections
+       FROM sections s WHERE s.academic_year_id = $1`,
+    [yearId]
+  );
+  const sections = Number(struct[0]?.sections ?? 0);
+  steps.push({
+    id: "structure",
+    titleBn: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u0993 \u09B6\u09BE\u0996\u09BE",
+    state: sections > 0 ? "ok" : "blocked",
+    detailBn: sections > 0 ? `${bn3(Number(struct[0].classes))}\u099F\u09BF \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \xB7 ${bn3(sections)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE` : "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE \u09A8\u09C7\u0987",
+    done: sections,
+    total: sections || 1
+  });
+  const { rows: demand } = await c.query(
+    `SELECT count(*)::text AS subjects,
+            count(*) FILTER (WHERE cs.periods_per_week = 0)::text AS zero,
+            COALESCE(sum(cs.periods_per_week), 0)::text AS weekly
+       FROM class_subjects cs
+      WHERE cs.academic_year_id = $1`,
+    [yearId]
+  );
+  const subjects = Number(demand[0]?.subjects ?? 0);
+  const zero = Number(demand[0]?.zero ?? 0);
+  steps.push({
+    id: "demand",
+    titleBn: "\u09AC\u09BF\u09B7\u09AF\u09BC \u0993 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1",
+    state: subjects === 0 ? "blocked" : zero > 0 ? "warn" : "ok",
+    detailBn: subjects === 0 ? "\u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09BF\u09A4 \u09A8\u09C7\u0987" : zero > 0 ? `${bn3(zero)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B6\u09C2\u09A8\u09CD\u09AF \u2014 \u09B8\u09C7\u0997\u09C1\u09B2\u09CB \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0986\u09B8\u09AC\u09C7 \u09A8\u09BE` : `${bn3(subjects)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC \xB7 \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u09AE\u09CB\u099F ${bn3(Number(demand[0].weekly))}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`,
+    done: subjects - zero,
+    total: subjects || 1
+  });
+  const { rows: assign2 } = await c.query(
+    `SELECT (SELECT count(*) FROM sections s
+               JOIN class_subjects cs ON cs.class_id = s.class_id
+                AND cs.academic_year_id = s.academic_year_id
+              WHERE s.academic_year_id = $1)::text AS required,
+            (SELECT count(*) FROM section_subject_teachers sst
+               JOIN sections s ON s.id = sst.section_id
+              WHERE sst.academic_year_id = $1 AND sst.ended_on IS NULL)::text AS assigned`,
+    [yearId]
+  );
+  const required = Number(assign2[0]?.required ?? 0);
+  const assigned = Number(assign2[0]?.assigned ?? 0);
+  steps.push({
+    id: "assignments",
+    titleBn: "\u0995\u09C7 \u0995\u09CB\u09A8 \u09AC\u09BF\u09B7\u09AF\u09BC \u09AA\u09A1\u09BC\u09BE\u09A8",
+    state: required === 0 ? "blocked" : assigned >= required ? "ok" : "blocked",
+    detailBn: required === 0 ? "\u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE\u09B0 \u09AE\u09A4\u09CB \u0995\u09BF\u099B\u09C1 \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u09AC\u09BF\u09B7\u09AF\u09BC \u0993 \u09B6\u09BE\u0996\u09BE \u09A0\u09BF\u0995 \u0995\u09B0\u09C1\u09A8" : assigned >= required ? `${bn3(required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn3(required)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3` : `${bn3(required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn3(assigned)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 ${bn3(required - assigned)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`,
+    done: assigned,
+    total: required || 1
+  });
+  const { rows: avail } = await c.query(
+    `SELECT (SELECT count(DISTINCT sst.teacher_id) FROM section_subject_teachers sst
+              WHERE sst.academic_year_id = $1 AND sst.ended_on IS NULL)::text AS teachers,
+            (SELECT count(DISTINCT ta.teacher_id) FROM teacher_availability ta)::text AS with_rows`,
+    [yearId]
+  );
+  const teacherCount = Number(avail[0]?.teachers ?? 0);
+  const withRows = Number(avail[0]?.with_rows ?? 0);
+  steps.push({
+    id: "availability",
+    titleBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE",
+    state: "warn",
+    detailBn: teacherCount === 0 ? "\u0986\u0997\u09C7 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8" : withRows === 0 ? "\u0995\u09BE\u09B0\u0993 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09B8\u09AC\u09BE\u0987\u0995\u09C7 \u09B8\u09AC \u09B8\u09AE\u09AF\u09BC \u09AB\u09BE\u0981\u0995\u09BE \u09A7\u09B0\u09BE \u09B9\u09AC\u09C7" : `${bn3(teacherCount)} \u099C\u09A8\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn3(withRows)} \u099C\u09A8\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u0986\u099B\u09C7`,
+    done: withRows,
+    total: teacherCount || 1
+  });
+  const { rows: rooms } = await c.query(
+    `SELECT (SELECT count(*) FROM rooms WHERE is_bookable)::text AS rooms,
+            (SELECT count(DISTINCT cap) FROM rooms r,
+                    LATERAL unnest(COALESCE(r.capabilities, '{}')) AS cap
+              WHERE r.is_bookable)::text AS caps,
+            (SELECT count(DISTINCT sub.requires_capability)
+               FROM class_subjects cs JOIN subjects sub ON sub.id = cs.subject_id
+              WHERE cs.academic_year_id = $1
+                AND sub.requires_capability IS NOT NULL)::text AS needed`,
+    [yearId]
+  );
+  const roomCount = Number(rooms[0]?.rooms ?? 0);
+  const needed = Number(rooms[0]?.needed ?? 0);
+  const caps = Number(rooms[0]?.caps ?? 0);
+  steps.push({
+    id: "rooms",
+    titleBn: "\u0995\u0995\u09CD\u09B7 \u0993 \u09B2\u09CD\u09AF\u09BE\u09AC",
+    state: roomCount === 0 ? "blocked" : needed > 0 && caps < needed ? "warn" : "ok",
+    detailBn: roomCount === 0 ? "\u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09A8\u09C7\u0987 \u2014 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB\u09B0 \u099C\u09BE\u09AF\u09BC\u0997\u09BE \u09B2\u09BE\u0997\u09AC\u09C7" : needed > 0 && caps < needed ? `${bn3(roomCount)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \xB7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09B8\u09AC \u09A7\u09B0\u09A8\u09C7\u09B0 \u09B2\u09CD\u09AF\u09BE\u09AC \u09A8\u09C7\u0987` : `${bn3(roomCount)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u0997\u09C7\u099B\u09C7`,
+    done: roomCount,
+    total: roomCount || 1
+  });
+  return {
+    steps,
+    canGenerate: steps.every((s) => s.state !== "blocked"),
+    weekend: { days: weekendDays, managedBy: "platform" }
+  };
+}
+async function periodsStep(c) {
+  const { rows: templates } = await c.query(`SELECT id, name_bn, shift::text AS shift, is_active FROM period_templates
+       ORDER BY is_active DESC, name_bn`);
+  const { rows: defs } = await c.query(`SELECT id, template_id, period_no, label_bn,
+             to_char(starts_at,'HH24:MI') AS starts_at,
+             to_char(ends_at,'HH24:MI') AS ends_at, kind::text AS kind
+        FROM period_definitions ORDER BY template_id, period_no`);
+  return {
+    templates: templates.map((t) => ({
+      id: t.id,
+      nameBn: t.name_bn,
+      shift: t.shift,
+      isActive: t.is_active
+    })),
+    periods: defs.map((d) => ({
+      id: d.id,
+      templateId: d.template_id,
+      periodNo: d.period_no,
+      labelBn: d.label_bn,
+      startsAt: d.starts_at,
+      endsAt: d.ends_at,
+      kind: d.kind
+    })),
+    kinds: PERIOD_KINDS
+  };
+}
+async function demandStep(c, yearId, classId) {
+  const { rows: classes } = await c.query(
+    `SELECT DISTINCT cl.id, cl.name_bn, cl.level_no
+       FROM classes cl JOIN sections s ON s.class_id = cl.id AND s.academic_year_id = $1
+      ORDER BY cl.level_no`,
+    [yearId]
+  );
+  const target = classId ?? classes[0]?.id ?? null;
+  if (!target) return { classes: [], classId: null, rows: [] };
+  const { rows } = await c.query(
+    `SELECT cs.id, cs.subject_id, sub.name_bn, cs.periods_per_week,
+            cs.double_periods_per_week, sub.requires_capability
+       FROM class_subjects cs JOIN subjects sub ON sub.id = cs.subject_id
+      WHERE cs.class_id = $1 AND cs.academic_year_id = $2
+      ORDER BY sub.name_bn`,
+    [target, yearId]
+  );
+  return {
+    classes: classes.map((r) => ({ id: r.id, nameBn: r.name_bn, levelNo: r.level_no })),
+    classId: target,
+    rows: rows.map((r) => ({
+      id: r.id,
+      subjectId: r.subject_id,
+      nameBn: r.name_bn,
+      periodsPerWeek: r.periods_per_week,
+      doublePeriodsPerWeek: r.double_periods_per_week,
+      requiresCapability: r.requires_capability
+    }))
+  };
+}
+async function availabilityStep(c, yearId) {
+  const { rows: teachers } = await c.query(
+    `SELECT DISTINCT u.id, u.full_name_bn AS name_bn
+       FROM section_subject_teachers sst JOIN users u ON u.id = sst.teacher_id
+      WHERE sst.academic_year_id = $1 AND sst.ended_on IS NULL
+      ORDER BY u.full_name_bn`,
+    [yearId]
+  );
+  const { rows } = await c.query(
+    `SELECT id, teacher_id, day_of_week,
+            to_char(starts_at,'HH24:MI') AS starts_at,
+            to_char(ends_at,'HH24:MI') AS ends_at, kind, reason
+       FROM teacher_availability
+      WHERE effective_to IS NULL OR effective_to >= app.today_dhaka()
+      ORDER BY teacher_id, day_of_week, starts_at`
+  );
+  return {
+    teachers: teachers.map((t) => ({ id: t.id, nameBn: t.name_bn })),
+    blocks: rows.map((r) => ({
+      id: r.id,
+      teacherId: r.teacher_id,
+      dayOfWeek: r.day_of_week,
+      startsAt: r.starts_at,
+      endsAt: r.ends_at,
+      kind: r.kind,
+      reason: r.reason
+    })),
+    kinds: AVAILABILITY_KINDS
+  };
+}
+async function savePeriods(c, templateId, list2) {
+  if (!UUID_RE8.test(templateId)) {
+    throw new HttpError(400, "\u09B6\u09BF\u09AB\u099F \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_template", { field: "templateId" });
+  }
+  if (list2.length === 0) {
+    throw new HttpError(400, "\u0985\u09A8\u09CD\u09A4\u09A4 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09BF\u09A8", "no_periods");
+  }
+  if (list2.length > 20) {
+    throw new HttpError(400, `\u098F\u0995\u099F\u09BF \u09B6\u09BF\u09AB\u099F\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn3(20)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`, "too_many_periods");
+  }
+  const clean2 = list2.map((p, i) => {
+    const startsAt = String(p.startsAt ?? "");
+    const endsAt = String(p.endsAt ?? "");
+    const labelBn = String(p.labelBn ?? "").trim();
+    const kind = String(p.kind ?? "teaching");
+    const periodNo = Number(p.periodNo ?? i + 1);
+    if (!TIME_RE2.test(startsAt) || !TIME_RE2.test(endsAt)) {
+      throw new HttpError(
+        400,
+        `${bn3(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC \u09E8\u09EA-\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09AB\u09B0\u09AE\u09CD\u09AF\u09BE\u099F\u09C7 \u09A6\u09BF\u09A8`,
+        "invalid_time",
+        { field: "startsAt", periodNo }
+      );
+    }
+    if (endsAt <= startsAt) {
+      throw new HttpError(
+        400,
+        `${bn3(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 ${startsAt}-\u098F \u09B6\u09C1\u09B0\u09C1 \u09B9\u09AF\u09BC\u09C7 ${endsAt}-\u098F \u09B6\u09C7\u09B7 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE`,
+        "ends_before_start",
+        { field: "endsAt", periodNo }
+      );
+    }
+    if (!labelBn) {
+      throw new HttpError(
+        400,
+        `${bn3(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09A8\u09BE\u09AE \u09A6\u09BF\u09A8`,
+        "invalid_label",
+        { field: "labelBn", periodNo }
+      );
+    }
+    if (!PERIOD_KINDS.includes(kind)) {
+      throw new HttpError(400, "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09A7\u09B0\u09A8 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_kind", { field: "kind" });
+    }
+    return { periodNo, labelBn, startsAt, endsAt, kind };
+  });
+  const sorted = [...clean2].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].startsAt < sorted[i - 1].endsAt) {
+      throw new HttpError(
+        409,
+        `"${sorted[i - 1].labelBn}" (${sorted[i - 1].startsAt}\u2013${sorted[i - 1].endsAt}) \u098F\u09AC\u0982 "${sorted[i].labelBn}" (${sorted[i].startsAt}\u2013${sorted[i].endsAt}) \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09AA\u09A1\u09BC\u099B\u09C7`,
+        "period_overlap",
+        { field: "startsAt" }
+      );
+    }
+  }
+  const nos = new Set(clean2.map((p) => p.periodNo));
+  if (nos.size !== clean2.length) {
+    throw new HttpError(409, "\u098F\u0995\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A8\u09AE\u09CD\u09AC\u09B0 \u09A6\u09C1\u0987\u09AC\u09BE\u09B0 \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7", "duplicate_period_no");
+  }
+  const { rows: owned } = await c.query(
+    "SELECT 1 FROM period_templates WHERE id = $1",
+    [templateId]
+  );
+  if (!owned[0]) throw new HttpError(404, "\u09B6\u09BF\u09AB\u099F\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "template_not_found");
+  await c.query("DELETE FROM period_definitions WHERE template_id = $1", [templateId]);
+  for (const p of clean2) {
+    await c.query(
+      `INSERT INTO period_definitions
+         (tenant_id, template_id, period_no, label_bn, starts_at, ends_at, kind)
+       VALUES (app.current_tenant(), $1, $2, $3, $4::time, $5::time, $6::period_kind)`,
+      [templateId, p.periodNo, p.labelBn, p.startsAt, p.endsAt, p.kind]
+    );
+  }
+  return { periods: clean2.length, teaching: clean2.filter((p) => p.kind === "teaching").length };
+}
+async function saveDemand(c, yearId, list2) {
+  if (list2.length === 0) throw new HttpError(400, "\u0995\u09CB\u09A8\u09CB \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF", "no_changes");
+  if (list2.length > 200) {
+    throw new HttpError(400, `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn3(200)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC`, "too_many_rows");
+  }
+  let changed = 0;
+  for (const row of list2) {
+    const id = String(row.id ?? "");
+    if (!UUID_RE8.test(id)) {
+      throw new HttpError(400, "\u09AC\u09BF\u09B7\u09AF\u09BC \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_row", { field: "id" });
+    }
+    const perWeek = Number(row.periodsPerWeek);
+    const doubles = Number(row.doublePeriodsPerWeek ?? 0);
+    if (!Number.isInteger(perWeek) || perWeek < 0 || perWeek > 20) {
+      throw new HttpError(
+        400,
+        `\u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09E6 \u09A5\u09C7\u0995\u09C7 ${bn3(20)}-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8`,
+        "invalid_periods",
+        { field: "periodsPerWeek" }
+      );
+    }
+    if (!Number.isInteger(doubles) || doubles < 0) {
+      throw new HttpError(
+        400,
+        "\u09A1\u09BE\u09AC\u09B2 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098B\u09A3\u09BE\u09A4\u09CD\u09AE\u0995 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE",
+        "invalid_doubles",
+        { field: "doublePeriodsPerWeek" }
+      );
+    }
+    if (doubles * 2 > perWeek) {
+      throw new HttpError(
+        409,
+        `${bn3(doubles)}\u099F\u09BF \u09A1\u09BE\u09AC\u09B2 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0985\u09A8\u09CD\u09A4\u09A4 ${bn3(doubles * 2)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B2\u09BE\u0997\u09AC\u09C7`,
+        "doubles_exceed_week",
+        { field: "doublePeriodsPerWeek" }
+      );
+    }
+    const { rowCount } = await c.query(
+      `UPDATE class_subjects SET periods_per_week = $2, double_periods_per_week = $3
+        WHERE id = $1 AND academic_year_id = $4`,
+      [id, perWeek, doubles, yearId]
+    );
+    if (rowCount === 0) {
+      throw new HttpError(404, "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u09AC\u09BF\u09B7\u09AF\u09BC\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "row_not_in_year");
+    }
+    changed += 1;
+  }
+  return { changed };
+}
+async function addAvailability(c, b) {
+  const teacherId = String(b.teacherId ?? "");
+  if (!UUID_RE8.test(teacherId)) {
+    throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_teacher", { field: "teacherId" });
+  }
+  const day2 = Number(b.dayOfWeek);
+  if (!Number.isInteger(day2) || day2 < 0 || day2 > 6) {
+    throw new HttpError(400, "\u09A6\u09BF\u09A8 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_day", { field: "dayOfWeek" });
+  }
+  const startsAt = String(b.startsAt ?? "");
+  const endsAt = String(b.endsAt ?? "");
+  if (!TIME_RE2.test(startsAt) || !TIME_RE2.test(endsAt)) {
+    throw new HttpError(400, "\u09B8\u09AE\u09AF\u09BC \u09E8\u09EA-\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09AB\u09B0\u09AE\u09CD\u09AF\u09BE\u099F\u09C7 \u09A6\u09BF\u09A8", "invalid_time", { field: "startsAt" });
+  }
+  if (endsAt <= startsAt) {
+    throw new HttpError(
+      400,
+      `${DAY_BN3[day2]}\u09AC\u09BE\u09B0\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC\u099F\u09BF \u09B6\u09C1\u09B0\u09C1\u09B0 \u0986\u0997\u09C7\u0987 \u09B6\u09C7\u09B7 \u09B9\u099A\u09CD\u099B\u09C7`,
+      "ends_before_start",
+      { field: "endsAt" }
+    );
+  }
+  const kind = String(b.kind ?? "unavailable");
+  if (!AVAILABILITY_KINDS.includes(kind)) {
+    throw new HttpError(400, "\u09A7\u09B0\u09A8 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_kind", { field: "kind" });
+  }
+  const { rows: t } = await c.query(
+    "SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL",
+    [teacherId]
+  );
+  if (!t[0]) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "teacher_not_found");
+  const { rows } = await c.query(
+    `INSERT INTO teacher_availability
+       (tenant_id, teacher_id, day_of_week, starts_at, ends_at, time_range, kind, reason)
+     VALUES (app.current_tenant(), $1, $2, $3::time, $4::time,
+             timerange($3::time, $4::time), $5, NULLIF($6,''))
+     RETURNING id`,
+    [teacherId, day2, startsAt, endsAt, kind, (b.reason ?? "").trim()]
+  );
+  return { id: rows[0].id };
+}
+async function removeAvailability(c, id) {
+  if (!UUID_RE8.test(id)) {
+    throw new HttpError(400, "\u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_id", { field: "id" });
+  }
+  const { rowCount } = await c.query("DELETE FROM teacher_availability WHERE id = $1", [id]);
+  if (rowCount === 0) throw new HttpError(404, "\u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "not_found");
+  return { removed: 1 };
+}
+async function handler9(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const url = new URL(req.url ?? "/", "http://internal");
+    const step = url.searchParams.get("step") ?? "";
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      requireRole(claims, AVAILABILITY_ROLES);
+      const yearId = url.searchParams.get("yearId") ?? "";
+      if (!UUID_RE8.test(yearId)) {
+        throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
+      }
+      const classId = url.searchParams.get("classId");
+      if (classId && !UUID_RE8.test(classId)) {
+        throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_class", { field: "classId" });
+      }
+      const out = await db.withTenant(ctx, async (raw) => {
+        const c = raw;
+        if (step === "periods") return periodsStep(c);
+        if (step === "demand") return demandStep(c, yearId, classId);
+        if (step === "availability") return availabilityStep(c, yearId);
+        return readiness(c, yearId);
+      });
+      json(res, 200, out, cors);
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      const which = String(body.step ?? "");
+      requireRole(claims, which === "availability" ? AVAILABILITY_ROLES : SETUP_ROLES);
+      const write = (fn) => db.withTenant(ctx, (c) => fn(c), { write: true });
+      if (which === "periods") {
+        json(res, 200, await write((c) => savePeriods(
+          c,
+          String(body.templateId ?? ""),
+          body.periods ?? []
+        )), cors);
+        return;
+      }
+      if (which === "demand") {
+        const yearId = String(body.yearId ?? "");
+        if (!UUID_RE8.test(yearId)) {
+          throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
+        }
+        json(res, 200, await write((c) => saveDemand(
+          c,
+          yearId,
+          body.rows ?? []
+        )), cors);
+        return;
+      }
+      if (which === "availability") {
+        if (body.remove) {
+          json(res, 200, await write((c) => removeAvailability(c, String(body.remove))), cors);
+          return;
+        }
+        json(res, 200, await write((c) => addAvailability(c, body)), cors);
+        return;
+      }
+      throw new HttpError(
+        400,
+        "step must be 'periods', 'demand' or 'availability'",
+        "invalid_step",
+        { field: "step" }
+      );
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    console.error("[rms/setup]", err);
+    json(res, 500, { error: "internal_error", message: "\u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF" }, cors);
+  }
+}
+
 // services/rms-svc/api/index.ts
 var ROUTES = {
   routine: handler,
@@ -4352,9 +4836,12 @@ var ROUTES = {
   editor: handler6,
   rooms: handler7,
   // P9-1. The one solver input no school could supply.
-  assignments: handler8
+  assignments: handler8,
+  // P9-2. The wizard's readiness check and the three writers that stop
+  // bell times, subject demand and teacher availability being SQL-only.
+  setup: handler9
 };
-async function handler9(req, res) {
+async function handler10(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -4369,5 +4856,5 @@ async function handler9(req, res) {
   return route(req, res);
 }
 export {
-  handler9 as default
+  handler10 as default
 };

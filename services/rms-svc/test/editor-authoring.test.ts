@@ -108,14 +108,25 @@ async function seed(): Promise<void> {
     await c.query(
       `INSERT INTO period_templates (id, tenant_id, name_bn, shift, effective_from, is_active)
        VALUES ($1,$2,'নিয়মিত ঘণ্টা','single','2026-01-01',true)`, [TPL, T]);
-    // Periods 1 and 2 OVERLAP deliberately (09:00-10:00 and 09:30-10:30), so a
-    // clash is reachable. Period 3 is a break, period 4 is clear.
+    // A REAL bell schedule: consecutive, non-overlapping.
+    //
+    // Periods 1 and 2 used to overlap on purpose (09:00-10:00 and
+    // 09:30-10:30) so that a clash was reachable. P9-2's
+    // `pd_no_overlap_within_template` (migration 073) now refuses that, and
+    // rightly: a school cannot ring period 1 and period 2 at overlapping
+    // times in one shift, so the fixture was reaching its clash through a
+    // state no school can be in.
+    //
+    // The clashes below are reachable without it, and more directly — "the
+    // same section twice in one hour" IS the same period. Placing twice into
+    // period 1 collides on the identical time range, which is exactly what
+    // the three GiST constraints exist to catch.
     await c.query(
       `INSERT INTO period_definitions (tenant_id, template_id, period_no, label_bn, starts_at, ends_at, kind) VALUES
          ($1,$2,1,'১ম','09:00','10:00','teaching'),
-         ($1,$2,2,'২য়','09:30','10:30','teaching'),
-         ($1,$2,3,'টিফিন','10:30','11:00','tiffin'),
-         ($1,$2,4,'৩য়','11:00','12:00','teaching')`,
+         ($1,$2,2,'২য়','10:00','11:00','teaching'),
+         ($1,$2,3,'টিফিন','11:00','11:30','tiffin'),
+         ($1,$2,4,'৩য়','11:30','12:30','teaching')`,
       [T, TPL]);
   });
 
@@ -207,8 +218,10 @@ describe('A4 — routine authoring', { skip }, () => {
 
   describe('the database refuses the three clashes, and the API names them', () => {
     test('SECTION clash — the same section, twice in one hour', async () => {
+      // The SAME period as the placement above: one hour, one section, two
+      // lessons. No overlapping bell schedule needed to reach it.
       const r = await post({
-        action: 'place', routineId, sectionId: SEC_A, dayOfWeek: 0, periodNo: 2,
+        action: 'place', routineId, sectionId: SEC_A, dayOfWeek: 0, periodNo: 1,
         subjectId: MATHS, teacherId: TEACH_A,
       });
       assert.equal(r.status, 409, JSON.stringify(r.body));
@@ -221,7 +234,7 @@ describe('A4 — routine authoring', { skip }, () => {
 
     test('TEACHER clash — one teacher, two sections, one hour', async () => {
       const r = await post({
-        action: 'place', routineId, sectionId: SEC_B, dayOfWeek: 0, periodNo: 2,
+        action: 'place', routineId, sectionId: SEC_B, dayOfWeek: 0, periodNo: 1,
         subjectId: BANGLA, teacherId: TEACH_A,
       });
       assert.equal(r.status, 409, JSON.stringify(r.body));
@@ -234,7 +247,7 @@ describe('A4 — routine authoring', { skip }, () => {
     test('ROOM clash — one room, two sections, one hour', async () => {
       // Salma teaches maths in section খ, so this is not a teacher clash.
       const r = await post({
-        action: 'place', routineId, sectionId: SEC_B, dayOfWeek: 0, periodNo: 2,
+        action: 'place', routineId, sectionId: SEC_B, dayOfWeek: 0, periodNo: 1,
         subjectId: MATHS, teacherId: TEACH_B, roomId: ROOM,
       });
       assert.equal(r.status, 409, JSON.stringify(r.body));

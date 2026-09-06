@@ -28,6 +28,7 @@ import { SubstituteView } from './substitute-view.ts';
 import { ExamRoutineView } from './exam-routine-view.ts';
 import { RoutineEditorView } from './routine-editor-view.ts';
 import { TeachingAssignmentsView } from './teaching-assignments-view.ts';
+import { RoutineSetupView } from './routine-setup-view.ts';
 import { SubjectChoiceView } from './subject-choice-view.ts';
 import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
@@ -248,6 +249,7 @@ const CARD = {
   staffAtt:   { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন — বদলি শিক্ষক খোঁজায় লাগে' },
   rooms:      { path: 'rooms',      glyph: 'layers',       titleBn: 'কক্ষ ব্যবস্থাপনা',   subtitleBn: 'শ্রেণিকক্ষ ও ল্যাব — রুটিনে লাগে' },
   teachAssign:{ path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
+  routineSetup:{ path: 'routinesetup', glyph: 'check-square', titleBn: 'রুটিন তৈরির প্রস্তুতি', subtitleBn: 'কী কী বাকি আছে — এক নজরে' },
   feeSetup:   { path: 'feestructures', glyph: 'percent',    titleBn: 'ফি নির্ধারণ',        subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
   exams:      { path: 'exams',      glyph: 'clipboard',    titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
   rollover:   { path: 'rollover',   glyph: 'repeat',       titleBn: 'বার্ষিক উন্নয়ন',      subtitleBn: 'পরবর্তী শিক্ষাবর্ষে উন্নীতকরণ' },
@@ -581,6 +583,7 @@ async function main() {
               { path: 'fees', glyph: 'wallet', titleBn: 'বেতন ও ফি', subtitleBn: 'ইনভয়েস, মওকুফ ও ডিজিটাল রসিদ' },
               { path: 'staffattendance', glyph: 'check-square', titleBn: 'শিক্ষক হাজিরা', subtitleBn: 'কে এসেছেন, কে আসেননি' },
               { path: 'rooms', glyph: 'layers', titleBn: 'কক্ষ ব্যবস্থাপনা', subtitleBn: 'শ্রেণিকক্ষ, ল্যাব ও ধারণক্ষমতা' },
+              { path: 'routinesetup', glyph: 'check-square', titleBn: 'রুটিন তৈরির প্রস্তুতি', subtitleBn: 'কী কী বাকি আছে — এক নজরে' },
               { path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
               { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
               { path: 'exams', glyph: 'clipboard', titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
@@ -853,6 +856,21 @@ async function main() {
         hidden: true,
         mount: (container) => {
           new TeachingAssignmentsView({ root: container, doc: document, auth });
+        },
+      },
+      {
+        // P9-2. The checklist that decides whether a routine can be generated
+        // at all, and the only screen for bell times, subject demand and
+        // teacher availability — three inputs that were SQL-only before it.
+        path: 'routinesetup',
+        labelBn: 'রুটিন তৈরির প্রস্তুতি',
+        glyph: 'check-square',
+        hidden: true,
+        mount: (container) => {
+          new RoutineSetupView({
+            root: container, doc: document, auth,
+            onNavigate: (path) => { location.hash = `#/${path}`; },
+          });
         },
       },
       {

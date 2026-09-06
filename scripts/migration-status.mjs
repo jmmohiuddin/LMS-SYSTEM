@@ -176,6 +176,10 @@ const SENTINELS = [
   // UPDATE would still let anyone erase the record of who taught a class,
   // and this is a history table (B-89).
   ['072_teaching_assignment_scope',    'policy',        'sst_delete_scope'],
+  // The EXCLUDE constraint, not one of the six policies: a half-applied 073
+  // that left the scopes would still allow a bell schedule whose periods
+  // overlap, which makes a timetable unfillable for reasons nobody can see.
+  ['073_routine_input_scope',          'constraint',    'pd_no_overlap_within_template'],
 ];
 
 /**

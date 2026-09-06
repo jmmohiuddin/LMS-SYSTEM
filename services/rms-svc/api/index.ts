@@ -16,6 +16,7 @@ import editor from './editor.ts';
 // P0. The room register — nothing in the product could write `rooms` until now.
 import rooms from './rooms.ts';
 import assignments from './assignments.ts';
+import setup from './setup.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -23,6 +24,9 @@ const ROUTES: Record<string, Handler> = {
   routine, solve, substitute, examroutine, generation, editor, rooms,
   // P9-1. The one solver input no school could supply.
   assignments,
+  // P9-2. The wizard's readiness check and the three writers that stop
+  // bell times, subject demand and teacher availability being SQL-only.
+  setup,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

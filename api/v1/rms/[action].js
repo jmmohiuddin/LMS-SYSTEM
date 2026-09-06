@@ -2280,7 +2280,24 @@ var RmsSolver = class {
          JOIN subjects sub ON sub.id = sst.subject_id
          JOIN class_subjects cs ON cs.class_id = s.class_id
           AND cs.subject_id = sst.subject_id AND cs.academic_year_id = sst.academic_year_id
-        WHERE sst.academic_year_id = $1 AND s.shift = $2`,
+        WHERE sst.academic_year_id = $1 AND s.shift = $2
+          -- CURRENT assignments only. section_subject_teachers is a HISTORY
+          -- table: reassigning a subject closes one row and opens another, so
+          -- last term's teacher is still there with ended_on set. Without
+          -- this the solver reads every assignment the school has ever made
+          -- and places periods_per_week once per historical teacher -- a
+          -- routine with three Bangla periods for every year the subject has
+          -- changed hands.
+          --
+          -- (No backticks in this comment on purpose: it lives inside a JS
+          -- template literal, and a backtick here ends the string. Same
+          -- mistake as A4's editor.ts.)
+          --
+          -- Invisible until P9-0 gave the table a DELETE ban (migration 072)
+          -- and the fixtures had to start closing rows rather than deleting
+          -- them. Before that nothing in this repository had ever produced a
+          -- closed row, so the filter had never been needed.
+          AND sst.ended_on IS NULL`,
       [academicYearId, shift]
     );
     return rows.map((r) => ({
@@ -4089,9 +4106,254 @@ async function update(db, ctx, req) {
   }, { write: true });
 }
 
-// services/rms-svc/api/index.ts
-var ROUTES = { routine: handler, solve: handler2, substitute: handler3, examroutine: handler4, generation: handler5, editor: handler6, rooms: handler7 };
+// services/rms-svc/api/assignments.ts
+var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var ASSIGN_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var MAX_CHANGES = 500;
+async function loadGrid2(c, yearId, classId) {
+  const { rows: classes } = await c.query(
+    `SELECT DISTINCT cl.id, cl.name_bn, cl.level_no
+       FROM classes cl
+       JOIN sections s ON s.class_id = cl.id AND s.academic_year_id = $1
+      ORDER BY cl.level_no`,
+    [yearId]
+  );
+  const target = classId ?? classes[0]?.id ?? null;
+  if (!target) {
+    return { classes: [], classId: null, sections: [], subjects: [], teachers: [], cells: [] };
+  }
+  const { rows: sections } = await c.query(
+    `SELECT id, name, shift::text AS shift FROM sections
+      WHERE class_id = $1 AND academic_year_id = $2 ORDER BY name`,
+    [target, yearId]
+  );
+  const { rows: subjects } = await c.query(
+    `SELECT sub.id, sub.name_bn, cs.periods_per_week, cs.double_periods_per_week,
+            sub.requires_capability
+       FROM class_subjects cs
+       JOIN subjects sub ON sub.id = cs.subject_id
+      WHERE cs.class_id = $1 AND cs.academic_year_id = $2
+      ORDER BY sub.name_bn`,
+    [target, yearId]
+  );
+  const { rows: teachers } = await c.query(
+    `SELECT u.id, u.full_name_bn AS name_bn, sp.employee_code,
+            COALESCE(array_agg(DISTINCT tc.subject_id)
+                     FILTER (WHERE tc.subject_id IS NOT NULL), '{}') AS subject_ids
+       FROM users u
+       JOIN staff_profiles sp ON sp.user_id = u.id
+       JOIN user_roles r ON r.user_id = u.id AND r.tenant_id = u.tenant_id
+       LEFT JOIN teacher_competencies tc ON tc.teacher_id = u.id
+      WHERE u.deleted_at IS NULL AND u.status <> 'left'
+        AND r.role_code IN ('subject_teacher','class_teacher','dept_head',
+                            'academic_coordinator','principal')
+      GROUP BY u.id, u.full_name_bn, sp.employee_code
+      ORDER BY u.full_name_bn`
+  );
+  const { rows: cells } = await c.query(
+    `SELECT sst.section_id, sst.subject_id, sst.teacher_id, u.full_name_bn AS teacher_bn
+       FROM section_subject_teachers sst
+       JOIN sections s ON s.id = sst.section_id
+       JOIN users u ON u.id = sst.teacher_id
+      WHERE s.class_id = $1 AND sst.academic_year_id = $2 AND sst.ended_on IS NULL`,
+    [target, yearId]
+  );
+  return {
+    classes: classes.map((r) => ({ id: r.id, nameBn: r.name_bn, levelNo: r.level_no })),
+    classId: target,
+    sections: sections.map((r) => ({ id: r.id, name: r.name, shift: r.shift })),
+    subjects: subjects.map((r) => ({
+      id: r.id,
+      nameBn: r.name_bn,
+      periodsPerWeek: r.periods_per_week,
+      doublePeriodsPerWeek: r.double_periods_per_week,
+      requiresCapability: r.requires_capability
+    })),
+    teachers: teachers.map((r) => ({
+      id: r.id,
+      nameBn: r.name_bn,
+      employeeCode: r.employee_code,
+      teaches: r.subject_ids
+    })),
+    cells: cells.map((r) => ({
+      sectionId: r.section_id,
+      subjectId: r.subject_id,
+      teacherId: r.teacher_id,
+      teacherBn: r.teacher_bn
+    })),
+    // What the wizard's step indicator reads. Computed here rather than in
+    // the browser so "you are 340 of 800 done" cannot drift from the truth.
+    progress: {
+      required: sections.length * subjects.length,
+      assigned: cells.length
+    }
+  };
+}
+async function applyChanges(c, ctx, yearId, changes) {
+  let opened = 0;
+  let closed = 0;
+  let unchanged = 0;
+  for (const raw of changes) {
+    const sectionId = String(raw.sectionId ?? "");
+    const subjectId = String(raw.subjectId ?? "");
+    const teacherId = raw.teacherId == null ? null : String(raw.teacherId);
+    if (!UUID_RE7.test(sectionId)) {
+      throw new HttpError(400, "\u09B8\u09C7\u0995\u09B6\u09A8 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_section", { field: "sectionId" });
+    }
+    if (!UUID_RE7.test(subjectId)) {
+      throw new HttpError(400, "\u09AC\u09BF\u09B7\u09AF\u09BC \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_subject", { field: "subjectId" });
+    }
+    if (teacherId !== null && !UUID_RE7.test(teacherId)) {
+      throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_teacher", { field: "teacherId" });
+    }
+    const { rows: sec } = await c.query(
+      `SELECT class_id FROM sections WHERE id = $1 AND academic_year_id = $2`,
+      [sectionId, yearId]
+    );
+    if (!sec[0]) {
+      throw new HttpError(404, "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u09B8\u09C7\u0995\u09B6\u09A8\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "section_not_in_year");
+    }
+    const { rows: studies } = await c.query(
+      `SELECT 1 FROM class_subjects
+        WHERE class_id = $1 AND subject_id = $2 AND academic_year_id = $3`,
+      [sec[0].class_id, subjectId, yearId]
+    );
+    if (!studies[0]) {
+      throw new HttpError(
+        409,
+        "\u098F\u0987 \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09A4\u09C7 \u09AC\u09BF\u09B7\u09AF\u09BC\u099F\u09BF \u09AA\u09A1\u09BC\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC \u09A8\u09BE",
+        "subject_not_in_class",
+        { field: "subjectId" }
+      );
+    }
+    if (teacherId !== null) {
+      const { rows: t } = await c.query(
+        `SELECT 1 FROM users u JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.id = $1 AND u.deleted_at IS NULL`,
+        [teacherId]
+      );
+      if (!t[0]) {
+        throw new HttpError(
+          404,
+          "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+          "teacher_not_found",
+          { field: "teacherId" }
+        );
+      }
+    }
+    const { rows: current } = await c.query(
+      `SELECT id, teacher_id FROM section_subject_teachers
+        WHERE section_id = $1 AND subject_id = $2 AND academic_year_id = $3
+          AND ended_on IS NULL
+        FOR UPDATE`,
+      [sectionId, subjectId, yearId]
+    );
+    if (current[0] && current[0].teacher_id === teacherId) {
+      unchanged += 1;
+      continue;
+    }
+    if (current[0]) {
+      await c.query(
+        `UPDATE section_subject_teachers
+            SET ended_on = GREATEST(started_on, app.today_dhaka()),
+                end_reason = 'reassigned'
+          WHERE id = $1`,
+        [current[0].id]
+      );
+      closed += 1;
+    }
+    if (teacherId !== null) {
+      await c.query(
+        `INSERT INTO section_subject_teachers
+           (tenant_id, section_id, subject_id, teacher_id, academic_year_id,
+            started_on, assigned_by)
+         VALUES (app.current_tenant(), $1, $2, $3, $4, app.today_dhaka(), $5)`,
+        [sectionId, subjectId, teacherId, yearId, ctx.userId]
+      );
+      opened += 1;
+    }
+  }
+  return { opened, closed, unchanged };
+}
 async function handler8(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, ASSIGN_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const url = new URL(req.url ?? "/", "http://internal");
+    if (req.method === "GET") {
+      const yearId = url.searchParams.get("yearId") ?? "";
+      if (!UUID_RE7.test(yearId)) {
+        throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
+      }
+      const classId = url.searchParams.get("classId");
+      if (classId && !UUID_RE7.test(classId)) {
+        throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09B8\u09A0\u09BF\u0995 \u09A8\u09AF\u09BC", "invalid_class", { field: "classId" });
+      }
+      json(
+        res,
+        200,
+        await db.withTenant(ctx, (c) => loadGrid2(c, yearId, classId)),
+        cors
+      );
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      const yearId = String(body.yearId ?? "");
+      if (!UUID_RE7.test(yearId)) {
+        throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
+      }
+      const changes = Array.isArray(body.changes) ? body.changes : [];
+      if (changes.length === 0) {
+        throw new HttpError(400, "\u0995\u09CB\u09A8\u09CB \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF", "no_changes");
+      }
+      if (changes.length > MAX_CHANGES) {
+        throw new HttpError(
+          400,
+          `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${MAX_CHANGES}\u099F\u09BF \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC`,
+          "too_many_changes"
+        );
+      }
+      const result = await db.withTenant(
+        ctx,
+        (c) => applyChanges(c, ctx, yearId, changes),
+        { write: true }
+      );
+      json(res, 200, result, cors);
+      return;
+    }
+    json(res, 405, { error: "method_not_allowed" }, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    console.error("[rms/assignments]", err);
+    json(res, 500, { error: "internal_error", message: "\u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09A3 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF" }, cors);
+  }
+}
+
+// services/rms-svc/api/index.ts
+var ROUTES = {
+  routine: handler,
+  solve: handler2,
+  substitute: handler3,
+  examroutine: handler4,
+  generation: handler5,
+  editor: handler6,
+  rooms: handler7,
+  // P9-1. The one solver input no school could supply.
+  assignments: handler8
+};
+async function handler9(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -4106,5 +4368,5 @@ async function handler8(req, res) {
   return route(req, res);
 }
 export {
-  handler8 as default
+  handler9 as default
 };

@@ -1038,6 +1038,43 @@ offline devices could queue two publications that are each valid alone and
 together are not. The action is disabled without a connection, with that
 reason in a sentence; the review itself still reads.
 
+**Replacing a live routine (B-108, closed after P9-7).**
+`POST /api/v1/rms/generate { yearId, baseline?: 'inputs' | 'current' }`.
+
+The solver's busy-set exempts the ACTIVE routine for the SAME shift — the
+version being replaced, unique by `uq_routine_active`. Other shifts still
+compete, and sibling drafts named by the caller still compete; only the
+predecessor is exempt. Before this the solver counted the outgoing timetable's
+teachers and rooms as taken and a replacement came back a fraction of the
+original (560 → 193 on a 20-section school).
+
+`baseline: 'current'` copies the live routine into the new draft — pinned
+slots included — marks it `generated_by = 'copied'`, and lets the same solver
+top up whatever the copy left short. It is refused when the bell schedule has
+changed, because a copied slot's `period_definition_id` would then belong to
+the old template. `'inputs'` is the default and is exactly what this endpoint
+always did.
+
+Publishing a replacement demotes the predecessor to `superseded` and promotes
+the new one in ONE transaction, writing `supersedes_id`. The order is forced
+by the unique index; the single transaction is what stops a failure between
+them leaving a school with no live timetable at all. `supersedes_id` and the
+`superseded` status had existed since migration 006 and had never been written
+by anything.
+
+**Measured:** a replacement places exactly what a first generation places at
+20 / 40 / 80 / 120 sections; the clone path runs 7.4×–11× faster because the
+solver meets a routine that is already full.
+
+**Bangla numerals (B-108 §16).** `--font-bn-num` was declared in `app.css`
+with its rationale and referenced zero times, so every Bangla digit rendered
+in Hind Siliguri — where ১ is close enough to ৮ at UI sizes that "১০:৪৫" reads
+as "৮০:৪৫" and "১২,৫০০.৭৫" as "৮২,৫০০.৭৫". A token could not have fixed it:
+digits arrive inside sentences, not as elements, so the split is per character
+via `@font-face` + `unicode-range: U+09E6-09EF`, sourced from `local()` only
+(no download, no precache risk) and naming each platform's own Bangla face.
+Measured: digits 186.76 → 218.41 px, letters unchanged at 101.67 px.
+
 **The demo is its own bundle (B-109, closed in P9-7).** `demo.ts` was 94.1 kB
 minified inside `app.js` — the largest module there, 10.7% of a bundle
 budgeted at 180 KB gzipped for a phone on 2G. It is now

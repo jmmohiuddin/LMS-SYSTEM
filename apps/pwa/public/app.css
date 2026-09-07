@@ -168,13 +168,22 @@
   /* Override 1 — Inter named for Latin, Hind Siliguri primary for Bangla.
      Design system uses these; still not self-hosted for the SW-precache
      reason in the header. Google Fonts loaded via index.html <link>. */
-  --font-heading: 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'ShikhonBnNum', 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-heading-weight: 700;
-  --font-body: 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-bn: 'Hind Siliguri', 'Noto Sans Bengali', 'SolaimanLipi', sans-serif;
+  --font-body: 'ShikhonBnNum', 'Inter', 'Hind Siliguri', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-bn: 'ShikhonBnNum', 'Hind Siliguri', 'Noto Sans Bengali', 'SolaimanLipi', sans-serif;
   /* Numerals only. Hind Siliguri's Bangla digits are ambiguous with
      Latin I/l at table-row sizes — the wrong ambiguity for a ledger
-     balance or a mark. Letters stay on Hind Siliguri. */
+     balance or a mark. Letters stay on Hind Siliguri.
+
+     This token was declared here and used by NOTHING — `var(--font-bn-num)`
+     appeared zero times in this stylesheet — so every ০-৯ in the product
+     rendered in Hind Siliguri, which is the state it exists to prevent.
+     It could not have been fixed by applying it, either: digits arrive
+     inside sentences, not as elements, so the split has to be per character.
+     `@font-face ShikhonBnNum` below does that with `unicode-range`, and is
+     named first in the three stacks above. This token is kept for a rule
+     that wants the numeric face on a whole element — a ledger column. */
   --font-bn-num: 'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
 
   /* ── Semantic aliases ──────────────────────────────────────────────────
@@ -366,6 +375,41 @@ body {
   /* Override 2 — no tracking. Positive letter-spacing visually severs
      Bangla conjuncts and negative destroys them. */
   letter-spacing: normal;
+}
+
+/* ── Bangla digits, and only Bangla digits ───────────────────────────────
+   U+09E6–U+09EF is ০ through ৯. Named FIRST in --font-body, --font-bn and
+   --font-heading, so a digit anywhere in the product takes this face and
+   every letter around it stays on Hind Siliguri.
+
+   `local()` only: the header of this file rules out self-hosted webfonts
+   after one 404'd and broke the service-worker install, and the precache
+   list already states that Bangla renders from the device's own Noto. This
+   adds no request, no bytes and no precache risk. On a device without Noto
+   Sans Bengali the digits fall through to Hind Siliguri — today's rendering,
+   so the worst case of this rule is no change at all.
+
+   No font-weight descriptor, deliberately: one face answers every weight and
+   the browser synthesises bold, which is correct for ten digits and avoids
+   four local() lookups that would each fail differently across platforms. */
+@font-face {
+  font-family: 'ShikhonBnNum';
+  /* Every platform's own Bangla face, best first. The token above named
+     only Noto, which is true of Android and NOT of Windows — measured:
+     `local('Noto Sans Bengali')` does not match there at all, and what a
+     Windows browser actually falls back to is Nirmala UI. A one-name list
+     would have fixed the target device and silently left every desk
+     unfixed. If none match, the digit falls through to Hind Siliguri and
+     the screen is what it is today. */
+  src: local('Noto Sans Bengali'),        /* Android, ChromeOS, most Linux */
+       local('NotoSansBengali-Regular'),
+       local('Nirmala UI'),               /* Windows */
+       local('Kohinoor Bangla'),          /* macOS, iOS */
+       local('Bangla MN'),
+       local('Kalpurush'),                /* commonly installed in BD */
+       local('SolaimanLipi');
+  unicode-range: U+09E6-09EF;
+  font-display: swap;
 }
 
 /* Bangla renders from the device system font, always (Wireframe §1). */

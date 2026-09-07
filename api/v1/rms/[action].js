@@ -1824,7 +1824,8 @@ var RmsSolver = class {
         client,
         routineId,
         routine.academicYearId,
-        siblings
+        siblings,
+        routine.shift
       );
       const unavailability = await this.loadUnavailability(client, [...new Set(demand.map((d) => d.teacherId))]);
       const teacherBusy = new IntervalBook();
@@ -2158,8 +2159,16 @@ var RmsSolver = class {
       const solverRunId = randomUUID();
       const solverSeconds = Math.round((this.now() - startedAt) / 1e3 * 100) / 100;
       await client.query(
+        // B-108. 'copied' survives a top-up. A replacement draft is copied
+        // FROM the live routine and then filled in by this solver, and of the
+        // two facts the copy is the one a reader cannot recover elsewhere —
+        // `solver_run_id` and `solver_seconds` below already record that the
+        // solver ran. Overwriting it lost the only trace of where 560 lessons
+        // a coordinator had not authored came from.
         `UPDATE routines
-            SET generated_by = 'solver', solver_run_id = $2, solver_seconds = $3,
+            SET generated_by = CASE WHEN generated_by = 'copied' THEN 'copied'
+                                    ELSE 'solver' END,
+                solver_run_id = $2, solver_seconds = $3,
                 objective_score = $4, soft_violations = $5::jsonb, updated_at = now()
           WHERE id = $1`,
         // Both lists are persisted, because §8.2 is a screen a coordinator
@@ -2469,12 +2478,34 @@ var RmsSolver = class {
       requiresCapability: r.requires_capability
     }));
   }
-  async loadExistingSlots(client, routineId, academicYearId, siblingRoutineIds = []) {
+  async loadExistingSlots(client, routineId, academicYearId, siblingRoutineIds, shift) {
     const { rows } = await client.query(
       // F-506. This routine's own slots, PLUS every slot in any other
-      // ACTIVE routine for the same year — which is the other shift. A
-      // teacher booked in the morning is not free in the afternoon just
+      // ACTIVE routine for the same year that belongs to a DIFFERENT SHIFT.
+      // A teacher booked in the morning is not free in the afternoon just
       // because a different routine_id owns that hour.
+      //
+      // B-108 added the shift test, and it is the whole of the fix. This
+      // said "every other ACTIVE routine ... which is the other shift", and
+      // that was true while the only way to have two active routines was to
+      // run two shifts. A school that PUBLISHES and then regenerates has a
+      // second one for the same shift: the version being replaced. Counting
+      // it left the solver believing every teacher and every room in the
+      // school was already taken — by the timetable the new draft exists to
+      // replace. Measured on a 20-section school: 560 placed in v1, then 193
+      // in v2, 125 of 129 unplaced demands reading `no_free_slot`.
+      //
+      // `uq_routine_active` permits at most one active routine per (tenant,
+      // year, shift), so "the active routine for MY shift" names the
+      // predecessor uniquely. That is why this is derived from the schema
+      // here rather than passed in: a caller could name the wrong routine,
+      // and a caller that named none would have the solver ignore the other
+      // shift too.
+      //
+      // The database never objected to the overlap and never had to — the
+      // teacher and room exclusions are predicated on `routine_status =
+      // 'active'`, and their comment says so: "a draft may still overlap the
+      // routine it will replace". Verified by hand rather than trusted.
       //
       // `$3` adds the sibling DRAFTS the caller named: the other shifts of
       // the same generation run, which are not active yet and would
@@ -2492,9 +2523,10 @@ var RmsSolver = class {
         WHERE rs.academic_year_id = $2
           AND rs.status = 'active'
           AND rs.slot_kind = 'teaching'
-          AND (rs.routine_id = $1 OR rs.routine_status = 'active'
-               OR rs.routine_id = ANY($3::uuid[]))`,
-      [routineId, academicYearId, siblingRoutineIds]
+          AND (rs.routine_id = $1
+               OR rs.routine_id = ANY($3::uuid[])
+               OR (rs.routine_status = 'active' AND r.shift <> $4::shift_code))`,
+      [routineId, academicYearId, siblingRoutineIds, shift]
     );
     return rows;
   }
@@ -4485,10 +4517,31 @@ async function publishRoutine(c, ctx, routineId, opts = {}) {
       { warnings: review.warnings, fingerprint: review.fingerprint }
     );
   }
+  const { rows: prior } = await c.query(
+    `SELECT p.id, p.version
+       FROM routines p
+       JOIN routines mine ON mine.id = $1
+      WHERE p.tenant_id = mine.tenant_id
+        AND p.academic_year_id = mine.academic_year_id
+        AND p.shift = mine.shift
+        AND p.status = 'active'
+        AND p.id <> mine.id`,
+    [routineId]
+  );
+  const replaced = prior[0] ?? null;
   await tryWrite(c, async () => {
+    if (replaced) {
+      await c.query(
+        `UPDATE routines SET status = 'superseded', effective_to = current_date
+          WHERE id = $1`,
+        [replaced.id]
+      );
+    }
     await c.query(
-      `UPDATE routines SET status = 'active', published_at = now(), published_by = $2 WHERE id = $1`,
-      [routineId, ctx.userId]
+      `UPDATE routines SET status = 'active', published_at = now(), published_by = $2,
+              supersedes_id = $3
+        WHERE id = $1`,
+      [routineId, ctx.userId, replaced?.id ?? null]
     );
   }, async (e) => {
     if (e.code === "23P01") {
@@ -4499,7 +4552,7 @@ async function publishRoutine(c, ctx, routineId, opts = {}) {
     if (e.code === "23505") {
       return new HttpError(
         409,
-        "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u0993 \u09B6\u09BF\u09AB\u099F\u09C7 \u098F\u0995\u099F\u09BF \u09B0\u09C1\u099F\u09BF\u09A8 \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u099A\u09BE\u09B2\u09C1 \u0986\u099B\u09C7 \u2014 \u0986\u0997\u09C7 \u09B8\u09C7\u099F\u09BF \u09AC\u09A6\u09B2\u09BE\u09A8\u0964",
+        "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u0993 \u09B6\u09BF\u09AB\u099F\u09C7 \u098F\u0987\u09AE\u09BE\u09A4\u09CD\u09B0 \u0985\u09A8\u09CD\u09AF \u098F\u0995\u099F\u09BF \u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09BE\u09B2\u09C1 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 \u09A8\u09A4\u09C1\u09A8 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09A6\u09C7\u0996\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
         "routine_already_active"
       );
     }
@@ -4519,14 +4572,20 @@ async function publishRoutine(c, ctx, routineId, opts = {}) {
       version: review.version,
       slots: review.slots,
       hardConflicts: review.hardConflicts,
-      warnings: review.warnings.map((w) => w.code)
+      warnings: review.warnings.map((w) => w.code),
+      // B-108. Which timetable stopped being the school's, and when. A
+      // routine that replaced another is a different event from a first
+      // publication, and six months later the difference is the question.
+      supersededId: replaced?.id ?? null,
+      supersededVersion: replaced?.version ?? null
     }
   });
   return {
     ok: true,
     slots: review.slots,
     version: review.version,
-    warnings: review.warnings
+    warnings: review.warnings,
+    supersededVersion: replaced?.version ?? null
   };
 }
 async function publish(c, ctx, routineId, body) {
@@ -6169,6 +6228,46 @@ async function draftFor(c, ctx, yearId, shift) {
   );
   return { routineId: ins[0].id, version: ins[0].version, created: true };
 }
+async function cloneLiveInto(c, draftId, yearId, shift) {
+  const { rows: live } = await c.query(
+    `SELECT id, version, period_template_id AS template
+       FROM routines
+      WHERE academic_year_id = $1 AND shift = $2::shift_code AND status = 'active'`,
+    [yearId, shift]
+  );
+  if (!live[0]) return { copied: 0, fromVersion: null };
+  const { rows: mine } = await c.query(
+    `SELECT period_template_id AS template FROM routines WHERE id = $1`,
+    [draftId]
+  );
+  if (mine[0]?.template !== live[0].template) {
+    throw new HttpError(
+      409,
+      "\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09B8\u09AE\u09AF\u09BC\u09B8\u09C2\u099A\u09BF \u09AC\u09A6\u09B2\u09C7\u099B\u09C7, \u09A4\u09BE\u0987 \u099A\u09BE\u09B2\u09C1 \u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u09B9\u09C1\u09AC\u09B9\u09C1 \u09A8\u0995\u09B2 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u09A8\u09A4\u09C1\u09A8 \u0995\u09B0\u09C7 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "period_template_changed",
+      { shift }
+    );
+  }
+  const { rowCount } = await c.query(
+    `INSERT INTO routine_slots
+       (tenant_id, routine_id, academic_year_id, day_of_week, period_no,
+        period_definition_id, starts_at, ends_at, slot_kind,
+        primary_section_id, subject_id, teacher_id, room_id,
+        is_double, double_group_id, is_pinned, notes, parallel_pool)
+     SELECT s.tenant_id, $1, s.academic_year_id, s.day_of_week, s.period_no,
+            s.period_definition_id, s.starts_at, s.ends_at, s.slot_kind,
+            s.primary_section_id, s.subject_id, s.teacher_id, s.room_id,
+            s.is_double, s.double_group_id, s.is_pinned, s.notes, s.parallel_pool
+       FROM routine_slots s
+      WHERE s.routine_id = $2 AND s.status = 'active'`,
+    [draftId, live[0].id]
+  );
+  await c.query(
+    `UPDATE routines SET generated_by = 'copied' WHERE id = $1`,
+    [draftId]
+  );
+  return { copied: rowCount ?? 0, fromVersion: live[0].version };
+}
 async function shiftsOf(c, yearId) {
   const { rows } = await c.query(
     `SELECT shift::text AS code FROM sections
@@ -6253,7 +6352,10 @@ async function lastResult(c, yearId) {
             (SELECT count(*) FROM routine_slots s
               WHERE s.routine_id = r.id AND s.status <> 'removed')::text AS slots
        FROM routines r
-      WHERE r.academic_year_id = $1 AND r.generated_by = 'solver'
+      -- B-108. 'copied' as well as 'solver': a replacement draft is copied
+      -- from the live routine and then topped up, and filtering it out made
+      -- the draft a coordinator had just created vanish from this screen.
+      WHERE r.academic_year_id = $1 AND r.generated_by IN ('solver','copied')
       ORDER BY r.updated_at DESC`,
     [yearId]
   );
@@ -6300,6 +6402,15 @@ async function handler10(req, res) {
       return;
     }
     const body = await readJson(req);
+    const baseline = body.baseline === void 0 ? "inputs" : String(body.baseline);
+    if (baseline !== "inputs" && baseline !== "current") {
+      throw new HttpError(
+        400,
+        "baseline must be 'inputs' or 'current'",
+        "invalid_baseline",
+        { field: "baseline" }
+      );
+    }
     const yearId = String(body.yearId ?? "");
     if (!UUID_RE9.test(yearId)) {
       throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year", { field: "yearId" });
@@ -6326,6 +6437,11 @@ async function handler10(req, res) {
         (c) => draftFor(c, ctx, yearId, shift),
         { write: true }
       );
+      const cloned = baseline === "current" && draft.created ? await db.withTenant(
+        ctx,
+        (c) => cloneLiveInto(c, draft.routineId, yearId, shift),
+        { write: true }
+      ) : { copied: 0, fromVersion: null };
       const solved = await new RmsSolver(db).solve(
         draft.routineId,
         ctx,
@@ -6355,7 +6471,12 @@ async function handler10(req, res) {
         unplaced: named,
         soft: solved.soft,
         shortages,
-        solverSeconds: solved.solverSeconds
+        solverSeconds: solved.solverSeconds,
+        // B-108. What this draft was built FROM, so the screen can say it
+        // rather than leave a coordinator to infer why 560 lessons appeared
+        // in a routine they have not edited yet.
+        copiedFromVersion: cloned.fromVersion,
+        copiedSlots: cloned.copied
       });
     }
     const hardConflicts = await db.withTenant(
@@ -6406,7 +6527,12 @@ async function handler10(req, res) {
         unplaced: r.unplaced.map(({ blockers, ...rest }) => {
           return rest;
         }),
-        shortages: r.shortages
+        shortages: r.shortages,
+        // B-108. Where this draft came from. Without it the screen cannot
+        // tell a coordinator why a routine they have not touched already
+        // holds five hundred lessons.
+        copiedFromVersion: r.copiedFromVersion,
+        copiedSlots: r.copiedSlots
       })),
       summary: summarise2(results, hardConflicts, Date.now() - startedAt),
       explanations,
@@ -6646,8 +6772,13 @@ async function head(c, yearId) {
 }
 async function routinesForYear(c, yearId) {
   const { rows } = await c.query(
+    // B-108. Superseded versions are excluded along with archived ones: this
+    // is the screen a head publishes FROM, and a school accumulates a retired
+    // version every time it revises a timetable. What replaced what is on the
+    // audit record (`rms.routine.publish` carries `supersededVersion`), which
+    // is where a question about history actually gets answered.
     `SELECT id FROM routines
-      WHERE academic_year_id = $1 AND status <> 'archived'
+      WHERE academic_year_id = $1 AND status NOT IN ('archived', 'superseded')
       ORDER BY shift, version DESC`,
     [yearId]
   );
@@ -6695,7 +6826,7 @@ async function decorate(c, r) {
     publishedByBn: x?.publisher ?? null,
     supersedes,
     consequenceBn: consequenceBn(r, shiftBn, supersedes),
-    verdictBn: r.status === "active" ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09BE\u09B2\u09C1 \u0986\u099B\u09C7\u0964" : r.canPublish ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7\u0964" : "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u098F\u0996\u09A8\u0987 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964"
+    verdictBn: r.status === "active" ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09BE\u09B2\u09C1 \u0986\u099B\u09C7\u0964" : !UNPUBLISHED.has(r.status) ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AC\u09BE\u09A4\u09BF\u09B2 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 \u09A8\u09A4\u09C1\u09A8 \u09B8\u0982\u09B8\u09CD\u0995\u09B0\u09A3 \u099A\u09BE\u09B2\u09C1 \u0986\u099B\u09C7\u0964" : r.canPublish ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7\u0964" : "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u098F\u0996\u09A8\u0987 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964"
   };
 }
 async function moveStatus(c, ctx, routineId, to) {

@@ -214,6 +214,24 @@ describe('P9-7 — the routine review screen', () => {
       'a routine edited after the head read it must not be published unread');
   });
 
+  test('a payload without the composed sentences does not kill the button', async () => {
+    // A service worker holding a response from before the server composed
+    // these, or an older deployment behind a newer client, makes them
+    // undefined — and spreading undefined throws inside the click handler,
+    // which loses the dialog and leaves the button dead with nothing on
+    // screen to say why. Observed once in the browser, from a cached payload.
+    const stripped = structuredClone(CLEAN) as Partial<ReviewEntry>;
+    delete stripped.consequenceBn;
+    delete stripped.verdictBn;
+    entries = [stripped as ReviewEntry];
+    await mount();
+    assert.ok(text().length > 0, 'the card still renders');
+    buttonNamed('প্রকাশ করুন')?.click();
+    await settle();
+    assert.ok(dialog(), 'and the confirmation still opens');
+    assert.ok(dialogButton('হ্যাঁ, প্রকাশ করুন'), 'with its button reachable');
+  });
+
   test('cancelling publishes nothing', async () => {
     await mount();
     buttonNamed('প্রকাশ করুন')?.click();
@@ -370,6 +388,26 @@ describe('P9-7 — the routine review screen', () => {
   });
 
   /* ─────────────────────────── §14 / §15 states ───────────────────────── */
+
+  test('B-108 — a superseded version reads as history, not as work', async () => {
+    // The state B-108 created. P9-7 stopped a PUBLISHED routine being
+    // described as broken; a superseded one carries the same
+    // `already_published` blocker and was described as broken instead —
+    // found in the browser, on the retired card, right after a replacement
+    // went live.
+    entries = [{
+      ...structuredClone(PUBLISHED),
+      status: 'superseded', statusBn: 'বাতিল — নতুন রুটিন চালু',
+      verdictBn: 'এই রুটিন বাতিল হয়েছে।',
+      blockers: [{ code: 'already_published', messageBn: 'এই রুটিন আগেই প্রকাশিত।' }],
+      warnings: [{ code: 'soft', messageBn: '১২টি ক্ষেত্রে পছন্দের নিয়ম ছাড় দিতে হয়েছে।' }],
+    }];
+    await mount();
+    assert.match(text(), /বাতিল — নতুন রুটিন চালু/, 'it is still listed, and named');
+    assert.doesNotMatch(text(), /যা ঠিক করতে হবে/, 'a retired version has nothing to fix');
+    assert.doesNotMatch(text(), /যা জেনে রাখা দরকার/, 'and nothing left to act on');
+    assert.equal(buttonNamed('প্রকাশ করুন'), undefined);
+  });
 
   test('§14 — offline disables publishing and says why, rather than hiding it', async () => {
     online = false;

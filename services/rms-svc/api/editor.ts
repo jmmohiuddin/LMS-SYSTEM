@@ -1133,10 +1133,41 @@ export async function publishRoutine(
   // when the same teacher is booked in both shifts at one hour. That is a
   // business refusal, not a server fault -- B-70(a), in this path -- so it is
   // a 409 carrying the trigger's own sentence, which names the teacher.
+  // B-108. The version this one replaces, if the school already has a live
+  // timetable for this (year, shift). `uq_routine_active` guarantees there is
+  // at most one, which is what makes "the predecessor" a well-defined thing
+  // rather than a guess.
+  const { rows: prior } = await c.query<{ id: string; version: number }>(
+    `SELECT p.id, p.version
+       FROM routines p
+       JOIN routines mine ON mine.id = $1
+      WHERE p.tenant_id = mine.tenant_id
+        AND p.academic_year_id = mine.academic_year_id
+        AND p.shift = mine.shift
+        AND p.status = 'active'
+        AND p.id <> mine.id`,
+    [routineId]);
+  const replaced = prior[0] ?? null;
+
   await tryWrite(c, async () => {
+    // Demote FIRST. The unique index is checked per statement, so two active
+    // rows for one (year, shift) cannot exist even for the length of a
+    // statement — and promoting before demoting would raise 23505 against the
+    // very row this is about to retire.
+    //
+    // Both writes are in the caller's transaction. A failure between them
+    // would otherwise leave a school with no live timetable at all, which is
+    // strictly worse than the old one it was replacing.
+    if (replaced) {
+      await c.query(
+        `UPDATE routines SET status = 'superseded', effective_to = current_date
+          WHERE id = $1`, [replaced.id]);
+    }
     await c.query(
-      `UPDATE routines SET status = 'active', published_at = now(), published_by = $2 WHERE id = $1`,
-      [routineId, ctx.userId]);
+      `UPDATE routines SET status = 'active', published_at = now(), published_by = $2,
+              supersedes_id = $3
+        WHERE id = $1`,
+      [routineId, ctx.userId, replaced?.id ?? null]);
   }, async (e) => {
     // Publication is where the teacher and room constraints first apply:
     // propagate_routine_status flips every slot to routine_status='active' and
@@ -1148,11 +1179,15 @@ export async function publishRoutine(
       return new HttpError(409, 'রুটিনে সময়ের সংঘর্ষ আছে — প্রকাশ করা যায়নি।', 'slot_conflict');
     }
     // uq_routine_active: at most one ACTIVE routine per (tenant, year, shift).
-    // A school replacing its timetable supersedes the old one rather than
-    // running two, and the domain carries `superseded` + supersedes_id for it.
+    // Until B-108 this was the end of the road — a school with a published
+    // routine could not publish its replacement, and the message told them to
+    // "change it first" with nothing that could. The predecessor is now
+    // demoted in the same transaction, so reaching this means something ELSE
+    // took the slot between the read and the write: another publish, racing.
     if (e.code === '23505') {
       return new HttpError(409,
-        'এই শিক্ষাবর্ষ ও শিফটে একটি রুটিন ইতিমধ্যে চালু আছে — আগে সেটি বদলান।',
+        'এই শিক্ষাবর্ষ ও শিফটে এইমাত্র অন্য একটি রুটিন চালু হয়েছে — '
+        + 'নতুন অবস্থা দেখে আবার চেষ্টা করুন।',
         'routine_already_active');
     }
     return new HttpError(409,
@@ -1174,6 +1209,11 @@ export async function publishRoutine(
       slots: review.slots,
       hardConflicts: review.hardConflicts,
       warnings: review.warnings.map((w) => w.code),
+      // B-108. Which timetable stopped being the school's, and when. A
+      // routine that replaced another is a different event from a first
+      // publication, and six months later the difference is the question.
+      supersededId: replaced?.id ?? null,
+      supersededVersion: replaced?.version ?? null,
     },
   });
   // The warnings travel with the success rather than being forgotten: §8.1
@@ -1185,6 +1225,7 @@ export async function publishRoutine(
     slots: review.slots,
     version: review.version,
     warnings: review.warnings,
+    supersededVersion: replaced?.version ?? null,
   };
 }
 

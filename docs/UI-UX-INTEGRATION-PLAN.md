@@ -1549,3 +1549,67 @@ refuses, so every timestamp had been printing as an em-dash.
 confirmation is exactly 375 wide.
 
 **Both themes**: card `#FFFFFF` / `#241E1A`, body text `#53443D` / `#EDE7DA`.
+
+## B-108 — replacing a live routine, and the numerals (2026-09-07)
+
+### The generate screen says what will NOT change
+
+When a routine is live, `#/routinegenerate` leads with **বর্তমানে চালু রুটিন**
+— the shift, the version, the period count, and "শিক্ষক ও শিক্ষার্থীরা এটিই
+দেখছেন" — followed by "নতুন খসড়া তৈরি করলে এই রুটিনটি বদলাবে না। নতুনটি প্রকাশ
+করার পরেই কেবল এটি বাতিল হবে।"
+
+It sits ABOVE the button, because the misunderstanding it prevents happens at
+the moment of pressing. A coordinator who believes Generate rewrites the live
+timetable will not press it at all; one who believes it does not, when it
+does, has already broken three thousand people's week.
+
+The button relabels to **নতুন খসড়া তৈরি করুন**, and the idempotency note below
+it changes with the situation — "আবার চাপলে নতুন রুটিন তৈরি হবে না" is true of
+a draft and false once something is live, where a press really does make a new
+version.
+
+### One choice, in the school's own words
+
+**কোথা থেকে শুরু** offers the two baselines as sentences rather than jargon:
+"চালু রুটিনটি নকল করে — তারপর যেটুকু দরকার বদলাব" (default) and "একদম নতুন করে
+— এখনকার শিক্ষক ও বিষয়ের তালিকা থেকে", each with what happens to pinned
+lessons stated before the button, not after.
+
+The result then says where the lessons came from: "সংস্করণ ১ থেকে ৫৬০টি ক্লাস
+কপি করা হয়েছে — পিন করা ক্লাসসহ। চালু রুটিনটি অপরিবর্তিত আছে।" Without it a
+coordinator opens a draft they have never edited and finds five hundred
+placements in it.
+
+### A retired version is history, not work
+
+B-108 made `superseded` reachable, and the review screen's guards had been
+written when only draft and active existed. A superseded routine was offered
+**প্রকাশ করুন** and **সম্পাদনা করুন** — one would 409, the other opens an editor
+that refuses every write — and carried "যা ঠিক করতে হবে — এই রুটিন আগেই
+প্রকাশিত", which is the defect P9-7 fixed for the published card in the state
+that did not exist yet. Actions are now gated on *editable*; findings are
+shown for a draft, warnings only for the live routine, and neither for a
+retired one. Superseded versions are excluded from the publish screen
+altogether.
+
+### The numerals
+
+Bangla digits no longer render in Hind Siliguri, where **১ is close enough to
+৮** that "১০টি" reads as "৮০টি". A `unicode-range` face over U+09E6–U+09EF
+moves the ten digits to the device's own Bangla face and leaves every letter
+on Hind Siliguri — verified by measurement (digits 186.76 → 218.41 px, letters
+101.67 → 101.67 px) rather than by eye alone.
+
+Read on screen across all nine cases: single digit `৫টি`; two digits `২৩ জন ·
+১০টি · ৬০টি · ২০টি`; three digits `৫৬০টি · ২০৬টি · ১২৯টি`; every digit `০ ১ ২
+৩ ৪ ৫ ৬ ৭ ৮ ৯`; time `সকাল ১০:৪৫ — দুপুর ১২:৩০`; date `৭ সেপ্টেম্বর ২০২৬`;
+money `৳ ১২,৫০০.৭৫`; percentage `৯২.৫%`; and inside a sentence, `১০টি বিষয়ের
+কিছু পিরিয়ড বসানো যায়নি।` The counter words (টি, জন, বিষয়ের) beside them are
+still Hind Siliguri.
+
+**Accessibility**: the digits are real text nodes — not CSS `content`, not
+images — so they are selectable, copyable and announced; every stat pairs a
+label with its value in reading order ("মোট ক্লাস ৫৬০টি"); and every finding
+row carries words, so nothing depends on colour. The face is presentational
+and cannot change an accessible name, because the characters are identical.

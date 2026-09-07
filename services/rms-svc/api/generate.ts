@@ -122,6 +122,10 @@ interface ShiftResult {
   soft: SolveResult['soft'];
   shortages: NamedShortage[];
   solverSeconds: number;
+  /** B-108. The live version this draft was copied from, or null if fresh. */
+  copiedFromVersion: number | null;
+  /** How many lessons the copy carried. 0 on the 'inputs' baseline. */
+  copiedSlots: number;
 }
 
 /** Which subjects asked for each capability that ran short. */
@@ -277,6 +281,65 @@ async function draftFor(
 }
 
 /**
+ * Copy the live routine for this shift into a fresh draft. (B-108)
+ *
+ * Returns how many slots were copied, or 0 when the school has nothing
+ * published for this shift yet — in which case the caller has an ordinary
+ * empty draft and the solver fills it, which is the right answer rather than
+ * an error.
+ *
+ * `is_pinned` rides along deliberately (§5). `time_range` is maintained by
+ * `trg_slot_time_range` and `routine_status` by `trg_routine_slots_facts`, so
+ * neither is copied; `row_version` restarts at 1 because these are new rows
+ * and P9-5's concurrency check is about THIS draft's edit history.
+ *
+ * `routine_slot_sections` is not copied because nothing writes it: parallel
+ * blocks are expressed through `parallel_pool`, which is.
+ */
+async function cloneLiveInto(
+  c: Client, draftId: string, yearId: string, shift: string,
+): Promise<{ copied: number; fromVersion: number | null }> {
+  const { rows: live } = await c.query<{ id: string; version: number; template: string }>(
+    `SELECT id, version, period_template_id AS template
+       FROM routines
+      WHERE academic_year_id = $1 AND shift = $2::shift_code AND status = 'active'`,
+    [yearId, shift]);
+  if (!live[0]) return { copied: 0, fromVersion: null };
+
+  // A copied slot points at a period_definition_id. If the school has since
+  // adopted a new bell schedule, the new draft is on a different template and
+  // those ids belong to the old one — the copy would look right and place
+  // every lesson at the previous timetable's clock times. Refused rather than
+  // silently produced.
+  const { rows: mine } = await c.query<{ template: string }>(
+    `SELECT period_template_id AS template FROM routines WHERE id = $1`, [draftId]);
+  if (mine[0]?.template !== live[0].template) {
+    throw new HttpError(409,
+      'ঘণ্টার সময়সূচি বদলেছে, তাই চালু রুটিনটি হুবহু নকল করা যাবে না — '
+      + 'নতুন করে তৈরি করুন।',
+      'period_template_changed', { shift });
+  }
+
+  const { rowCount } = await c.query(
+    `INSERT INTO routine_slots
+       (tenant_id, routine_id, academic_year_id, day_of_week, period_no,
+        period_definition_id, starts_at, ends_at, slot_kind,
+        primary_section_id, subject_id, teacher_id, room_id,
+        is_double, double_group_id, is_pinned, notes, parallel_pool)
+     SELECT s.tenant_id, $1, s.academic_year_id, s.day_of_week, s.period_no,
+            s.period_definition_id, s.starts_at, s.ends_at, s.slot_kind,
+            s.primary_section_id, s.subject_id, s.teacher_id, s.room_id,
+            s.is_double, s.double_group_id, s.is_pinned, s.notes, s.parallel_pool
+       FROM routine_slots s
+      WHERE s.routine_id = $2 AND s.status = 'active'`,
+    [draftId, live[0].id]);
+
+  await c.query(
+    `UPDATE routines SET generated_by = 'copied' WHERE id = $1`, [draftId]);
+  return { copied: rowCount ?? 0, fromVersion: live[0].version };
+}
+
+/**
  * Every shift this year's sections actually run, EARLIEST FIRST.
  *
  * The order decides who wins a contended room, because each shift is solved
@@ -420,7 +483,10 @@ async function lastResult(c: Client, yearId: string) {
             (SELECT count(*) FROM routine_slots s
               WHERE s.routine_id = r.id AND s.status <> 'removed')::text AS slots
        FROM routines r
-      WHERE r.academic_year_id = $1 AND r.generated_by = 'solver'
+      -- B-108. 'copied' as well as 'solver': a replacement draft is copied
+      -- from the live routine and then topped up, and filtering it out made
+      -- the draft a coordinator had just created vanish from this screen.
+      WHERE r.academic_year_id = $1 AND r.generated_by IN ('solver','copied')
       ORDER BY r.updated_at DESC`,
     [yearId]);
   return {
@@ -456,7 +522,15 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     if (req.method !== 'POST') { json(res, 405, { error: 'method_not_allowed' }, cors); return; }
 
-    const body = await readJson<{ yearId?: string }>(req);
+    const body = await readJson<{ yearId?: string; baseline?: string }>(req);
+    // B-108. 'current' copies the live routine into the new draft; 'inputs'
+    // (the default, and what this endpoint always did) builds from academic
+    // demand. Anything else is a typo, and a typo must not silently pick one.
+    const baseline = body.baseline === undefined ? 'inputs' : String(body.baseline);
+    if (baseline !== 'inputs' && baseline !== 'current') {
+      throw new HttpError(400, "baseline must be 'inputs' or 'current'",
+        'invalid_baseline', { field: 'baseline' });
+    }
     const yearId = String(body.yearId ?? '');
     if (!UUID_RE.test(yearId)) {
       throw new HttpError(400, 'শিক্ষাবর্ষ বেছে নিন', 'invalid_year', { field: 'yearId' });
@@ -485,6 +559,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // morning one and be told about the other.
       const draft = await db.withTenant(
         ctx, (c) => draftFor(c as Client, ctx, yearId, shift), { write: true });
+
+      // B-108. Copy the live routine in FIRST, so the solver meets a draft
+      // that is already full and tops up only what the copy could not carry.
+      // Only into a draft this run just created — copying into one a
+      // coordinator has been editing would duplicate every lesson in it.
+      const cloned = baseline === 'current' && draft.created
+        ? await db.withTenant(
+            ctx, (c) => cloneLiveInto(c as Client, draft.routineId, yearId, shift),
+            { write: true })
+        : { copied: 0, fromVersion: null };
 
       // Every draft this run has already filled is booked against. Without
       // it the day shift places lessons into rooms the morning shift is
@@ -516,6 +600,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         soft: solved.soft,
         shortages,
         solverSeconds: solved.solverSeconds,
+        // B-108. What this draft was built FROM, so the screen can say it
+        // rather than leave a coordinator to infer why 560 lessons appeared
+        // in a routine they have not edited yet.
+        copiedFromVersion: cloned.fromVersion,
+        copiedSlots: cloned.copied,
       });
     }
 
@@ -574,6 +663,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
           return rest;
         }),
         shortages: r.shortages,
+        // B-108. Where this draft came from. Without it the screen cannot
+        // tell a coordinator why a routine they have not touched already
+        // holds five hundred lessons.
+        copiedFromVersion: r.copiedFromVersion,
+        copiedSlots: r.copiedSlots,
       })),
       summary: summarise(results, hardConflicts, Date.now() - startedAt),
       explanations,

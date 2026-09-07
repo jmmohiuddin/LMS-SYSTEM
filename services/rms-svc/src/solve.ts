@@ -422,7 +422,7 @@ export class RmsSolver {
       const sections = await this.loadSections(client, routine.academicYearId, routine.shift);
       const demand = await this.loadDemand(client, routine.academicYearId, routine.shift);
       const existing = await this.loadExistingSlots(
-        client, routineId, routine.academicYearId, siblings);
+        client, routineId, routine.academicYearId, siblings, routine.shift);
       const unavailability = await this.loadUnavailability(client, [...new Set(demand.map((d) => d.teacherId))]);
 
       // F-506. Bookings are held as TIME INTERVALS per (resource, day), not
@@ -848,8 +848,16 @@ export class RmsSolver {
       const solverSeconds = Math.round(((this.now() - startedAt) / 1000) * 100) / 100;
 
       await client.query(
+        // B-108. 'copied' survives a top-up. A replacement draft is copied
+        // FROM the live routine and then filled in by this solver, and of the
+        // two facts the copy is the one a reader cannot recover elsewhere —
+        // `solver_run_id` and `solver_seconds` below already record that the
+        // solver ran. Overwriting it lost the only trace of where 560 lessons
+        // a coordinator had not authored came from.
         `UPDATE routines
-            SET generated_by = 'solver', solver_run_id = $2, solver_seconds = $3,
+            SET generated_by = CASE WHEN generated_by = 'copied' THEN 'copied'
+                                    ELSE 'solver' END,
+                solver_run_id = $2, solver_seconds = $3,
                 objective_score = $4, soft_violations = $5::jsonb, updated_at = now()
           WHERE id = $1`,
         // Both lists are persisted, because §8.2 is a screen a coordinator
@@ -1234,7 +1242,14 @@ export class RmsSolver {
 
   private async loadExistingSlots(
     client: pg.PoolClient, routineId: string, academicYearId: string,
-    siblingRoutineIds: readonly string[] = [],
+    siblingRoutineIds: readonly string[],
+    /**
+     * This routine's own shift. Required, not defaulted: the SQL casts it to
+     * `shift_code`, and a placeholder like '' is not a member of that enum —
+     * so a caller who forgot would get a type error from Postgres at runtime
+     * instead of a compile error here.
+     */
+    shift: string,
   ) {
     const { rows } = await client.query<{
       primary_section_id: string;
@@ -1250,9 +1265,31 @@ export class RmsSolver {
       owner_shift: string;
     }>(
       // F-506. This routine's own slots, PLUS every slot in any other
-      // ACTIVE routine for the same year — which is the other shift. A
-      // teacher booked in the morning is not free in the afternoon just
+      // ACTIVE routine for the same year that belongs to a DIFFERENT SHIFT.
+      // A teacher booked in the morning is not free in the afternoon just
       // because a different routine_id owns that hour.
+      //
+      // B-108 added the shift test, and it is the whole of the fix. This
+      // said "every other ACTIVE routine ... which is the other shift", and
+      // that was true while the only way to have two active routines was to
+      // run two shifts. A school that PUBLISHES and then regenerates has a
+      // second one for the same shift: the version being replaced. Counting
+      // it left the solver believing every teacher and every room in the
+      // school was already taken — by the timetable the new draft exists to
+      // replace. Measured on a 20-section school: 560 placed in v1, then 193
+      // in v2, 125 of 129 unplaced demands reading `no_free_slot`.
+      //
+      // `uq_routine_active` permits at most one active routine per (tenant,
+      // year, shift), so "the active routine for MY shift" names the
+      // predecessor uniquely. That is why this is derived from the schema
+      // here rather than passed in: a caller could name the wrong routine,
+      // and a caller that named none would have the solver ignore the other
+      // shift too.
+      //
+      // The database never objected to the overlap and never had to — the
+      // teacher and room exclusions are predicated on `routine_status =
+      // 'active'`, and their comment says so: "a draft may still overlap the
+      // routine it will replace". Verified by hand rather than trusted.
       //
       // `$3` adds the sibling DRAFTS the caller named: the other shifts of
       // the same generation run, which are not active yet and would
@@ -1270,9 +1307,10 @@ export class RmsSolver {
         WHERE rs.academic_year_id = $2
           AND rs.status = 'active'
           AND rs.slot_kind = 'teaching'
-          AND (rs.routine_id = $1 OR rs.routine_status = 'active'
-               OR rs.routine_id = ANY($3::uuid[]))`,
-      [routineId, academicYearId, siblingRoutineIds],
+          AND (rs.routine_id = $1
+               OR rs.routine_id = ANY($3::uuid[])
+               OR (rs.routine_status = 'active' AND r.shift <> $4::shift_code))`,
+      [routineId, academicYearId, siblingRoutineIds, shift],
     );
     return rows;
   }

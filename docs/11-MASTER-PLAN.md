@@ -1720,6 +1720,25 @@ of the bundle, downloaded by every school so they could never open it — out
 into its own lazily-loaded bundle (`B-109`); app.js fell to 159 kB gzipped
 with the limit unchanged. Role outputs and print remain.
 
+**B-108 — replacing a live routine.** *Closed 2026-09-07, after P9-7.* A
+school that published once could not publish again. The solver booked against
+every ACTIVE routine in the year, on a comment's assumption that the only
+other one is the other SHIFT — so a school regenerating after publishing had
+every teacher and room counted as taken by the timetable it was replacing
+(560 placed in v1, **193** in v2). And even filled, the replacement could not
+go live: `uq_routine_active` refused it, while `supersedes_id` and the
+`superseded` status — both present since migration 006 — had never been
+written by anything. The database was never the blocker and said so in its own
+constraint comment. Fixed with a predicate that exempts the same shift's
+predecessor (unique by `uq_routine_active`, derived from the schema, other
+shifts still compete) and a publish that demotes then promotes in one
+transaction. `/rms/generate` gained a baseline: clone the live routine, pins
+included, or start fresh from academic inputs. **A replacement now places
+exactly what a first generation places at every size measured**; the clone
+path is 7.4×–11× faster. Also fixed `--font-bn-num`, declared in `app.css`
+with its reason and referenced ZERO times, so every Bangla digit rendered in
+Hind Siliguri — where ১ is close enough to ৮ that "১০:৪৫" reads as "৮০:৪৫".
+
 **B-104 — cross-tenant client cache.** *Closed 2026-09-07, before P9-5.*
 Found by P9-4's own browser acceptance and fixed as its own piece of work,
 because tenant isolation is one of the six things that may interrupt the

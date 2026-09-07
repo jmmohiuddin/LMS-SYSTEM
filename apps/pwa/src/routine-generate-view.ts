@@ -36,7 +36,7 @@
 import {
   el, pageHeader, card, button, buttonRow, statusBadge, sectionHeading,
   statRow, statCard, permissionState, deniedMessage, deniedContact,
-  announce, inlineLoader, listSkeleton, openDrawer, successNote,
+  announce, inlineLoader, listSkeleton, openDrawer, successNote, field,
 } from './ui/index.ts';
 import { refuseUnlessOk, isDenied, HttpStatus } from './http-status.ts';
 import type { Auth } from './auth.ts';
@@ -68,6 +68,9 @@ interface ShiftResult {
   softViolations: number;
   shortages: Shortage[];
   solverSeconds: number;
+  /** B-108. The live version this draft was copied from, or null if fresh. */
+  copiedFromVersion?: number | null;
+  copiedSlots?: number;
 }
 interface Summary {
   totalDemand: number; placed: number; unplacedPeriods: number;
@@ -146,6 +149,13 @@ export class RoutineGenerateView {
   private startedAt = 0;
   private elapsed = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * B-108. What a replacement draft is built FROM, when the school already
+   * has a live routine. 'current' copies it (pins and all) and lets the
+   * solver top up; 'inputs' starts from the academic demand.
+   */
+  private baseline: 'current' | 'inputs' = 'current';
 
   private denied = false;
   private deniedErr: unknown = null;
@@ -251,7 +261,12 @@ export class RoutineGenerateView {
       const res = await this.o.auth.authedFetch('/api/v1/rms/generate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ yearId: this.yearId }),
+        // Only when there IS something to copy. Sending 'current' with
+        // nothing live is harmless but meaningless, and a request that says
+        // what it means is easier to read in a log six months later.
+        body: JSON.stringify(this.live().length > 0
+          ? { yearId: this.yearId, baseline: this.baseline }
+          : { yearId: this.yearId }),
       });
       if (res.status === 403) { await refuseUnlessOk(res); }
 
@@ -333,7 +348,7 @@ export class RoutineGenerateView {
     }
     root.append(this.actionCard());
     if (this.result) root.append(...this.resultCards());
-    else if (this.prior.length > 0) root.append(this.priorCard());
+    else if (this.prior.some((r) => r.status !== 'active')) root.append(this.priorCard());
   }
 
   /** §3 — generating. Elapsed seconds, and no invented percentage. */
@@ -413,8 +428,17 @@ export class RoutineGenerateView {
       }
     }
 
+    // B-108 §15. The live routine, said plainly and BEFORE the button, so
+    // nobody presses it believing this week's timetable is about to change.
+    if (this.live().length > 0) {
+      body.append(this.liveCard());
+      body.append(this.baselineCard());
+    }
+
     const go = button(d, {
-      label: this.prior.length > 0 ? 'আবার তৈরি করুন' : 'রুটিন তৈরি করুন',
+      label: this.live().length > 0
+        ? 'নতুন খসড়া তৈরি করুন'
+        : this.prior.length > 0 ? 'আবার তৈরি করুন' : 'রুটিন তৈরি করুন',
       variant: 'primary',
       disabled: !this.canGenerate,
       onClick: () => void this.generate(),
@@ -428,9 +452,17 @@ export class RoutineGenerateView {
     if (this.prior.length > 0) {
       // Idempotency, said out loud. The commonest fear at this button is
       // that a second press will produce a second timetable.
+      //
+      // B-108. With a routine already LIVE that sentence stops being true —
+      // pressing does make a new draft, which is the whole point — so the
+      // note says which of the two is happening rather than reassuring a
+      // coordinator about the wrong one.
       body.append(el(d, 'p', {
         className: 'ui-card-note',
-        text: 'আবার চাপলে নতুন রুটিন তৈরি হবে না — যেগুলো এখনও বসেনি, '
+        text: this.live().length > 0
+          ? 'চালু রুটিনটি অপরিবর্তিত থাকবে। একটি নতুন খসড়া তৈরি হবে, '
+            + 'যেটি আপনি দেখে নিয়ে তবেই প্রকাশ করবেন।'
+          : 'আবার চাপলে নতুন রুটিন তৈরি হবে না — যেগুলো এখনও বসেনি, '
             + 'শুধু সেগুলোই বসানোর চেষ্টা হবে।',
       }));
     }
@@ -669,6 +701,17 @@ export class RoutineGenerateView {
     const body = el(d, 'div', { className: 'ui-stack' });
     const name = SHIFT_BN[shift.shift] ?? shift.shift;
 
+    // B-108. Where these lessons came from. Without it a coordinator opens a
+    // draft they have never edited and finds five hundred placements in it.
+    if (shift.copiedFromVersion != null) {
+      body.append(el(d, 'p', {
+        className: 'ui-card-note',
+        text: `সংস্করণ ${bn(shift.copiedFromVersion)} থেকে `
+            + `${bn(shift.copiedSlots ?? 0)}টি ক্লাস কপি করা হয়েছে — `
+            + 'পিন করা ক্লাসসহ। চালু রুটিনটি অপরিবর্তিত আছে।',
+      }));
+    }
+
     const line = el(d, 'div', { className: 'ui-cell-line' });
     line.append(shift.unplaced.length === 0
       ? statusBadge(d, { state: 'active', label: 'সম্পূর্ণ', tone: 'success' })
@@ -715,6 +758,77 @@ export class RoutineGenerateView {
     return card(d, { title: `${name} শিফট`, glyph: 'clock', headingLevel: 3 }, body);
   }
 
+  /** The routines the school is actually running right now. */
+  private live(): PriorRun[] {
+    return this.prior.filter((r) => r.status === 'active');
+  }
+
+  /**
+   * B-108 §15. "This is what the school is using, and it is not what you are
+   * about to change."
+   *
+   * Placed above the button rather than below the result, because the
+   * misunderstanding it prevents happens at the moment of pressing. A
+   * coordinator who believes Generate rewrites the live timetable will not
+   * press it at all — and one who believes it does not, when it does, has
+   * already broken three thousand people's week.
+   */
+  private liveCard(): HTMLElement {
+    const d = this.o.doc;
+    const body = el(d, 'div', { className: 'ui-stack' });
+    const list = el(d, 'ul', { className: 'gen-trades' });
+    for (const run of this.live()) {
+      const li = el(d, 'li');
+      li.append(el(d, 'span', {
+        className: 'gen-trade-what',
+        text: `${SHIFT_BN[run.shift] ?? run.shift} শিফট — সংস্করণ ${bn(run.version)}`,
+      }));
+      li.append(el(d, 'span', {
+        className: 'gen-trade-why',
+        text: `${bn(run.slots)}টি পিরিয়ড · শিক্ষক ও শিক্ষার্থীরা এটিই দেখছেন`,
+      }));
+      list.append(li);
+    }
+    body.append(list);
+    body.append(el(d, 'p', {
+      className: 'ui-card-note',
+      text: 'নতুন খসড়া তৈরি করলে এই রুটিনটি বদলাবে না। নতুনটি প্রকাশ করার '
+          + 'পরেই কেবল এটি বাতিল হবে।',
+    }));
+    return card(d, {
+      title: 'বর্তমানে চালু রুটিন', glyph: 'check-square', tone: 'success',
+    }, body);
+  }
+
+  /** B-108 §2/§5 — what the replacement is built from. */
+  private baselineCard(): HTMLElement {
+    const d = this.o.doc;
+    const body = el(d, 'div', { className: 'ui-stack' });
+    body.append(field(d, {
+      label: 'নতুন খসড়া কীভাবে শুরু হবে',
+      name: 'baseline',
+      kind: 'select',
+      value: this.baseline,
+      options: [
+        { value: 'current', label: 'চালু রুটিনটি নকল করে — তারপর যেটুকু দরকার বদলাব' },
+        { value: 'inputs', label: 'একদম নতুন করে — এখনকার শিক্ষক ও বিষয়ের তালিকা থেকে' },
+      ],
+      onChange: (v) => {
+        this.baseline = v === 'inputs' ? 'inputs' : 'current';
+        this.render();
+      },
+    }).root);
+    body.append(el(d, 'p', {
+      className: 'ui-card-note',
+      text: this.baseline === 'current'
+        ? 'চালু রুটিনের সব ক্লাস — পিন করা ক্লাসসহ — নতুন খসড়ায় কপি হবে। '
+          + 'কিছু বাকি থাকলে সেটুকু বসিয়ে দেওয়া হবে।'
+        : 'পিন করা ক্লাসগুলো নতুন খসড়ায় থাকবে না। শিক্ষক বা বিষয়ের তালিকা '
+          + 'বড় রকম বদলালে এটিই বেছে নিন।',
+    }));
+    return card(d, { title: 'কোথা থেকে শুরু', glyph: 'repeat' }, body);
+  }
+
   /** §13 — a run from before this page was opened. */
   private priorCard(): HTMLElement {
     const d = this.o.doc;
@@ -724,7 +838,10 @@ export class RoutineGenerateView {
       text: 'আগে তৈরি করা খসড়া রুটিন পাওয়া গেছে। আবার তৈরি করলে এগুলোই পূরণ হবে।',
     }));
     const list = el(d, 'ul', { className: 'gen-trades' });
-    for (const run of this.prior) {
+    // B-108. The live routine has its own card above and is NOT something
+    // "আবার তৈরি করলে পূরণ হবে" — saying that about a published timetable is
+    // the exact misunderstanding §15 exists to prevent.
+    for (const run of this.prior.filter((r) => r.status !== 'active')) {
       const li = el(d, 'li');
       li.append(el(d, 'span', {
         className: 'gen-trade-what',
@@ -739,7 +856,7 @@ export class RoutineGenerateView {
       list.append(li);
     }
     body.append(list);
-    body.append(buttonRow(d, ...this.prior.map((run) => button(d, {
+    body.append(buttonRow(d, ...this.prior.filter((r) => r.status !== 'active').map((run) => button(d, {
       label: `${SHIFT_BN[run.shift] ?? run.shift} — বিস্তারিত`,
       variant: 'ghost',
       onClick: () => this.o.onNavigate?.(`generation?routineId=${run.routineId}`),

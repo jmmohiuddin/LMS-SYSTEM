@@ -352,9 +352,12 @@ describe('A4 — routine authoring', { skip }, () => {
       return e.rows[0].id;
     });
 
-    // A second routine cannot be published while one is active — the domain
-    // allows exactly one per (year, shift). That refusal is itself worth
-    // asserting: it used to be a 500.
+    // A second routine used to be UNPUBLISHABLE while one was active — the
+    // domain allows one per (year, shift) and nothing could retire the
+    // incumbent, so a school that published once could never publish again
+    // (B-108). It now supersedes, and this test follows the change: what is
+    // asserted below is that the swap happens and that the EXAM is still not
+    // touched by any of it, which is what this test is named for.
     const c2 = await post({ action: 'create-routine', sectionId: SEC_A, nameBn: 'দ্বিতীয় খসড়া' });
     const second = (c2.body as { routineId: string }).routineId;
 
@@ -366,16 +369,24 @@ describe('A4 — routine authoring', { skip }, () => {
     assert.equal(bare.status, 409, JSON.stringify(bare.body));
     assert.equal((bare.body as { error: string }).error, 'empty_routine');
 
-    // Give it a lesson, and the ORIGINAL refusal is the one that fires:
-    // uq_routine_active, one active routine per (tenant, year, shift).
+    // Give it a lesson and it publishes, retiring the first — B-108.
     const placed = await post({
       action: 'place', routineId: second, sectionId: SEC_A, dayOfWeek: 1, periodNo: 1,
       subjectId: BANGLA, teacherId: TEACH_A, roomId: ROOM,
     });
     assert.equal(placed.status, 200, JSON.stringify(placed.body));
     const pub = await post({ action: 'publish', routineId: second, confirmWarnings: true });
-    assert.equal(pub.status, 409, JSON.stringify(pub.body));
-    assert.equal((pub.body as { error: string }).error, 'routine_already_active');
+    assert.equal(pub.status, 200, JSON.stringify(pub.body));
+
+    const lifecycle = await asBootstrap(
+      db, { tenantId: T, userId: COORD, role: 'principal' },
+      (c) => c.query<{ id: string; status: string }>(
+        `SELECT id, status::text AS status FROM routines WHERE tenant_id = $1`, [T]));
+    const retired = lifecycle.rows.filter((r) => r.status === 'superseded');
+    const nowLive = lifecycle.rows.filter((r) => r.status === 'active');
+    assert.equal(nowLive.length, 1, 'exactly one routine is live');
+    assert.equal(nowLive[0].id, second);
+    assert.equal(retired.length, 1, 'and the one it replaced stepped down');
 
     const after = await asBootstrap(db, { tenantId: T, userId: COORD, role: 'principal' }, async (c) => {
       const q = await c.query<{ status: string; published_at: string | null; rpa: string | null }>(

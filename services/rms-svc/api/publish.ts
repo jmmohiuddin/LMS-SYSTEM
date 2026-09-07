@@ -104,8 +104,13 @@ async function head(c: Client, yearId: string): Promise<Head | null> {
  */
 async function routinesForYear(c: Client, yearId: string): Promise<string[]> {
   const { rows } = await c.query<{ id: string }>(
+    // B-108. Superseded versions are excluded along with archived ones: this
+    // is the screen a head publishes FROM, and a school accumulates a retired
+    // version every time it revises a timetable. What replaced what is on the
+    // audit record (`rms.routine.publish` carries `supersededVersion`), which
+    // is where a question about history actually gets answered.
     `SELECT id FROM routines
-      WHERE academic_year_id = $1 AND status <> 'archived'
+      WHERE academic_year_id = $1 AND status NOT IN ('archived', 'superseded')
       ORDER BY shift, version DESC`,
     [yearId]);
   return rows.map((r) => r.id);
@@ -190,9 +195,14 @@ async function decorate(c: Client, r: PublishReview): Promise<Entry> {
     consequenceBn: consequenceBn(r, shiftBn, supersedes),
     verdictBn: r.status === 'active'
       ? 'এই রুটিন চালু আছে।'
-      : r.canPublish
-        ? 'এই রুটিন প্রকাশ করা যাবে।'
-        : 'এই রুটিন এখনই প্রকাশ করা যাবে না।',
+      // B-108 made this state reachable. Without its own line it fell to
+      // "প্রকাশ করা যাবে না", which reads as a fault to repair rather than a
+      // version that has already been replaced.
+      : !UNPUBLISHED.has(r.status)
+        ? 'এই রুটিন বাতিল হয়েছে — নতুন সংস্করণ চালু আছে।'
+        : r.canPublish
+          ? 'এই রুটিন প্রকাশ করা যাবে।'
+          : 'এই রুটিন এখনই প্রকাশ করা যাবে না।',
   };
 }
 

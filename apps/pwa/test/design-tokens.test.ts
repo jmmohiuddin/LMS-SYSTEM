@@ -296,3 +296,68 @@ describe('P0 — the geometry that was already canonical stays untouched', () =>
     assert.match(light, /--text-body:\s*var\(--text-base\)/, 'semantic name maps onto it');
   });
 });
+
+/**
+ * B-108 §16 — Bangla digits do not render in Hind Siliguri.
+ *
+ * The defect this guards was visible and shipped: Hind Siliguri's ১ is close
+ * enough to ৮ at UI sizes that "১০টি" reads as "৮০টি", "১০:৪৫" as "৮০:৪৫" and
+ * "১২,৫০০.৭৫" as "৮২,৫০০.৭৫" — a mark, a time and a fee, each wrong by a
+ * digit. `--font-bn-num` was written for exactly that, with the reason in a
+ * comment beside it, and `var(--font-bn-num)` appeared in this stylesheet
+ * ZERO times.
+ *
+ * It could not have been fixed by using the token either: digits arrive
+ * inside sentences, not as elements, so the split has to be per character.
+ * Hence a `unicode-range` face over U+09E6–U+09EF only.
+ *
+ * These read the shipped CSS. A font cannot be measured in jsdom, so what is
+ * asserted here is that the treatment stays WIRED; the rendering itself was
+ * verified in a real browser (PHASE_LOG B-108: digits 186.76 → 218.41 px,
+ * letters 101.67 → 101.67 px, so the digits moved face and the letters did
+ * not).
+ */
+describe('B-108 §16 — the Bangla numeral face', () => {
+  const face = (() => {
+    const i = CSS.indexOf("font-family: 'ShikhonBnNum'");
+    return i < 0 ? '' : CSS.slice(CSS.lastIndexOf('@font-face', i), CSS.indexOf('}', i));
+  })();
+
+  test('THE ONE THAT MATTERS — digits are covered, and only digits', () => {
+    assert.ok(face, 'the numeral @font-face is gone');
+    // U+09E6–U+09EF is ০ through ৯ and nothing else. Widening it would drag
+    // Bangla letters onto the numeric face and undo half the design.
+    assert.match(face, /unicode-range:\s*U\+09E6-09EF/i);
+    assert.doesNotMatch(face, /U\+0980-09FF/i, 'that would be the whole script');
+  });
+
+  test('it is reachable — named first, in every stack that carries text', () => {
+    // The token it replaces failed by being defined and never referenced.
+    for (const token of ['--font-body', '--font-bn', '--font-heading']) {
+      const line = CSS.split('\n').find((l) => l.trim().startsWith(`${token}:`)) ?? '';
+      assert.match(line, /ShikhonBnNum/, `${token} does not reach the numeral face`);
+      assert.ok(line.indexOf('ShikhonBnNum') < line.indexOf('Hind Siliguri'),
+        `${token} must name it BEFORE Hind Siliguri, or Hind Siliguri keeps the digits`);
+    }
+  });
+
+  test('Bangla letters still belong to Hind Siliguri', () => {
+    const bn = CSS.split('\n').find((l) => l.trim().startsWith('--font-bn:')) ?? '';
+    assert.match(bn, /'Hind Siliguri'/, 'the letter face must remain');
+  });
+
+  test('every platform is named, not just the target device', () => {
+    // Measured, not assumed: `local('Noto Sans Bengali')` does not match on
+    // Windows at all — what a Windows browser falls back to is Nirmala UI. A
+    // Noto-only list would have fixed Android and left every desk unfixed.
+    for (const family of ['Noto Sans Bengali', 'Nirmala UI', 'Kohinoor Bangla']) {
+      assert.ok(face.includes(`local('${family}')`), `${family} is not named`);
+    }
+  });
+
+  test('it downloads nothing', () => {
+    // The header of app.css rules out self-hosted webfonts after one 404'd
+    // and broke the service-worker install outright.
+    assert.doesNotMatch(face, /url\(/, 'a numeral face must not fetch anything');
+  });
+});

@@ -276,7 +276,13 @@ export class RoutinePublishView {
     // `extra` is what a REFUSAL wanted acknowledged: the server hands those
     // back when it declines an unconfirmed publish, and they belong in the
     // second ask even though the review that drew this card did not have them.
-    const lines = [...e.consequenceBn];
+    // `?? []` is not defensive noise: a service worker holding a response
+    // from before the server composed these, or an older deployment behind a
+    // newer client, makes this undefined — and spreading undefined throws
+    // inside a click handler, which loses the dialog and leaves the button
+    // dead with nothing on screen to say why. Observed exactly once, in the
+    // browser, from a cached payload.
+    const lines = [...(e.consequenceBn ?? [])];
     for (const w of extra) {
       const line = `মেনে নেওয়া হচ্ছে: ${w.messageBn}`;
       if (!lines.includes(line)) lines.splice(lines.length - 1, 0, line);
@@ -356,6 +362,11 @@ export class RoutinePublishView {
   private entryCard(e: ReviewEntry): HTMLElement {
     const d = this.o.doc;
     const published = e.status === 'active';
+    // B-108 introduced a fourth state on this screen. A routine that is still
+    // the coordinator's — draft or review — has work in it; anything else is
+    // either the school's timetable or its history.
+    const editable = e.status === 'draft' || e.status === 'review';
+    const retired = !published && !editable;
     const body = el(d, 'div', { className: 'ui-stack' });
 
     // §2. The verdict first — a head reads one line and knows where they are.
@@ -364,9 +375,9 @@ export class RoutinePublishView {
       // The dari closes a sentence; a clause continuing it must not follow
       // one, or the line reads "এই রুটিন চালু আছে। — ৭ সেপ্টেম্বর".
       text: published
-        ? e.verdictBn.replace(/।$/, '') + ` — ${dateBn(e.publishedAt)}`
+        ? (e.verdictBn ?? '').replace(/।$/, '') + ` — ${dateBn(e.publishedAt)}`
           + (e.publishedByBn ? `, প্রকাশ করেছেন ${e.publishedByBn}` : '')
-        : e.verdictBn,
+        : e.verdictBn ?? '',
     }));
 
     // §2's list, as labelled numbers. Each word says what it counts, because
@@ -407,8 +418,14 @@ export class RoutinePublishView {
     // timetable was broken. The warnings stay: what the routine actually
     // carries is still worth reading after it goes live.
     for (const [heading, items, cls] of [
-      ['যা ঠিক করতে হবে', published ? [] : e.blockers, 'ui-note-danger'],
-      ['যা জেনে রাখা দরকার', e.warnings, 'ui-note-warn'],
+      // Only a routine somebody can still work on has anything "to fix". A
+      // published one's single blocker is "already published", and a
+      // SUPERSEDED one's is the same — neither is a defect, and P9-7 fixed
+      // only the first of the two because the second did not exist yet.
+      ['যা ঠিক করতে হবে', editable ? e.blockers : [], 'ui-note-danger'],
+      // A retired version's warnings are history, not work. The live one's
+      // still say what the school is teaching around.
+      ['যা জেনে রাখা দরকার', retired ? [] : e.warnings, 'ui-note-warn'],
     ] as const) {
       if (items.length === 0) continue;
       body.append(sectionHeading(d, { title: heading, level: 3 }));
@@ -425,7 +442,12 @@ export class RoutinePublishView {
     }
 
     const actions: HTMLElement[] = [];
-    if (!published) {
+    // B-108. `!published` was right while the only two states were draft and
+    // active. A SUPERSEDED routine is neither, and it was being offered
+    // "প্রকাশ করুন" and "সম্পাদনা করুন" — one would 409 and the other opens an
+    // editor that refuses every write. Offering a control that cannot work is
+    // the defect this whole phase keeps finding from the other side.
+    if (editable) {
       actions.push(button(d, {
         label: 'রুটিন দেখুন ও সম্পাদনা করুন', variant: 'secondary',
         onClick: () => this.o.onNavigate?.('routineeditor'),

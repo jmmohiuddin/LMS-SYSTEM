@@ -61,6 +61,14 @@ period_template        ← per-shift bell schedule; a school may run Morning + D
        • Hard-constraint violations cannot exist (the solver is infeasible-or-valid)
   5. Manual adjustments via drag-drop; each drop is validated in <50 ms against the clash API
   6. ▶ Publish  →  version++, becomes ACTIVE at effective_from, emits routine.published.v1
+     As built (B-108): publishing demotes the previous ACTIVE routine for the
+     same (year, shift) to `superseded` and writes `supersedes_id`, in ONE
+     transaction — `uq_routine_active` forbids two, so the order is demote
+     then promote. A replacement draft is created by `POST /rms/generate
+     { baseline: 'current' }`, which copies the live routine (pins included,
+     `generated_by = 'copied'`) before the solver tops it up. The solver
+     exempts the same shift's ACTIVE predecessor from its busy-set; other
+     shifts still compete.
        • previous version is retained; a diff view shows exactly what changed
        • affected teachers + guardians get a notification; PWA clients invalidate their cursor
 ```

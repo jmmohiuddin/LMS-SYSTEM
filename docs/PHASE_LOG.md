@@ -13089,3 +13089,247 @@ institutions precisely so that is visible. And a refused ACTION was calling
 "this build does not write" 403 wiped the review it had just drawn and told a
 head they were not allowed to see their own timetable. A refused action is now
 a notice; the denial panel stays for a refused READ, where it is the truth.
+
+---
+
+# B-108 — the second timetable a school could never have (2026-09-07)
+
+## Root cause: one word in a comment that stopped being true
+
+`RmsSolver.loadExistingSlots` gathered "this routine's own slots, PLUS every
+slot in any other ACTIVE routine for the same year — **which is the other
+shift**".
+
+That last clause was true while the only way to have two active routines was
+to run two shifts. It stopped being true the moment a school published and
+then regenerated: the second active routine is the SAME shift's predecessor,
+and the solver counted every teacher and every room it holds as taken — by
+the timetable the new draft exists to replace.
+
+Measured on a real 20-section school: **560 placed in v1, 193 in v2**, with
+**125 of 129** unplaced demands reading `no_free_slot`.
+
+**The database was never involved.** The teacher and room exclusions are
+predicated on `routine_status = 'active'`, and their own comment says so:
+*"Only ACTIVE routines participate, so a draft may still overlap the routine
+it will replace."* Proved rather than trusted — an INSERT of a draft slot
+holding the same teacher AND the same room at the same hour as a published
+slot is accepted, and there is a test whose passing IS that insert not
+raising.
+
+The fix is a predicate, not an algorithm change:
+
+```sql
+AND (rs.routine_id = $1
+     OR rs.routine_id = ANY($3::uuid[])
+     OR (rs.routine_status = 'active' AND r.shift <> $4::shift_code))
+```
+
+Derived from the schema rather than passed in by a caller. `uq_routine_active`
+allows at most one active routine per (tenant, year, shift), so "the active
+routine for MY shift" names the predecessor uniquely and cannot name the
+wrong one — and a caller who passed nothing would have had the solver ignore
+the other shift too, which is the failure this same query was written to fix
+in P9-3.
+
+## The second half: the replacement could not be published at all
+
+Even filled, v2 could not go live. `uq_routine_active` raised 23505 and the
+endpoint answered *"একটি রুটিন ইতিমধ্যে চালু আছে — আগে সেটি বদলান"* — change it
+first, with nothing that could.
+
+`routines.supersedes_id` and the `superseded` status have both existed since
+migration 006. The live database held **0 of each**. Nothing in the product
+had ever written either.
+
+That is the **fifth** control this workstream has found in that state, after
+`section_subject_teachers` (P9-1), the bell schedule (P9-2), `is_pinned`
+(P9-5) and `review` (P9-7). The sixth is below.
+
+Publishing now demotes then promotes, in the caller's transaction. The order
+is forced by the index — two active rows for one (year, shift) cannot exist
+even for the length of a statement — and one transaction is what stops a
+failure between them leaving a school with **no** live timetable, which is
+strictly worse than the old one it was replacing.
+
+## Replacement semantics: both, because they answer different questions
+
+`routines.generated_by` has admitted `'copied'` alongside `'solver'` since
+migration 006, and nothing had ever written that either.
+
+**`baseline: 'inputs'`** — the default, and exactly what `/rms/generate` has
+always done. A fresh draft the solver fills from current academic demand.
+Right when the INPUTS changed: three teachers left, a subject's periods went
+up. Pins are not carried, because a pin refers to a placement in a timetable
+this one is not derived from.
+
+**`baseline: 'current'`** — the live routine copied into a new draft, pins and
+all, which the same solver then tops up. Right when the school wants this
+timetable with three changes — and that is what a replacement usually is. It
+is also the only route by which a published routine can be edited, since
+publishing makes it immutable.
+
+Neither is a second generation system. The clone is one `INSERT ... SELECT`
+and then stops; every placement decision after that is `RmsSolver`, unchanged.
+
+Cloning is REFUSED when the bell schedule has changed underneath it. A copied
+slot points at a `period_definition_id`; on a new template those ids belong to
+the old one, and the copy would look right while placing every lesson at the
+previous timetable's clock times.
+
+## Pins (§5)
+
+Carried by the clone, as pins, verified by comparing (day, period, teacher,
+section, subject) before and after. That is what a pin means — a
+coordinator's decision about where a lesson goes — and one that survived one
+version and not the next would be worthless. From that moment P9-6's guarantee
+takes over: pins are excluded from a scoped re-solve's removal set, so they
+survive by construction rather than by a check.
+
+## Measured (§11)
+
+Same schools as every previous P9 benchmark. Wall clock around the real
+handler; local container, no network, no TLS, no render.
+
+| profile | sections | initial | replace-new | replace-copy |
+|---|---|---|---|---|
+| small | 20 | 1,124 ms · 560/580 | 1,128 ms · 560/580 | **151 ms** · 560/580 |
+| medium | 40 | 2,119 ms · 1125/1160 | 2,163 ms · 1125/1160 | **217 ms** · 1125/1160 |
+| large (2 shifts) | 80 | 4,414 ms · 2325/2360 | 4,449 ms · 2325/2360 | **438 ms** · 2325/2360 |
+| college (2 shifts) | 120 | 6,702 ms · 3464/3600 | 6,698 ms · 3464/3600 | **608 ms** · 3464/3600 |
+
+The number that matters is not the time — it is that **replace-new now places
+exactly what initial places**, at every size. That column was the defect.
+
+The clone is 7.4× to 11× faster because the solver meets a routine that is
+already full and has almost nothing to place; a copy is work the database
+does in one statement rather than work the solver does per lesson.
+
+## §16 — the numerals, and the sixth unreachable control
+
+`--font-bn-num` has existed in `app.css` with its reason written beside it —
+*"Hind Siliguri's Bangla digits are ambiguous … Letters stay on Hind
+Siliguri"* — and `grep -c 'var(--font-bn-num)'` over the whole stylesheet
+returned **0**.
+
+The screenshot complaint was exactly right and worse than cosmetic. In Hind
+Siliguri at UI sizes **১ is close enough to ৮** that:
+
+- `১০টি` reads as `৮০টি`
+- `১০:৪৫` reads as `৮০:৪৫`
+- `১২,৫০০.৭৫` reads as `৮২,৫০০.৭৫`
+
+A count, a class time and a fee, each wrong by a digit.
+
+**A token could never have fixed it.** `font-family` reaches whole elements,
+and digits do not arrive as elements — they arrive inside sentences. The split
+has to happen per CHARACTER, which is what `unicode-range` is for and the only
+mechanism in CSS that can do it. Wrapping every number in a span would mean
+touching every string in the product and still missing the next one written.
+
+```css
+@font-face {
+  font-family: 'ShikhonBnNum';
+  src: local('Noto Sans Bengali'), … local('Nirmala UI'), local('Kohinoor Bangla') …;
+  unicode-range: U+09E6-09EF;
+}
+```
+
+Named FIRST in `--font-body`, `--font-bn` and `--font-heading`.
+
+**Measured, not assumed, and it changed the fix:** `local('Noto Sans Bengali')`
+does **not** match on Windows at all. What a Windows browser actually falls
+back to is **Nirmala UI** — the earlier reading that "Noto is available" was
+Windows substituting it. A Noto-only list, which is what the token named,
+would have fixed the target Android device and left every desk unfixed. Each
+platform's own Bangla face is now named.
+
+Verified in a real browser at 32px:
+
+| | digits `০১২৩৪৫৬৭৮৯` | letters `বিদ্যালয়` |
+|---|---|---|
+| Hind Siliguri only | 186.76 px | 101.67 px |
+| shipped stack | **218.41 px** | **101.67 px** |
+
+The digits moved face; the letters did not. That is the requirement, and it is
+the whole requirement — the UI has not been switched away from Hind Siliguri.
+
+`local()` only, so it downloads nothing: `app.css`'s own header rules out
+self-hosted webfonts after one 404'd and broke the service-worker install, and
+the precache list already states that Bangla renders from the device's own
+font. Where no face matches, the digit falls through to Hind Siliguri and the
+screen is exactly what it is today — the worst case of this rule is no change.
+
+All nine cases §16 lists were rendered and read: single, two and three digits,
+every digit, time, date, money, percentage, and a digit inside a Bangla
+sentence.
+
+## What the browser found
+
+**A superseded routine offered "প্রকাশ করুন" and "সম্পাদনা করুন".** B-108
+created a fourth state on the review screen, and the guard was written
+`!published` when only draft and active existed. One button would have 409'd
+and the other opens an editor that refuses every write. The retired card also
+carried "যা ঠিক করতে হবে — এই রুটিন আগেই প্রকাশিত", which is the same defect
+P9-7 fixed for the published card, in the state that did not exist yet.
+
+**A cached payload could kill the publish button.** `[...e.consequenceBn]`
+throws on undefined inside a click handler, which loses the dialog and leaves
+the button dead with nothing on screen to say why. A service worker holding a
+response from before the server composed those sentences is enough.
+
+**The demo showed one school's name on the other's screen.** The publish
+fixture hard-coded it; the demo carries two institutions precisely so that is
+visible.
+
+## Evidence
+
+- **2026 tests, all passing** across 13 workspaces — 15 new API
+  (`replacement.test.ts`), 2 new view, 5 new stylesheet guards
+- rms suites (246) run **three times**; 26/26 SQL suites **three times**
+- typecheck 0/0/0 · build clean · **75/75 migrations, and B-108 needed none**
+- **Security probe 29/29** against the running deployment
+- **D11** clean in both directions · `app.js` 160,030 / 184,320 gzipped
+- **Browser, real API, a published 20-section school:** the generate screen
+  shows "বর্তমানে চালু রুটিন — একক শিফট, সংস্করণ ১, ৫৬০টি পিরিয়ড · শিক্ষক ও
+  শিক্ষার্থীরা এটিই দেখছেন" with "নতুন খসড়া তৈরি করলে এই রুটিনটি বদলাবে না" →
+  baseline picker → "সংস্করণ ১ থেকে ৫৬০টি ক্লাস কপি করা হয়েছে — পিন করা
+  ক্লাসসহ। চালু রুটিনটি অপরিবর্তিত আছে।" → review → publish → v1 superseded,
+  v2 live
+- **Consumers, over real HTTP, before and after:** version 1 / 560 slots and
+  `teacher_day` 5 rows before; version 2 / 560 slots and `teacher_day` 5 rows
+  after. A teacher reads their own routine (200) throughout and never sees the
+  review (403).
+- **§12 independently, for both baselines:** teacher 0, room 0, section 0,
+  wrong-capability room 0, availability violation 0
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**The browser leg covered principal and teacher; student and guardian are
+covered by the API suite.** The benchmark school seeds neither, so the
+four-role check for those two is `replacement.test.ts` §14 against real
+student and guardian users — 403 on create and on publish, with the live
+routine unchanged — rather than a screenshot.
+
+**A retired version is not shown anywhere yet.** Superseded routines are
+excluded from the publish screen deliberately: a school accumulates one every
+revision, and this is the screen a head publishes FROM. What replaced what is
+on the audit record (`rms.routine.publish` carries `supersededId` and
+`supersededVersion`). A history screen is not built.
+
+**`generated_by` holds one value for a routine that was both copied and
+solved.** 'copied' wins, because it is the fact a reader cannot recover
+elsewhere — `solver_run_id` and `solver_seconds` already record that the
+solver ran.
+
+**The numeral face cannot be verified on Android from here.** It is measured
+working on Windows via Nirmala UI, and the Noto names are the ones Android
+uses; a device without any named face falls through to today's rendering, so
+the change cannot regress. Confirming the Android rendering needs an Android
+device.
+
+**Nothing carries a pin from a fresh generation.** Choosing 'inputs' over a
+live routine discards its pins, and the screen says so before the button is
+pressed. Carrying them into a draft not derived from that timetable would
+place lessons a coordinator never asked for into a week they have not seen.

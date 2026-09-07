@@ -21,6 +21,47 @@ export interface RouteDecision {
   cache?: string;
   ttlSeconds?: number;
   reason: string;
+  /**
+   * B-104. This response belongs to ONE school and must never be served to
+   * another. Set on every cached `/api/` route.
+   *
+   * The Cache API matches on URL alone unless the stored response carries a
+   * `Vary` header, and ours do not — so `/api/v1/academics/hierarchy` cached
+   * for one school was served to whoever asked next. That is invisible in
+   * production's usual shape, where a school is a subdomain and the browser
+   * partitions by origin, and wide open in the shape production actually
+   * ships today: `/app?tid=<uuid>`, every school on one origin. Observed in
+   * P9-4 acceptance — a session for one school first painted against
+   * another's academic year, cached minutes earlier in the same browser.
+   */
+  tenantScoped?: boolean;
+}
+
+/**
+ * The header a page attaches so the service worker knows whose answer this is.
+ *
+ * `Authorization` cannot serve: it rotates every fifteen minutes, so keying a
+ * cache on it would miss on every refresh and quietly disable the offline
+ * story this app is built around.
+ */
+export const TENANT_HEADER = 'x-tenant-id';
+
+/**
+ * The cache key for a tenant-scoped response.
+ *
+ * A distinct KEY rather than a stored tag compared after the fact: a
+ * different school produces a different key, so a cross-tenant hit is not
+ * something the code must remember to check — it cannot be expressed. There
+ * is no window during a switch, no ordering to get right, and no way for a
+ * later edit to reintroduce the bug by forgetting a comparison.
+ *
+ * The empty tenant is its own partition, which is correct: `app.public_
+ * branding()` is served unauthenticated and belongs to nobody's session.
+ */
+export function tenantCacheKey(url: string, tenantId: string): string {
+  const u = new URL(url);
+  u.searchParams.set('__t', tenantId || 'public');
+  return u.toString();
 }
 
 // v2: R-1-A. Bumped so every returning device drops the v1 shell on activate
@@ -68,7 +109,7 @@ export function isPlatformPath(path: string): boolean {
     || path === '/platform.html' || path === '/platform.js' || path === '/platform.css';
 }
 
-export function route(request: { url: string; method: string; mode?: string }): RouteDecision {
+function decide(request: { url: string; method: string; mode?: string }): RouteDecision {
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -257,6 +298,26 @@ export function route(request: { url: string; method: string; mode?: string }): 
   }
 
   return { strategy: 'network-only', reason: 'unclassified' };
+}
+
+/**
+ * The routing decision, with B-104's tenant flag applied.
+ *
+ * Wrapped rather than set on each branch: `decide()` has fourteen returns and
+ * a fifteenth added next month would silently ship an unscoped cache. Here
+ * the rule is stated once — a cached `/api/` response belongs to one school —
+ * and applies to every route that exists or will.
+ *
+ * Shell and media buckets are deliberately NOT scoped. `/app.js` and the
+ * precached shell are the product's own code, identical for every school, and
+ * partitioning them per tenant would download the whole application again on
+ * a device that serves two institutions.
+ */
+export function route(request: { url: string; method: string; mode?: string }): RouteDecision {
+  const d = decide(request);
+  if (!d.cache) return d;
+  const path = new URL(request.url).pathname;
+  return path.startsWith('/api/') ? { ...d, tenantScoped: true } : d;
 }
 
 /**

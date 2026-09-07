@@ -569,6 +569,27 @@ start otherwise). The known residual: RLS reads via `app.my_section_ids()` /
 `current_user_id()` are correct but are also the exact thing blocking support
 mode (B-38) — a design consequence, not a leak.
 
+**Client-side isolation, added 2026-09-07 (B-104).** The audit above covers
+the server, and the server was never breached. The BROWSER was: the service
+worker's data cache matched on URL alone, so on one device serving two
+schools — the `/app?tid=<uuid>` addressing production uses today — one
+school's cached answer first-painted for the other. Found by P9-4's own
+browser acceptance, not by this matrix, which had no client-cache dimension
+until now.
+
+Closed with tenant-aware cache keys plus a purge on switch, and proved in a
+real browser: A's warm cache answers `null` to all of B's identical reads,
+both directions, across ten endpoints; the switch clears the session and
+screen caches while keeping the device id; and with the server stopped, A
+still reads its own data offline while B's identical request fails rather
+than receiving A's. 14 tests in
+`apps/pwa/test/tenant-cache-isolation.test.ts`. The offline outbox needed no
+change — `ownedBy()` has scoped it by `{tenantId, actorId}` since it was
+written.
+
+This adds a dimension the isolation matrix should keep: **first paint, on a
+shared device, is the correct tenant** — not merely eventually correct.
+
 ## 15. UI/UX Audit  ·  16. Accessibility Audit
 
 Risk-based matrix executed in P8 and spot-re-verified this audit: 9 widths ×

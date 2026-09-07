@@ -1664,11 +1664,24 @@ of zero as a constant — the same defect as B-94, in the other reader of the
 same routines), `B-99` (raw room-capability codes reached the explainer
 screen from rows stored months earlier), `B-100` (an 80-section school
 produced 1,516 findings, close to a megabyte and a list nobody reads),
-`B-101` (the explanation cost 38% of the run it explained) and `B-102` (the
+`B-101` (the explanation cost 38% of the run it explained), `B-102` (the
 findings card claimed "no problems found" from an empty list) and `B-103`
 (the generate response was five sixths data nothing drew — 375 kB down to
 70 kB on a 120-section college). `B-91` records the mechanism behind the
 RLS-scope family.
+
+**B-104 — cross-tenant client cache.** *Closed 2026-09-07, before P9-5.*
+Found by P9-4's own browser acceptance and fixed as its own piece of work,
+because tenant isolation is one of the six things that may interrupt the
+roadmap. The service worker's data cache matched on URL alone, so one
+school's cached answer was served to the next school on the same device —
+and production addresses schools as `/app?tid=<uuid>` on ONE origin, so
+browser origin partitioning did not separate them. RLS was never breached;
+the client was. Fixed with tenant-aware cache keys (which make a cross-tenant
+hit impossible to express) plus a purge on switch (which removes the leaving
+school's data from the device), and proved with the server stopped: the
+owning school still works offline, the other gets nothing rather than
+somebody else's roster.
 
 The original note stands as written:
 

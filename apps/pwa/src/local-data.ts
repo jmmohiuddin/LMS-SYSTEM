@@ -75,7 +75,57 @@ const BRANDING_PREFIX = 'shikhon_branding_';
 /** The demo's own selectors. Meaningless outside `/demo`, harmless inside it. */
 export const DEMO_KEYS = ['shikhon_demo_role', 'shikhon_demo_tenant'] as const;
 
-export type PurgeReason = 'logout' | 'role-switch';
+export type PurgeReason = 'logout' | 'role-switch' | 'tenant-switch';
+
+/**
+ * B-104. Does this page load belong to a different school than the data
+ * already on this device?
+ *
+ * Pure, and separated from the acting so the RULE can be tested without a
+ * browser — this is the decision that either protects a shared device or
+ * needlessly throws away a school's offline cache, and both mistakes are
+ * expensive.
+ *
+ * Conservative on purpose. Only a page load that NAMES a school (`?tid=`) can
+ * declare a change; a PWA reopening with no query string is the same school
+ * it was yesterday, and purging then would drop the offline cache of every
+ * device in Bangladesh once a day.
+ *
+ * Two ways a change shows itself, and both are needed:
+ *
+ *   the device already holds another school's data (`shikhon_tid`) — the
+ *   `/app?tid=A` then `/app?tid=B` case that B-104 was found in;
+ *
+ *   a session for another school is still open (`shikhon_auth.tenantId`) —
+ *   somebody signed in as A and the link for B was opened without a logout,
+ *   which no logout hook can catch because no logout happened.
+ */
+export function isTenantSwitch(o: {
+  /** `?tid=` on this load. Empty when the PWA was reopened from the home screen. */
+  incomingTid: string;
+  /** `shikhon_tid` — which school's door this device was last opened at. */
+  storedTid: string;
+  /** `shikhon_auth.tenantId` — whose session is still on this device. */
+  sessionTid: string;
+}): boolean {
+  if (!o.incomingTid) return false;
+  if (o.storedTid && o.storedTid !== o.incomingTid) return true;
+  if (o.sessionTid && o.sessionTid !== o.incomingTid) return true;
+  return false;
+}
+
+/** The tenant of the stored session, or `''`. Never throws. */
+export function sessionTenantId(storage?: Storage): string {
+  try {
+    const ls = storage ?? (globalThis as { localStorage?: Storage }).localStorage;
+    const raw = ls?.getItem('shikhon_auth');
+    if (!raw) return '';
+    const parsed = JSON.parse(raw) as { tenantId?: unknown };
+    return typeof parsed?.tenantId === 'string' ? parsed.tenantId : '';
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Which `shikhon_` keys survive a given transition.
@@ -83,6 +133,10 @@ export type PurgeReason = 'logout' | 'role-switch';
  * A demo role switch is not a logout: nobody signed out, and the demo has no
  * session to end, so tier 1 stays. A real logout ends the session, so it does
  * not.
+ *
+ * A TENANT switch keeps the same set as a logout, and must: the session token
+ * on the device belongs to the school being left, and leaving it behind while
+ * another school's link is open is the whole defect (B-104).
  */
 function keepFor(reason: PurgeReason): Set<string> {
   const keep = new Set<string>([...DEVICE_KEYS, ...DEMO_KEYS]);

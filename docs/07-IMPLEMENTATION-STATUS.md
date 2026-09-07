@@ -976,6 +976,25 @@ These are LOCAL container numbers — no network, no TLS, no browser render —
 so the product's "roughly one minute" promise is **not** proven end to end by
 them and is not claimed to be.
 
+**Client cache isolation (B-104).** The service worker's data cache is keyed
+by school. `sw-router.ts:route()` flags every cached `/api/` decision
+`tenantScoped`, at one place rather than on each branch, so a route added
+later cannot ship unscoped; `tenantCacheKey()` puts the school in the key, so
+a cross-tenant hit is not a check that can be forgotten — it cannot be
+expressed. `auth.ts:authedFetch` sends `X-Tenant-Id` for the worker to key on;
+`Authorization` cannot serve, because it rotates every fifteen minutes and a
+cache keyed on it would miss on every refresh.
+
+Alongside it, `local-data.ts:isTenantSwitch` detects a school change at boot —
+at module top level, synchronously, and BEFORE `shikhon_tid` is overwritten —
+and runs the existing B-8 purge. The key makes serving another school's data
+impossible; the purge makes keeping it on the device impossible. Shell and
+media buckets are deliberately unpartitioned: they are the product's own code.
+
+The outbox needed no change. `OpOwner` is `{tenantId, actorId}` and
+`ownedBy()` has filtered `claimBatch` and `counts` since it was written, so a
+device holding two schools' unsent work has always kept them apart.
+
 **Routine explainability (P9-4).** Four explainers, and only the fourth is
 new. `api/generation.ts:explainSlot` answers "why this teacher, this room"
 for a PLACED lesson (F-503); `src/soft-constraints.ts` lists every trade-off

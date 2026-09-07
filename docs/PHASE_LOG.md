@@ -12321,3 +12321,175 @@ point at, and an unplaced demand has none.
 **Suggestions are not applied.** Every one names a screen the coordinator
 goes to. Acting on them from the drawer is P9-5's editor and P9-6's scoped
 re-solve.
+
+---
+
+# B-104 — two schools, one browser (2026-09-07)
+
+Found during P9-4 browser acceptance, fixed before P9-5.
+
+## Root cause
+
+The Cache API matches on URL alone unless the stored response carries a
+`Vary` header. Ours do not. `sw.ts` did `cache.match(req)`, so the entry
+cached for one school was served to whoever asked next, whatever token was on
+the request.
+
+That is invisible in the shape production is *designed* for — a school per
+subdomain, where the browser partitions by origin — and wide open in the
+shape production **actually ships today**: `/app?tid=<uuid>`, every school on
+one origin, with subdomains recorded in the runbook as not ready and gated
+behind an attestation.
+
+Observed, not theorised: a session for the benchmark school first painted
+against মনিপুর স্কুল's academic year id, cached minutes earlier in the same
+browser. The readiness screen said "এই শিক্ষাবর্ষে কোনো শাখা নেই" because RLS
+correctly returned nothing for a foreign year. **RLS held. The client did
+not.** The devices this happens on are ordinary here: a Union Digital Centre,
+a school's one office laptop, a teacher who works at two madrasas.
+
+## The audit
+
+| Cache / data | Tenant-scoped before? | Key | Risk | Action |
+|---|---|---|---|---|
+| SW `shikhon-data-v1` — `/academics/*`, `/rms/*`, `/ops/inbox`, `/ops/notices`, `/ops/calendar`, `/ops/brand*` | **NO** | URL | **HIGH** — first paint from another school's roster, routine, notices, calendar, hierarchy | tenant-keyed + purge |
+| SW `shikhon-media-v1` — `/media/`, `/scripts/` | **NO** | URL | MEDIUM — answer scripts and photos; URLs embed unguessable ids, so a hit needs the exact URL | purge on switch |
+| SW `shikhon-shell-v2` — precache, app shell, entry assets | n/a — the product's own code | URL | none | **unchanged, deliberately** |
+| localStorage tier 2 — ~20 screen caches (`shikhon_sections_cache`, `shikhon_last_section`, `shikhon_last_roster`, `shikhon_last_class`, …) | **NO** | fixed | **HIGH** — cold-start paint from the previous school | purge on switch |
+| localStorage tier 1 — `shikhon_auth` | holds `tenantId` | fixed | MEDIUM — the leaving school's token stays on the device | purge on switch |
+| localStorage tier 4 — `shikhon_branding_<tid>` | **YES**, already | per tenant | none | unchanged |
+| localStorage tier 4 — `shikhon_tid`, `shikhon_d`, theme, sidebar, textsize | device facts | fixed | none | unchanged |
+| IndexedDB `shikhon` — outbox (tier 3) | **YES**, already | `opId`, every op carries `tenantId`; `ownedBy()` filters `claimBatch` and `counts` | none | unchanged, and never cleared |
+| Demo keys | `/demo` only | fixed | none | unchanged |
+
+Two of the nine were already right, and the reason matters: the outbox was
+designed for a shared device from the start (`OpOwner` is `{tenantId,
+actorId}`), and branding was already one key per school because it is public
+data served before anybody signs in.
+
+## Architecture — C and A together, and both are needed
+
+**C, tenant-aware cache keys**, is what makes a cross-tenant hit impossible.
+`tenantCacheKey()` appends the school to the key, so another school's request
+produces a different key and simply misses. This is not a check somebody must
+remember to write — it cannot be expressed. It holds during a switch, before
+any purge has finished, and a later edit cannot reintroduce the bug by
+forgetting a comparison.
+
+**A, purge on switch**, is what makes "the other school's data is gone" true
+rather than merely "unreachable". `isTenantSwitch()` decides; the existing
+B-8 `purgeLocalData` does the work, which is the module built for exactly
+this and already tested.
+
+**B, partitioned cache names**, was rejected: it would need the tenant woven
+into ~20 localStorage keys and the IndexedDB name too, which is the general
+cache refactor §12 forbids.
+
+Rejected outright: `Vary: Authorization`. Correct, and it would disable the
+cache — the token rotates every fifteen minutes, so every refresh would miss,
+and the offline story this product is built around would quietly die.
+
+The shell and media buckets are deliberately NOT partitioned. `/app.js` and
+the precached shell are the product's own code, identical for every school;
+keying them per tenant would re-download the whole application on exactly the
+devices least able to afford it.
+
+## The ordering, which is the whole point
+
+```
+resolve ?tid=  →  compare with stored tid AND with the open session
+               →  sweepNow()            (synchronous — no await, no gap)
+               →  purgeLocalData()      (async; the key covers this window)
+               →  write the new tid
+               →  screens may now read
+```
+
+It sits at module top level in `app.ts`, not inside `main()`, and **before**
+`localStorage.setItem('shikhon_tid', …)` — which would otherwise destroy the
+evidence the comparison needs. No fetch has been issued at that point.
+
+`isTenantSwitch` is conservative by design: only a load that NAMES a school
+can declare a change. A PWA reopened from the home screen with no query
+string is the same school it was yesterday, and treating that as a switch
+would drop the offline cache of every installed device, every day.
+
+## Proof
+
+Real browser, real service worker, real Cache API, two real schools on one
+origin.
+
+**Negative test (§9/§10).** Warm A's cache, then read the identical URLs as
+B, before B has fetched anything:
+
+```
+keys after warming A:
+  /api/v1/academics/hierarchy?__t=7c9b0000-…-bea0
+  /api/v1/ops/notices?__t=7c9b0000-…-bea0
+  /api/v1/ops/calendar?month=2026-09&__t=7c9b0000-…-bea0
+B reading the same three: null, null, null
+```
+
+Both directions, across ten endpoints, asserted in
+`apps/pwa/test/tenant-cache-isolation.test.ts` against a fake Cache that
+reproduces the real matching rule — URL only, headers ignored — because a
+fake that quietly matched on headers would pass a broken implementation.
+
+**Coexistence.** With both warmed, `aYear = …bea2`, `bYear = 850555c9…`:
+different data, each school seeing only its own.
+
+**Switch, both directions (§5).** `?tid=A` → `?tid=B`: tab title became
+**মনিপুর স্কুল**, `shikhon_auth` gone, `shikhon_sections_cache` gone, A's six
+cache entries gone, `shikhon_d` and `shikhon_theme` kept. `?tid=B` → `?tid=A`:
+title **ছোট স্কুল — গ্রামীণ মাধ্যমিক**, B's session and screen cache gone,
+`offline_AwouldSeeB: false`.
+
+**Offline (§6), with the server actually stopped:**
+
+```
+A offline: ok: true,  year: 7c9b0000-…-bea2      ← its own data, as designed
+B offline: fetch failed entirely                  ← nothing, rather than A's
+```
+
+That is the requirement exactly: the school that owns the cache keeps working
+offline, and the other one gets nothing rather than somebody else's roster.
+
+## Performance
+
+No extra network requests. The key changes; the number of fetches does not.
+A device that never switches schools sees no change at all.
+
+The cost falls only where a device actually serves two institutions: after a
+switch, the arriving school re-downloads its reference data once. That is
+§3's stated priority applied — no cross-tenant data first, offline second —
+and it is the trade the purge buys, since the keying alone would have let
+both caches sit on the device indefinitely.
+
+One benign effect worth recording: a fetch issued in the first moments after
+a switch can have its cache entry deleted by the still-running purge, so it
+is re-fetched next time. Observed during acceptance. A miss, never a wrong
+answer.
+
+## Evidence
+
+- **1900 tests, all passing** across 13 workspaces — 14 new in
+  `tenant-cache-isolation.test.ts`
+- 26/26 SQL suites, run **three times**; the isolation and surface suites run
+  three times
+- typecheck 0/0/0 across three CI configs · 73/73 migrations · build clean
+- **Security probe 29/29** against a running deployment (`local-docker-b104`)
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**The `/media/` and `/scripts/` buckets are cleared on switch, not keyed.**
+Their URLs embed unguessable ids, so serving one across tenants requires
+already knowing the other school's URL. Keying them would have meant
+threading the header through non-API asset requests, which is the refactor
+§12 rules out; the purge covers the realistic case.
+
+**Subdomain deployments were already safe** and are unaffected. This fix is
+for the address production actually uses today.
+
+**The outbox is untouched**, as it must be: tier 3 is never cleared by
+anything, and it did not need to be — `ownedBy()` has scoped it by tenant
+since it was written.

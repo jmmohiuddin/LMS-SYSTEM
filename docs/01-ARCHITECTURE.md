@@ -183,6 +183,31 @@ with a one-tap retry and an export-to-file escape hatch.
 | Student media (answer scripts) | **Cache-first with 7-day TTL**, range requests | Large, rarely re-read |
 | AI chat (`/ai/*`) | **Network-only** + explicit "offline" state | Never fake a tutor response |
 
+**Every cached `/api/` entry is keyed by school (B-104).** The Cache API
+matches on URL alone unless the stored response carries `Vary`, and ours do
+not — so before this, one school's cached answer was served to the next
+school on the same device. That is invisible where a school is a subdomain
+and the browser partitions by origin, and wide open at `/app?tid=<uuid>`,
+which is the address production ships today.
+
+`sw-router.ts:route()` flags every cached `/api/` decision `tenantScoped` at
+one place, so a route added later cannot ship unscoped, and
+`tenantCacheKey(url, tenantId)` puts the school in the key: a cross-tenant
+hit is not a check that can be forgotten, it cannot be expressed. The page
+sends `X-Tenant-Id` (`auth.ts:authedFetch`) for the worker to key on;
+`Authorization` cannot serve, because it rotates every fifteen minutes and a
+cache keyed on it would miss on every refresh.
+
+The shell and media buckets are deliberately NOT partitioned: they hold the
+product's own code, identical for every school, and keying them per tenant
+would re-download the application on the devices least able to afford it.
+
+Alongside the key, `local-data.ts:isTenantSwitch` detects a school change at
+boot — synchronously, at module top level, before `shikhon_tid` is
+overwritten — and clears the leaving school's screen caches and session. The
+key makes serving another school's data impossible; the purge makes keeping
+it on the device impossible.
+
 ### 2.5 Delta sync protocol (read path)
 
 Pull is cursor-based, not timestamp-based, to survive clock skew on cheap Android devices.

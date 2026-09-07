@@ -62,7 +62,9 @@ import {
 } from './branding.ts';
 import { brandName } from '../../../packages/ui-core/src/branding.ts';
 import { todayLocalIso } from '../../../packages/ui-core/src/format.ts';
-import { purgeLocalData, sweepNow } from './local-data.ts';
+import {
+  purgeLocalData, sweepNow, isTenantSwitch, sessionTenantId,
+} from './local-data.ts';
 import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { TeacherHomeView } from './teacher-home-view.ts';
@@ -85,6 +87,30 @@ const apiBase = location.origin;
 // from then on, so re-opening the PWA (no query string) still knows who it
 // belongs to. login-view.ts falls back to an inline field if this is empty.
 const tenantIdFromUrl = params.get('tid') ?? '';
+
+// B-104. If this load belongs to a different school than the data already on
+// this device, that data goes NOW — before the comparison is destroyed by the
+// write below, and before any screen can read a cache belonging to somebody
+// else's school.
+//
+// The order is the whole point and it is why this sits at module top level
+// rather than inside `main()`: `sweepNow` is synchronous, so nothing can
+// interleave between the decision and the empty store, and no fetch has been
+// issued yet. The Cache API half is asynchronous and cannot be, but it does
+// not need to be — the service worker keys tenant-scoped entries by school
+// (`sw-router.ts:tenantCacheKey`), so a request for one school cannot match
+// another's entry even while this is still running. The purge is about not
+// KEEPING another school's data on the device; the key is what makes serving
+// it impossible.
+if (isTenantSwitch({
+  incomingTid: tenantIdFromUrl,
+  storedTid: localStorage.getItem('shikhon_tid') ?? '',
+  sessionTid: sessionTenantId(),
+})) {
+  sweepNow('tenant-switch');
+  void purgeLocalData('tenant-switch');
+}
+
 if (tenantIdFromUrl) localStorage.setItem('shikhon_tid', tenantIdFromUrl);
 
 // R-7.12. A school reached at monipur-high-school.sikhon.systems carries its

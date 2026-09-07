@@ -228,6 +228,12 @@ export class Auth {
     if (!token) throw new AuthError('not_authenticated', 'not logged in');
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${token}`);
+    // B-104. Which school this answer belongs to, for the service worker's
+    // cache key. `Authorization` cannot serve that purpose: it rotates every
+    // fifteen minutes, so a cache keyed on it would miss on every refresh and
+    // quietly disable the offline story. The server ignores this header —
+    // the tenant it acts on comes from the token, and always did.
+    headers.set('X-Tenant-Id', this.state?.tenantId ?? '');
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     return fetch(`${this.o.apiBase}${path}`, { ...init, headers });
   }

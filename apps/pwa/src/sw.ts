@@ -11,7 +11,7 @@
 /// <reference lib="webworker" />
 import {
   route, stalecaches, PRECACHE, CACHE_SHELL, APP_SHELL_URL, type RouteDecision,
-  notificationFor,
+  notificationFor, tenantCacheKey, TENANT_HEADER,
 } from './sw-router.ts';
 
 declare const self: ServiceWorkerGlobalScope;
@@ -52,23 +52,42 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(handle(req, decision));
 });
 
+/**
+ * B-104. What this response is filed under.
+ *
+ * For a tenant-scoped route the key carries the school the request was made
+ * for, so another school's request produces a different key and simply
+ * misses. The isolation is a property of the key rather than a check
+ * somewhere — there is nothing to forget, and nothing to get wrong during a
+ * switch.
+ *
+ * The header is set by `auth.ts:authedFetch`. A request without one is
+ * public (`app.public_branding()` before anybody signs in) and gets the
+ * `public` partition, which is exactly where it belongs.
+ */
+function cacheKey(req: Request, d: RouteDecision): Request | string {
+  if (!d.tenantScoped) return req;
+  return tenantCacheKey(req.url, req.headers.get(TENANT_HEADER) ?? '');
+}
+
 async function handle(req: Request, d: RouteDecision): Promise<Response> {
   const cache = d.cache ? await caches.open(d.cache) : null;
+  const key = cacheKey(req, d);
 
   switch (d.strategy) {
     case 'cache-first':
     case 'cache-first-ttl': {
-      const hit = await cache!.match(req);
+      const hit = await cache!.match(key);
       if (hit) return hit;
       const res = await fetch(req);
-      if (res.ok) cache!.put(req, res.clone());
+      if (res.ok) cache!.put(key, res.clone());
       return res;
     }
 
     case 'stale-while-revalidate': {
-      const hit = await cache!.match(req);
+      const hit = await cache!.match(key);
       const network = fetch(req)
-        .then((res) => { if (res.ok) cache!.put(req, res.clone()); return res; })
+        .then((res) => { if (res.ok) cache!.put(key, res.clone()); return res; })
         .catch(() => hit ?? Response.error());
       return hit ?? network;
     }

@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { TimetableView, type TimetablePayload } from '../src/timetable-view.ts';
+import { ordinalBn, formatClockRange } from '../../../packages/ui-core/src/format.ts';
 
 let dom: JSDOM;
 
@@ -194,8 +195,10 @@ describe('P9-8 — the published routine on screen', () => {
     assert.ok(cell);
     const name = cell.getAttribute('aria-label') ?? '';
     assert.match(name, /রবিবার/, 'the day');
-    assert.match(name, /১ নম্বর পিরিয়ড/, 'the hour');
-    assert.match(name, /০৯:০০ থেকে ০৯:৪৫/, 'the clock time');
+    // The ordinal and the clock a sighted reader sees, not `period_no` and a
+    // 24-hour range — the label used to carry both, and both were wrong.
+    assert.match(name, /১ম পিরিয়ড/, 'the hour');
+    assert.match(name, /সকাল ৯:০০–৯:৪৫/, 'the clock time');
     assert.match(name, /গণিত/, 'and what happens in it');
   });
 
@@ -238,6 +241,75 @@ describe('P9-8 — the published routine on screen', () => {
     payload.lessons = [lesson(0, 1, { isParallel: true })];
     await mount();
     assert.match(text(), /বিভাজিত ক্লাস/);
+  });
+
+  test('THE SCREEN AND THE SHEET AGREE — same ordinal, same clock', () => {
+    // A screen that says one thing and paper printed from it that says
+    // another is the divergence this whole shared read exists to prevent.
+    // Both of these were wrong on the screen and right on the sheet, and a
+    // browser check caught it because no test asserted the screen's clock.
+    assert.equal(ordinalBn(5), '৫ম');
+    assert.equal(formatClockRange('13:30', '14:15', 'bn'), 'দুপুর ১:৩০–২:১৫');
+  });
+
+  test('§3 — the grid clock is 12-hour with the part of the day', async () => {
+    payload.periods = [
+      { ...period(1), startsAt: '10:00', endsAt: '10:45', kind: 'teaching' },
+      { ...period(2), labelBn: 'টিফিন', startsAt: '13:00', endsAt: '13:30',
+        kind: 'tiffin' },
+      { ...period(3), startsAt: '13:30', endsAt: '14:15', kind: 'teaching' },
+    ];
+    payload.lessons = [lesson(0, 3, { startsAt: '13:30', endsAt: '14:15' })];
+    await mount();
+    const t = text();
+    assert.match(t, /সকাল ১০:০০–১০:৪৫/);
+    assert.match(t, /দুপুর ১:৩০–২:১৫/, 'the afternoon hour, not ১৩:৩০');
+    assert.doesNotMatch(t, /১৩:৩০|১৪:১৫/,
+      'a 24-hour clock under a period ordinal reads as a period number');
+    // The break carries its clock the same way.
+    assert.match(t, /টিফিন/);
+    assert.match(t, /দুপুর ১:০০–১:৩০/);
+  });
+
+  test('§2 — the screen ordinal counts TAUGHT hours, skipping the break', async () => {
+    payload.periods = [
+      { ...period(1), startsAt: '10:00', endsAt: '10:45', kind: 'teaching' },
+      { ...period(2), labelBn: 'টিফিন', startsAt: '13:00', endsAt: '13:30',
+        kind: 'tiffin' },
+      { ...period(3), startsAt: '13:30', endsAt: '14:15', kind: 'teaching' },
+    ];
+    payload.lessons = [lesson(0, 3, { startsAt: '13:30', endsAt: '14:15' })];
+    await mount();
+    const nos = [...root().querySelectorAll('.routine-grid-no')]
+      .map((e) => (e.textContent ?? '').replace('পিরিয়ড', '').trim());
+    assert.deepEqual(nos, ['১ম', '২য়'],
+      'period_no 3 is the SECOND taught hour — counting rows printed ৩য়');
+  });
+
+  test('the accessible label carries the same hour the column shows', async () => {
+    // A screen-reader user heard "৬ নম্বর পিরিয়ড" for the hour everyone else
+    // called ৫ম, because this label counted `period_no`. Same off-by-one,
+    // one layer down where nobody looks.
+    payload.periods = [
+      { ...period(1), startsAt: '10:00', endsAt: '10:45', kind: 'teaching' },
+      { ...period(2), labelBn: 'টিফিন', startsAt: '13:00', endsAt: '13:30',
+        kind: 'tiffin' },
+      { ...period(3), startsAt: '13:30', endsAt: '14:15', kind: 'teaching' },
+    ];
+    payload.lessons = [lesson(0, 3, { startsAt: '13:30', endsAt: '14:15' })];
+    await mount();
+    const label = root().querySelector('.routine-slot')
+      ?.getAttribute('aria-label') ?? '';
+    assert.match(label, /২য় পিরিয়ড/, label);
+    assert.doesNotMatch(label, /৩ নম্বর|নম্বর পিরিয়ড/, label);
+    assert.match(label, /দুপুর ১:৩০–২:১৫/, label);
+  });
+
+  test('B-116 — the year on the screen is in Bangla numerals', async () => {
+    payload.routines = [{ ...BASE.routines[0], yearLabel: '2026' }];
+    await mount();
+    assert.match(text(), /২০২৬ শিক্ষাবর্ষ/);
+    assert.doesNotMatch(text(), /2026/);
   });
 
   /* ──────────────────────────── the numbers ───────────────────────────── */

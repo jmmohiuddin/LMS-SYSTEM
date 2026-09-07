@@ -5160,7 +5160,7 @@ function buildReportCard(d, locale = "bn") {
     title: titleFor("report_card", locale),
     meta: [
       { label: "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE", value: d.examNameBn },
-      { label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: d.yearLabel }
+      { label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: num(d.yearLabel, locale) }
     ],
     bodyHtml: [
       fields(studentFields(d.student, locale)),
@@ -5184,7 +5184,7 @@ function buildAdmitCard(d, locale = "bn") {
     title: titleFor("admit_card", locale),
     meta: [
       { label: "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE", value: d.examNameBn },
-      { label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: d.yearLabel }
+      { label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: num(d.yearLabel, locale) }
     ],
     bodyHtml: [
       fields(studentFields(d.student, locale)),
@@ -5202,7 +5202,7 @@ var ADMIT_INSTRUCTIONS_BN = [
 function buildIdCard(d, locale = "bn") {
   return {
     title: titleFor("id_card", locale),
-    meta: [{ label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: d.yearLabel }],
+    meta: [{ label: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7", value: num(d.yearLabel, locale) }],
     showSignature: false,
     bodyHtml: [
       '<div class="doc-idcard">',
@@ -5373,7 +5373,10 @@ function buildRoutineSheet(d, locale = "bn") {
     return `<tr><th class="rt-period" scope="row"><span class="rt-no">${escapeHtml(ord)}<span class="rt-pd">${escapeHtml(bn ? "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1" : "period")}</span></span><span class="rt-time">${escapeHtml(clock)}</span></th>` + cells + "</tr>";
   }).join("");
   const meta = [
-    { label: bn ? "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7" : "Year", value: d.yearLabel },
+    // B-116. Through `num()` like the version and the date beside it: a
+    // school's own label, with only its DIGITS in the reader's numerals.
+    // '2026-27' prints ২০২৬-২৭ and a label already in Bangla is untouched.
+    { label: bn ? "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7" : "Year", value: num(d.yearLabel, locale) },
     { label: bn ? "\u09B6\u09BF\u09AB\u099F" : "Shift", value: d.shiftBn },
     { label: bn ? "\u09B8\u0982\u09B8\u09CD\u0995\u09B0\u09A3" : "Version", value: num(d.version, locale) }
   ];

@@ -1742,3 +1742,13 @@ cell, which has room for a second line). `board=1` is the notice-board sheet:
 the same grid, larger type, and a page cap that knows a 22% larger face costs
 45% more page. Verified by rasterisation, not by computed style — one document
 page is one sheet of A4 on all 24 sheets measured.
+
+**The screen and the sheet share their formatters, and are tested on it.**
+Both take the period ordinal from `ordinalBn(taught)` and the clock from
+`formatClockRange`, and the year from `num()`/`toBanglaDigits`. This is not
+tidiness: the screen's clock was briefly left on 24-hour `১০:০০–১০:৪৫` while
+the sheet printed `সকাল ১০:০০–১০:৪৫`, and no test caught it because none
+asserted the screen's clock. One now does, and one asserts the two use the
+same functions. The accessible label carries the same ordinal and clock as the
+visible column — it used to carry `formatCount(period_no)`, so a screen-reader
+user heard the off-by-one everyone else had already been spared.

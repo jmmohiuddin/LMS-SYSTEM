@@ -1762,8 +1762,17 @@ is near-neutral and is the FOURTH signal after the chip, its border and the
 rule between lines, so the page survives a photocopier. **One document page is
 one sheet of A4 on all 24 rasterised sheets**, and a 120-section college prints
 60 class-grouped pages where the first pass printed 120 ungrouped ones.
-`B-115` (no physical print) and `B-116` (Latin year beside Bangla numerals)
-remain open.
+`B-116` closed at the same time and was never a routine bug: `num()` has done
+locale-aware digits since R-5 and FOUR builders — report card, admit card, ID
+card, routine sheet — passed the year straight past it. Digits only, so a
+school's `2026-27` session prints ২০২৬-২৭ and its words are never rewritten.
+
+Browser acceptance is what closed the phase, and it found two things 2041
+tests did not: the screen's clock was still 24-hour while the sheet printed
+`সকাল ১০:০০`, and the accessible label still counted `period_no` — so a
+screen-reader user heard "৬ নম্বর পিরিয়ড" for the hour everyone else called
+৫ম. `B-115` remains **NOT OBSERVED / EXTERNAL**: the PDFs are real and
+measured, but no sheet has come off a printer.
 
 **P9-8 — role-specific routine outputs.** *Delivered 2026-09-07.* Eight
 audiences, ONE dataset: institution, class, group, stream, section, teacher,

@@ -24,6 +24,7 @@ import {
   buildIdCard,
   buildTransferCertificate,
   buildAttendanceSheet,
+  buildRoutineSheet,
   documentBodyCss,
   ADMIT_INSTRUCTIONS_BN,
   DOCUMENT_TITLES_BN,
@@ -504,5 +505,109 @@ describe('the document set', () => {
     assert.match(html, /@page\{size:A4/);
     assert.match(html, /print-color-adjust:exact/,
       'browsers strip background imagery from print by default — the watermark needs this');
+  });
+});
+
+/**
+ * B-116 — the academic year, in the numerals the reader uses.
+ *
+ * `num()` has done locale-aware digits since R-5, and `date()` already went
+ * through it — which is why a sheet printed "প্রকাশ: ৭ সেপ্টেম্বর ২০২৬" and
+ * "সংস্করণ: ১" correctly and "শিক্ষাবর্ষ: 2026" on the very same line. Four
+ * builders passed the year RAW past the helper that was already right.
+ *
+ * It survived because EVERY fixture in this file already said '২০২৬'. A test
+ * that only ever feeds correct-looking input cannot catch a missing
+ * conversion, so these feed the Latin the onboarding screen actually defaults
+ * to — `label.input.value.trim() || year`, where `year` comes from the
+ * browser's clock.
+ *
+ * The rule is DIGITS, not the label: `academic_years.label` is free text a
+ * school types and `2026-27` is a real Bangladeshi session, so the words and
+ * the punctuation survive and only the figures move.
+ */
+describe('B-116 — the year prints in the reader’s numerals', () => {
+  const yearOf = (b: { meta?: { label: string; value: string }[] }) =>
+    (b.meta ?? []).find((m) => m.label === 'শিক্ষাবর্ষ' || m.label === 'Year')?.value;
+
+  /** Every builder that puts a year on paper, with a year-shaped hole in it. */
+  const withYear = (yearLabel: string) => ({
+    report_card: buildReportCard({ ...REPORT, yearLabel }),
+    admit_card: buildAdmitCard({
+      student: RAFI, examNameBn: 'অর্ধবার্ষিক পরীক্ষা', yearLabel,
+      papers: [], instructionsBn: [],
+    }),
+    id_card: buildIdCard({
+      student: RAFI, yearLabel, validUntil: '2026-12-31',
+      guardianPhone: '+8801711000009',
+    }),
+    routine_sheet: buildRoutineSheet({
+      scopeTitle: 'নবম শ্রেণি', scopeKind: 'class', yearLabel,
+      shiftBn: 'একক', version: 1, publishedAt: null,
+      days: [{ dow: 0, bn: 'রবি' }],
+      periods: [{ periodNo: 1, labelBn: '১ম', startsAt: '10:00',
+                  endsAt: '10:45', kind: 'teaching' }],
+      lessons: [{
+        dayOfWeek: 0, periodNo: 1, startsAt: '10:00', endsAt: '10:45',
+        subjectBn: 'গণিত', teacherBn: 'রফিক স্যার', roomBn: 'R-1',
+        sectionLabel: 'ক', classBn: 'নবম শ্রেণি', classLevel: 9,
+        isParallel: false,
+      }],
+    }),
+  });
+
+  test('THE ONE THAT MATTERS — a Latin year prints Bangla on every document', () => {
+    // The onboarding screen defaults this field from the browser's clock, so
+    // "2026" is not a hypothetical: it is what a school gets by pressing next.
+    for (const [type, body] of Object.entries(withYear('2026'))) {
+      assert.equal(yearOf(body), '২০২৬', `${type} printed a Latin year`);
+    }
+  });
+
+  test('a Bangla year is left exactly as it is', () => {
+    // The conversion must be idempotent, or a second pass would corrupt it.
+    for (const [type, body] of Object.entries(withYear('২০২৬'))) {
+      assert.equal(yearOf(body), '২০২৬', type);
+    }
+  });
+
+  test('a session label keeps its shape — only the figures move', () => {
+    // '2026-27' is a real Bangladeshi session and the hyphen is the school's.
+    for (const [type, body] of Object.entries(withYear('2026-27'))) {
+      assert.equal(yearOf(body), '২০২৬-২৭', type);
+    }
+    // Words a school typed are not touched at all. This is the line between
+    // localising numerals and rewriting somebody's free text.
+    for (const [type, body] of Object.entries(withYear('শিক্ষাবর্ষ 2026'))) {
+      assert.equal(yearOf(body), 'শিক্ষাবর্ষ ২০২৬', type);
+    }
+  });
+
+  test('no Bangla document leaks a Latin digit in its year, ever', () => {
+    // The sweep, so a SEVENTH builder added later cannot quietly skip this.
+    for (const [type, body] of Object.entries(withYear('2026'))) {
+      const html = brandedDocument({ branding: MONIPUR, ...body });
+      const meta = html.match(/<div><b>শিক্ষাবর্ষ:<\/b>([^<]*)<\/div>/)?.[1] ?? '';
+      assert.doesNotMatch(meta, /[0-9]/, `${type} meta: ${meta}`);
+    }
+  });
+
+  test('an English document prints the label the school typed', () => {
+    // `num()` converts TO the locale's numerals and never away from a value
+    // as stored: 'bn' localises Latin digits, 'en' leaves what it is given.
+    // That asymmetry is deliberate. Converting ২০২৬ to 2026 for an English
+    // sheet would be a second transform of a school's own free text, in the
+    // opposite direction, and §1 of this phase's brief forbids exactly that.
+    // An English document therefore shows the label as typed.
+    const en = (yearLabel: string) => buildRoutineSheet({
+      scopeTitle: 'Class 9', scopeKind: 'class', yearLabel,
+      shiftBn: 'Single', version: 1, publishedAt: null,
+      days: [{ dow: 0, bn: 'Sun' }],
+      periods: [{ periodNo: 1, labelBn: '1st', startsAt: '10:00',
+                  endsAt: '10:45', kind: 'teaching' }],
+      lessons: [],
+    }, 'en');
+    assert.equal(yearOf(en('2026')), '2026', 'a Latin label stays Latin');
+    assert.equal(yearOf(en('২০২৬')), '২০২৬', 'and a Bangla one is not rewritten');
   });
 });

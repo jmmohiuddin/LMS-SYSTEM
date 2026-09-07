@@ -14054,3 +14054,129 @@ through `বাংলাদেশ ও বিশ্বপরিচয়` and the
 with consistently longer ones gets more wrapping and thinner margin — not a
 spill, because the 8mm constant is weighted toward the wrapped case, but the
 headroom is smaller than the table above suggests.
+
+---
+
+# P9-9 CLOSURE — B-116, and what the browser found (2026-09-08)
+
+## B-116 — the helper was already right; four call sites walked past it
+
+The brief said to verify the source before transforming anything, and that
+verification is most of this fix.
+
+`academic_years.label` is `text NOT NULL` and its schema comment has said
+`-- '২০২৬'` since migration 003, so a Bangla numeral is the documented intent.
+But it IS free text: onboarding stores `label.input.value.trim() || year`,
+where `year` comes from the browser's clock — which is why the CI database
+holds both `২০২৬` (the reference tenant) and `2026` (every tenant created by
+pressing next). A Bangladeshi school may equally type `2026-27` for a session.
+
+So a blind replacement would have been wrong. But nothing needed writing:
+`num()` has done locale-aware digits since R-5, `date()` already went through
+it, and `toBanglaDigits` rewrites `[0-9]` and NOTHING else. `2026-27` becomes
+২০২৬-২৭, a label already in Bangla is untouched, and any words survive.
+
+The defect was that **four builders passed the year raw** past the helper
+sitting on the same line as the version it formatted correctly:
+
+    শিক্ষাবর্ষ: 2026   শিফট: একক   সংস্করণ: ১   প্রকাশ: ৭ সেপ্টেম্বর ২০২৬
+                 ↑ raw            ↑ num()      ↑ date() → num()
+
+Report card, admit card, ID card and the routine sheet — so this was never a
+routine bug. Two screens did the same: the routine header and the academic
+history table.
+
+**Why it survived:** every fixture in `documents.test.ts` already said `'২০২৬'`.
+A test that only feeds correct-looking input cannot catch a missing
+conversion. The new tests feed the Latin the onboarding screen actually
+produces, plus `2026-27` and `শিক্ষাবর্ষ 2026`, and sweep every builder — so a
+seventh added later cannot quietly skip it.
+
+**Deliberately NOT changed:** `num(x, 'en')` leaves what it is given. An
+English sheet shows a Bangla-typed label as typed, because converting it to
+Latin would be a second transform of a school's free text in the opposite
+direction — exactly what §1 forbids. Asserted, so nobody "fixes" it later.
+
+## What the browser found that 2041 tests did not
+
+§3 asked for browser verification, and it earned its place twice.
+
+**A stale dev server.** The first pass against `localhost:4174` returned
+`১ নম্বর` ordinals and `১৩:০০–১৩:৩০` tiffin — the design from two commits
+earlier. The server had been running since before those edits and Node had the
+modules cached. Restarting it is the whole fix, but it is worth recording: a
+long-lived dev server is a mirror that shows you the past, and it would have
+been very easy to read that output as a regression and "fix" working code.
+
+**A silent no-op patch, which was a real bug.** The screen's teaching-row
+clock was still `formatTime` — 24-hour `১০:০০–১০:৪৫` — while the printed sheet
+said `সকাল ১০:০০–১০:৪৫`. One of the edits that introduced `formatClockRange`
+matched nothing and reported success anyway, and no test asserted the SCREEN's
+clock format, so nothing caught it. The screen and the sheet share one read
+precisely so they cannot disagree, and they had begun to.
+
+**And one layer below that**, the same defect in the accessible label:
+
+    aria-label: "রবিবার, ৬ নম্বর পিরিয়ড, ১৩:৩০ থেকে ১৪:১৫, …"
+
+`formatCount(period_no)` — the off-by-one this phase fixed twice in the
+visible column, still live where only a screen-reader user would meet it. A
+person using a screen reader heard "৬ নম্বর পিরিয়ড" for the hour everyone
+else called ৫ম. Now:
+
+    aria-label: "রবিবার, ১ম পিরিয়ড, সকাল ১০:০০–১০:৪৫, বাংলা, ষষ্ঠ-ক, শিক্ষক ১, কক্ষ ১"
+
+Five new view tests pin all of it, including one whose only job is to assert
+that the screen's ordinal and clock are the same functions the sheet uses.
+
+## Browser acceptance, against the live server
+
+A token minted with the server's own keys, seeded into `localStorage` the way
+the app stores it, then the real screens and the real endpoint:
+
+| output | status | year | ordinals | clock | tiffin | paper | pages |
+|---|---|---|---|---|---|---|---|
+| institution | 200 | ২০২৬ | ১ম–৭ম | সকাল ১০:০০–১০:৪৫ | দুপুর ১:০০–১:৩০ | landscape | 10 |
+| class | 200 | ২০২৬ | ১ম–৭ম | সকাল ১০:০০–১০:৪৫ | দুপুর ১:০০–১:৩০ | landscape | 2 |
+| section | 200 | ২০২৬ | ১ম–৭ম | সকাল ১০:০০–১০:৪৫ | দুপুর ১:০০–১:৩০ | portrait | 1 |
+| teacher | 200 | ২০২৬ | ১ম–৭ম | সকাল ১০:০০–১০:৪৫ | দুপুর ১:০০–১:৩০ | portrait | 1 |
+| room | 200 | ২০২৬ | ১ম–৭ম | সকাল ১০:০০–১০:৪৫ | দুপুর ১:০০–১:৩০ | portrait | 1 |
+| class, board | 200 | ২০২৬ | ১ম–৭ম | সকাল ১০:০০–১০:৪৫ | দুপুর ১:০০–১:৩০ | landscape | 4 |
+
+No Latin digit in the rendered text of any of them. The class sheet was also
+rendered through the SAME sandboxed `srcdoc` iframe the print drawer uses, and
+photographed there: the letterhead, `শিক্ষাবর্ষ: ২০২৬`, the chips, the tints,
+the tiffin band, the footer, and page two breaking below.
+
+## §4/§5/§6 re-verified after the change
+
+- **Tints** unchanged and still near-neutral — a test extracts every hex in
+  the sheet's CSS and fails any whose channels differ by 40 or more. First
+  section white, so the page has somewhere to rest. Tint remains the FOURTH
+  signal after the chip, its border and the rule between lines.
+- **Four section-name lengths** re-rendered and re-rasterised, `ক` through
+  `ব্যবসায় শিক্ষা ও ব্যবস্থাপনা বিজ্ঞান শাখা`: one page each, no horizontal
+  overflow, no truncation.
+- **24 sheets rasterised**, document pages equal printed sheets on every one,
+  A4 landscape for dense scopes and portrait for single-lesson ones.
+
+## Evidence
+
+- **2041 tests passing** — 1990 in the standard sweep plus platform-svc's 51
+- typecheck 0/0/0 · build clean · **26/26 SQL suites** · 75/75 migrations
+- **Security probe 29/29** over 12 areas, including tenant isolation and the
+  published-only rule
+- **D11** clean: zero platform brand in any of the 24 rendered documents
+- **D13** satisfied: the UI layer verified in a browser, both the screen and
+  the print path, which is what found two of the three defects above
+- `app.js` **165,544 / 184,320** gzipped
+- Landing page byte-identical at `496199bd`
+
+## B-115 — NOT OBSERVED / EXTERNAL
+
+No routine sheet has been printed on paper. The PDFs are real, rasterised and
+measured; the tints and the grey period column are argued from their channel
+values and have not been seen come out of a mono laser, and the 9mm page
+margin has not met a printer's own unprintable edge. This needs one office
+printer and one look, and no amount of further work in this environment can
+supply it. **NOT OBSERVED / EXTERNAL.**

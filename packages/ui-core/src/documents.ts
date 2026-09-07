@@ -303,7 +303,7 @@ export function buildReportCard(d: ReportCardData, locale: Locale = 'bn'): Docum
     title: titleFor('report_card', locale),
     meta: [
       { label: 'পরীক্ষা', value: d.examNameBn },
-      { label: 'শিক্ষাবর্ষ', value: d.yearLabel },
+      { label: 'শিক্ষাবর্ষ', value: num(d.yearLabel, locale) },
     ],
     bodyHtml: [
       fields(studentFields(d.student, locale)),
@@ -356,7 +356,7 @@ export function buildAdmitCard(d: AdmitCardData, locale: Locale = 'bn'): Documen
     title: titleFor('admit_card', locale),
     meta: [
       { label: 'পরীক্ষা', value: d.examNameBn },
-      { label: 'শিক্ষাবর্ষ', value: d.yearLabel },
+      { label: 'শিক্ষাবর্ষ', value: num(d.yearLabel, locale) },
     ],
     bodyHtml: [
       fields(studentFields(d.student, locale)),
@@ -409,7 +409,7 @@ export interface IdCardData {
 export function buildIdCard(d: IdCardData, locale: Locale = 'bn'): DocumentBody {
   return {
     title: titleFor('id_card', locale),
-    meta: [{ label: 'শিক্ষাবর্ষ', value: d.yearLabel }],
+    meta: [{ label: 'শিক্ষাবর্ষ', value: num(d.yearLabel, locale) }],
     showSignature: false,
     bodyHtml: [
       '<div class="doc-idcard">',
@@ -851,7 +851,10 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
   }).join('');
 
   const meta: { label: string; value: string }[] = [
-    { label: bn ? 'শিক্ষাবর্ষ' : 'Year', value: d.yearLabel },
+    // B-116. Through `num()` like the version and the date beside it: a
+    // school's own label, with only its DIGITS in the reader's numerals.
+    // '2026-27' prints ২০২৬-২৭ and a label already in Bangla is untouched.
+    { label: bn ? 'শিক্ষাবর্ষ' : 'Year', value: num(d.yearLabel, locale) },
     { label: bn ? 'শিফট' : 'Shift', value: d.shiftBn },
     { label: bn ? 'সংস্করণ' : 'Version', value: num(d.version, locale) },
   ];

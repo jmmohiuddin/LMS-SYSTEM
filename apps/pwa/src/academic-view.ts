@@ -24,7 +24,7 @@
  * replacements at all, and then the register and the truth diverge quietly.
  */
 import type { Auth } from './auth.ts';
-import { todayLocalIso } from '../../../packages/ui-core/src/format.ts';
+import { todayLocalIso, toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 import { iconSvg } from './icon.ts';
 import {
   skeleton, errorState, emptyState, successNote, confirmDialog, bnNum, bnDate,
@@ -1091,7 +1091,8 @@ export class AcademicView {
       rowKey: (h) => `${h.yearLabel}-${h.section}-${h.rollNo}`,
       empty: { message: 'আগের কোনো শিক্ষাবর্ষের রেকর্ড নেই।' },
       columns: [
-        { key: 'year', header: 'শিক্ষাবর্ষ', mobile: 'title', cell: (h) => h.yearLabel,
+        { key: 'year', header: 'শিক্ষাবর্ষ', mobile: 'title',
+          cell: (h) => toBanglaDigits(h.yearLabel),
           width: 'minmax(0, 1fr)' },
         { key: 'class', header: 'শ্রেণি', mobile: 'subtitle',
           cell: (h) => `${h.classBn} · ${h.groupBn}`, width: 'minmax(0, 1.6fr)' },

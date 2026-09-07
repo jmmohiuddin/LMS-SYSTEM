@@ -1077,6 +1077,13 @@ number before it is read as a time. `formatClockRange` and `dayPartBn` carry
 the everyday boundaries (ভোর/সকাল/দুপুর/বিকাল/সন্ধ্যা/রাত), so an evening
 shift does not fall off the table.
 
+**The year prints in the reader's numerals** (B-116). `num()` has done
+locale-aware digits since R-5 and `date()` already used it — four builders
+passed the year RAW past it, so a sheet read `শিক্ষাবর্ষ: 2026` beside
+`সংস্করণ: ১`. Digits only, never the label: `2026-27` prints ২০২৬-২৭, a Bangla
+label is untouched, and words a school typed survive. An English document
+still shows the label as typed, deliberately.
+
 **A section is a chip, a border, a rule and then a tint** — in that order,
 because tint is what a photocopier loses first. Eight near-neutral tints, the
 first pure white so the page has somewhere to rest. A page whose section

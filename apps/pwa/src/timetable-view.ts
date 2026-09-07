@@ -250,7 +250,10 @@ export class TimetableView {
     if (r) {
       body.append(el(d, 'p', {
         className: 'ui-card-note',
-        text: `${r.yearLabel} শিক্ষাবর্ষ · সংস্করণ ${formatCount(r.version, 'bn')}`
+        // B-116. The version beside it was already Bangla and the year was
+        // not, on the same line. Digits only — a school that labels its
+        // session '2026-27' gets ২০২৬-২৭, not a rewritten label.
+        text: `${toBanglaDigits(r.yearLabel)} শিক্ষাবর্ষ · সংস্করণ ${formatCount(r.version, 'bn')}`
             + ` · প্রকাশ: ${dateBn(r.publishedAt)}`,
       }));
     }
@@ -345,9 +348,14 @@ export class TimetableView {
       // Its own class, not `routine-slot-meta`: that one also carries teacher
       // and room NAMES, and `--font-bn-num` on it would move their letters
       // too. This span is a clock time and nothing else.
+      //
+      // The SAME formatter the printed sheet uses. A 24-hour '১৪:০০' sitting
+      // under a period ordinal is read as a period number, and a screen that
+      // says one thing while the paper printed from it says another is the
+      // divergence this whole read exists to prevent.
       th.append(el(d, 'span', {
         className: 'routine-grid-time',
-        text: `${formatTime(p.startsAt, 'bn')}–${formatTime(p.endsAt, 'bn')}` }));
+        text: formatClockRange(p.startsAt, p.endsAt, 'bn') }));
       tr.append(th);
 
       for (const day of data.days) {
@@ -356,7 +364,9 @@ export class TimetableView {
         if (here.length === 0) {
           td.append(el(d, 'span', { className: 'routine-slot-empty', text: '—' }));
         } else {
-          for (const l of here.slice(0, PER_CELL)) td.append(this.cell(l, day.bn, p));
+          for (const l of here.slice(0, PER_CELL)) {
+            td.append(this.cell(l, day.bn, p, ordinalBn(taught)));
+          }
           if (here.length > PER_CELL) {
             td.append(el(d, 'span', {
               className: 'routine-slot-meta',
@@ -480,7 +490,7 @@ export class TimetableView {
    * carries the day and hour because a screen reader moving through a table
    * cell by cell has no other way to know which one it is in.
    */
-  private cell(l: Lesson, dayBn: string, p: Period): HTMLElement {
+  private cell(l: Lesson, dayBn: string, p: Period, ordinal: string): HTMLElement {
     const d = this.o.doc;
     const wrap = el(d, 'div', { className: 'routine-slot' });
     wrap.setAttribute('data-filled', 'true');
@@ -504,10 +514,14 @@ export class TimetableView {
       wrap.append(el(d, 'span', { className: 'routine-slot-meta', text: 'বিভাজিত ক্লাস' }));
     }
 
+    // The SAME ordinal and the SAME clock the sighted column shows. This
+    // label used to count `period_no`, so a screen-reader user heard
+    // “৬ নম্বর পিরিয়ড” for the hour everyone else called ৫ম — the same
+    // off-by-one as the printed sheet, one layer down where nobody looks.
     wrap.setAttribute('aria-label', [
       `${dayBn}বার`,
-      `${formatCount(p.periodNo, 'bn')} নম্বর পিরিয়ড`,
-      `${formatTime(l.startsAt, 'bn')} থেকে ${formatTime(l.endsAt, 'bn')}`,
+      `${ordinal} পিরিয়ড`,
+      formatClockRange(l.startsAt, l.endsAt, 'bn'),
       ...what,
       l.teacherBn ?? '',
       l.roomBn ?? '',

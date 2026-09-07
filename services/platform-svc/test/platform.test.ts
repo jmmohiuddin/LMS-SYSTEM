@@ -777,4 +777,105 @@ describe('R-7 — platform console', { skip }, () => {
       assert.equal(r.status, 400);
     });
   });
+
+  // ── P10-1 · the fleet, one page at a time ──────────────────────────────
+  //
+  // The console used to fetch EVERY school on every request — 142 kB at 258
+  // schools — and page, sort and triage in the browser. These pin the parts
+  // a paginated list gets wrong quietly.
+
+  describe('fleet pagination', () => {
+    test('THE ONE THAT MATTERS — the total describes the FLEET, not the page', async () => {
+      // The failure this prevents: an operator filters to the schools that
+      // are down, sees "25 of 25" because that is the page size, and closes
+      // the screen believing they have seen all of them.
+      const small = await asOperator('/api/v1/platform/tenants?size=2&page=1');
+      assert.equal(small.status, 200);
+      const b = small.body as { tenants: unknown[]; page: Record<string, number | string> };
+      assert.ok(b.tenants.length <= 2, `page returned ${b.tenants.length}`);
+
+      const all = await asOperator('/api/v1/platform/tenants?size=100&page=1');
+      const a = all.body as { tenants: unknown[]; page: Record<string, number> };
+      assert.equal(b.page.total, a.page.total,
+        'a page of 2 and a page of 100 must report the same total');
+      assert.ok((b.page.total as number) >= b.tenants.length);
+    });
+
+    test('page 2 does not repeat page 1', async () => {
+      const p1 = await asOperator('/api/v1/platform/tenants?size=3&page=1');
+      const p2 = await asOperator('/api/v1/platform/tenants?size=3&page=2');
+      const ids = (r: typeof p1) =>
+        ((r.body as { tenants: { id: string }[] }).tenants).map((t) => t.id);
+      const overlap = ids(p1).filter((id) => ids(p2).includes(id));
+      assert.deepEqual(overlap, [], 'a school appeared on both pages');
+    });
+
+    test('the page size is clamped, so a caller cannot ask for the fleet', async () => {
+      const r = await asOperator('/api/v1/platform/tenants?size=100000');
+      const b = r.body as { tenants: unknown[]; page: { size: number } };
+      assert.ok(b.page.size <= 100, `size came back ${b.page.size}`);
+      assert.ok(b.tenants.length <= 100);
+    });
+
+    test('an unknown sort key falls back rather than reaching the database', async () => {
+      const r = await asOperator(
+        '/api/v1/platform/tenants?sort=' + encodeURIComponent("name; DROP TABLE tenants--"));
+      assert.equal(r.status, 200);
+      assert.equal((r.body as { page: { sort: string } }).page.sort, 'name');
+      // And the fleet is still there.
+      const after = await asOperator('/api/v1/platform/tenants?size=1');
+      assert.equal(after.status, 200);
+    });
+
+    test('sorting by students is numeric, not lexicographic', async () => {
+      const r = await asOperator('/api/v1/platform/tenants?sort=students&dir=desc&size=50');
+      const counts = ((r.body as { tenants: { studentCount: number }[] }).tenants)
+        .map((t) => t.studentCount);
+      const sorted = [...counts].sort((x, y) => y - x);
+      assert.deepEqual(counts, sorted, '9 must not sort above 10');
+    });
+
+    test('every row carries the operational state the console shows', async () => {
+      const r = await asOperator('/api/v1/platform/tenants?size=1');
+      const t = (r.body as { tenants: Record<string, unknown>[] }).tenants[0];
+      if (!t) return;                       // an empty fixture is not a failure
+      for (const k of ['status', 'access', 'opsState', 'billingState',
+                       'studentCount', 'userCount', 'classCount',
+                       'sectionCount', 'severity']) {
+        assert.ok(k in t, `the fleet row has no ${k}`);
+      }
+      assert.ok(['critical', 'warning', 'info', 'none'].includes(t.severity as string),
+        `unexpected severity ${String(t.severity)}`);
+    });
+
+    test('the summary counts the whole fleet, not the page', async () => {
+      const sum = await asOperator('/api/v1/platform/fleetsummary');
+      assert.equal(sum.status, 200);
+      const s = sum.body as {
+        total: number; attention: { critical: number; warning: number; info: number } };
+      const page = await asOperator('/api/v1/platform/tenants?size=1');
+      assert.equal(s.total, (page.body as { page: { total: number } }).page.total,
+        'the summary and an unfiltered page must agree on the fleet size');
+
+      // And a severity filter returns exactly what the summary promised.
+      const crit = await asOperator('/api/v1/platform/tenants?attention=critical&size=100');
+      const rows = (crit.body as { tenants: { severity: string }[] }).tenants;
+      assert.ok(rows.every((t) => t.severity === 'critical'),
+        'a critical-only page contained something else');
+      assert.equal((crit.body as { page: { total: number } }).page.total,
+        s.attention.critical,
+        'the filtered total must equal the badge that offered the filter');
+    });
+
+    test('the fleet is not reachable without both credentials', async () => {
+      const noKey = await call(platform, {
+        url: '/api/v1/platform/fleetsummary', token: opToken });
+      assert.equal(noKey.status, 403);
+      const asSchool = await call(platform, {
+        url: '/api/v1/platform/fleetsummary', token: principalToken,
+        headers: { 'x-platform-key': KEY },
+      } as Parameters<typeof call>[1]);
+      assert.equal(asSchool.status, 403);
+    });
+  });
 });

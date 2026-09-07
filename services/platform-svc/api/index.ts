@@ -147,6 +147,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     switch (`${req.method} ${action}`) {
       case 'GET tenants':   return json(res, 200, await listTenants(db, req), cors);
+      case 'GET fleetsummary': return json(res, 200, await fleetSummary(db), cors);
       case 'POST tenants':  return json(res, 200, await createTenant(db, op, req), cors);
       case 'GET tenant':    return json(res, 200, await getTenant(db, req), cors);
       case 'GET health':    return json(res, 200, await tenantHealth(db, req), cors);
@@ -213,18 +214,95 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
 // ── The list and one institution ────────────────────────────────────────
 
+/** Sort keys the fleet list offers. Anything else falls back to the name. */
+const FLEET_SORTS = ['name', 'students', 'created', 'active', 'status',
+                     'plan', 'severity'] as const;
+/** Severity bands, in the order an operator should read them. */
+const FLEET_BANDS = ['critical', 'warning', 'info', 'any'] as const;
+
+/**
+ * One page of the fleet.  (P10-1)
+ *
+ * This used to be `app.platform_tenants(q)` with no page, no sort and no
+ * filter, and the console's actual list came from `app.platform_overview()`
+ * — every school, every request, 142 kB into a browser that then paged and
+ * triaged on the client. That is fine at 20 schools and is the thing this
+ * phase exists to fix.
+ *
+ * Paging, sorting, filtering and the severity band are all decided in the
+ * database now, so the browser receives one page and the numbers beside it
+ * describe the WHOLE fleet rather than the page.
+ *
+ * `size` is clamped in SQL as well as here. A caller that asks for 100000
+ * rows is not a caller to be trusted with the answer, and the clamp belongs
+ * next to the query rather than only in front of it.
+ */
 async function listTenants(db: Db, req: IncomingMessage) {
-  const q = (query(req).get('q') ?? '').trim();
+  const p = query(req);
+  const search = (p.get('q') ?? '').trim();
+  const sortRaw = (p.get('sort') ?? 'name').toLowerCase();
+  const sort = (FLEET_SORTS as readonly string[]).includes(sortRaw) ? sortRaw : 'name';
+  const dir = (p.get('dir') ?? 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc';
+  const bandRaw = (p.get('attention') ?? '').toLowerCase();
+  const band = (FLEET_BANDS as readonly string[]).includes(bandRaw) ? bandRaw : null;
+
+  const size = Math.min(Math.max(Number(p.get('size') ?? 25) || 25, 1), 100);
+  const page = Math.max(Number(p.get('page') ?? 1) || 1, 1);
+
   const { rows } = await db.pool.query(
-    `SELECT * FROM app.platform_tenants($1)`, [q || null]);
+    `SELECT * FROM app.platform_fleet($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [search || null, (p.get('status') ?? '').trim() || null,
+     (p.get('plan') ?? '').trim() || null, band,
+     sort, dir, size, (page - 1) * size]);
+
+  // The total comes back on every row (one window function, no second
+  // query). An empty page means an empty result, not an unknown total.
+  const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
+
   return {
     tenants: rows.map((r: Record<string, unknown>) => ({
       id: r.id, slug: String(r.slug), nameBn: r.name_bn, nameEn: r.name_en,
-      stream: r.stream, level: r.level, status: r.status,
-      planCode: r.plan_code, studentCap: r.student_cap,
+      stream: r.stream, level: r.level, district: r.district,
+      status: r.status, access: r.access, opsState: r.ops_state,
+      billingState: r.billing_state, stateReason: r.state_reason,
+      planCode: r.plan_code, planName: r.plan_name,
+      planPrice: Number(r.plan_price ?? 0), billingCycle: r.billing_cycle,
+      studentCap: r.student_cap,
       studentCount: Number(r.student_count),
+      userCount: Number(r.user_count),
+      classCount: Number(r.class_count),
+      sectionCount: Number(r.section_count),
+      paidTotal: Number(r.paid_total ?? 0),
+      nextDueOn: r.next_due_on, graceUntil: r.grace_until,
       trialEndsOn: r.trial_ends_on, createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+      portals: r.portals ?? {}, services: r.services ?? {},
+      severity: r.severity,
     })),
+    page: {
+      page, size, total,
+      pages: Math.max(1, Math.ceil(total / size)),
+      sort, dir,
+    },
+  };
+}
+
+/**
+ * How many schools need a person, across the WHOLE fleet.  (P10-3)
+ *
+ * Separate from the page on purpose: a filter bar that counts only the rows
+ * it can see is a filter bar that lies, and an operator paging through 258
+ * schools has to be able to trust "৫টি জরুরি" to mean five in the country.
+ */
+async function fleetSummary(db: Db) {
+  const { rows } = await db.pool.query(`SELECT * FROM app.platform_fleet_summary()`);
+  const r = (rows[0] ?? {}) as Record<string, unknown>;
+  const n = (v: unknown) => Number(v ?? 0);
+  return {
+    total: n(r.total),
+    attention: { critical: n(r.critical), warning: n(r.warning), info: n(r.info) },
+    suspended: n(r.suspended), trial: n(r.trial),
+    overdue: n(r.overdue), active: n(r.active),
   };
 }
 

@@ -2739,6 +2739,8 @@ async function handler(req, res) {
     switch (`${req.method} ${action}`) {
       case "GET tenants":
         return json(res, 200, await listTenants(db, req), cors);
+      case "GET fleetsummary":
+        return json(res, 200, await fleetSummary(db), cors);
       case "POST tenants":
         return json(res, 200, await createTenant(db, op, req), cors);
       case "GET tenant":
@@ -2807,12 +2809,40 @@ async function handler(req, res) {
     return json(res, 500, { error: "platform_error" }, cors);
   }
 }
+var FLEET_SORTS = [
+  "name",
+  "students",
+  "created",
+  "active",
+  "status",
+  "plan",
+  "severity"
+];
+var FLEET_BANDS = ["critical", "warning", "info", "any"];
 async function listTenants(db, req) {
-  const q = (query(req).get("q") ?? "").trim();
+  const p = query(req);
+  const search = (p.get("q") ?? "").trim();
+  const sortRaw = (p.get("sort") ?? "name").toLowerCase();
+  const sort = FLEET_SORTS.includes(sortRaw) ? sortRaw : "name";
+  const dir = (p.get("dir") ?? "asc").toLowerCase() === "desc" ? "desc" : "asc";
+  const bandRaw = (p.get("attention") ?? "").toLowerCase();
+  const band = FLEET_BANDS.includes(bandRaw) ? bandRaw : null;
+  const size = Math.min(Math.max(Number(p.get("size") ?? 25) || 25, 1), 100);
+  const page = Math.max(Number(p.get("page") ?? 1) || 1, 1);
   const { rows } = await db.pool.query(
-    `SELECT * FROM app.platform_tenants($1)`,
-    [q || null]
+    `SELECT * FROM app.platform_fleet($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      search || null,
+      (p.get("status") ?? "").trim() || null,
+      (p.get("plan") ?? "").trim() || null,
+      band,
+      sort,
+      dir,
+      size,
+      (page - 1) * size
+    ]
   );
+  const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
   return {
     tenants: rows.map((r) => ({
       id: r.id,
@@ -2821,13 +2851,52 @@ async function listTenants(db, req) {
       nameEn: r.name_en,
       stream: r.stream,
       level: r.level,
+      district: r.district,
       status: r.status,
+      access: r.access,
+      opsState: r.ops_state,
+      billingState: r.billing_state,
+      stateReason: r.state_reason,
       planCode: r.plan_code,
+      planName: r.plan_name,
+      planPrice: Number(r.plan_price ?? 0),
+      billingCycle: r.billing_cycle,
       studentCap: r.student_cap,
       studentCount: Number(r.student_count),
+      userCount: Number(r.user_count),
+      classCount: Number(r.class_count),
+      sectionCount: Number(r.section_count),
+      paidTotal: Number(r.paid_total ?? 0),
+      nextDueOn: r.next_due_on,
+      graceUntil: r.grace_until,
       trialEndsOn: r.trial_ends_on,
-      createdAt: r.created_at
-    }))
+      createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+      portals: r.portals ?? {},
+      services: r.services ?? {},
+      severity: r.severity
+    })),
+    page: {
+      page,
+      size,
+      total,
+      pages: Math.max(1, Math.ceil(total / size)),
+      sort,
+      dir
+    }
+  };
+}
+async function fleetSummary(db) {
+  const { rows } = await db.pool.query(`SELECT * FROM app.platform_fleet_summary()`);
+  const r = rows[0] ?? {};
+  const n = (v) => Number(v ?? 0);
+  return {
+    total: n(r.total),
+    attention: { critical: n(r.critical), warning: n(r.warning), info: n(r.info) },
+    suspended: n(r.suspended),
+    trial: n(r.trial),
+    overdue: n(r.overdue),
+    active: n(r.active)
   };
 }
 async function getTenant(db, req) {

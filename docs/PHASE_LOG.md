@@ -12211,9 +12211,26 @@ empty routine.
 | college (2 shifts) | 120 | 3600 | 3477 | 6.78s | 0 |
 | madrasa | 30 | 1050 | 1050 | 1.98s | 0 |
 
+Response sizes after the payload trim below: 19 / 23 / 25 / 70 / 11 kB.
+
 **The one-minute target's status is unchanged: NOT PROVEN END TO END.** These
 are local container numbers with no network, no TLS and no browser render,
 exactly as P9-3 recorded them.
+
+## The response was five sixths data nothing drew
+
+Measuring the payload after grouping found the college profile still shipping
+**375 kB**. The blocker tallies were 175 kB of it and the solver's full
+soft-violation list — 1,172 sentences — most of the rest. The screen draws
+neither: the trades are in `explanations`, already grouped, and the complete
+list is served by the F-503 explainer from `routines.soft_violations` where
+the solver persisted it.
+
+Both are now consumed server-side and dropped before the response is built.
+**375 kB → 70 kB** on the college profile, 73 → 19 kB on the small school.
+On a 2G connection that is the difference between a wait and a failure, and
+§1's "do not expose solver internals" says the same thing for a different
+reason.
 
 ## §9's audit found the same string in a second place
 
@@ -12268,9 +12285,10 @@ suggested it says so rather than showing an empty heading.
 
 ## Evidence
 
-- **1885 tests, all passing** across 13 workspaces — 25 explanation-model and
-  presentation tests (pure), 3 new API tests (cross-shift on the real
-  two-shift fixture, role authorization across seven roles), 8 new view tests
+- **1886 tests, all passing** across 13 workspaces — 25 explanation-model and
+  presentation tests (pure), 4 new API tests (cross-shift on the real
+  two-shift fixture, role authorization across seven roles, solver internals
+  kept off the wire), 8 new view tests
 - 26/26 SQL suites · typecheck 0/0/0 across three CI configs · 73/73 migrations
 - **Security probe 29/29** against a running deployment (`local-docker-p9-4`)
 - Browser, 80-section two-shift school through the real API: 1,516 → **12

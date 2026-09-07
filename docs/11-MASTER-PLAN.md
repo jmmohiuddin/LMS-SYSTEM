@@ -1665,8 +1665,10 @@ same routines), `B-99` (raw room-capability codes reached the explainer
 screen from rows stored months earlier), `B-100` (an 80-section school
 produced 1,516 findings, close to a megabyte and a list nobody reads),
 `B-101` (the explanation cost 38% of the run it explained) and `B-102` (the
-findings card claimed "no problems found" from an empty list). `B-91` records
-the mechanism behind the RLS-scope family.
+findings card claimed "no problems found" from an empty list) and `B-103`
+(the generate response was five sixths data nothing drew — 375 kB down to
+70 kB on a 120-section college). `B-91` records the mechanism behind the
+RLS-scope family.
 
 The original note stands as written:
 

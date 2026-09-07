@@ -5707,6 +5707,11 @@ async function handler10(req, res) {
     );
     const explanations = explain({
       unplaced: results.flatMap((r) => r.unplaced),
+      // NOTE: `blockers` is consumed here and stripped below. It is the
+      // solver's own bookkeeping — how many candidate hours each guard
+      // rejected — and §1 says not to expose solver internals. It also cost
+      // 175 kB of the college profile's 375 kB response, which on a 2G
+      // connection is most of a minute for data nothing renders.
       soft: results.flatMap((r) => r.soft?.violations ?? []),
       shortages: results.flatMap((r) => r.shortages),
       // The same rule can be reported once per shift; a coordinator needs to
@@ -5723,7 +5728,29 @@ async function handler10(req, res) {
     json(res, 200, {
       ok: true,
       yearId,
-      shifts: results,
+      // What the browser actually renders, and nothing else.
+      //
+      // `blockers` is the solver's own bookkeeping and `soft` is its full
+      // violation list — 1,172 sentences on the college profile, 210 kB of a
+      // 375 kB response, none of which this screen draws: the trades are
+      // already in `explanations`, grouped, and the full list is served by
+      // the F-503 explainer from `routines.soft_violations` where the solver
+      // persisted it. §1 says not to expose solver internals; on 2G this is
+      // also most of a minute for data nothing uses.
+      shifts: results.map((r) => ({
+        shift: r.shift,
+        routineId: r.routineId,
+        version: r.version,
+        created: r.created,
+        totalDemand: r.totalDemand,
+        placed: r.placed,
+        solverSeconds: r.solverSeconds,
+        softViolations: r.soft?.violations?.length ?? 0,
+        unplaced: r.unplaced.map(({ blockers, ...rest }) => {
+          return rest;
+        }),
+        shortages: r.shortages
+      })),
       summary: summarise(results, hardConflicts, Date.now() - startedAt),
       explanations,
       severity: severityCounts(explanations)

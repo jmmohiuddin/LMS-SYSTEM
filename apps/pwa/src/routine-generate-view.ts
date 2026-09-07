@@ -61,7 +61,8 @@ interface ShiftResult {
   shift: string; routineId: string; version: number; created: boolean;
   totalDemand: number; placed: number;
   unplaced: Unplaced[];
-  soft: { violations?: Array<{ detailBn: string }> } | null;
+  /** A count. The sentences live in `explanations`, grouped. */
+  softViolations: number;
   shortages: Shortage[];
   solverSeconds: number;
 }

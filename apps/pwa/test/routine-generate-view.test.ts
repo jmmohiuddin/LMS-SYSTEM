@@ -77,7 +77,7 @@ const BLOCKED = {
 const CLEAN_RESULT = {
   shifts: [{
     shift: 'morning', routineId: ROUTINE_M, version: 1, created: true,
-    totalDemand: 580, placed: 580, unplaced: [], soft: { violations: [] },
+    totalDemand: 580, placed: 580, unplaced: [], softViolations: 12,
     shortages: [], solverSeconds: 1.06,
   }],
   summary: {
@@ -97,7 +97,7 @@ const PARTIAL_RESULT = {
       required: 4, placed: 1, missing: 3, reason: 'no_free_capable_room',
       reasonBn: 'উপযুক্ত কক্ষ আছে, কিন্তু ওই সময়ে সেটি খালি নেই',
     }],
-    soft: { violations: [] },
+    softViolations: 3,
     shortages: [{ capability: 'chemistry_lab',
                   detailBn: 'রসায়নের ১২টি ল্যাব পিরিয়ড দরকার; ১টি কক্ষে ৮টি খালি' }],
     solverSeconds: 0.4,

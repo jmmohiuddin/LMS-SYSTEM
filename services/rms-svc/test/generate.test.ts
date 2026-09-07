@@ -396,6 +396,24 @@ describe('P9-3 — generating an institution-wide routine', { skip }, () => {
       'UPDATE class_subjects SET periods_per_week = 3 WHERE tenant_id = $1', [T]));
   });
 
+  test('P9-4 — the solver’s own bookkeeping stays on the server', async () => {
+    // The blocker tally is evidence, not output: §1 says not to expose
+    // solver internals, and at 120 sections it was 175 kB of a 375 kB
+    // response — on 2G, most of a minute for data nothing renders.
+    const r = await run({ yearId: YEAR });
+    assert.equal(r.status, 200);
+    assert.doesNotMatch(r.raw, /"blockers"/,
+      'the tally is consumed by explain() and must not reach the browser');
+    assert.doesNotMatch(r.raw, /"candidates"|"teacherBusy"|"crossShiftNames"/);
+    // Nor the full soft-violation list: the trades are in `explanations`,
+    // grouped, and the F-503 explainer serves the complete list from where
+    // the solver persisted it.
+    assert.doesNotMatch(r.raw, /"notEvaluated"/);
+    assert.match(r.raw, /"softViolations"/, 'the count stays — the screen shows it');
+    // And the explanations it produced are still there.
+    assert.ok(Array.isArray((r.body as { explanations: unknown[] }).explanations));
+  });
+
   test('the result SURVIVES a refresh — it is not browser memory', async () => {
     await run({ yearId: YEAR });
     const g = await read(`yearId=${YEAR}`);

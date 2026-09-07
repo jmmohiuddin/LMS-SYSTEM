@@ -1004,6 +1004,12 @@ rule for soft trades — and only after each category is decided, so a group is
 one cause — brings that to 12. Every individual soft sentence is kept one
 level in, because F-505's "nothing is silently accepted" still holds.
 
+**The response carries only what the screen draws.** The blocker tallies and
+the solver's full soft-violation list are consumed server-side and dropped:
+375 kB → 70 kB on the 120-section college, 73 → 19 kB on the 20-section
+school. Both are solver internals, which §1 says not to expose, and on a 2G
+connection both were a cost paid for data nothing rendered.
+
 **`src/presentation.ts` is the one place a machine identifier becomes
 readable.** A map for the capabilities the schema names, a scrubber for
 sentences composed and stored before anyone knew they would be shown, and a

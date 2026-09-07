@@ -39,7 +39,9 @@
  */
 import { type Branding } from './branding.ts';
 import { escapeHtml } from './branded-doc.ts';
-import { toBanglaDigits, formatBdt, formatDayMonth, type Locale } from './format.ts';
+import {
+  toBanglaDigits, formatBdt, formatDayMonth, formatTime, ordinalBn, type Locale,
+} from './format.ts';
 
 /**
  * The six the master plan names, in its own order of daily-habit frequency.
@@ -54,7 +56,11 @@ export type DocumentType =
   | 'admit_card'
   | 'id_card'
   | 'transfer_certificate'
-  | 'attendance_sheet';
+  | 'attendance_sheet'
+  // P9-9. The one a school pins to a noticeboard. Unlike the six above it
+  // is not about a student — it is about the institution's week — so it is
+  // the first here that takes no `StudentRef` at all.
+  | 'routine_sheet';
 
 export const DOCUMENT_TITLES_BN: Record<DocumentType, string> = {
   fee_receipt: 'ফি রসিদ',
@@ -63,6 +69,7 @@ export const DOCUMENT_TITLES_BN: Record<DocumentType, string> = {
   id_card: 'পরিচয়পত্র',
   transfer_certificate: 'ছাড়পত্র',
   attendance_sheet: 'হাজিরা শিট',
+  routine_sheet: 'ক্লাস রুটিন',
 };
 
 const DOCUMENT_TITLES_EN: Record<DocumentType, string> = {
@@ -72,6 +79,7 @@ const DOCUMENT_TITLES_EN: Record<DocumentType, string> = {
   id_card: 'Identity Card',
   transfer_certificate: 'Transfer Certificate',
   attendance_sheet: 'Attendance Sheet',
+  routine_sheet: 'Class Routine',
 };
 
 /** Which documents are naturally produced for a whole section at once. */
@@ -543,6 +551,219 @@ export function buildAttendanceSheet(
  * table that splits across a page must repeat its header. Browsers do neither
  * by default.
  */
+/**
+ * One printed routine — the grid a school pins up.  (P9-9)
+ *
+ * Takes the SAME data `GET /api/v1/rms/timetable` returns to the screen, so a
+ * printed sheet and the screen it was printed from cannot disagree. There is
+ * no second query and no second shape; this builder only lays it out.
+ *
+ * ── Why a cell holds a list ──────────────────────────────────────────────
+ * A section's hour holds one lesson. A whole institution's holds one per
+ * section running at that time. Same grid, different density — which is also
+ * what decides the paper orientation below, rather than a per-type flag
+ * somebody has to remember to set.
+ *
+ * ── What each audience needs in the cell ─────────────────────────────────
+ * §9 and §10 ask for teacher and room sheets that do not repeat what the page
+ * is already about. A teacher's sheet says the section and the room; a room's
+ * says the section and the teacher; a section's says the subject and who
+ * teaches it. `omit` is that rule, and it is the same one the screen uses.
+ */
+export interface RoutineLesson {
+  dayOfWeek: number;
+  periodNo: number;
+  startsAt: string;
+  endsAt: string;
+  subjectBn: string | null;
+  teacherBn: string | null;
+  roomBn: string | null;
+  sectionLabel: string | null;
+  classBn: string | null;
+  classLevel: number | null;
+  isParallel: boolean;
+}
+
+export interface RoutineSheetData {
+  /** What this sheet is OF — "নবম শ্রেণি — ক", a teacher's name, a room. */
+  scopeTitle: string;
+  scopeKind: RoutineScope;
+  yearLabel: string;
+  shiftBn: string;
+  version: number;
+  /** ISO. Null when the routine predates the publish stamp. */
+  publishedAt: string | null;
+  days: Array<{ dow: number; bn: string }>;
+  periods: Array<{ periodNo: number; labelBn: string; startsAt: string; endsAt: string }>;
+  lessons: RoutineLesson[];
+}
+
+export type RoutineScope =
+  | 'institution' | 'class' | 'group' | 'stream'
+  | 'section' | 'teacher' | 'room' | 'student';
+
+export const ROUTINE_SCOPE_BN: Record<RoutineScope, string> = {
+  institution: 'প্রতিষ্ঠানের রুটিন',
+  class: 'শ্রেণির রুটিন',
+  group: 'বিভাগের রুটিন',
+  stream: 'মাধ্যমের রুটিন',
+  section: 'শাখার রুটিন',
+  teacher: 'শিক্ষকের রুটিন',
+  room: 'কক্ষের রুটিন',
+  student: 'শিক্ষার্থীর রুটিন',
+};
+
+/**
+ * Portrait or landscape, decided by how much goes in a cell.  (§3)
+ *
+ * A section, a teacher, a room and a student each get ONE lesson per hour, so
+ * six columns fit portrait A4 (182mm of usable width, ~30mm a column) and the
+ * sheet reads the way a noticeboard notice should.
+ *
+ * An institution, a class, a group and a stream stack every section running
+ * at that hour into one cell. At 30mm those wrap into unreadable slivers, so
+ * they take landscape (269mm usable, ~45mm a column). §3 asks for exactly
+ * this — not one orientation forced on every routine.
+ */
+export function routineOrientation(scope: RoutineScope): 'portrait' | 'landscape' {
+  return scope === 'institution' || scope === 'class'
+      || scope === 'group' || scope === 'stream'
+    ? 'landscape' : 'portrait';
+}
+
+/** Which field the page is already about, and so need not repeat in a cell. */
+function omit(scope: RoutineScope): { teacher: boolean; room: boolean; section: boolean } {
+  return {
+    teacher: scope === 'teacher',
+    room: scope === 'room',
+    section: scope === 'section' || scope === 'student',
+  };
+}
+
+export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): DocumentBody {
+  const bn = locale === 'bn';
+  const skip = omit(d.scopeKind);
+
+  const byCell = new Map<string, RoutineLesson[]>();
+  for (const l of d.lessons) {
+    const k = `${l.dayOfWeek}|${l.periodNo}`;
+    if (!byCell.has(k)) byCell.set(k, []);
+    byCell.get(k)!.push(l);
+  }
+
+  const head = [
+    `<th class="rt-period-col">${escapeHtml(bn ? 'পিরিয়ড' : 'Period')}</th>`,
+    ...d.days.map((day) =>
+      `<th>${escapeHtml(bn ? `${day.bn}বার` : day.bn)}</th>`),
+  ].join('');
+
+  const rows = d.periods.map((p) => {
+    const cells = d.days.map((day) => {
+      const here = byCell.get(`${day.dow}|${p.periodNo}`) ?? [];
+      if (here.length === 0) return '<td class="rt-empty">—</td>';
+      const inner = here.map((l) => {
+        const lines = [`<b>${escapeHtml(l.subjectBn ?? (bn ? 'ক্লাস' : 'Class'))}</b>`];
+        if (!skip.section && l.sectionLabel) {
+          lines.push(escapeHtml(
+            `${l.classBn ? `${l.classBn}-` : ''}${l.sectionLabel}`));
+        }
+        if (!skip.teacher && l.teacherBn) lines.push(escapeHtml(l.teacherBn));
+        if (!skip.room && l.roomBn) lines.push(escapeHtml(l.roomBn));
+        if (l.isParallel) {
+          lines.push(`<i>${escapeHtml(bn ? 'বিভাজিত' : 'split')}</i>`);
+        }
+        return `<div class="rt-lesson">${lines.join('<br>')}</div>`;
+      }).join('');
+      return `<td>${inner}</td>`;
+    }).join('');
+
+    // The period column is pure number and pure time — §5's `১ম` and
+    // `১০:০০–১০:৪৫` — and carries the numeric face for that reason.
+    return '<tr>'
+      + `<th class="rt-period" scope="row">`
+      + `<span class="rt-no">${escapeHtml(bn ? ordinalBn(p.periodNo) : String(p.periodNo))}</span>`
+      + `<span class="rt-time">${escapeHtml(
+          `${formatTime(p.startsAt, locale)}–${formatTime(p.endsAt, locale)}`)}</span>`
+      + '</th>' + cells + '</tr>';
+  }).join('');
+
+  const meta: { label: string; value: string }[] = [
+    { label: bn ? 'শিক্ষাবর্ষ' : 'Year', value: d.yearLabel },
+    { label: bn ? 'শিফট' : 'Shift', value: d.shiftBn },
+    { label: bn ? 'সংস্করণ' : 'Version', value: num(d.version, locale) },
+  ];
+  if (d.publishedAt) {
+    meta.push({ label: bn ? 'প্রকাশ' : 'Published', value: date(d.publishedAt, locale) });
+  }
+
+  const empty = d.lessons.length === 0;
+  return {
+    // The letterhead above already carries the institution's name, so the
+    // institution's own sheet does not repeat it — "প্রতিষ্ঠানের রুটিন —
+    // ছোট স্কুল" under a heading that says ছোট স্কুল reads as a stutter.
+    // Every other scope names the part it is of, which the letterhead cannot.
+    title: d.scopeKind === 'institution'
+      ? ROUTINE_SCOPE_BN[d.scopeKind]
+      : `${ROUTINE_SCOPE_BN[d.scopeKind]} — ${d.scopeTitle}`,
+    meta,
+    bodyHtml: empty
+      // §15's other half: a sheet with no lessons must say so rather than
+      // print an empty grid somebody pins up and then wonders about.
+      ? `<p class="doc-note">${escapeHtml(bn
+          ? 'এই অংশের জন্য প্রকাশিত রুটিনে কোনো ক্লাস নেই।'
+          : 'The published routine has no classes for this selection.')}</p>`
+      : `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead>`
+        + `<tbody>${rows}</tbody></table>`,
+    // A timetable is the institution's statement about its own week; the head
+    // signs it, exactly as they sign a transfer certificate.
+    signatureCaption: bn ? 'প্রধান শিক্ষক' : 'Head of Institution',
+  };
+}
+
+/**
+ * The grid's own print rules, on top of `documentBodyCss()`.
+ *
+ * Kept separate because it is the only document whose table is WIDE, and the
+ * rules that make a wide table survive a page break are not ones the receipt
+ * or the report card need.
+ */
+export function routineSheetCss(orientation: 'portrait' | 'landscape'): string {
+  return [
+    `@page{size:A4 ${orientation};margin:0}`,
+    // Landscape needs the letterhead's page box to follow it, or the document
+    // keeps a 210mm column in the middle of a 297mm sheet.
+    orientation === 'landscape'
+      ? '.doc{max-width:297mm;min-height:210mm;padding:12mm 14mm}'
+      : '',
+    '.rt-grid{table-layout:fixed;font-size:10.5px}',
+    '.rt-grid th,.rt-grid td{vertical-align:top;padding:3px 4px}',
+    '.rt-period-col{width:22mm}',
+    '.rt-period{width:22mm;background:#f3f4f6;text-align:center;'
+      + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    // §5. The two spans whose whole content is a figure take the numeric
+    // face; the lesson cells beside them keep Hind Siliguri for their names.
+    '.rt-no{display:block;font-weight:700;font-size:12px;'
+      + 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif}',
+    '.rt-time{display:block;font-size:9px;color:#4b5563;white-space:nowrap;'
+      + 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif}',
+    '.rt-lesson{padding:1px 0;line-height:1.35}',
+    '.rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}',
+    '.rt-lesson i{font-size:9px;color:#4b5563}',
+    '.rt-empty{color:#9ca3af;text-align:center}',
+    '@media print{',
+    // §6. A routine row is one hour of the school's week and must not be cut
+    // in half by a page boundary; the header repeats so page two is readable
+    // without page one beside it. `documentBodyCss` sets both for `.doc-table`
+    // already — restated here because this table is the one where a break in
+    // the wrong place is a person reading the wrong hour.
+    '  .rt-grid tr{page-break-inside:avoid;break-inside:avoid}',
+    '  .rt-grid thead{display:table-header-group}',
+    '  .rt-grid tbody{break-inside:auto}',
+    '  .rt-lesson{page-break-inside:avoid;break-inside:avoid}',
+    '}',
+  ].filter(Boolean).join('');
+}
+
 export function documentBodyCss(): string {
   return [
     '.doc-fields{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;margin:0 0 12px}',

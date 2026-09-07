@@ -167,6 +167,28 @@ export function levelNameBn(level: number): string {
 }
 
 /**
+ * The short ordinal a school writes on a printed sheet: `1` → "১ম", `2` → "২য়".
+ *
+ * A separate table from LEVEL_BN because these are different words for
+ * different jobs — a class is "নবম শ্রেণি" in full, a period is "৯ম" in a
+ * grid cell where four characters is all the column has. Both are per-number
+ * for the SAME reason the comment above gives: the suffix is not "ম" for
+ * every number, and "২ম" is the mistake P4 shipped. ২য়, ৩য়, ৪র্থ and ৬ষ্ঠ
+ * each differ, and a school notices immediately.
+ *
+ * Beyond the table it falls back to the plain Bangla numeral rather than
+ * guessing a suffix: "১৩" is honest where "১৩ম" would be wrong.
+ */
+const ORDINAL_BN = [
+  '', '১ম', '২য়', '৩য়', '৪র্থ', '৫ম', '৬ষ্ঠ',
+  '৭ম', '৮ম', '৯ম', '১০ম', '১১তম', '১২তম',
+] as const;
+
+export function ordinalBn(n: number): string {
+  return ORDINAL_BN[n] ?? toBanglaDigits(n);
+}
+
+/**
  * Today, on the calendar the person in front of the screen is reading.
  *
  * `new Date().toISOString().slice(0, 10)` is UTC, and Dhaka is six hours

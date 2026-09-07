@@ -1720,6 +1720,24 @@ of the bundle, downloaded by every school so they could never open it — out
 into its own lazily-loaded bundle (`B-109`); app.js fell to 159 kB gzipped
 with the limit unchanged. Role outputs and print remain.
 
+**P9-9 — the printable routine.** *Delivered 2026-09-07.* A seventh document
+type rather than a print system: R-5 had already built the letterhead, the
+watermark, the signature, the escaping, `@page{size:A4}`, unbreakable table
+rows and repeating headers, and an endpoint whose tenant "is never a
+parameter". So `routine_sheet` joins `GET /api/v1/ops/document` and imports
+`readTimetable` from rms-svc rather than re-deriving authorisation — one
+authorisation path, so a printed sheet cannot show an hour the screen would
+refuse, and `status = 'active'` makes "published only" true without a check.
+No PDF library, no server renderer (§13). **Orientation follows content**, and
+**pages split until no cell holds more than six lessons** — the second rule was
+forced by measurement: a 120-section college has only FOUR classes, so a
+class-per-page booklet produced a cell of thirty lessons, a row taller than the
+sheet that `page-break-inside: avoid` cannot rescue. It now prints 120 clean
+single-section pages, and a 20-section school prints five, one per class. Also
+fixed a gap in all seven documents: a school that had never opened the branding
+screen printed the neutral "শিক্ষা প্রতিষ্ঠান" placeholder instead of its own
+name. Closes `B-112`; `B-113` records that no PDF was captured.
+
 **P9-8 — role-specific routine outputs.** *Delivered 2026-09-07.* Eight
 audiences, ONE dataset: institution, class, group, stream, section, teacher,
 room and student are eight WHERE clauses over the routine whose `status =

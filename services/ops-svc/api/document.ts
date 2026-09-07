@@ -54,8 +54,24 @@ import {
   buildTransferCertificate,
   buildAttendanceSheet,
   ADMIT_INSTRUCTIONS_BN,
+  buildRoutineSheet,
+  routineOrientation,
+  routineSheetCss,
+  type RoutineScope,
   type StudentRef,
 } from '../../../packages/ui-core/src/documents.ts';
+// P9-9. The routine's authoritative read, imported rather than reimplemented.
+//
+// It carries the per-scope authorisation P9-8 built and tested — a teacher
+// gets their own week, a guardian their ward's, an administrator the school —
+// and printing must obey exactly those rules. Re-deriving them here would be
+// a second opinion about permission, which is the failure P9-8 spent a whole
+// section avoiding. `platform-svc` already imports `academics-svc/src` for
+// the same reason: the logic belongs to one service and the caller is
+// another.
+import {
+  readTimetable, teachingDays, type Scope,
+} from '../../rms-svc/api/timetable.ts';
 import { toBanglaDigits } from '../../../packages/ui-core/src/format.ts';
 import { dhakaToday } from '../../../packages/server-core/src/time.ts';
 
@@ -89,6 +105,12 @@ const ACCESS: Record<DocumentType, string[]> = {
   transfer_certificate: ['principal', 'school_owner'],
   attendance_sheet: ['principal', 'school_owner', 'academic_coordinator',
                      'dept_head', 'class_teacher', 'subject_teacher'],
+  // P9-9. Everybody has a routine, so everybody may print ONE — but which
+  // one is decided by `readTimetable`'s per-scope rules, not by this list. A
+  // student reaching `type=routine_sheet&scope=institution` is refused there,
+  // by the same code that refuses them on screen.
+  routine_sheet: ['principal', 'school_owner', 'academic_coordinator', 'it_admin',
+                  'dept_head', 'class_teacher', 'subject_teacher', 'student', 'guardian'],
 };
 
 /**
@@ -114,6 +136,11 @@ const ACCESS: Record<DocumentType, string[]> = {
  * being off, which is exactly what a school closing its finance module still
  * needs in order to send a child elsewhere.
  */
+//
+// P9-9's `routine_sheet` maps to nothing for the same reason as those two.
+// There is no `routine` row in `service_catalogue` — the timetable is not a
+// switchable module, it is what the school IS — and a school that has turned
+// finance off still runs classes and still pins a routine to the wall.
 const CONTENT_SERVICE: Partial<Record<DocumentType, string>> = {
   fee_receipt: 'finance',
   report_card: 'results',
@@ -123,6 +150,17 @@ const CONTENT_SERVICE: Partial<Record<DocumentType, string>> = {
 
 /** A batch is a section, and a section is at most a large classroom. */
 const MAX_BULK = 120;
+
+/**
+ * How many lessons one grid cell may hold before the page splits.  (P9-9 §7)
+ *
+ * Six is what a landscape A4 row can carry and still leave the seven period
+ * rows readable. Above it a row stops fitting the sheet AT ALL, and
+ * `page-break-inside: avoid` has nothing to do but overflow — measured on the
+ * 120-section college profile, where grouping by class alone produced a cell
+ * of thirty.
+ */
+const MAX_LESSONS_PER_CELL = 6;
 
 const MONTHS_BN = [
   'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
@@ -159,10 +197,28 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const html = await db.withTenant(ctx, async (c) => {
       // The whole reason this is safe: branding is read from the row the
       // session's tenant context selects, and nothing else.
-      const { rows: brandRows } = await c.query<{ branding: unknown }>(
-        `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding FROM tenants`,
+      const { rows: brandRows } = await c.query<{
+        branding: unknown; name_bn: string; name_en: string;
+      }>(
+        // P9-9. The tenant's own NAME comes along with its branding.
+        // `parseBranding({})` falls back to the neutral "শিক্ষা প্রতিষ্ঠান" —
+        // deliberately, so an unbranded school does not look like a different
+        // one — but a school that has never opened the branding screen still
+        // HAS a name, given when it was created and never optional. Printing
+        // a placeholder on its routine, its receipts and its certificates was
+        // losing the one identifying fact every document is required to
+        // carry. Branding still wins where it is set, so a school that brands
+        // itself differently keeps that.
+        `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding,
+                name_bn, name_en
+           FROM tenants`,
       );
-      const branding = parseBranding(brandRows[0]?.branding ?? {});
+      const row = brandRows[0];
+      const branding = parseBranding({
+        ...(row?.name_bn ? { nameBn: row.name_bn, shortName: row.name_bn } : {}),
+        ...(row?.name_en ? { nameEn: row.name_en } : {}),
+        ...(row?.branding as Record<string, unknown> ?? {}),
+      });
 
       // The content's own entitlement, checked before a single row of it is
       // read. `limited` still prints: a school in billing arrears is the one
@@ -194,7 +250,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         branding,
         sections,
         locale: q.get('locale') === 'en' ? 'en' : 'bn',
-        extraCss: documentBodyCss(),
+        // P9-9. The routine is the first document whose PAPER depends on its
+        // content: a section's week fits portrait, a whole institution's does
+        // not. Everything else keeps `documentBodyCss()` alone and the A4
+        // portrait `@page` that `brandedDocumentCss` sets.
+        extraCss: documentBodyCss() + extraCssFor(type, q),
       });
     });
 
@@ -232,7 +292,137 @@ async function build(
     case 'id_card':              return idCards(c, q);
     case 'transfer_certificate': return transferCertificate(c, q, branding);
     case 'attendance_sheet':     return attendanceSheet(c, q);
+    case 'routine_sheet':        return routineSheet(c, ctx, q);
   }
+}
+
+/** The scope a routine sheet is of, validated the same way the API validates it. */
+function routineScopeOf(q: URLSearchParams): RoutineScope {
+  const raw = q.get('scope') ?? '';
+  const known: RoutineScope[] = ['institution', 'class', 'group', 'stream',
+                                 'section', 'teacher', 'room', 'student'];
+  if (!known.includes(raw as RoutineScope)) {
+    throw new HttpError(400, `scope must be one of: ${known.join(', ')}`, 'invalid_scope');
+  }
+  return raw as RoutineScope;
+}
+
+/** Paper that follows the content, not the document type. */
+function extraCssFor(type: DocumentType, q: URLSearchParams): string {
+  if (type !== 'routine_sheet') return '';
+  return routineSheetCss(routineOrientation(routineScopeOf(q)));
+}
+
+/**
+ * One printed routine — the SAME read the screen uses.  (P9-9)
+ *
+ * `readTimetable` holds both the authorisation and the filter, so a printed
+ * sheet cannot show an hour the screen would refuse, and cannot go stale
+ * against it either. It reads `routines.status = 'active'` and nothing else,
+ * which is what makes §15 true without a check here: a draft, a routine under
+ * review and a superseded version are all invisible to it.
+ */
+async function routineSheet(
+  c: Client, ctx: Ctx, q: URLSearchParams,
+): Promise<BrandedSection[]> {
+  const scope = routineScopeOf(q);
+  const idParam = q.get('id') ?? '';
+  const id = idParam === 'self' ? ctx.userId : idParam;
+
+  const [t, days] = await Promise.all([
+    readTimetable(c as never, scope as Scope, id, ctx.role, null),
+    teachingDays(c as never),
+  ]);
+  if (!t.published) {
+    // Not an empty grid. A blank sheet pinned to a noticeboard is a claim
+    // that the school has no classes; "nothing published yet" is the truth.
+    throw new HttpError(409,
+      'এখনো কোনো রুটিন প্রকাশ করা হয়নি — প্রকাশের পর ছাপা যাবে।',
+      'not_published');
+  }
+
+  // One page per shift, ALWAYS. A two-shift school's morning period 8 and day
+  // period 1 are different hours with the same number, so a single grid keyed
+  // on period number would print two different times in one row.
+  //
+  // Within a shift, pages are split until NO CELL IS TALLER THAN A PAGE.
+  // That is the only rule that works, and scope alone is not it:
+  //
+  //   a 20-section school, institution scope → 5 classes of 4 sections, so a
+  //   cell holds 4 and a class fits one page. Five pages, one per class.
+  //
+  //   a 120-section college, institution scope → 4 classes of 30 sections.
+  //   Grouping by class gives a cell of THIRTY lessons — measured: ~90 lines,
+  //   far taller than a landscape A4 — and `page-break-inside: avoid` cannot
+  //   rescue a row that does not fit a page at all. Those split again, one
+  //   page per section.
+  //
+  // §7 asks for exactly this: multiple clean pages rather than text shrunk
+  // until nobody can read it. 120 single-section sheets is also what a
+  // college's office actually prints — one for each classroom door.
+  const booklet = scope === 'institution' || scope === 'group'
+                  || scope === 'stream' || scope === 'class';
+
+  const depth = (lessons: typeof t.lessons) => {
+    const per = new Map<string, number>();
+    for (const l of lessons) {
+      const k = `${l.dayOfWeek}|${l.periodNo}`;
+      per.set(k, (per.get(k) ?? 0) + 1);
+    }
+    return Math.max(0, ...per.values());
+  };
+
+  const pages: BrandedSection[] = [];
+  for (const r of t.routines) {
+    const periods = t.periods.filter((p) => p.routineId === r.id);
+    const mine = t.lessons.filter((l) => l.routineId === r.id);
+    const common = {
+      scopeKind: scope, yearLabel: r.yearLabel, shiftBn: r.shiftBn,
+      version: r.version, publishedAt: r.publishedAt, days, periods,
+    };
+
+    if (!booklet) {
+      pages.push(buildRoutineSheet({ ...common, scopeTitle: t.titleBn, lessons: mine }));
+      continue;
+    }
+
+    // Grouped on (level, name) rather than name alone: a college runs
+    // "একাদশ" in both science and humanities, and merging those onto one page
+    // would stack two classes' sections in a cell — the very thing this split
+    // exists to prevent. The level also gives the booklet its order.
+    const byClass = new Map<string, typeof mine>();
+    for (const l of mine) {
+      const key = `${String(l.classLevel ?? 99).padStart(2, '0')}|${l.classBn ?? ''}`;
+      if (!byClass.has(key)) byClass.set(key, []);
+      byClass.get(key)!.push(l);
+    }
+
+    for (const key of [...byClass.keys()].sort()) {
+      const lessons = byClass.get(key)!;
+      const classBn = lessons[0]?.classBn ?? key.split('|')[1];
+      if (depth(lessons) <= MAX_LESSONS_PER_CELL) {
+        pages.push(buildRoutineSheet({
+          // The page is a class's, so it says the class — and its cells then
+          // only have to distinguish the SECTIONS within it.
+          ...common, scopeKind: 'class', scopeTitle: classBn, lessons,
+        }));
+        continue;
+      }
+      const bySection = new Map<string, typeof lessons>();
+      for (const l of lessons) {
+        const k = l.sectionLabel ?? '';
+        if (!bySection.has(k)) bySection.set(k, []);
+        bySection.get(k)!.push(l);
+      }
+      for (const k of [...bySection.keys()].sort()) {
+        pages.push(buildRoutineSheet({
+          ...common, scopeKind: 'section',
+          scopeTitle: `${classBn} — ${k}`, lessons: bySection.get(k)!,
+        }));
+      }
+    }
+  }
+  return pages;
 }
 
 /**

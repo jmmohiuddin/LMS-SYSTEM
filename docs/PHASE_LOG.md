@@ -13498,3 +13498,206 @@ and `packages/ui-core/src/documents.ts` is where that would live. Recorded as
 B-112.
 
 **The year label can be Latin.** See above — it is the school's own text.
+
+---
+
+# P9-9 — the routine as paper (2026-09-07)
+
+## Almost all of it already existed
+
+§1 said to inspect `packages/ui-core/src/documents.ts` before implementing,
+and that inspection is most of this phase's design. R-5 had already built:
+
+- one builder per document returning `{ title, meta, bodyHtml }`, pure, no DOM
+- `brandedDocument()` / `brandedDocumentSet()` wrapping any of them in the
+  tenant's letterhead, watermark and signature
+- `@page{size:A4}`, `page-break-inside:avoid` on table rows,
+  `display:table-header-group` on `thead`, `orphans:3; widows:3`
+- an endpoint, `GET /api/v1/ops/document`, whose header says "The tenant is
+  never a parameter" — branding comes from the JWT, so a Tenant A user cannot
+  render on Tenant B's letterhead, not because a check rejects it but because
+  the request cannot express it
+- a preview that IS the print: a sandboxed `srcdoc` iframe and
+  `contentWindow.print()`
+
+So P9-9 is a **seventh document type**, not a print system. No PDF library, no
+renderer, no second pipeline — §13 asked for exactly that restraint and the
+architecture already had it.
+
+## Where the routine sheet lives, and why it is not in rms-svc
+
+`document.ts` carries a comment from B-53 — "the machinery is not the content"
+— and a `CONTENT_SERVICE` map gating each document on the service that owns its
+data. That settles the placement: the printing machinery is shared, so the
+routine sheet belongs to the document endpoint like the other six.
+
+But the AUTHORISATION belongs to P9-8. So `document.ts` imports
+`readTimetable` from `rms-svc` rather than re-deriving who may see what. One
+authorisation path, one data read; a printed sheet cannot show an hour the
+screen would refuse. (`platform-svc` already imports `academics-svc/src` for
+the same reason.)
+
+`CONTENT_SERVICE` maps `routine_sheet` to **nothing**, like `id_card` and
+`transfer_certificate`: there is no `routine` row in `service_catalogue`
+because the timetable is not a switchable module — it is what the school IS.
+A school with finance turned off still runs classes and still pins up a
+routine.
+
+## §15 is true by construction
+
+`readTimetable` reads `routines.status = 'active'` and nothing else, so draft,
+review and B-108's `superseded` are invisible to the print path without a
+single check in it. Asserted rather than assumed: a generated-but-unpublished
+routine answers **409 `not_published`** to the principal, the teacher and the
+student alike, and prints the moment it is published. Publishing a replacement
+moves the sheet to v2 in the same breath.
+
+The drawer says the rule out loud — "শুধু প্রকাশিত রুটিন ছাপা যায়" — rather
+than leaving somebody to wonder why the draft they just edited is missing.
+
+## §3 — paper follows content, and §7 forced the real design
+
+Portrait for a section, a teacher, a room and a student: one lesson per hour,
+six columns, 182mm of usable width, ~30mm a column.
+
+Landscape for an institution, a class, a group or a stream: their cells stack
+every section running at that hour, and at 30mm those wrap into slivers.
+
+That was the easy half. The hard half was measured, not reasoned:
+
+| school | classes | grouping by class gives | outcome |
+|---|---|---|---|
+| 20 sections | 5 | 4 lessons per cell | 5 pages, one per class ✓ |
+| 120-section college | **4** | **30 lessons per cell** | a row taller than the sheet ✗ |
+
+A college has FEW classes and MANY sections each, so a class-per-page booklet
+does not bound anything. `page-break-inside: avoid` cannot rescue a row that
+does not fit a page at all — it simply overflows.
+
+So the rule is on DEPTH, not on scope: **pages split until no cell holds more
+than six lessons.** A class fits one page where it can; where it cannot, it
+splits again into one page per section. Measured after the change:
+
+    120 sections → 120 pages, worst cell 1, 100 ms, 521 kB
+     20 sections →   5 pages, worst cell 4,  52 ms,  58 kB
+
+120 single-section sheets is also what a college's office actually prints —
+one for each classroom door. §7 asked for multiple clean pages over shrunken
+text, and this is that, with a number behind it.
+
+## §5 — the ordinals needed a table
+
+`format.ts` already warned, in its own comment, that Bangla ordinals are
+per-number and that appending "ম" gives "১১ম" where a school says "একাদশ" —
+and that **P4 shipped exactly that mistake once, as "২ম পিরিয়ড"**.
+
+The brief's own examples (`১ম`, `২য়`) are the short forms, which need the same
+treatment for the same reason: ২য়, ৩য়, ৪র্থ and ৬ষ্ঠ each differ. `ordinalBn`
+is that table, beside `levelNameBn` so there is one of each, falling back to
+the plain numeral past it rather than guessing a suffix.
+
+The period column and the clock time carry `--font-bn-num`; the lesson cells
+beside them keep Hind Siliguri for the names in them. B-108's `unicode-range`
+face covers everything else.
+
+## §4 — an unbranded school was printing a placeholder
+
+`parseBranding({})` falls back to the neutral "শিক্ষা প্রতিষ্ঠান", and that
+default is deliberate and documented: a tenant whose branding is unset should
+look unbranded rather than look like a different institution.
+
+But `tenants.name_bn` is given when the school is created and is never
+optional. A school that has simply never opened the branding screen still HAS
+a name, and printing a placeholder on its routine — and on its receipts, its
+report cards and its transfer certificates — was losing the one identifying
+fact §4 requires every document to carry.
+
+The branding load now starts from the tenant's own name and lets the branding
+JSON override it, so a school that brands itself differently keeps that. This
+fixes all seven documents, not just the new one.
+
+## §19 — what the print acceptance could and could not do
+
+**Could not:** capture a real print/PDF. `window.print()` opens a blocking
+OS-level dialog; invoking it wedged the renderer and the tab had to be
+discarded. §19 allows for this ("if the environment permits") and it does not.
+
+**Could, and did:** measure the RENDERED document rather than read its CSS.
+
+- The page box, from computed style inside the preview iframe:
+  **297mm × 210mm** for a landscape booklet, matching A4 exactly.
+- `break-before: page` computed on the second page onward — pages really do
+  start fresh.
+- The `@media print` rules re-scoped to `screen` in a throwaway iframe and
+  then measured, which tests that the rules THIS document ships resolve to the
+  values §6 requires:
+
+  | property | computed |
+  |---|---|
+  | `.rt-grid tr` break-inside | `avoid` — no row split across pages |
+  | `.rt-lesson` break-inside | `avoid` — no lesson cut in half |
+  | `.rt-grid thead` display | `table-header-group` — header repeats |
+  | `.rt-grid tbody` break-inside | `auto` — the grid flows |
+  | `.doc` margin | `0px` — the `@page` margin owns the edge |
+  | horizontal overflow | none |
+
+That is the difference between "the CSS says so" and "the browser computed
+so". What remains unverified is only the final rasterisation, which needs a
+print capture this environment cannot produce.
+
+## §16 — the strongest possible answer
+
+`/api/v1/ops/document` routes **network-only with no cache at all**, so there
+is nothing stored that could be served to the next tenant. Above that, the
+tenant is never a parameter: it comes from the JWT. A→B→A alternating requests
+each answer with their own school's letterhead and never the other's, and B
+holding A's section, teacher, room and class ids gets nothing of A's.
+
+## Evidence
+
+- **2092 tests, all passing** across 13 workspaces — 15 new builder
+  (`routine-sheet.test.ts`), 11 new endpoint (`routine-print.test.ts`), 5 new
+  view
+- rms + ops suites (387) run **three times**; 26/26 SQL suites **three times**
+- typecheck 0/0/0 · build clean · **75/75 migrations, and P9-9 needed none**
+- **Security probe 29/29** · **D11** clean both directions
+- `app.js` 162,090 / 184,320 gzipped
+- **Browser, real API:** the print action on the routine screen → a drawer
+  stating the published-only rule → a sandboxed preview showing the school's
+  letterhead, "শ্রেণির রুটিন — ষষ্ঠ", `১ম` / `১০:০০–১০:৪৫`, and each cell's
+  subject, section, teacher and room → 5 pages titled ষষ্ঠ · সপ্তম · অষ্টম ·
+  নবম · দশম, in level order
+- **Nine widths** 360 → 1600: no page overflow, the drawer fits, the print
+  button is reachable at 360
+- **Accessibility**: `role="dialog"`, `aria-labelledby`, focus moves into the
+  drawer, every control labelled in words
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**No captured PDF.** See §19 above. The page geometry and every break rule
+were measured from the rendered document; the rasterised output was not.
+
+**Grayscale is inherited, not designed.** The sheet uses the letterhead's
+`--doc-primary` for the school's name and a light grey for the period column
+and table header — both survive a mono printer as tone, and nothing on the
+sheet carries meaning by colour alone (a split hour says "বিভাজিত", an empty
+hour says "—"). It was not tested on a monochrome printer.
+
+**Orientation is chosen from the REQUESTED scope, not from what the split
+produced.** A 120-section college's institution booklet prints its per-section
+pages in landscape, because `@page` is document-wide and a booklet may contain
+class pages. The sheets are usable — landscape gives a section grid more room,
+not less — but a portrait section sheet would use less paper.
+
+**Six lessons per cell is a measured bound, not a computed one.** It is what a
+landscape A4 row carries with seven period rows still readable. A school with
+unusually long subject names could still crowd a cell at six.
+
+**The year label can be Latin.** `academic_years.label` is the school's own
+free text — "2026" as the benchmark typed it. Not converted, for the same
+reason P9-4 does not scrub room names.
+
+**Print is online.** The document is fetched with the caller's token and the
+endpoint is network-only; there is no offline print. That matches the rest of
+the document system rather than being new.

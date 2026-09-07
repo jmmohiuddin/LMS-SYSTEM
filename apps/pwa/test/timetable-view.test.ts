@@ -85,6 +85,9 @@ const BASE: TimetablePayload = {
 
 let payload: TimetablePayload;
 let reply: { ok: boolean; status: number; body: unknown } | null = null;
+/** What `/ops/document` answers when the print drawer asks. */
+let printReply: { ok: boolean; status: number; text: string; body?: unknown } =
+  { ok: true, status: 200, text: '<html><body><main class="doc">sheet</main></body></html>' };
 let asked: string[] = [];
 let navigated: string[] = [];
 
@@ -93,6 +96,11 @@ function auth() {
     role: 'class_teacher',
     authedFetch: async (url: string) => {
       asked.push(url);
+      if (url.includes('/ops/document')) {
+        return { ok: printReply.ok, status: printReply.status,
+                 text: async () => printReply.text,
+                 json: async () => printReply.body ?? {} } as unknown as Response;
+      }
       if (reply) {
         return { ok: reply.ok, status: reply.status,
                  json: async () => reply.body } as unknown as Response;
@@ -118,6 +126,10 @@ describe('P9-8 — the published routine on screen', () => {
     reply = null;
     asked = [];
     navigated = [];
+    printReply = { ok: true, status: 200,
+                   text: '<html><body><main class="doc">sheet</main></body></html>' };
+    doc().querySelectorAll('[role="dialog"]').forEach((n) => n.remove());
+    doc().querySelectorAll('.ui-scrim').forEach((n) => n.remove());
   });
 
   /* ─────────────────────────── the picker ─────────────────────────────── */
@@ -248,6 +260,85 @@ describe('P9-8 — the published routine on screen', () => {
     assert.doesNotMatch(text(), /undefined|NaN|\[object/);
     assert.doesNotMatch(text(), /[0-9a-f]{8}-[0-9a-f]{4}/, 'no uuid');
     assert.doesNotMatch(text(), /\br1\b|routineId/);
+  });
+
+  /* ──────────────────────────── P9-9 print ───────────────────────────── */
+
+  test('P9-9 — the print action previews before it prints', async () => {
+    await mount();
+    const print = [...root().querySelectorAll('button')]
+      .find((b) => (b.textContent ?? '').trim() === 'ছাপুন');
+    assert.ok(print, 'the action sits with the routine it prints');
+    print.click();
+    await settle();
+
+    const dlg = doc().querySelector('[role="dialog"]') as HTMLElement | null;
+    assert.ok(dlg, 'a preview opens');
+    // §15's rule, said before somebody wonders why their draft is missing.
+    assert.match(dlg.textContent ?? '', /শুধু প্রকাশিত রুটিন ছাপা যায়/);
+    // The document is FETCHED with the caller's token, not loaded by URL: an
+    // iframe pointed at the endpoint would send no Authorization header.
+    assert.match(asked.at(-1) ?? '', /\/api\/v1\/ops\/document\?/);
+    assert.match(asked.at(-1) ?? '', /type=routine_sheet/);
+    assert.match(asked.at(-1) ?? '', /scope=section/);
+  });
+
+  test('the preview iframe cannot run scripts', async () => {
+    await mount();
+    [...root().querySelectorAll('button')]
+      .find((b) => (b.textContent ?? '').trim() === 'ছাপুন')!.click();
+    await settle();
+    const frame = doc().querySelector('[role="dialog"] iframe') as HTMLIFrameElement;
+    assert.ok(frame, 'the preview is an iframe, not the app’s own DOM');
+    const sandbox = frame.getAttribute('sandbox') ?? '';
+    assert.doesNotMatch(sandbox, /allow-scripts/,
+      'defence that does not depend on the escaping being right');
+    assert.match(sandbox, /allow-same-origin/,
+      'the parent needs a handle to call print() on it');
+    assert.ok(frame.srcdoc.includes('class="doc"'), 'and it holds the document');
+  });
+
+  test('print stays unreachable until there is something to print', async () => {
+    // A print button that fires on an empty frame opens a blank page dialogue.
+    let resolveFetch: (() => void) | null = null;
+    const gate = new Promise<void>((r) => { resolveFetch = r; });
+    const original = printReply;
+    printReply = { ...original, text: original.text };
+    await mount();
+    [...root().querySelectorAll('button')]
+      .find((b) => (b.textContent ?? '').trim() === 'ছাপুন')!.click();
+    const btn = [...(doc().querySelectorAll('[role="dialog"] button') ?? [])]
+      .find((b) => (b.textContent ?? '').includes('ছাপুন')) as HTMLButtonElement;
+    assert.equal(btn.disabled, true, 'disabled while the sheet is being built');
+    await settle();
+    assert.equal(btn.disabled, false, 'and reachable once it is there');
+    void gate; void resolveFetch;
+  });
+
+  test('a refused print says why and does not open an empty preview', async () => {
+    printReply = { ok: false, status: 409, text: '',
+                   body: { error: 'not_published',
+                           message: 'এখনো কোনো রুটিন প্রকাশ করা হয়নি — প্রকাশের পর ছাপা যাবে।' } };
+    await mount();
+    [...root().querySelectorAll('button')]
+      .find((b) => (b.textContent ?? '').trim() === 'ছাপুন')!.click();
+    await settle();
+    const dlg = doc().querySelector('[role="dialog"]');
+    assert.match(dlg?.textContent ?? '', /এখনো কোনো রুটিন প্রকাশ করা হয়নি/);
+    assert.equal(dlg?.querySelector('iframe'), null, 'no frame, nothing to print');
+    const btn = [...(dlg?.querySelectorAll('button') ?? [])]
+      .find((b) => (b.textContent ?? '').includes('ছাপুন')) as HTMLButtonElement;
+    assert.equal(btn.disabled, true);
+  });
+
+  test('the print request follows the scope on screen', async () => {
+    payload.scope = 'teacher';
+    await mount({ scope: 'teacher', id: 'self' });
+    [...root().querySelectorAll('button')]
+      .find((b) => (b.textContent ?? '').trim() === 'ছাপুন')!.click();
+    await settle();
+    assert.match(asked.at(-1) ?? '', /scope=teacher/);
+    assert.match(asked.at(-1) ?? '', /id=self/);
   });
 
   /* ─────────────────────────── the states ─────────────────────────────── */

@@ -1665,3 +1665,45 @@ can.
 
 **Both themes**: card `#FFFFFF` / `#241E1A`, cell `#E9E3D4` / `#302821`, text
 `#53443D` / `#EDE7DA`.
+
+## P9-9 — printing the routine (2026-09-07)
+
+The action lives with the routine it prints. A coordinator looking at ষষ্ঠ-ক's
+week and wanting it on the noticeboard should not have to go and find it again
+on a documents screen, so **ছাপুন** sits under the summary on `#/timetable`.
+
+    রুটিন দেখুন → ছাপুন → পূর্বরূপ → ছাপুন
+
+**The preview IS the print.** The document is fetched with `authedFetch` (so
+it travels with the caller's token — an iframe pointed at the endpoint URL
+would send no Authorization header) and rendered into a sandboxed `srcdoc`
+iframe. `contentWindow.print()` then prints exactly what is on screen, so the
+preview cannot drift from the output. Same mechanism as নথি ও ছাপা,
+deliberately: a second print path is a second one to get wrong.
+
+`sandbox="allow-same-origin allow-modals"` — **`allow-scripts` is absent**.
+The document is server-generated markup in which every interpolated value is
+escaped, and with no script permission nothing in it can execute even if that
+escaping were ever wrong. `allow-same-origin` is granted because the parent
+calls `print()` on the frame and an opaque origin would block it.
+
+**The published-only rule is stated, not implied**: "শুধু প্রকাশিত রুটিন ছাপা
+যায় — খসড়া বা পর্যালোচনায় থাকা রুটিন নয়।" Otherwise a coordinator who has
+just edited a draft wonders why it is not on the sheet.
+
+**Print is unreachable until there is something to print** — the button is
+disabled while the sheet is being built, because a print button that fires on
+an empty frame opens a blank-page dialogue.
+
+**When the app itself is printed** (someone pressing Ctrl+P on the screen
+rather than the preview's button) `@media print { body > .shell { display:
+none } }` prints nothing: the shell, the tab bar and a scaled-down iframe are
+not a document. That rule predates P9-9 and is what §12 asks for.
+
+**Responsive**: verified at 360 · 375 · 390 · 640 · 768 · 1024 · 1280 · 1440 ·
+1600 with the drawer open — no page overflow, the drawer fits, and the print
+button is reachable at 360.
+
+**Accessibility**: `role="dialog"`, `aria-labelledby`, focus moves into the
+drawer on open, every control labelled in words, and the failure path is a
+sentence with `role="status"` rather than a colour.

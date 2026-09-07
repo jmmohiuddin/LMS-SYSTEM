@@ -83,6 +83,8 @@ interface Lesson {
   startsAt: string; endsAt: string;
   subjectBn: string | null; teacherBn: string | null; roomBn: string | null;
   sectionLabel: string | null; classBn: string | null;
+  /** For ordering and grouping a printed booklet. Not an identifier. */
+  classLevel: number | null;
   isParallel: boolean;
 }
 interface Period { routineId: string; periodNo: number; labelBn: string; startsAt: string; endsAt: string }
@@ -270,7 +272,8 @@ export async function readTimetable(
     routine_id: string; day_of_week: number; period_no: number;
     starts_at: string; ends_at: string; subject_bn: string | null;
     teacher_bn: string | null; room_bn: string | null;
-    section_label: string | null; class_bn: string | null; parallel_pool: string | null;
+    section_label: string | null; class_bn: string | null;
+    class_level: number | null; parallel_pool: string | null;
   }>(
     `SELECT rs.routine_id, rs.day_of_week, rs.period_no,
             to_char(rs.starts_at, 'HH24:MI') AS starts_at,
@@ -280,6 +283,7 @@ export async function readTimetable(
             COALESCE(rm.name_bn, rm.code) AS room_bn,
             sec.name AS section_label,
             cls.name_bn AS class_bn,
+            cls.level_no AS class_level,
             rs.parallel_pool
        FROM routine_slots rs
        LEFT JOIN subjects sub ON sub.id = rs.subject_id
@@ -347,13 +351,19 @@ export async function readTimetable(
       startsAt: l.starts_at, endsAt: l.ends_at,
       subjectBn: l.subject_bn, teacherBn: l.teacher_bn, roomBn: l.room_bn,
       sectionLabel: l.section_label, classBn: l.class_bn,
+      classLevel: l.class_level,
       isParallel: l.parallel_pool !== null,
     })),
   };
 }
 
-/** The days this school teaches, so an empty column is not drawn for Friday. */
-async function teachingDays(c: Client): Promise<Array<{ dow: number; bn: string }>> {
+/**
+ * The days this school teaches, so an empty column is not drawn for Friday.
+ *
+ * Exported for the print path (P9-9): a printed sheet with a Friday column a
+ * school never uses is one somebody has to explain.
+ */
+export async function teachingDays(c: Client): Promise<Array<{ dow: number; bn: string }>> {
   const { rows } = await c.query<{ weekend: number[] }>(
     `SELECT weekend_days AS weekend FROM tenants WHERE id = app.current_tenant()`);
   const weekend = new Set(rows[0]?.weekend ?? [5, 6]);

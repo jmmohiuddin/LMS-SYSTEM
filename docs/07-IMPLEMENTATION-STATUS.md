@@ -1038,6 +1038,39 @@ offline devices could queue two publications that are each valid alone and
 together are not. The action is disabled without a connection, with that
 reason in a sentence; the review itself still reads.
 
+**Printable routine (P9-9).**
+`GET /api/v1/ops/document?type=routine_sheet&scope=…&id=…` → standalone
+printable HTML on the school's own letterhead.
+
+A seventh document type in R-5's existing machinery, not a print system: the
+letterhead, watermark, signature, escaping, `@page{size:A4}`, unbreakable
+table rows and repeating headers were all already there. No PDF library and no
+server-side renderer — browser "Print → Save as PDF" from the same markup.
+
+It imports `readTimetable` from rms-svc rather than re-deriving who may print
+what, so the print path and the screen share one authorisation and one data
+read. `status = 'active'` is the whole visibility rule, so draft, review and
+superseded are unprintable without a check: they answer `409 not_published`.
+
+**Orientation follows content**: portrait for section / teacher / room /
+student (one lesson a cell), landscape for institution / class / group /
+stream (a cell stacks every section running that hour).
+
+**Pages split until no cell holds more than six lessons.** Forced by
+measurement, not chosen: a 120-section college has only four classes, so
+grouping by class gave a cell of thirty — a row taller than the sheet, which
+`page-break-inside: avoid` cannot rescue. It prints 120 single-section pages
+(worst cell 1, 100 ms, 521 kB); a 20-section school prints five, one per class.
+
+`CONTENT_SERVICE` maps it to nothing, like `id_card` and
+`transfer_certificate`: there is no `routine` service to switch off, because
+the timetable is what the school is.
+
+**Also fixed for all seven documents:** the branding load now starts from
+`tenants.name_bn`. A school that had never opened the branding screen was
+printing the neutral "শিক্ষা প্রতিষ্ঠান" placeholder on its own receipts,
+report cards and certificates.
+
 **Role-specific routine outputs (P9-8).**
 `GET /api/v1/rms/timetable?scope=…&id=…` — eight audiences, one dataset.
 

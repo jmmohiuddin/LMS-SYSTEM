@@ -26,9 +26,10 @@
  * student's Tuesday or a whole school's.
  */
 import {
-  el, pageHeader, card, statusBadge, statRow, statCard,
-  permissionState, deniedMessage, deniedContact,
-  listSkeleton, emptyState, errorState, field,
+  el, pageHeader, card, statusBadge, statRow, statCard, button, buttonRow,
+  permissionState, deniedMessage, deniedContact, openDrawer, announce,
+  listSkeleton, emptyState, errorState, field, inlineLoader,
+  type OverlayHandle,
 } from './ui/index.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
 import {
@@ -47,6 +48,7 @@ export interface Lesson {
   roomBn: string | null;
   sectionLabel: string | null;
   classBn: string | null;
+  classLevel: number | null;
   isParallel: boolean;
 }
 export interface RoutineHead {
@@ -249,6 +251,18 @@ export class TimetableView {
             + ` · প্রকাশ: ${dateBn(r.publishedAt)}`,
       }));
     }
+
+    // P9-9 §2. The print action sits with the routine it prints, not on a
+    // separate documents screen — a coordinator who is looking at ষষ্ঠ-ক's
+    // week and wants it on the noticeboard should not have to go and find it
+    // again somewhere else.
+    body.append(buttonRow(d, button(d, {
+      // No glyph: the icon set has no printer, and the fallback for an
+      // unknown name is a dot — worse than a plain labelled button. নথি ও ছাপা's
+      // own print button is unglyphed for the same reason.
+      label: 'ছাপুন', variant: 'primary',
+      onClick: () => this.openPrint(),
+    })));
     return card(d, {
       title: data.titleBn,
       subtitle: data.subtitleBn,
@@ -334,6 +348,98 @@ export class TimetableView {
       subtitle: `${formatCount(lessons.length, 'bn')}টি ক্লাস`,
       glyph: 'clock',
     }, body);
+  }
+
+  /**
+   * §2 — preview, then print.  (P9-9)
+   *
+   * The document is fetched with `authedFetch` so it travels with the
+   * caller's bearer token, then rendered into a sandboxed `srcdoc` iframe.
+   * Pointing the iframe at the endpoint URL instead would send a plain
+   * browser request with no Authorization header — it would 401, and the
+   * "fix" for that is a document URL that works without the app.
+   *
+   * The thing on screen IS the thing that prints: `contentWindow.print()`
+   * prints exactly the previewed document, so the preview cannot drift from
+   * the output the way a lookalike would. Same mechanism as নথি ও ছাপা,
+   * deliberately — a second print path is a second one to get wrong.
+   */
+  private openPrint(): void {
+    const d = this.o.doc;
+    const body = el(d, 'div', { className: 'ui-stack' });
+    const slot = el(d, 'div', { className: 'ui-stack' });
+    body.append(el(d, 'p', {
+      className: 'ui-card-note',
+      // §15. Say the rule rather than let somebody wonder why the draft they
+      // just edited is not on the sheet.
+      text: 'শুধু প্রকাশিত রুটিন ছাপা যায় — খসড়া বা পর্যালোচনায় থাকা রুটিন নয়।',
+    }));
+    body.append(slot);
+
+    let handle: OverlayHandle | undefined;
+    const printBtn = button(d, {
+      label: 'ছাপুন', variant: 'primary', disabled: true,
+      onClick: () => {
+        const frame = slot.querySelector('iframe');
+        const win = (frame as HTMLIFrameElement | null)?.contentWindow;
+        if (!win) return;
+        // Focus first: some browsers ignore print() on a background frame.
+        win.focus();
+        win.print();
+      },
+    });
+
+    handle = openDrawer(d, {
+      title: 'রুটিন ছাপুন',
+      body,
+      actions: [
+        button(d, { label: 'বন্ধ করুন', variant: 'secondary',
+                    onClick: () => handle?.close() }),
+        printBtn,
+      ],
+    });
+
+    slot.append(inlineLoader(d, 'ছাপার নমুনা তৈরি হচ্ছে'));
+    void (async () => {
+      const qs = new URLSearchParams({ type: 'routine_sheet', scope: this.scope });
+      if (this.id) qs.set('id', this.id);
+      try {
+        const res = await this.o.auth.authedFetch(`/api/v1/ops/document?${qs}`);
+        if (!res.ok) {
+          const b = await res.json().catch(() => ({})) as { message?: string };
+          slot.textContent = '';
+          slot.append(el(d, 'p', {
+            className: 'ui-note-warn', attrs: { role: 'status' },
+            text: b.message ?? 'ছাপার নমুনা তৈরি করা যায়নি।',
+          }));
+          return;
+        }
+        const html = await res.text();
+        slot.textContent = '';
+        const frame = d.createElement('iframe');
+        frame.className = 'doc-preview';
+        frame.title = 'রুটিন — ছাপার নমুনা';
+        // `allow-scripts` is deliberately absent: the document is
+        // server-generated markup in which every interpolated value is
+        // escaped, and with no script permission nothing in it can execute
+        // even if that escaping were ever wrong. `allow-same-origin` IS
+        // granted, because the print button calls `contentWindow.print()`
+        // from the parent and an opaque origin would block it.
+        frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+        frame.srcdoc = html;
+        slot.append(frame);
+        printBtn.disabled = false;
+        announce(d, 'ছাপার নমুনা প্রস্তুত');
+      } catch {
+        slot.textContent = '';
+        slot.append(el(d, 'p', {
+          className: 'ui-note-warn', attrs: { role: 'status' },
+          text: navigator.onLine
+            ? 'ছাপার নমুনা তৈরি করা যায়নি।'
+            : 'সংযোগ নেই — ছাপার নমুনা আনতে ইন্টারনেট লাগবে।',
+        }));
+      }
+    })();
   }
 
   /**

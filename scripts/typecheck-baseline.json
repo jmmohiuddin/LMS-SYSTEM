@@ -76,6 +76,7 @@
     "packages/ui-core/test/format.test.ts",
     "packages/ui-core/test/media.test.ts",
     "packages/ui-core/test/notice.test.ts",
+    "packages/ui-core/test/routine-sheet.test.ts",
     "services/sync-svc/test/e2e-client-server.test.ts",
     "services/sync-svc/test/push.test.ts",
     "services/sync-svc/test/vertical-slice.test.ts"

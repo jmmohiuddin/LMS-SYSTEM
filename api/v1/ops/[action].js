@@ -1999,6 +1999,32 @@ function formatDayMonth(isoDate, locale) {
   if (!y || !m || !d) return isoDate;
   return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
 }
+function formatTime(hhmm, locale) {
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+  if (locale === "bn") return toBanglaDigits(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+  const suffix = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+var ORDINAL_BN = [
+  "",
+  "\u09E7\u09AE",
+  "\u09E8\u09AF\u09BC",
+  "\u09E9\u09AF\u09BC",
+  "\u09EA\u09B0\u09CD\u09A5",
+  "\u09EB\u09AE",
+  "\u09EC\u09B7\u09CD\u09A0",
+  "\u09ED\u09AE",
+  "\u09EE\u09AE",
+  "\u09EF\u09AE",
+  "\u09E7\u09E6\u09AE",
+  "\u09E7\u09E7\u09A4\u09AE",
+  "\u09E7\u09E8\u09A4\u09AE"
+];
+function ordinalBn(n) {
+  return ORDINAL_BN[n] ?? toBanglaDigits(n);
+}
 
 // packages/server-core/src/go-live.ts
 function enabled(name, env = process.env) {
@@ -5000,7 +5026,8 @@ var DOCUMENT_TITLES_BN = {
   admit_card: "\u09AA\u09CD\u09B0\u09AC\u09C7\u09B6\u09AA\u09A4\u09CD\u09B0",
   id_card: "\u09AA\u09B0\u09BF\u099A\u09AF\u09BC\u09AA\u09A4\u09CD\u09B0",
   transfer_certificate: "\u099B\u09BE\u09A1\u09BC\u09AA\u09A4\u09CD\u09B0",
-  attendance_sheet: "\u09B9\u09BE\u099C\u09BF\u09B0\u09BE \u09B6\u09BF\u099F"
+  attendance_sheet: "\u09B9\u09BE\u099C\u09BF\u09B0\u09BE \u09B6\u09BF\u099F",
+  routine_sheet: "\u0995\u09CD\u09B2\u09BE\u09B8 \u09B0\u09C1\u099F\u09BF\u09A8"
 };
 var DOCUMENT_TITLES_EN = {
   fee_receipt: "Fee Receipt",
@@ -5008,7 +5035,8 @@ var DOCUMENT_TITLES_EN = {
   admit_card: "Admit Card",
   id_card: "Identity Card",
   transfer_certificate: "Transfer Certificate",
-  attendance_sheet: "Attendance Sheet"
+  attendance_sheet: "Attendance Sheet",
+  routine_sheet: "Class Routine"
 };
 function num(v, locale) {
   if (v === null || v === void 0 || v === "") return "\u2014";
@@ -5225,6 +5253,116 @@ function buildAttendanceSheet(d, locale = "bn") {
     bodyHtml: d.students.length > 0 ? table(head, rows, "doc-table-grid") : '<p class="doc-note">\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u0995\u09CB\u09A8\u09CB \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09A8\u09C7\u0987\u0964</p>'
   };
 }
+var ROUTINE_SCOPE_BN = {
+  institution: "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  class: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  group: "\u09AC\u09BF\u09AD\u09BE\u0997\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  stream: "\u09AE\u09BE\u09A7\u09CD\u09AF\u09AE\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  section: "\u09B6\u09BE\u0996\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  teacher: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  room: "\u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+  student: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8"
+};
+function routineOrientation(scope) {
+  return scope === "institution" || scope === "class" || scope === "group" || scope === "stream" ? "landscape" : "portrait";
+}
+function omit(scope) {
+  return {
+    teacher: scope === "teacher",
+    room: scope === "room",
+    section: scope === "section" || scope === "student"
+  };
+}
+function buildRoutineSheet(d, locale = "bn") {
+  const bn = locale === "bn";
+  const skip = omit(d.scopeKind);
+  const byCell = /* @__PURE__ */ new Map();
+  for (const l of d.lessons) {
+    const k = `${l.dayOfWeek}|${l.periodNo}`;
+    if (!byCell.has(k)) byCell.set(k, []);
+    byCell.get(k).push(l);
+  }
+  const head = [
+    `<th class="rt-period-col">${escapeHtml(bn ? "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1" : "Period")}</th>`,
+    ...d.days.map((day2) => `<th>${escapeHtml(bn ? `${day2.bn}\u09AC\u09BE\u09B0` : day2.bn)}</th>`)
+  ].join("");
+  const rows = d.periods.map((p) => {
+    const cells = d.days.map((day2) => {
+      const here = byCell.get(`${day2.dow}|${p.periodNo}`) ?? [];
+      if (here.length === 0) return '<td class="rt-empty">\u2014</td>';
+      const inner = here.map((l) => {
+        const lines = [`<b>${escapeHtml(l.subjectBn ?? (bn ? "\u0995\u09CD\u09B2\u09BE\u09B8" : "Class"))}</b>`];
+        if (!skip.section && l.sectionLabel) {
+          lines.push(escapeHtml(
+            `${l.classBn ? `${l.classBn}-` : ""}${l.sectionLabel}`
+          ));
+        }
+        if (!skip.teacher && l.teacherBn) lines.push(escapeHtml(l.teacherBn));
+        if (!skip.room && l.roomBn) lines.push(escapeHtml(l.roomBn));
+        if (l.isParallel) {
+          lines.push(`<i>${escapeHtml(bn ? "\u09AC\u09BF\u09AD\u09BE\u099C\u09BF\u09A4" : "split")}</i>`);
+        }
+        return `<div class="rt-lesson">${lines.join("<br>")}</div>`;
+      }).join("");
+      return `<td>${inner}</td>`;
+    }).join("");
+    return `<tr><th class="rt-period" scope="row"><span class="rt-no">${escapeHtml(bn ? ordinalBn(p.periodNo) : String(p.periodNo))}</span><span class="rt-time">${escapeHtml(
+      `${formatTime(p.startsAt, locale)}\u2013${formatTime(p.endsAt, locale)}`
+    )}</span></th>` + cells + "</tr>";
+  }).join("");
+  const meta = [
+    { label: bn ? "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7" : "Year", value: d.yearLabel },
+    { label: bn ? "\u09B6\u09BF\u09AB\u099F" : "Shift", value: d.shiftBn },
+    { label: bn ? "\u09B8\u0982\u09B8\u09CD\u0995\u09B0\u09A3" : "Version", value: num(d.version, locale) }
+  ];
+  if (d.publishedAt) {
+    meta.push({ label: bn ? "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6" : "Published", value: date(d.publishedAt, locale) });
+  }
+  const empty = d.lessons.length === 0;
+  return {
+    // The letterhead above already carries the institution's name, so the
+    // institution's own sheet does not repeat it — "প্রতিষ্ঠানের রুটিন —
+    // ছোট স্কুল" under a heading that says ছোট স্কুল reads as a stutter.
+    // Every other scope names the part it is of, which the letterhead cannot.
+    title: d.scopeKind === "institution" ? ROUTINE_SCOPE_BN[d.scopeKind] : `${ROUTINE_SCOPE_BN[d.scopeKind]} \u2014 ${d.scopeTitle}`,
+    meta,
+    bodyHtml: empty ? `<p class="doc-note">${escapeHtml(bn ? "\u098F\u0987 \u0985\u0982\u09B6\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964" : "The published routine has no classes for this selection.")}</p>` : `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`,
+    // A timetable is the institution's statement about its own week; the head
+    // signs it, exactly as they sign a transfer certificate.
+    signatureCaption: bn ? "\u09AA\u09CD\u09B0\u09A7\u09BE\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995" : "Head of Institution"
+  };
+}
+function routineSheetCss(orientation) {
+  return [
+    `@page{size:A4 ${orientation};margin:0}`,
+    // Landscape needs the letterhead's page box to follow it, or the document
+    // keeps a 210mm column in the middle of a 297mm sheet.
+    orientation === "landscape" ? ".doc{max-width:297mm;min-height:210mm;padding:12mm 14mm}" : "",
+    ".rt-grid{table-layout:fixed;font-size:10.5px}",
+    ".rt-grid th,.rt-grid td{vertical-align:top;padding:3px 4px}",
+    ".rt-period-col{width:22mm}",
+    ".rt-period{width:22mm;background:#f3f4f6;text-align:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    // §5. The two spans whose whole content is a figure take the numeric
+    // face; the lesson cells beside them keep Hind Siliguri for their names.
+    '.rt-no{display:block;font-weight:700;font-size:12px;font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif}',
+    '.rt-time{display:block;font-size:9px;color:#4b5563;white-space:nowrap;font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif}',
+    ".rt-lesson{padding:1px 0;line-height:1.35}",
+    ".rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}",
+    ".rt-lesson i{font-size:9px;color:#4b5563}",
+    ".rt-empty{color:#9ca3af;text-align:center}",
+    "@media print{",
+    // §6. A routine row is one hour of the school's week and must not be cut
+    // in half by a page boundary; the header repeats so page two is readable
+    // without page one beside it. `documentBodyCss` sets both for `.doc-table`
+    // already — restated here because this table is the one where a break in
+    // the wrong place is a person reading the wrong hour.
+    "  .rt-grid tr{page-break-inside:avoid;break-inside:avoid}",
+    "  .rt-grid thead{display:table-header-group}",
+    "  .rt-grid tbody{break-inside:auto}",
+    "  .rt-lesson{page-break-inside:avoid;break-inside:avoid}",
+    "}"
+  ].filter(Boolean).join("");
+}
 function documentBodyCss() {
   return [
     ".doc-fields{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;margin:0 0 12px}",
@@ -5270,6 +5408,295 @@ function documentBodyCss() {
   ].join("");
 }
 
+// services/rms-svc/src/presentation.ts
+var SHIFT_BN = {
+  morning: "\u09B8\u0995\u09BE\u09B2",
+  day: "\u09A6\u09BF\u09AC\u09BE",
+  evening: "\u09B8\u09BE\u09A8\u09CD\u09A7\u09CD\u09AF",
+  single: "\u098F\u0995\u0995"
+};
+var shiftLabelBn = (shift) => SHIFT_BN[shift] ?? shift;
+
+// services/rms-svc/api/timetable.ts
+var UUID_RE6 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var ADMIN_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var DAY_BN = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var GROUP_BN = {
+  science: "\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8",
+  humanities: "\u09AE\u09BE\u09A8\u09AC\u09BF\u0995",
+  business_studies: "\u09AC\u09CD\u09AF\u09AC\u09B8\u09BE\u09AF\u09BC \u09B6\u09BF\u0995\u09CD\u09B7\u09BE",
+  vocational: "\u09AD\u09CB\u0995\u09C7\u09B6\u09A8\u09BE\u09B2",
+  general: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3",
+  none: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3"
+};
+var STREAM_BN = {
+  bangla_medium: "\u09AC\u09BE\u0982\u09B2\u09BE \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE",
+  english_version: "\u0987\u0982\u09B0\u09C7\u099C\u09BF \u09AD\u09BE\u09B0\u09CD\u09B8\u09A8",
+  english_medium: "\u0987\u0982\u09B0\u09C7\u099C\u09BF \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE",
+  madrasah: "\u09AE\u09BE\u09A6\u09B0\u09BE\u09B8\u09BE",
+  technical: "\u0995\u09BE\u09B0\u09BF\u0997\u09B0\u09BF"
+};
+async function scopeFilter(c, scope, id, role) {
+  const isAdmin = ADMIN_ROLES.includes(role);
+  const deny = () => new HttpError(
+    403,
+    "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A6\u09C7\u0996\u09BE\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987\u0964",
+    "forbidden_scope",
+    { scope }
+  );
+  if (scope === "institution") {
+    if (!isAdmin) throw deny();
+    const { rows: rows2 } = await c.query(
+      `SELECT name_bn FROM tenants WHERE id = app.current_tenant()`
+    );
+    return {
+      where: "TRUE",
+      params: [],
+      titleBn: rows2[0]?.name_bn ?? "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8",
+      subtitleBn: "\u09AA\u09C1\u09B0\u09CB \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u099A\u09BE\u09B2\u09C1 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "class") {
+    if (!isAdmin) throw deny();
+    if (!UUID_RE6.test(id)) throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_class_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT name_bn FROM classes WHERE id = $1`,
+      [id]
+    );
+    if (!rows2[0]) throw new HttpError(404, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "class_not_found");
+    return {
+      where: "cls.id = $N",
+      params: [id],
+      titleBn: rows2[0].name_bn,
+      subtitleBn: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B8\u09AC \u09B6\u09BE\u0996\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "group" || scope === "stream") {
+    if (!isAdmin) throw deny();
+    const table2 = scope === "group" ? GROUP_BN : STREAM_BN;
+    if (!Object.prototype.hasOwnProperty.call(table2, id)) {
+      throw new HttpError(
+        400,
+        scope === "group" ? "\u09AC\u09BF\u09AD\u09BE\u0997 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8" : "\u09AE\u09BE\u09A7\u09CD\u09AF\u09AE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8",
+        scope === "group" ? "invalid_group" : "invalid_stream"
+      );
+    }
+    return {
+      where: scope === "group" ? 'cls."group"::text = $N' : "cls.stream::text = $N",
+      params: [id],
+      titleBn: table2[id],
+      subtitleBn: scope === "group" ? "\u098F\u0987 \u09AC\u09BF\u09AD\u09BE\u0997\u09C7\u09B0 \u09B8\u09AC \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8" : "\u098F\u0987 \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE\u09C7\u09B0 \u09B8\u09AC \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "section") {
+    if (!UUID_RE6.test(id)) throw new HttpError(400, "\u09B6\u09BE\u0996\u09BE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_section_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT $1::uuid = ANY(app.my_section_ids()) AS teaches,
+              EXISTS (SELECT 1 FROM enrolments e
+                       WHERE e.section_id = $1 AND e.status = 'active'
+                         AND (e.student_id = app.current_user_id()
+                              OR e.student_id = ANY(app.my_ward_ids()))) AS enrolled,
+              (SELECT s.name FROM sections s WHERE s.id = $1) AS name,
+              (SELECT c2.name_bn FROM sections s JOIN classes c2 ON c2.id = s.class_id
+                WHERE s.id = $1) AS class_bn`,
+      [id]
+    );
+    const r = rows2[0];
+    if (!r?.name) throw new HttpError(404, "\u09B6\u09BE\u0996\u09BE \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "section_not_found");
+    if (!isAdmin && !r.teaches && !r.enrolled) throw deny();
+    return {
+      where: "rs.primary_section_id = $N",
+      params: [id],
+      titleBn: `${r.class_bn ?? ""} \u2014 ${r.name}`.trim(),
+      subtitleBn: "\u09B6\u09BE\u0996\u09BE\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "teacher") {
+    if (!UUID_RE6.test(id)) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_teacher_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT $1::uuid = app.current_user_id() AS me,
+              (SELECT full_name_bn FROM users WHERE id = $1) AS name_bn`,
+      [id]
+    );
+    const r = rows2[0];
+    if (!isAdmin && !r?.me) throw deny();
+    if (!r?.name_bn) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "teacher_not_found");
+    return {
+      where: "rs.teacher_id = $N",
+      params: [id],
+      titleBn: r.name_bn,
+      subtitleBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "room") {
+    if (!isAdmin) throw deny();
+    if (!UUID_RE6.test(id)) throw new HttpError(400, "\u0995\u0995\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_room_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT COALESCE(name_bn, code) AS label FROM rooms WHERE id = $1`,
+      [id]
+    );
+    if (!rows2[0]) throw new HttpError(404, "\u0995\u0995\u09CD\u09B7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "room_not_found");
+    return {
+      where: "rs.room_id = $N",
+      params: [id],
+      titleBn: rows2[0].label,
+      subtitleBn: "\u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0"
+    };
+  }
+  if (!UUID_RE6.test(id)) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_student_id");
+  const { rows } = await c.query(
+    `SELECT app.can_see_student($1) AS allowed,
+            (SELECT full_name_bn FROM users WHERE id = $1) AS name_bn`,
+    [id]
+  );
+  if (!rows[0]?.allowed) throw deny();
+  if (!rows[0].name_bn) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "student_not_found");
+  return {
+    // The student's own section, and within it only the lessons they take:
+    // a parallel block is one hour in which the section splits by religion
+    // or optional subject, and showing all of them would put a class on this
+    // student's timetable that they do not attend.
+    where: `rs.primary_section_id IN (
+              SELECT e.section_id FROM enrolments e
+               WHERE e.student_id = $N AND e.status = 'active')
+            AND (rs.parallel_pool IS NULL
+                 OR EXISTS (SELECT 1 FROM student_subjects ss
+                             JOIN enrolments e2 ON e2.id = ss.enrolment_id
+                            WHERE e2.student_id = $N AND e2.status = 'active'
+                              AND ss.subject_id = rs.subject_id))`,
+    params: [id],
+    titleBn: rows[0].name_bn,
+    subtitleBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09B0\u09C1\u099F\u09BF\u09A8"
+  };
+}
+function bind(where) {
+  return where.replace(/\$N/g, "$1");
+}
+async function readTimetable(c, scope, id, role, yearId) {
+  const f = await scopeFilter(c, scope, id, role);
+  const where = bind(f.where);
+  const { rows: heads } = await c.query(
+    // The ONE visibility rule. Draft, review and superseded are all excluded
+    // by it without being named, which is why a new lifecycle state cannot
+    // accidentally become readable by an audience.
+    `SELECT r.id, r.version, r.shift::text AS shift, r.name_bn,
+            to_char(r.published_at AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS published_at,
+            y.label AS year_label
+       FROM routines r
+       JOIN academic_years y ON y.id = r.academic_year_id
+      WHERE r.status = 'active'
+        AND ($1::uuid IS NULL OR r.academic_year_id = $1)
+      ORDER BY r.shift`,
+    [yearId]
+  );
+  if (heads.length === 0) {
+    return {
+      published: false,
+      titleBn: f.titleBn,
+      subtitleBn: f.subtitleBn,
+      routines: [],
+      periods: [],
+      lessons: [],
+      counts: { sections: 0, teachers: 0, rooms: 0, classes: 0 }
+    };
+  }
+  const routineIds = heads.map((h) => h.id);
+  const { rows: lessons } = await c.query(
+    `SELECT rs.routine_id, rs.day_of_week, rs.period_no,
+            to_char(rs.starts_at, 'HH24:MI') AS starts_at,
+            to_char(rs.ends_at, 'HH24:MI') AS ends_at,
+            sub.name_bn AS subject_bn,
+            u.full_name_bn AS teacher_bn,
+            COALESCE(rm.name_bn, rm.code) AS room_bn,
+            sec.name AS section_label,
+            cls.name_bn AS class_bn,
+            cls.level_no AS class_level,
+            rs.parallel_pool
+       FROM routine_slots rs
+       LEFT JOIN subjects sub ON sub.id = rs.subject_id
+       LEFT JOIN users u      ON u.id = rs.teacher_id
+       LEFT JOIN rooms rm     ON rm.id = rs.room_id
+       LEFT JOIN sections sec ON sec.id = rs.primary_section_id
+       LEFT JOIN classes cls  ON cls.id = sec.class_id
+      WHERE rs.routine_id = ANY($${f.params.length + 1}::uuid[])
+        AND rs.status = 'active'
+        AND (${where})
+      ORDER BY rs.day_of_week, rs.period_no, cls.level_no, sec.name`,
+    [...f.params, routineIds]
+  );
+  const { rows: periods } = await c.query(
+    `SELECT r.id AS routine_id, pd.period_no, pd.label_bn,
+            to_char(pd.starts_at, 'HH24:MI') AS starts_at,
+            to_char(pd.ends_at, 'HH24:MI') AS ends_at
+       FROM routines r
+       JOIN period_definitions pd ON pd.template_id = r.period_template_id
+      WHERE r.id = ANY($1::uuid[]) AND pd.kind = 'teaching'
+      ORDER BY r.shift, pd.period_no`,
+    [routineIds]
+  );
+  const { rows: counts } = await c.query(
+    `SELECT count(DISTINCT rs.primary_section_id)::int AS sections,
+            count(DISTINCT rs.teacher_id)::int AS teachers,
+            count(DISTINCT rs.room_id)::int AS rooms,
+            count(DISTINCT sec.class_id)::int AS classes
+       FROM routine_slots rs
+       LEFT JOIN sections sec ON sec.id = rs.primary_section_id
+       LEFT JOIN classes cls  ON cls.id = sec.class_id
+      WHERE rs.routine_id = ANY($${f.params.length + 1}::uuid[])
+        AND rs.status = 'active'
+        AND (${where})`,
+    [...f.params, routineIds]
+  );
+  return {
+    published: true,
+    // NOT `...f`. That spread put the SQL predicate and its bound parameter —
+    // a section or student UUID — into the HTTP response, where the browser
+    // neither needs them nor should see them. Only the two presentation
+    // fields cross the wire.
+    titleBn: f.titleBn,
+    subtitleBn: f.subtitleBn,
+    counts: counts[0] ?? { sections: 0, teachers: 0, rooms: 0, classes: 0 },
+    routines: heads.map((h) => ({
+      id: h.id,
+      version: h.version,
+      shift: h.shift,
+      shiftBn: shiftLabelBn(h.shift),
+      nameBn: h.name_bn,
+      publishedAt: h.published_at,
+      yearLabel: h.year_label
+    })),
+    periods: periods.map((p) => ({
+      routineId: p.routine_id,
+      periodNo: p.period_no,
+      labelBn: p.label_bn,
+      startsAt: p.starts_at,
+      endsAt: p.ends_at
+    })),
+    lessons: lessons.map((l) => ({
+      routineId: l.routine_id,
+      dayOfWeek: l.day_of_week,
+      periodNo: l.period_no,
+      startsAt: l.starts_at,
+      endsAt: l.ends_at,
+      subjectBn: l.subject_bn,
+      teacherBn: l.teacher_bn,
+      roomBn: l.room_bn,
+      sectionLabel: l.section_label,
+      classBn: l.class_bn,
+      classLevel: l.class_level,
+      isParallel: l.parallel_pool !== null
+    }))
+  };
+}
+async function teachingDays(c) {
+  const { rows } = await c.query(
+    `SELECT weekend_days AS weekend FROM tenants WHERE id = app.current_tenant()`
+  );
+  const weekend = new Set(rows[0]?.weekend ?? [5, 6]);
+  return [0, 1, 2, 3, 4, 5, 6].filter((d) => !weekend.has(d)).map((d) => ({ dow: d, bn: DAY_BN[d] }));
+}
+
 // services/ops-svc/api/document.ts
 var SERVICE4 = "documents";
 var ACCESS = {
@@ -5303,6 +5730,21 @@ var ACCESS = {
     "dept_head",
     "class_teacher",
     "subject_teacher"
+  ],
+  // P9-9. Everybody has a routine, so everybody may print ONE — but which
+  // one is decided by `readTimetable`'s per-scope rules, not by this list. A
+  // student reaching `type=routine_sheet&scope=institution` is refused there,
+  // by the same code that refuses them on screen.
+  routine_sheet: [
+    "principal",
+    "school_owner",
+    "academic_coordinator",
+    "it_admin",
+    "dept_head",
+    "class_teacher",
+    "subject_teacher",
+    "student",
+    "guardian"
   ]
 };
 var CONTENT_SERVICE = {
@@ -5312,6 +5754,7 @@ var CONTENT_SERVICE = {
   attendance_sheet: "attendance"
 };
 var MAX_BULK = 120;
+var MAX_LESSONS_PER_CELL = 6;
 var MONTHS_BN = [
   "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
   "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
@@ -5352,9 +5795,25 @@ async function handler18(req, res) {
     const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role, service: SERVICE4 };
     const html = await db.withTenant(ctx, async (c) => {
       const { rows: brandRows } = await c.query(
-        `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding FROM tenants`
+        // P9-9. The tenant's own NAME comes along with its branding.
+        // `parseBranding({})` falls back to the neutral "শিক্ষা প্রতিষ্ঠান" —
+        // deliberately, so an unbranded school does not look like a different
+        // one — but a school that has never opened the branding screen still
+        // HAS a name, given when it was created and never optional. Printing
+        // a placeholder on its routine, its receipts and its certificates was
+        // losing the one identifying fact every document is required to
+        // carry. Branding still wins where it is set, so a school that brands
+        // itself differently keeps that.
+        `SELECT COALESCE(settings->'branding', '{}'::jsonb) AS branding,
+                name_bn, name_en
+           FROM tenants`
       );
-      const branding = parseBranding(brandRows[0]?.branding ?? {});
+      const row = brandRows[0];
+      const branding = parseBranding({
+        ...row?.name_bn ? { nameBn: row.name_bn, shortName: row.name_bn } : {},
+        ...row?.name_en ? { nameEn: row.name_en } : {},
+        ...row?.branding ?? {}
+      });
       const contentService = CONTENT_SERVICE[type];
       if (contentService) {
         const { rows: st } = await c.query(
@@ -5379,7 +5838,11 @@ async function handler18(req, res) {
         branding,
         sections,
         locale: q.get("locale") === "en" ? "en" : "bn",
-        extraCss: documentBodyCss()
+        // P9-9. The routine is the first document whose PAPER depends on its
+        // content: a section's week fits portrait, a whole institution's does
+        // not. Everything else keeps `documentBodyCss()` alone and the A4
+        // portrait `@page` that `brandedDocumentCss` sets.
+        extraCss: documentBodyCss() + extraCssFor(type, q)
       });
     });
     res.writeHead(200, {
@@ -5415,7 +5878,109 @@ async function build(c, ctx, type, q, branding) {
       return transferCertificate(c, q, branding);
     case "attendance_sheet":
       return attendanceSheet(c, q);
+    case "routine_sheet":
+      return routineSheet(c, ctx, q);
   }
+}
+function routineScopeOf(q) {
+  const raw = q.get("scope") ?? "";
+  const known = [
+    "institution",
+    "class",
+    "group",
+    "stream",
+    "section",
+    "teacher",
+    "room",
+    "student"
+  ];
+  if (!known.includes(raw)) {
+    throw new HttpError(400, `scope must be one of: ${known.join(", ")}`, "invalid_scope");
+  }
+  return raw;
+}
+function extraCssFor(type, q) {
+  if (type !== "routine_sheet") return "";
+  return routineSheetCss(routineOrientation(routineScopeOf(q)));
+}
+async function routineSheet(c, ctx, q) {
+  const scope = routineScopeOf(q);
+  const idParam = q.get("id") ?? "";
+  const id = idParam === "self" ? ctx.userId : idParam;
+  const [t, days] = await Promise.all([
+    readTimetable(c, scope, id, ctx.role, null),
+    teachingDays(c)
+  ]);
+  if (!t.published) {
+    throw new HttpError(
+      409,
+      "\u098F\u0996\u09A8\u09CB \u0995\u09CB\u09A8\u09CB \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09C7\u09B0 \u09AA\u09B0 \u099B\u09BE\u09AA\u09BE \u09AF\u09BE\u09AC\u09C7\u0964",
+      "not_published"
+    );
+  }
+  const booklet = scope === "institution" || scope === "group" || scope === "stream" || scope === "class";
+  const depth = (lessons) => {
+    const per = /* @__PURE__ */ new Map();
+    for (const l of lessons) {
+      const k = `${l.dayOfWeek}|${l.periodNo}`;
+      per.set(k, (per.get(k) ?? 0) + 1);
+    }
+    return Math.max(0, ...per.values());
+  };
+  const pages = [];
+  for (const r of t.routines) {
+    const periods = t.periods.filter((p) => p.routineId === r.id);
+    const mine = t.lessons.filter((l) => l.routineId === r.id);
+    const common = {
+      scopeKind: scope,
+      yearLabel: r.yearLabel,
+      shiftBn: r.shiftBn,
+      version: r.version,
+      publishedAt: r.publishedAt,
+      days,
+      periods
+    };
+    if (!booklet) {
+      pages.push(buildRoutineSheet({ ...common, scopeTitle: t.titleBn, lessons: mine }));
+      continue;
+    }
+    const byClass = /* @__PURE__ */ new Map();
+    for (const l of mine) {
+      const key = `${String(l.classLevel ?? 99).padStart(2, "0")}|${l.classBn ?? ""}`;
+      if (!byClass.has(key)) byClass.set(key, []);
+      byClass.get(key).push(l);
+    }
+    for (const key of [...byClass.keys()].sort()) {
+      const lessons = byClass.get(key);
+      const classBn = lessons[0]?.classBn ?? key.split("|")[1];
+      if (depth(lessons) <= MAX_LESSONS_PER_CELL) {
+        pages.push(buildRoutineSheet({
+          // The page is a class's, so it says the class — and its cells then
+          // only have to distinguish the SECTIONS within it.
+          ...common,
+          scopeKind: "class",
+          scopeTitle: classBn,
+          lessons
+        }));
+        continue;
+      }
+      const bySection = /* @__PURE__ */ new Map();
+      for (const l of lessons) {
+        const k = l.sectionLabel ?? "";
+        if (!bySection.has(k)) bySection.set(k, []);
+        bySection.get(k).push(l);
+      }
+      for (const k of [...bySection.keys()].sort()) {
+        pages.push(buildRoutineSheet({
+          ...common,
+          scopeKind: "section",
+          scopeTitle: `${classBn} \u2014 ${k}`,
+          lessons: bySection.get(k)
+        }));
+      }
+    }
+  }
+  return pages;
 }
 async function studentIdsFor(c, q) {
   const explicit = (q.get("studentIds") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -5452,7 +6017,7 @@ async function studentIdsFor(c, q) {
   }
   return rows.map((r) => r.student_id);
 }
-var GROUP_BN = {
+var GROUP_BN2 = {
   none: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3",
   science: "\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8",
   humanities: "\u09AE\u09BE\u09A8\u09AC\u09BF\u0995",
@@ -5486,7 +6051,7 @@ function toRef(r) {
     nameEn: r.name_en,
     studentCode: r.student_code,
     classBn: r.class_bn,
-    groupBn: r.group_bn ? GROUP_BN[r.group_bn] ?? r.group_bn : null,
+    groupBn: r.group_bn ? GROUP_BN2[r.group_bn] ?? r.group_bn : null,
     section: r.section,
     rollNo: r.roll_no,
     fatherNameBn: r.father_bn,
@@ -5749,7 +6314,7 @@ async function attendanceSheet(c, q) {
   const dayColumns = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
   return [buildAttendanceSheet({
     classBn: sec[0].class_bn,
-    groupBn: GROUP_BN[sec[0].group_bn] ?? sec[0].group_bn,
+    groupBn: GROUP_BN2[sec[0].group_bn] ?? sec[0].group_bn,
     section: sec[0].name,
     yearLabel: sec[0].year_label,
     monthBn: `${MONTHS_BN[mm - 1]} ${yy}`,

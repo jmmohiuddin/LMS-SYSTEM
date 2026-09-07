@@ -7161,6 +7161,7 @@ async function readTimetable(c, scope, id, role, yearId) {
             COALESCE(rm.name_bn, rm.code) AS room_bn,
             sec.name AS section_label,
             cls.name_bn AS class_bn,
+            cls.level_no AS class_level,
             rs.parallel_pool
        FROM routine_slots rs
        LEFT JOIN subjects sub ON sub.id = rs.subject_id
@@ -7233,6 +7234,7 @@ async function readTimetable(c, scope, id, role, yearId) {
       roomBn: l.room_bn,
       sectionLabel: l.section_label,
       classBn: l.class_bn,
+      classLevel: l.class_level,
       isParallel: l.parallel_pool !== null
     }))
   };

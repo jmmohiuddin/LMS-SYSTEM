@@ -1148,6 +1148,43 @@ export class PlatformOpsView {
       onSelect: (id) => { this.filter = id; this.page.page = 1; void this.load(); },
     }));
 
+    // ── Sorting ──
+    //
+    // A labelled SELECT rather than clickable column headers, for two
+    // reasons: this table renders as a list of cards below 1024px, where
+    // there are no headers to click at all, and a select is one tab stop
+    // with a name a screen reader reads — where twelve sortable headers are
+    // twelve stops that each announce a column name and leave the reader to
+    // infer that it sorts.
+    const sortRow = el(d, 'div', { className: 'plat-sort' });
+    const sortSel = field(d, {
+      label: 'সাজান', name: 'sort', kind: 'select',
+      value: this.page.sort,
+      options: [
+        { value: 'name', label: 'নাম' },
+        { value: 'severity', label: 'অগ্রাধিকার' },
+        { value: 'students', label: 'শিক্ষার্থী' },
+        { value: 'active', label: 'সর্বশেষ সক্রিয়' },
+        { value: 'status', label: 'অবস্থা' },
+        { value: 'plan', label: 'প্ল্যান' },
+        { value: 'created', label: 'তৈরির তারিখ' },
+      ],
+      onChange: (v) => {
+        this.page.sort = v; this.page.page = 1; void this.load();
+      },
+    });
+    append(sortRow, sortSel.root);
+    sortRow.append(button(d, {
+      label: this.page.dir === 'desc' ? '↓ বড় থেকে ছোট' : '↑ ছোট থেকে বড়',
+      variant: 'ghost',
+      onClick: () => {
+        this.page.dir = this.page.dir === 'desc' ? 'asc' : 'desc';
+        this.page.page = 1;
+        void this.load();
+      },
+    }));
+    root.append(sortRow);
+
     const host = el(d, 'div', { className: 'plat-table-host' });
     root.append(host);
     this.tableHost = host;

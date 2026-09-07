@@ -227,3 +227,12 @@
 @media (min-width: 1440px) {
   .fleet-table { table-layout: auto; }
 }
+
+/* The ops list's sort control. A row on a desk, stacked on a phone so the
+   select keeps a full-width tap target. */
+.plat-sort { display: flex; align-items: flex-end; gap: 10px; margin: 8px 0; }
+.plat-sort .ui-field { flex: 0 1 260px; min-width: 0; }
+@media (max-width: 640px) {
+  .plat-sort { flex-direction: column; align-items: stretch; }
+  .plat-sort .ui-field { flex: 1 1 auto; }
+}

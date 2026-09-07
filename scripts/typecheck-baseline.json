@@ -62,6 +62,7 @@
     "apps/pwa/test/surfaces.test.ts",
     "apps/pwa/test/teaching-assignments-view.test.ts",
     "apps/pwa/test/tenant-cache-isolation.test.ts",
+    "apps/pwa/test/timetable-view.test.ts",
     "apps/pwa/test/track.test.ts",
     "apps/pwa/test/ui-core.test.ts",
     "apps/pwa/test/ui-data.test.ts",

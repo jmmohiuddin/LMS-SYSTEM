@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { AttendanceView, type OutboxLike } from '../src/attendance-view.ts';
-import { route, stalecaches, dataSaverPolicy, PRECACHE, CACHE_SHELL } from '../src/sw-router.ts';
+import { route, stalecaches, dataSaverPolicy, PRECACHE, CACHE_SHELL, CACHE_DATA } from '../src/sw-router.ts';
 import type { Student } from '../../../packages/ui-core/src/attendance-grid.ts';
 
 let dom: JSDOM;
@@ -274,6 +274,18 @@ describe('service-worker routing policy', () => {
     // stored nowhere — the stronger guarantee, not a weaker one.
     assert.equal(pub.cache, undefined);
     assert.equal(pub.tenantScoped, undefined);
+  });
+
+  test('P9-8 — the published timetable is readable offline, and partitioned', () => {
+    // A published routine is the reference data the offline story exists for:
+    // a teacher checking the week in a corridor on a dead link is the case.
+    // It falls into the existing /api/v1/rms/ branch rather than getting its
+    // own rule — and it must be tenant-scoped, because two schools on one
+    // device share this origin (B-104).
+    const t = route({ url: 'https://a.bd/api/v1/rms/timetable?scope=institution', method: 'GET' });
+    assert.equal(t.strategy, 'stale-while-revalidate');
+    assert.equal(t.cache, CACHE_DATA);
+    assert.equal(t.tenantScoped, true);
   });
 
   test('B-109 — the demo bundle is versioned like an entry, and never precached', () => {

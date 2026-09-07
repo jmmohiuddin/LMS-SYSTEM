@@ -2162,6 +2162,89 @@ export class DemoAuth extends Auth {
         });
       }
 
+      case '/api/v1/rms/timetable': {
+        // P9-8. The published routine as each reader sees it. The demo's role
+        // decides the menu, exactly as the server's `offered()` does — a demo
+        // that showed a student the institution would be teaching the wrong
+        // thing about the product.
+        // `this.role`, not a fresh DemoAuth: constructing one re-reads
+        // `location.search`, so every caller got whichever role the PAGE URL
+        // named rather than the one asking.
+        const role = this.role;
+        const admin = ['principal', 'school_owner', 'academic_coordinator', 'it_admin']
+          .includes(role);
+        const scope = new URL(url, 'http://d').searchParams.get('scope')
+          ?? (admin ? 'institution' : role === 'guardian' ? 'student'
+              : role === 'student' ? 'student' : 'teacher');
+        const menu = admin
+          ? [
+              { scope: 'institution', labelBn: 'পুরো প্রতিষ্ঠান' },
+              { scope: 'section', labelBn: 'শাখা',
+                options: [{ id: 'demo-9a', labelBn: 'নবম শ্রেণি — ক' },
+                          { id: 'demo-9b', labelBn: 'নবম শ্রেণি — খ' }] },
+              { scope: 'teacher', labelBn: 'শিক্ষক',
+                options: [{ id: 'demo-teacher', labelBn: 'রফিক ইসলাম' }] },
+              { scope: 'room', labelBn: 'কক্ষ ও ল্যাব',
+                options: [{ id: 'demo-room-1', labelBn: '১০১ নম্বর কক্ষ' }] },
+            ]
+          : role === 'guardian'
+            ? [{ scope: 'student', labelBn: 'আমার সন্তান',
+                 options: [{ id: 'demo-user', labelBn: 'সাদিয়া ইসলাম' }] }]
+            : role === 'student'
+              ? [{ scope: 'student', labelBn: 'আমার রুটিন',
+                   options: [{ id: 'self', labelBn: 'আমার সাপ্তাহিক ক্লাস' }] }]
+              : [{ scope: 'teacher', labelBn: 'আমার রুটিন',
+                   options: [{ id: 'self', labelBn: 'আমার সাপ্তাহিক ক্লাস' }] },
+                 { scope: 'section', labelBn: 'আমার শাখা',
+                   options: [{ id: 'demo-9a', labelBn: 'নবম শ্রেণি — ক' }] }];
+
+        const SUBJ = ['গণিত', 'বাংলা', 'ইংরেজি', 'বিজ্ঞান', 'ধর্ম ও নৈতিক শিক্ষা'];
+        const TEACH = ['রফিক ইসলাম', 'সালমা খাতুন', 'কামাল হোসেন'];
+        const lessons = [];
+        for (const dow of [0, 1, 2, 3, 4]) {
+          for (let p2 = 1; p2 <= 6; p2++) {
+            // The institution's grid legitimately stacks several sections in
+            // one cell; a section's holds one. Same shape, different density.
+            const n = scope === 'institution' ? 4 : 1;
+            for (let k = 0; k < n; k++) {
+              lessons.push({
+                routineId: 'demo-routine-live',
+                dayOfWeek: dow, periodNo: p2,
+                startsAt: `${String(8 + p2).padStart(2, '0')}:00`,
+                endsAt: `${String(8 + p2).padStart(2, '0')}:45`,
+                subjectBn: SUBJ[(dow + p2 + k) % SUBJ.length],
+                teacherBn: TEACH[(p2 + k) % TEACH.length],
+                roomBn: `${formatCount(101 + k, 'bn')} নম্বর কক্ষ`,
+                sectionLabel: k === 0 ? 'ক' : String.fromCharCode(0x995 + k),
+                classBn: 'নবম শ্রেণি',
+                isParallel: p2 === 5,
+              });
+            }
+          }
+        }
+        return ok({
+          ok: true, scope, published: true,
+          titleBn: admin && scope === 'institution'
+            ? DEMO_TENANTS[demoTenantKey()].branding.nameBn : 'নবম শ্রেণি — ক',
+          subtitleBn: 'সাপ্তাহিক প্রকাশিত রুটিন',
+          routines: [{ id: 'demo-routine-live', version: 2, shift: 'single',
+                       shiftBn: 'একক', nameBn: 'বার্ষিক রুটিন',
+                       publishedAt: new Date().toISOString(), yearLabel: '২০২৬' }],
+          periods: [1, 2, 3, 4, 5, 6].map((n) => ({
+            routineId: 'demo-routine-live', periodNo: n, labelBn: `${n} নম্বর`,
+            startsAt: `${String(8 + n).padStart(2, '0')}:00`,
+            endsAt: `${String(8 + n).padStart(2, '0')}:45`,
+          })),
+          lessons,
+          counts: scope === 'institution'
+            ? { sections: 4, teachers: 3, rooms: 4, classes: 1 }
+            : { sections: 1, teachers: 3, rooms: 1, classes: 1 },
+          days: [{ dow: 0, bn: 'রবি' }, { dow: 1, bn: 'সোম' }, { dow: 2, bn: 'মঙ্গল' },
+                 { dow: 3, bn: 'বুধ' }, { dow: 4, bn: 'বৃহস্পতি' }],
+          offered: menu,
+        });
+      }
+
       case '/api/v1/rms/publish': {
         // P9-7's review. The GET is demonstrable — a summary of the demo's
         // fixed school is a true summary of it. The POST is not: publishing's

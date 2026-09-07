@@ -13333,3 +13333,168 @@ device.
 live routine discards its pins, and the screen says so before the button is
 pressed. Carrying them into a draft not derived from that timetable would
 place lessons a coordinator never asked for into a week they have not seen.
+
+---
+
+# P9-8 — eight audiences, one routine (2026-09-07)
+
+## The whole design is a WHERE clause
+
+A school's timetable exists once: the routine whose `status = 'active'`. The
+institution's view, a class's, a group's, a stream's, a section's, a teacher's,
+a room's and a student's are eight selections from it — one endpoint, one
+query, one response shape.
+
+`GET /api/v1/rms/timetable?scope=…&id=…`
+
+The alternative — a per-role endpoint, or a table per audience — is how a
+school ends up with a teacher and a student reading different timetables for
+the same hour. There is a test whose only job is that every scope's lessons
+are a subset of the institution's.
+
+## `status = 'active'` is the whole visibility rule
+
+Applied once, in the read every scope passes through. A draft belongs to the
+coordinator building it (P9-5/P9-6) and to the head reviewing it (P9-7); it is
+not a timetable until somebody publishes it. B-108's `superseded` is excluded
+by the same clause **without being named**, which is why a new lifecycle state
+cannot become readable by accident.
+
+Proved with a generated-but-unpublished routine: the principal, the teacher,
+the student and the guardian all see `published: false` and zero lessons, and
+all four see it the moment it is published.
+
+## Authorisation is per SCOPE, and asks the database
+
+A single `requireRole` on the handler would be wrong in both directions — it
+would either let a student ask for the institution or stop a teacher reading
+their own week. So each scope states who may ask for it, and the subject-level
+ones use the functions the RLS policies themselves use:
+
+  `app.my_section_ids()`   — the sections a teacher teaches, including
+                             `section_subject_teachers` and not only class
+                             teaching
+  `app.my_ward_ids()`      — a guardian's children
+  `app.can_see_student()`  — the same gate `app.student_day` is joined to
+
+| scope | principal · owner · coordinator · IT | teacher | student | guardian |
+|---|---|---|---|---|
+| institution, class, group, stream, room | ✓ | ✗ | ✗ | ✗ |
+| teacher | any | own only | ✗ | ✗ |
+| section | any | ones they teach | own | ward's |
+| student | any | of their sections | own | ward's |
+
+Every one of those rows is a separate assertion, positive and negative.
+
+## The picker is the server's list
+
+`offered` comes back with the scopes this caller may actually ask for, built
+from the same role list and the same helpers the filters use. A menu assembled
+in the browser from `auth.role` would be a second opinion about permission,
+and the first time the two disagreed a person would be offered a view that
+403s. There is a test that walks every offered scope and asserts the server
+answers it — the drift, caught rather than assumed.
+
+An omitted `scope` is answered from that same menu rather than from a default.
+A default is a second opinion too: the day somebody widens a role list, a
+default becomes a leak.
+
+## A student sees the half of a split hour they attend
+
+A parallel block is an hour where the section divides by religion or optional
+subject. The student scope filters through `student_subjects`, exactly as
+`app.student_day` does — showing all of them would put a class on a child's
+timetable they do not attend. The SECTION's grid keeps the whole block, marked
+"বিভাজিত ক্লাস", because a coordinator has to see both halves.
+
+## What the browser found
+
+**The response was shipping its own SQL.** The first version spread the filter
+object into the body, so `where` (the predicate) and `params` (a bound section
+or student uuid) went to the browser. Found by reading a real response, fixed
+to send only the two presentation fields, and pinned by a test.
+
+**The section count was counted on labels.** Every class has a section named
+'ক', so de-duplicating the rendered labels told a head their twenty-section
+school had four. The counts now come from the server, on ids —
+`count(DISTINCT primary_section_id)`.
+
+**The demo answered with the page's role, not the caller's.** The case
+constructed a fresh `DemoAuth`, which re-reads `location.search`, so every
+persona got whichever role the URL named.
+
+**A teacher asking about a teacher got 404 where a room got 403.** The
+existence check ran before the permission check, and `users_scope` hides the
+row — so the two refusals differed, and the difference is itself information.
+Permission is decided first now; 404 is reserved for a caller who MAY ask
+about somebody who is not there.
+
+## Numerals (§16)
+
+B-108's `ShikhonBnNum` face already routes every ০-৯ in the product through
+`unicode-range: U+09E6-09EF`, including the digits inside sentences that no
+class selector can reach. Verified on this screen: digits move face
+(186.76 → 218.41 px at 32px) while letters do not (101.67 → 101.67 px).
+
+`--font-bn-num` is applied where the element's whole content is a figure — the
+grid's period number and its clock time. The clock time got its own class
+rather than reusing `.routine-slot-meta`, which also carries teacher and room
+NAMES: the token names Noto first for the whole element, and on a mixed
+element it would drag the letters along too.
+
+Read on screen: `১`, `২`, `৩`, `১০`, `২৩ জন`, `৫৬০টি`, `১০:০০–১০:৪৫`,
+`৭ সেপ্টেম্বর ২০২৬`, `সংস্করণ ২`, `২২টি`.
+
+The one Latin numeral on the screen is `academic_years.label` — "2026" as the
+benchmark fixture typed it. That is the school's own free-text label, supplied
+by whoever provisioned the year, and it is not converted for the same reason
+P9-4 does not scrub a school's room names: a school that labels its year
+"2026-27" would be mangled by a blind digit conversion.
+
+## Evidence
+
+- **2061 tests, all passing** across 13 workspaces — 15 new API
+  (`timetable.test.ts`), 17 new view, 1 new service-worker assertion
+- rms suites (261) run **three times**; 26/26 SQL suites **three times**
+- typecheck 0/0/0 · build clean · **75/75 migrations, and P9-8 needed none**
+- **Security probe 29/29** · **D11** clean both directions
+- `app.js` 161,634 / 184,320 gzipped
+- **Browser, real API, a published 20-section school:** the principal's menu
+  offers পুরো প্রতিষ্ঠান · শ্রেণি · বিভাগ · মাধ্যম · কক্ষ ও ল্যাব · শিক্ষক;
+  the institution reads ৫৬০টি ক্লাস · ২০টি শাখা · ২৩ জন শিক্ষক · ২২টি কক্ষ;
+  switching to কক্ষ ও ল্যাব re-reads and draws that room's week
+- **Browser, demo, five personas:** a student and a guardian see one section
+  and get no picker at all; a class teacher is offered আমার রুটিন and আমার
+  শাখা; a principal is offered the school
+- **Nine widths** 360 · 375 · 390 · 640 · 768 · 1024 · 1280 · 1440 · 1600:
+  `document.body.scrollWidth` never exceeds the viewport, and the grid scrolls
+  inside `.table-scroll` rather than pushing the page
+- **Both themes**: card `#FFFFFF` / `#241E1A`, cell `#E9E3D4` / `#302821`,
+  text `#53443D` / `#EDE7DA`
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**This screen is the published WEEK, not today.** Day-level substitutions —
+who is covering for an absent teacher on Tuesday — live in the existing
+`/rms/routine` and `/academics/myroutine` day views, which read
+`app.teacher_day` and `app.student_day` and merge substitutions for a date.
+Merging them here would make a weekly grid that changes meaning depending on
+which week you are in.
+
+**The institution's grid caps a cell at three lessons.** A whole school's
+Sunday first period holds twenty; printing them all makes a list, not a grid.
+The rest are counted ("আরও ১৭টি") and the way to see them is to narrow the
+scope, which is what the picker is for.
+
+**Group and stream are one dropdown each, from the classes that exist.** A
+school with one group sees one option. That is honest — it is what the school
+has — but it means the group scope looks pointless until a college with
+science and humanities opens it.
+
+**Nothing here is printable yet.** The brief's outputs are screens; a printed
+class routine on a noticeboard is what a Bangladeshi school actually pins up,
+and `packages/ui-core/src/documents.ts` is where that would live. Recorded as
+B-112.
+
+**The year label can be Latin.** See above — it is the school's own text.

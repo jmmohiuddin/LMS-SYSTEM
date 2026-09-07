@@ -1613,3 +1613,55 @@ images — so they are selectable, copyable and announced; every stat pairs a
 label with its value in reading order ("মোট ক্লাস ৫৬০টি"); and every finding
 row carries words, so nothing depends on colour. The face is presentational
 and cannot change an accessible name, because the characters are identical.
+
+## P9-8 — the published routine, for whoever is reading it (2026-09-07)
+
+`#/timetable` — `apps/pwa/src/timetable-view.ts`. One screen and one grid for
+all eight audiences, because there is one routine.
+
+**The picker is the server's list.** `offered` comes back with the scopes this
+caller may ask for, built from the same helpers the filters are gated by. A
+menu assembled in the browser from `auth.role` would be a second opinion about
+permission, and the first time the two disagreed a person would be handed a
+view that 403s. A test walks every offered scope and asserts the server
+answers it.
+
+**One reader with one thing to look at gets no picker.** A student has exactly
+one timetable, so the select is not drawn — a control with one option does
+nothing.
+
+**One grid per shift.** Morning period 8 and day period 1 are different hours
+with the same number, so a single table keyed on period number would put them
+in one row. A two-shift school gets two grids, each with its own bell times.
+
+**Density instead of a second component.** A section's cell holds one lesson;
+the institution's holds twenty. Every cell holds a LIST, prints the first
+three and counts the rest ("আরও ১৭টি"), so the same grid reads sensibly
+whether it is one child's Tuesday or a whole school's.
+
+**Each cell says only what the reader does not already know.** A teacher's own
+grid does not repeat the teacher in every cell; a section's does not repeat the
+section. The accessible name carries all of it plus the day and clock time,
+because a screen reader moving cell by cell has no other way to know where it
+is: "রবিবার, ১ নম্বর পিরিয়ড, ০৯:০০ থেকে ০৯:৪৫, গণিত, রফিক স্যার, ১০১ নম্বর
+কক্ষ".
+
+**Reflow, not a squeeze.** The grid scrolls inside `.table-scroll` — the same
+container the P9-5 editor uses — so at 360px the page itself never scrolls
+sideways. Verified at 360 · 375 · 390 · 640 · 768 · 1024 · 1280 · 1440 · 1600:
+`document.body.scrollWidth` never exceeds the viewport.
+
+**Nothing published is a state, not a failure.** A school in its first week
+meets it, and it offers the way to `#/routinepublish` rather than looking
+broken.
+
+**Numerals.** `--font-bn-num` on the two elements whose whole content is a
+figure — the period number and the clock time. The clock time got its own
+class rather than reusing `.routine-slot-meta`, which also carries teacher and
+room NAMES: the token names Noto first for the whole element, so on a mixed
+element it would move the letters too. Everything else is covered by B-108's
+`unicode-range` face, which reaches digits inside sentences that no selector
+can.
+
+**Both themes**: card `#FFFFFF` / `#241E1A`, cell `#E9E3D4` / `#302821`, text
+`#53443D` / `#EDE7DA`.

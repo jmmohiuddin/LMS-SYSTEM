@@ -20,6 +20,7 @@ import setup from './setup.ts';
 import generate from './generate.ts';
 import resolve from './resolve.ts';
 import publish from './publish.ts';
+import timetable from './timetable.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -37,6 +38,9 @@ const ROUTES: Record<string, Handler> = {
   resolve,
   // P9-7. The review surface and the DRAFT -> REVIEW -> PUBLISHED lifecycle.
   publish,
+  // P9-8. Every audience's view of the ONE published routine. Scope is a
+  // WHERE clause, not a second dataset.
+  timetable,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

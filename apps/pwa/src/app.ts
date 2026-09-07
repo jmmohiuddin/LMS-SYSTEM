@@ -34,6 +34,7 @@ import { TeachingAssignmentsView } from './teaching-assignments-view.ts';
 import { RoutineSetupView } from './routine-setup-view.ts';
 import { RoutineGenerateView } from './routine-generate-view.ts';
 import { RoutinePublishView } from './routine-publish-view.ts';
+import { TimetableView } from './timetable-view.ts';
 import { SubjectChoiceView } from './subject-choice-view.ts';
 import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
@@ -652,6 +653,7 @@ async function main() {
               { path: 'routinesetup', glyph: 'check-square', titleBn: 'রুটিন তৈরির প্রস্তুতি', subtitleBn: 'কী কী বাকি আছে — এক নজরে' },
               { path: 'routinegenerate', glyph: 'clock', titleBn: 'রুটিন তৈরি করুন', subtitleBn: 'পুরো প্রতিষ্ঠানের রুটিন — এক ধাপে' },
               { path: 'routinepublish', glyph: 'check-square', titleBn: 'রুটিন প্রকাশ', subtitleBn: 'দেখে নিন, তারপর সবার জন্য চালু করুন' },
+              { path: 'timetable', glyph: 'clock', titleBn: 'প্রকাশিত রুটিন', subtitleBn: 'শ্রেণি, শাখা, শিক্ষক ও কক্ষভিত্তিক' },
               { path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
               { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
               { path: 'exams', glyph: 'clipboard', titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
@@ -975,6 +977,25 @@ async function main() {
         mount: (container) => {
           new RoutineGenerateView({
             root: container, doc: document, auth,
+            onNavigate: (path) => { location.hash = `#/${path}`; },
+          });
+        },
+      },
+      {
+        // P9-8. The published routine, for whoever is reading it. One screen
+        // and one grid for all eight audiences, because there is one routine
+        // — the scope is a WHERE clause and the server decides which ones
+        // this reader may ask for.
+        path: 'timetable',
+        labelBn: 'প্রকাশিত রুটিন',
+        glyph: 'clock',
+        hidden: true,
+        mount: (container) => {
+          const q = new URLSearchParams((location.hash.split('?')[1] ?? ''));
+          new TimetableView({
+            root: container, doc: document, auth,
+            scope: q.get('scope') ?? undefined,
+            id: q.get('id') ?? undefined,
             onNavigate: (path) => { location.hash = `#/${path}`; },
           });
         },

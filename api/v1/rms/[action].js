@@ -1813,7 +1813,7 @@ var RmsSolver = class {
     const siblings = [...new Set(opts.alsoBookedAgainst ?? [])].filter((id) => id !== routineId);
     const run2 = async (client) => {
       const routine = await this.loadRoutine(client, routineId);
-      const teachingDays2 = this.teachingDays(routine.weekendDays);
+      const teachingDays3 = this.teachingDays(routine.weekendDays);
       const periods = await this.loadTeachingPeriods(client, routine.periodTemplateId);
       if (periods.length === 0) {
         throw Object.assign(new Error("period template has no teaching periods"), { code: "NO_TEACHING_PERIODS" });
@@ -1882,7 +1882,7 @@ var RmsSolver = class {
           const pair = this.findDoubleSlot(
             d,
             unit,
-            teachingDays2,
+            teachingDays3,
             periods,
             sectionSubjectDays.get(ssKey) ?? /* @__PURE__ */ new Set(),
             teacherBusy,
@@ -1936,7 +1936,7 @@ var RmsSolver = class {
           let found = null;
           tally = freshTally();
           for (const preferUnusedDay of [true, false]) {
-            for (const day3 of teachingDays2) {
+            for (const day3 of teachingDays3) {
               if (preferUnusedDay && usedDays.has(day3)) continue;
               for (const period2 of periods) {
                 const count = !preferUnusedDay;
@@ -2130,7 +2130,7 @@ var RmsSolver = class {
       ];
       const soft = evaluateSoftConstraints({
         slots: finalSlots,
-        teachingDayCount: teachingDays2.length,
+        teachingDayCount: teachingDays3.length,
         ...await this.loadSoftContext(client, finalSlots)
       });
       const shortages = [];
@@ -2138,7 +2138,7 @@ var RmsSolver = class {
         const rooms = roomsByCapability.get(cap) ?? [];
         let free = 0;
         for (const roomId of rooms) {
-          for (const day2 of teachingDays2) {
+          for (const day2 of teachingDays3) {
             for (const p of periods) {
               if (!roomBusy.overlaps(roomId, day2, p.startsAt, p.endsAt)) free++;
             }
@@ -2306,9 +2306,9 @@ var RmsSolver = class {
    * migration 035 enforces the same rule at COMMIT, so a solver that got
    * this wrong could not store its mistake.
    */
-  findDoubleSlot(d, unit, teachingDays2, periods, usedDays, teacherBusy, sectionBusy, roomBusy, isUnavailable, roomBySection, roomsByCapability, spareRooms) {
+  findDoubleSlot(d, unit, teachingDays3, periods, usedDays, teacherBusy, sectionBusy, roomBusy, isUnavailable, roomBySection, roomsByCapability, spareRooms) {
     for (const preferUnusedDay of [true, false]) {
-      for (const day2 of teachingDays2) {
+      for (const day2 of teachingDays3) {
         if (preferUnusedDay && usedDays.has(day2)) continue;
         for (let i = 0; i + 1 < periods.length; i++) {
           const first = periods[i];
@@ -6670,7 +6670,7 @@ async function run(c, ctx, o) {
   return payload;
 }
 function scopeLabel(scope, scoped) {
-  const DAY_BN5 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+  const DAY_BN6 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
   const first = scoped[0];
   if (scope.kind === "teacher") {
     return `${possessiveBn(first?.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995")} \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
@@ -6681,7 +6681,7 @@ function scopeLabel(scope, scoped) {
   if (scope.kind === "room") {
     return `${first?.roomLabel ?? "\u098F\u0987"} \u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
   }
-  return `${DAY_BN5[scope.dayOfWeek] ?? ""}\u09AC\u09BE\u09B0\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
+  return `${DAY_BN6[scope.dayOfWeek] ?? ""}\u09AC\u09BE\u09B0\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
 }
 async function handler11(req, res) {
   const cors = corsHeaders([], "POST, OPTIONS");
@@ -6957,6 +6957,450 @@ async function handler12(req, res) {
   }
 }
 
+// services/rms-svc/api/timetable.ts
+var UUID_RE12 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var ADMIN_ROLES = ["principal", "school_owner", "academic_coordinator", "it_admin"];
+var SCOPES = [
+  "institution",
+  "class",
+  "group",
+  "stream",
+  "section",
+  "teacher",
+  "room",
+  "student"
+];
+var DAY_BN5 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var GROUP_BN = {
+  science: "\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8",
+  humanities: "\u09AE\u09BE\u09A8\u09AC\u09BF\u0995",
+  business_studies: "\u09AC\u09CD\u09AF\u09AC\u09B8\u09BE\u09AF\u09BC \u09B6\u09BF\u0995\u09CD\u09B7\u09BE",
+  vocational: "\u09AD\u09CB\u0995\u09C7\u09B6\u09A8\u09BE\u09B2",
+  general: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3",
+  none: "\u09B8\u09BE\u09A7\u09BE\u09B0\u09A3"
+};
+var STREAM_BN = {
+  bangla_medium: "\u09AC\u09BE\u0982\u09B2\u09BE \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE",
+  english_version: "\u0987\u0982\u09B0\u09C7\u099C\u09BF \u09AD\u09BE\u09B0\u09CD\u09B8\u09A8",
+  english_medium: "\u0987\u0982\u09B0\u09C7\u099C\u09BF \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE",
+  madrasah: "\u09AE\u09BE\u09A6\u09B0\u09BE\u09B8\u09BE",
+  technical: "\u0995\u09BE\u09B0\u09BF\u0997\u09B0\u09BF"
+};
+async function scopeFilter(c, scope, id, role) {
+  const isAdmin = ADMIN_ROLES.includes(role);
+  const deny = () => new HttpError(
+    403,
+    "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A6\u09C7\u0996\u09BE\u09B0 \u0985\u09A8\u09C1\u09AE\u09A4\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09A8\u09C7\u0987\u0964",
+    "forbidden_scope",
+    { scope }
+  );
+  if (scope === "institution") {
+    if (!isAdmin) throw deny();
+    const { rows: rows2 } = await c.query(
+      `SELECT name_bn FROM tenants WHERE id = app.current_tenant()`
+    );
+    return {
+      where: "TRUE",
+      params: [],
+      titleBn: rows2[0]?.name_bn ?? "\u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8",
+      subtitleBn: "\u09AA\u09C1\u09B0\u09CB \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7\u09B0 \u099A\u09BE\u09B2\u09C1 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "class") {
+    if (!isAdmin) throw deny();
+    if (!UUID_RE12.test(id)) throw new HttpError(400, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_class_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT name_bn FROM classes WHERE id = $1`,
+      [id]
+    );
+    if (!rows2[0]) throw new HttpError(404, "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "class_not_found");
+    return {
+      where: "cls.id = $N",
+      params: [id],
+      titleBn: rows2[0].name_bn,
+      subtitleBn: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B8\u09AC \u09B6\u09BE\u0996\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "group" || scope === "stream") {
+    if (!isAdmin) throw deny();
+    const table = scope === "group" ? GROUP_BN : STREAM_BN;
+    if (!Object.prototype.hasOwnProperty.call(table, id)) {
+      throw new HttpError(
+        400,
+        scope === "group" ? "\u09AC\u09BF\u09AD\u09BE\u0997 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8" : "\u09AE\u09BE\u09A7\u09CD\u09AF\u09AE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8",
+        scope === "group" ? "invalid_group" : "invalid_stream"
+      );
+    }
+    return {
+      where: scope === "group" ? 'cls."group"::text = $N' : "cls.stream::text = $N",
+      params: [id],
+      titleBn: table[id],
+      subtitleBn: scope === "group" ? "\u098F\u0987 \u09AC\u09BF\u09AD\u09BE\u0997\u09C7\u09B0 \u09B8\u09AC \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8" : "\u098F\u0987 \u09AE\u09BE\u09A7\u09CD\u09AF\u09AE\u09C7\u09B0 \u09B8\u09AC \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "section") {
+    if (!UUID_RE12.test(id)) throw new HttpError(400, "\u09B6\u09BE\u0996\u09BE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_section_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT $1::uuid = ANY(app.my_section_ids()) AS teaches,
+              EXISTS (SELECT 1 FROM enrolments e
+                       WHERE e.section_id = $1 AND e.status = 'active'
+                         AND (e.student_id = app.current_user_id()
+                              OR e.student_id = ANY(app.my_ward_ids()))) AS enrolled,
+              (SELECT s.name FROM sections s WHERE s.id = $1) AS name,
+              (SELECT c2.name_bn FROM sections s JOIN classes c2 ON c2.id = s.class_id
+                WHERE s.id = $1) AS class_bn`,
+      [id]
+    );
+    const r = rows2[0];
+    if (!r?.name) throw new HttpError(404, "\u09B6\u09BE\u0996\u09BE \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "section_not_found");
+    if (!isAdmin && !r.teaches && !r.enrolled) throw deny();
+    return {
+      where: "rs.primary_section_id = $N",
+      params: [id],
+      titleBn: `${r.class_bn ?? ""} \u2014 ${r.name}`.trim(),
+      subtitleBn: "\u09B6\u09BE\u0996\u09BE\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "teacher") {
+    if (!UUID_RE12.test(id)) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_teacher_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT $1::uuid = app.current_user_id() AS me,
+              (SELECT full_name_bn FROM users WHERE id = $1) AS name_bn`,
+      [id]
+    );
+    const r = rows2[0];
+    if (!isAdmin && !r?.me) throw deny();
+    if (!r?.name_bn) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "teacher_not_found");
+    return {
+      where: "rs.teacher_id = $N",
+      params: [id],
+      titleBn: r.name_bn,
+      subtitleBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09B0\u09C1\u099F\u09BF\u09A8"
+    };
+  }
+  if (scope === "room") {
+    if (!isAdmin) throw deny();
+    if (!UUID_RE12.test(id)) throw new HttpError(400, "\u0995\u0995\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_room_id");
+    const { rows: rows2 } = await c.query(
+      `SELECT COALESCE(name_bn, code) AS label FROM rooms WHERE id = $1`,
+      [id]
+    );
+    if (!rows2[0]) throw new HttpError(404, "\u0995\u0995\u09CD\u09B7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "room_not_found");
+    return {
+      where: "rs.room_id = $N",
+      params: [id],
+      titleBn: rows2[0].label,
+      subtitleBn: "\u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0"
+    };
+  }
+  if (!UUID_RE12.test(id)) throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_student_id");
+  const { rows } = await c.query(
+    `SELECT app.can_see_student($1) AS allowed,
+            (SELECT full_name_bn FROM users WHERE id = $1) AS name_bn`,
+    [id]
+  );
+  if (!rows[0]?.allowed) throw deny();
+  if (!rows[0].name_bn) throw new HttpError(404, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "student_not_found");
+  return {
+    // The student's own section, and within it only the lessons they take:
+    // a parallel block is one hour in which the section splits by religion
+    // or optional subject, and showing all of them would put a class on this
+    // student's timetable that they do not attend.
+    where: `rs.primary_section_id IN (
+              SELECT e.section_id FROM enrolments e
+               WHERE e.student_id = $N AND e.status = 'active')
+            AND (rs.parallel_pool IS NULL
+                 OR EXISTS (SELECT 1 FROM student_subjects ss
+                             JOIN enrolments e2 ON e2.id = ss.enrolment_id
+                            WHERE e2.student_id = $N AND e2.status = 'active'
+                              AND ss.subject_id = rs.subject_id))`,
+    params: [id],
+    titleBn: rows[0].name_bn,
+    subtitleBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09B0\u09C1\u099F\u09BF\u09A8"
+  };
+}
+function bind(where) {
+  return where.replace(/\$N/g, "$1");
+}
+async function readTimetable(c, scope, id, role, yearId) {
+  const f = await scopeFilter(c, scope, id, role);
+  const where = bind(f.where);
+  const { rows: heads } = await c.query(
+    // The ONE visibility rule. Draft, review and superseded are all excluded
+    // by it without being named, which is why a new lifecycle state cannot
+    // accidentally become readable by an audience.
+    `SELECT r.id, r.version, r.shift::text AS shift, r.name_bn,
+            to_char(r.published_at AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS published_at,
+            y.label AS year_label
+       FROM routines r
+       JOIN academic_years y ON y.id = r.academic_year_id
+      WHERE r.status = 'active'
+        AND ($1::uuid IS NULL OR r.academic_year_id = $1)
+      ORDER BY r.shift`,
+    [yearId]
+  );
+  if (heads.length === 0) {
+    return {
+      published: false,
+      titleBn: f.titleBn,
+      subtitleBn: f.subtitleBn,
+      routines: [],
+      periods: [],
+      lessons: [],
+      counts: { sections: 0, teachers: 0, rooms: 0, classes: 0 }
+    };
+  }
+  const routineIds = heads.map((h) => h.id);
+  const { rows: lessons } = await c.query(
+    `SELECT rs.routine_id, rs.day_of_week, rs.period_no,
+            to_char(rs.starts_at, 'HH24:MI') AS starts_at,
+            to_char(rs.ends_at, 'HH24:MI') AS ends_at,
+            sub.name_bn AS subject_bn,
+            u.full_name_bn AS teacher_bn,
+            COALESCE(rm.name_bn, rm.code) AS room_bn,
+            sec.name AS section_label,
+            cls.name_bn AS class_bn,
+            rs.parallel_pool
+       FROM routine_slots rs
+       LEFT JOIN subjects sub ON sub.id = rs.subject_id
+       LEFT JOIN users u      ON u.id = rs.teacher_id
+       LEFT JOIN rooms rm     ON rm.id = rs.room_id
+       LEFT JOIN sections sec ON sec.id = rs.primary_section_id
+       LEFT JOIN classes cls  ON cls.id = sec.class_id
+      WHERE rs.routine_id = ANY($${f.params.length + 1}::uuid[])
+        AND rs.status = 'active'
+        AND (${where})
+      ORDER BY rs.day_of_week, rs.period_no, cls.level_no, sec.name`,
+    [...f.params, routineIds]
+  );
+  const { rows: periods } = await c.query(
+    `SELECT r.id AS routine_id, pd.period_no, pd.label_bn,
+            to_char(pd.starts_at, 'HH24:MI') AS starts_at,
+            to_char(pd.ends_at, 'HH24:MI') AS ends_at
+       FROM routines r
+       JOIN period_definitions pd ON pd.template_id = r.period_template_id
+      WHERE r.id = ANY($1::uuid[]) AND pd.kind = 'teaching'
+      ORDER BY r.shift, pd.period_no`,
+    [routineIds]
+  );
+  const { rows: counts } = await c.query(
+    `SELECT count(DISTINCT rs.primary_section_id)::int AS sections,
+            count(DISTINCT rs.teacher_id)::int AS teachers,
+            count(DISTINCT rs.room_id)::int AS rooms,
+            count(DISTINCT sec.class_id)::int AS classes
+       FROM routine_slots rs
+       LEFT JOIN sections sec ON sec.id = rs.primary_section_id
+       LEFT JOIN classes cls  ON cls.id = sec.class_id
+      WHERE rs.routine_id = ANY($${f.params.length + 1}::uuid[])
+        AND rs.status = 'active'
+        AND (${where})`,
+    [...f.params, routineIds]
+  );
+  return {
+    published: true,
+    // NOT `...f`. That spread put the SQL predicate and its bound parameter —
+    // a section or student UUID — into the HTTP response, where the browser
+    // neither needs them nor should see them. Only the two presentation
+    // fields cross the wire.
+    titleBn: f.titleBn,
+    subtitleBn: f.subtitleBn,
+    counts: counts[0] ?? { sections: 0, teachers: 0, rooms: 0, classes: 0 },
+    routines: heads.map((h) => ({
+      id: h.id,
+      version: h.version,
+      shift: h.shift,
+      shiftBn: shiftLabelBn(h.shift),
+      nameBn: h.name_bn,
+      publishedAt: h.published_at,
+      yearLabel: h.year_label
+    })),
+    periods: periods.map((p) => ({
+      routineId: p.routine_id,
+      periodNo: p.period_no,
+      labelBn: p.label_bn,
+      startsAt: p.starts_at,
+      endsAt: p.ends_at
+    })),
+    lessons: lessons.map((l) => ({
+      routineId: l.routine_id,
+      dayOfWeek: l.day_of_week,
+      periodNo: l.period_no,
+      startsAt: l.starts_at,
+      endsAt: l.ends_at,
+      subjectBn: l.subject_bn,
+      teacherBn: l.teacher_bn,
+      roomBn: l.room_bn,
+      sectionLabel: l.section_label,
+      classBn: l.class_bn,
+      isParallel: l.parallel_pool !== null
+    }))
+  };
+}
+async function teachingDays2(c) {
+  const { rows } = await c.query(
+    `SELECT weekend_days AS weekend FROM tenants WHERE id = app.current_tenant()`
+  );
+  const weekend = new Set(rows[0]?.weekend ?? [5, 6]);
+  return [0, 1, 2, 3, 4, 5, 6].filter((d) => !weekend.has(d)).map((d) => ({ dow: d, bn: DAY_BN5[d] }));
+}
+async function offered(c, role) {
+  const isAdmin = ADMIN_ROLES.includes(role);
+  const out = [];
+  if (isAdmin) {
+    out.push({ scope: "institution", labelBn: "\u09AA\u09C1\u09B0\u09CB \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8" });
+    const { rows: classes } = await c.query(
+      `SELECT id, name_bn FROM classes ORDER BY level_no, name_bn`
+    );
+    out.push({
+      scope: "class",
+      labelBn: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF",
+      options: classes.map((x) => ({ id: x.id, labelBn: x.name_bn }))
+    });
+    const { rows: groups } = await c.query(
+      `SELECT DISTINCT "group"::text AS g FROM classes ORDER BY 1`
+    );
+    out.push({
+      scope: "group",
+      labelBn: "\u09AC\u09BF\u09AD\u09BE\u0997",
+      options: groups.map((x) => ({ id: x.g, labelBn: GROUP_BN[x.g] ?? x.g }))
+    });
+    const { rows: streams } = await c.query(
+      `SELECT DISTINCT stream::text AS s FROM classes ORDER BY 1`
+    );
+    out.push({
+      scope: "stream",
+      labelBn: "\u09AE\u09BE\u09A7\u09CD\u09AF\u09AE",
+      options: streams.map((x) => ({ id: x.s, labelBn: STREAM_BN[x.s] ?? x.s }))
+    });
+    const { rows: rooms } = await c.query(
+      `SELECT id, COALESCE(name_bn, code) AS label FROM rooms
+        WHERE is_bookable ORDER BY code`
+    );
+    out.push({
+      scope: "room",
+      labelBn: "\u0995\u0995\u09CD\u09B7 \u0993 \u09B2\u09CD\u09AF\u09BE\u09AC",
+      options: rooms.map((x) => ({ id: x.id, labelBn: x.label }))
+    });
+    const { rows: teachers } = await c.query(
+      `SELECT DISTINCT u.id, u.full_name_bn AS name_bn
+         FROM users u JOIN user_roles ur ON ur.user_id = u.id
+        WHERE ur.role_code IN ('subject_teacher','class_teacher','dept_head','principal')
+          AND u.status = 'active'
+        ORDER BY 2`
+    );
+    out.push({
+      scope: "teacher",
+      labelBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995",
+      options: teachers.map((x) => ({ id: x.id, labelBn: x.name_bn }))
+    });
+  }
+  const { rows: self } = await c.query(
+    `SELECT EXISTS (SELECT 1 FROM routine_slots rs
+                     JOIN routines r ON r.id = rs.routine_id
+                    WHERE r.status = 'active' AND rs.status = 'active'
+                      AND rs.teacher_id = app.current_user_id()) AS teaches,
+            EXISTS (SELECT 1 FROM enrolments e
+                    WHERE e.student_id = app.current_user_id()
+                      AND e.status = 'active') AS studies`
+  );
+  if (self[0]?.teaches) {
+    out.unshift({
+      scope: "teacher",
+      labelBn: "\u0986\u09AE\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+      options: [{ id: "self", labelBn: "\u0986\u09AE\u09BE\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8" }]
+    });
+  }
+  if (self[0]?.studies) {
+    out.unshift({
+      scope: "student",
+      labelBn: "\u0986\u09AE\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
+      options: [{ id: "self", labelBn: "\u0986\u09AE\u09BE\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8" }]
+    });
+  }
+  const { rows: mine } = await c.query(
+    `SELECT s.id, c.name_bn || ' \u2014 ' || s.name AS label
+       FROM sections s JOIN classes c ON c.id = s.class_id
+      WHERE s.id = ANY(app.my_section_ids())
+      ORDER BY c.level_no, s.name`
+  );
+  if (mine.length > 0 && !isAdmin) {
+    out.push({
+      scope: "section",
+      labelBn: "\u0986\u09AE\u09BE\u09B0 \u09B6\u09BE\u0996\u09BE",
+      options: mine.map((x) => ({ id: x.id, labelBn: x.label }))
+    });
+  }
+  const { rows: wards } = await c.query(
+    `SELECT id, full_name_bn AS name_bn FROM users
+      WHERE id = ANY(app.my_ward_ids()) ORDER BY 2`
+  );
+  if (wards.length > 0) {
+    out.push({
+      scope: "student",
+      labelBn: "\u0986\u09AE\u09BE\u09B0 \u09B8\u09A8\u09CD\u09A4\u09BE\u09A8",
+      options: wards.map((x) => ({ id: x.id, labelBn: x.name_bn }))
+    });
+  }
+  return out;
+}
+async function handler13(req, res) {
+  const cors = corsHeaders([], "GET, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  if (req.method !== "GET") {
+    json(res, 405, { error: "method_not_allowed" }, cors);
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    const q = query(req);
+    const raw = q.get("scope") ?? "";
+    if (raw !== "" && !SCOPES.includes(raw)) {
+      throw new HttpError(400, `scope must be one of: ${SCOPES.join(", ")}`, "invalid_scope");
+    }
+    const yearId = q.get("yearId");
+    if (yearId && !UUID_RE12.test(yearId)) {
+      throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year");
+    }
+    const out = await db.withTenant(ctx, async (c) => {
+      const menu = await offered(c, claims.role);
+      if (menu.length === 0) {
+        throw new HttpError(
+          403,
+          "\u098F\u0987 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u0986\u09AA\u09A8\u09BE\u09B0 \u09A6\u09C7\u0996\u09BE\u09B0 \u09AE\u09A4\u09CB \u0995\u09CB\u09A8\u09CB \u09B0\u09C1\u099F\u09BF\u09A8 \u09A8\u09C7\u0987\u0964",
+          "no_scope_offered"
+        );
+      }
+      const chosen = raw === "" ? menu[0].scope : raw;
+      const idParam = q.get("id") ?? (raw === "" ? menu[0].options?.[0]?.id ?? "" : "");
+      const id = idParam === "self" ? claims.sub : idParam;
+      const data = await readTimetable(c, chosen, id, claims.role, yearId);
+      return {
+        ok: true,
+        scope: chosen,
+        id,
+        ...data,
+        days: await teachingDays2(c),
+        offered: menu
+      };
+    });
+    json(res, 200, out, cors);
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    console.error("[rms/timetable]", err);
+    json(res, 500, { error: "internal_error", message: "\u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u09A8\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964" }, cors);
+  }
+}
+
 // services/rms-svc/api/index.ts
 var ROUTES = {
   routine: handler,
@@ -6977,9 +7421,12 @@ var ROUTES = {
   // told to fill only the gaps a scoped removal just made.
   resolve: handler11,
   // P9-7. The review surface and the DRAFT -> REVIEW -> PUBLISHED lifecycle.
-  publish: handler12
+  publish: handler12,
+  // P9-8. Every audience's view of the ONE published routine. Scope is a
+  // WHERE clause, not a second dataset.
+  timetable: handler13
 };
-async function handler13(req, res) {
+async function handler14(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -6994,5 +7441,5 @@ async function handler13(req, res) {
   return route(req, res);
 }
 export {
-  handler13 as default
+  handler14 as default
 };

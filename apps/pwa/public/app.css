@@ -2987,7 +2987,16 @@ input.ui-sr-only, select.ui-sr-only, textarea.ui-sr-only {
   color: var(--c-ink-2); white-space: nowrap; }
 .routine-grid-period { background: var(--c-surface-2); white-space: nowrap;
   display: flex; flex-direction: column; gap: 2px; }
-.routine-grid-no { font-weight: 700; color: var(--c-ink-1); }
+/* P9-8. The period column is PURE number, which is what `--font-bn-num` was
+   written for — "numerals only … letters stay on Hind Siliguri". B-108's
+   `ShikhonBnNum` face already routes every ০-৯ in the product, including the
+   ones inside sentences that no class selector can reach; this states the
+   convention on the element where the whole content is a figure, and is safe
+   here precisely because there are no letters in it to drag along. */
+.routine-grid-no { font-weight: 700; color: var(--c-ink-1);
+  font-family: var(--font-bn-num); }
+.routine-grid-time { font-family: var(--font-bn-num); font-size: var(--text-3xs);
+  color: var(--c-ink-2); line-height: 1.3; white-space: nowrap; }
 .routine-grid-time { color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
 .routine-grid-cell { min-width: 108px; }
 .routine-grid-cell > span { display: block; }

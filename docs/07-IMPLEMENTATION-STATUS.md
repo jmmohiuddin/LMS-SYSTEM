@@ -1038,6 +1038,36 @@ offline devices could queue two publications that are each valid alone and
 together are not. The action is disabled without a connection, with that
 reason in a sentence; the review itself still reads.
 
+**Role-specific routine outputs (P9-8).**
+`GET /api/v1/rms/timetable?scope=…&id=…` — eight audiences, one dataset.
+
+`institution` · `class` · `group` · `stream` · `section` · `teacher` · `room` ·
+`student`, each a WHERE clause over the routine whose `status = 'active'`.
+One endpoint, one query, one response shape; a test asserts every scope's
+lessons are a subset of the institution's.
+
+Visibility is `status = 'active'` and nothing else, applied once in the read
+every scope passes through — draft, review and `superseded` are all excluded
+by it without being named.
+
+Authorisation is per scope and asks the database, not the token:
+`app.my_section_ids()` (which includes `section_subject_teachers`, so a
+subject teacher's sections count), `app.my_ward_ids()` and
+`app.can_see_student()` — the same functions the RLS policies use. A teacher
+reads their own week and the sections they teach; a student their own section;
+a guardian their ward's; the four administrative roles anything. `offered`
+returns the scopes a caller may ask for, built from the same helpers, so the
+picker cannot drift from what the server allows — and an omitted scope is
+answered from that menu rather than from a default.
+
+The student scope filters parallel blocks through `student_subjects`, exactly
+as `app.student_day` does, so a child does not see the half of a split hour
+they do not attend. The section's grid keeps both halves, marked.
+
+**Not day-level.** This is the published WEEK. Substitutions for a date live
+in `/rms/routine` and `/academics/myroutine`, which read `app.teacher_day` and
+`app.student_day`.
+
 **Replacing a live routine (B-108, closed after P9-7).**
 `POST /api/v1/rms/generate { yearId, baseline?: 'inputs' | 'current' }`.
 

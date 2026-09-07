@@ -1720,6 +1720,26 @@ of the bundle, downloaded by every school so they could never open it — out
 into its own lazily-loaded bundle (`B-109`); app.js fell to 159 kB gzipped
 with the limit unchanged. Role outputs and print remain.
 
+**P9-8 — role-specific routine outputs.** *Delivered 2026-09-07.* Eight
+audiences, ONE dataset: institution, class, group, stream, section, teacher,
+room and student are eight WHERE clauses over the routine whose `status =
+'active'`, served by one endpoint in one shape. A test asserts that every
+scope's lessons are a subset of the institution's, because the failure this
+prevents is a teacher and a student reading different timetables for the same
+hour. `status = 'active'` is the whole visibility rule and is applied once —
+draft, review and B-108's `superseded` are excluded by it without being named.
+Authorisation is per SCOPE and asks the database (`app.my_section_ids()`,
+`app.my_ward_ids()`, `app.can_see_student()` — the functions the RLS policies
+themselves use), so a teacher reads their own week without being an
+administrator and cannot read the school's. The picker is the server's own
+list, and an omitted scope is answered from it rather than from a default,
+because a default is a second opinion about permission. A student sees only
+the half of a split hour they attend; the section's grid keeps both. Found in
+the browser and fixed: the response was shipping its own SQL predicate and a
+bound uuid to the client, and the section count was being de-duplicated on
+labels ('ক' in every class), which told a head their twenty-section school had
+four. Print remains (`B-112`).
+
 **B-108 — replacing a live routine.** *Closed 2026-09-07, after P9-7.* A
 school that published once could not publish again. The solver booked against
 every ACTIVE routine in the year, on a comment's assumption that the only

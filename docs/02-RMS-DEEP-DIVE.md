@@ -424,6 +424,7 @@ at 07:10 on a 2 GB phone with no signal.**
 | `POST` | `/rms/routines/{id}/moves` | Apply a move with local repair |
 | `POST` | `/rms/routines/{id}/publish` | Version + activate at `effectiveFrom`. **As built (P9-7): `POST /rms/publish { action: 'submit' \| 'withdraw' \| 'publish', routineId, fingerprint?, confirmWarnings? }`, with `GET /rms/publish?yearId=…` for the review. `src/publish-gate.ts` is the single gate both use. `routines.status` walks `draft → review → active`; `review` had been in the enum since migration 006 with no writer.** |
 | `GET` | `/rms/routines/{id}/diff/{versionA}/{versionB}` | Change review before publish |
+| `GET` | `/rms/timetable?scope=…&id=…` | **As built (P9-8): the published routine for one audience — `institution` \| `class` \| `group` \| `stream` \| `section` \| `teacher` \| `room` \| `student`. One query over `routines.status = 'active'`; the scope is a WHERE clause, not a second dataset. Authorisation is per scope via `app.my_section_ids()`, `app.my_ward_ids()` and `app.can_see_student()`. `offered` returns the scopes the caller may ask for, and an omitted scope is answered from that menu.** |
 | `GET` | `/rms/teachers/{id}/day?date=` | Teacher day view (the PWA's main read) |
 | `GET` | `/rms/teachers/{id}/week?weekOf=` | Week grid |
 | `POST` | `/rms/leaves` | Teacher/coordinator files leave → triggers cover search |

@@ -692,6 +692,13 @@ export class RoutineGenerateView {
 
     body.append(buttonRow(d,
       button(d, {
+        // P9-7. The step after this one. "দেখুন" rather than "প্রকাশ করুন",
+        // because it opens a review — a routine with a conflict goes there
+        // to be told why it cannot be published, which is a real destination.
+        label: 'প্রকাশের জন্য দেখুন', variant: 'primary',
+        onClick: () => this.o.onNavigate?.('routinepublish'),
+      }),
+      button(d, {
         label: 'বিস্তারিত ব্যাখ্যা', variant: 'secondary',
         onClick: () => this.o.onNavigate?.(`generation?routineId=${shift.routineId}`),
       }),

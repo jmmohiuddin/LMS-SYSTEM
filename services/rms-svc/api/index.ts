@@ -19,6 +19,7 @@ import assignments from './assignments.ts';
 import setup from './setup.ts';
 import generate from './generate.ts';
 import resolve from './resolve.ts';
+import publish from './publish.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -34,6 +35,8 @@ const ROUTES: Record<string, Handler> = {
   // P9-6. Recalculate one teacher, section, room or day — the same solver,
   // told to fill only the gaps a scoped removal just made.
   resolve,
+  // P9-7. The review surface and the DRAFT -> REVIEW -> PUBLISHED lifecycle.
+  publish,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

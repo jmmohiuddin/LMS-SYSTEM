@@ -357,7 +357,23 @@ describe('A4 — routine authoring', { skip }, () => {
     // asserting: it used to be a 500.
     const c2 = await post({ action: 'create-routine', sectionId: SEC_A, nameBn: 'দ্বিতীয় খসড়া' });
     const second = (c2.body as { routineId: string }).routineId;
-    const pub = await post({ action: 'publish', routineId: second });
+
+    // P9-7 put an explicit gate in front of the constraints, and a routine
+    // with no lessons in it is now refused for the reason it is actually
+    // wrong — before the unique index gets a chance to speak. Publishing
+    // nothing over a school's live timetable is never what anybody meant.
+    const bare = await post({ action: 'publish', routineId: second });
+    assert.equal(bare.status, 409, JSON.stringify(bare.body));
+    assert.equal((bare.body as { error: string }).error, 'empty_routine');
+
+    // Give it a lesson, and the ORIGINAL refusal is the one that fires:
+    // uq_routine_active, one active routine per (tenant, year, shift).
+    const placed = await post({
+      action: 'place', routineId: second, sectionId: SEC_A, dayOfWeek: 1, periodNo: 1,
+      subjectId: BANGLA, teacherId: TEACH_A, roomId: ROOM,
+    });
+    assert.equal(placed.status, 200, JSON.stringify(placed.body));
+    const pub = await post({ action: 'publish', routineId: second, confirmWarnings: true });
     assert.equal(pub.status, 409, JSON.stringify(pub.body));
     assert.equal((pub.body as { error: string }).error, 'routine_already_active');
 

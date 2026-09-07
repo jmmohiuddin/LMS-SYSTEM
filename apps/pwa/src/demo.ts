@@ -760,6 +760,7 @@ const DEMO_GATES: Record<string, string[]> = {
   '/api/v1/academics/subjectchoice': ['principal', 'school_owner', 'academic_coordinator'],
   // The routine editor. EDITOR_ROLES.
   '/api/v1/rms/editor': ['principal', 'school_owner', 'academic_coordinator'],
+  '/api/v1/rms/publish': ['principal', 'school_owner', 'academic_coordinator'],
 };
 
 /**
@@ -2161,6 +2162,52 @@ export class DemoAuth extends Auth {
         });
       }
 
+      case '/api/v1/rms/publish': {
+        // P9-7's review. The GET is demonstrable — a summary of the demo's
+        // fixed school is a true summary of it. The POST is not: publishing's
+        // visible effect is the card returning as প্রকাশিত on the next read,
+        // and this school is a constant, so ok({ok:true}) would be the fake
+        // success /demo exists not to produce.
+        if (init.method === 'POST') {
+          return new Response(JSON.stringify({
+            error: 'demo_read_only',
+            message: 'এটি প্রদর্শনী সংস্করণ — এখানে সত্যিকারের রুটিন প্রকাশ করা যায় না।',
+          }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        return ok({
+          ok: true,
+          // The school whose demo this IS. Hard-coding one name showed
+          // tenant A's on tenant B's screen — the demo has two institutions
+          // precisely so that kind of leak is visible.
+          tenantNameBn: DEMO_TENANTS[demoTenantKey()].branding.nameBn,
+          yearLabel: '২০২৬',
+          routines: [{
+            routineId: 'demo-routine-1', status: 'draft', statusBn: 'খসড়া',
+            version: 1, shift: 'single', shiftBn: 'একক',
+            nameBn: 'বার্ষিক রুটিন', yearLabel: '২০২৬',
+            slots: 560, sections: 20, teachers: 23, pinned: 2,
+            hardConflicts: 0, softViolations: 12, unplacedDemands: 2,
+            lastModified: new Date().toISOString(), fingerprint: '560:560',
+            publishedAt: null, publishedByBn: null, supersedes: null,
+            blockers: [],
+            warnings: [{ code: 'unplaced',
+                         messageBn: '২টি বিষয়ের কিছু পিরিয়ড বসানো যায়নি।' }],
+            canPublish: true,
+            // Composed by the server in the real thing, so the demo has to
+            // supply them too — a screen that renders the server's sentences
+            // shows nothing when they are absent.
+            verdictBn: 'এই রুটিন প্রকাশ করা যাবে।',
+            consequenceBn: [
+              'একক শিফটের ৫৬০টি ক্লাস আজ থেকে সবার রুটিনে দেখা যাবে — '
+              + 'শিক্ষক, শিক্ষার্থী ও অভিভাবক সবাই।',
+              'মেনে নেওয়া হচ্ছে: ২টি বিষয়ের কিছু পিরিয়ড বসানো যায়নি।',
+              'প্রকাশের পর এই রুটিন সরাসরি বদলানো যাবে না — বদলাতে হলে নতুন '
+              + 'খসড়া তৈরি করতে হবে।',
+            ],
+          }],
+        });
+      }
+
       case '/api/v1/rms/editor': {
         // §8.1's grid. The demo carries a deliberate mix: an unfilled cell, a
         // parallel religion block, a double practical, and a pinned slot —
@@ -2182,7 +2229,7 @@ export class DemoAuth extends Auth {
               message: 'এটি প্রদর্শনী সংস্করণ — এখানে সত্যিকারের রুটিন সংরক্ষণ হয় না।',
             }), { status: 403, headers: { 'Content-Type': 'application/json' } });
           }
-          if (req.action === 'publish') return ok({ ok: true, unfilled: 1 });
+          if (req.action === 'publish') return ok({ ok: true, slots: 1, warnings: [] });
           // Period 2 is where the demo's Rafiq is already teaching 9-খ, so
           // moving onto it shows the named refusal rather than a shrug.
           if (req.periodNo === 2) {

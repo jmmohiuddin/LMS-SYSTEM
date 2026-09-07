@@ -414,7 +414,7 @@ at 07:10 on a 2 GB phone with no signal.**
 | `GET` | `/rms/routines/{id}?view=section\|teacher\|room` | Read a routine in any pivot |
 | `POST` | `/rms/routines/{id}/validate-placement` | Real-time clash check (§4.3) |
 | `POST` | `/rms/routines/{id}/moves` | Apply a move with local repair |
-| `POST` | `/rms/routines/{id}/publish` | Version + activate at `effectiveFrom` |
+| `POST` | `/rms/routines/{id}/publish` | Version + activate at `effectiveFrom`. **As built (P9-7): `POST /rms/publish { action: 'submit' \| 'withdraw' \| 'publish', routineId, fingerprint?, confirmWarnings? }`, with `GET /rms/publish?yearId=…` for the review. `src/publish-gate.ts` is the single gate both use. `routines.status` walks `draft → review → active`; `review` had been in the enum since migration 006 with no writer.** |
 | `GET` | `/rms/routines/{id}/diff/{versionA}/{versionB}` | Change review before publish |
 | `GET` | `/rms/teachers/{id}/day?date=` | Teacher day view (the PWA's main read) |
 | `GET` | `/rms/teachers/{id}/week?weekOf=` | Week grid |

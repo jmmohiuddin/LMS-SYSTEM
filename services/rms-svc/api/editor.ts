@@ -46,6 +46,7 @@ import { corsHeaders, readJson, json, HttpError } from '../../../packages/server
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { writeAudit } from '../../../packages/server-core/src/audit.ts';
 import { logEdit, undoable, claimNewest, UNDO_DEPTH } from '../src/edit-log.ts';
+import { reviewRoutine } from '../src/publish-gate.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -75,6 +76,10 @@ interface SlotBody {
    * refused rather than silently overwriting somebody else's newer change.
    */
   rowVersion?: number;
+  /** P9-7 §9. The routine as the review screen rendered it. */
+  fingerprint?: string;
+  /** P9-7 §5. The person read the warnings and still wants to publish. */
+  confirmWarnings?: boolean;
 }
 
 /**
@@ -155,7 +160,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         return;
       }
       if (body.action === 'publish') {
-        json(res, 200, await write((c) => publish(c, ctx, body.routineId ?? '')), cors);
+        json(res, 200, await write((c) => publish(c, ctx, body.routineId ?? '', body)), cors);
         return;
       }
       throw new HttpError(400,
@@ -1055,20 +1060,70 @@ async function firstPublishClash(c: Client, routineId: string): Promise<HttpErro
 
 /* --------------------------------------------------------------- publish */
 
-async function publish(c: Client, ctx: Ctx, routineId: string) {
+/**
+ * DRAFT or REVIEW -> PUBLISHED.  (P9-7)
+ *
+ * Exported, because `api/publish.ts` publishes through this function rather
+ * than repeating it. Two publish paths would be two sets of rules, and the
+ * one that got a rule wrong would be the one a school used.
+ *
+ * -- Why there is now an explicit gate in front of the constraints --------
+ * §8.1's principle stands: the exclusion constraints are the final arbiter,
+ * and everything below still runs inside their reach. But a coordinator who
+ * presses PUBLISH and receives "Rafiq is in two places at once" learned about
+ * the conflict from the failure. `reviewRoutine` counts the conflicts BEFORE
+ * the attempt, so the same fact reaches the review screen while there is
+ * still something to do about it -- and the refusal here is a decision this
+ * endpoint made, not a 23P01 it translated.
+ *
+ * The constraint handling below is not redundant with it. The gate reads;
+ * the constraints hold under concurrency. Between the count and the UPDATE
+ * another editor can place the very slot that collides, and that race is
+ * exactly what the database is for.
+ */
+export async function publishRoutine(
+  c: Client, ctx: Ctx, routineId: string,
+  opts: { fingerprint?: string; confirmWarnings?: boolean } = {},
+) {
   if (!UUID_RE.test(routineId)) throw new HttpError(400, 'routineId must be a valid uuid', 'invalid_routine_id');
-  const r = await c.query<{ status: string; unfilled: string }>(
-    `SELECT rt.status,
-            (SELECT count(*) FROM routine_slots s
-              WHERE s.routine_id = rt.id AND s.status = 'active'
-                AND s.slot_kind = 'teaching' AND s.teacher_id IS NULL) AS unfilled
-       FROM routines rt WHERE rt.id = $1`,
-    [routineId]);
-  const rt = r.rows[0];
-  if (!rt) throw new HttpError(404, 'routine not found', 'routine_not_found');
-  if (!EDITABLE.has(rt.status)) {
-    throw new HttpError(409, 'এই রুটিন আগেই প্রকাশিত।', 'already_published');
+  const review = await reviewRoutine(c as never, routineId);
+  // Not found and not yours are the same answer. RLS is what makes them the
+  // same row count, and saying "forbidden" would confirm the id exists.
+  if (!review) throw new HttpError(404, 'routine not found', 'routine_not_found');
+
+  // §9. The routine as the reviewer's screen last saw it. Someone approving
+  // a timetable is approving the one they read; if it moved underneath them
+  // they are approving something they have not seen. Optional, so a caller
+  // that never rendered a review is not forced to invent one.
+  if (opts.fingerprint && opts.fingerprint !== review.fingerprint) {
+    throw new HttpError(409,
+      'এই রুটিনটি আপনার পর্দায় দেখানোর পর অন্য কেউ বদলে ফেলেছেন। '
+      + 'নতুন অবস্থা দেখে আবার চেষ্টা করুন।', 'stale_routine',
+      { fingerprint: review.fingerprint });
   }
+
+  // §3/§4. Blocking findings refuse here, in the server, whatever the UI
+  // believed. `already_published` and `hard_conflict` both arrive this way.
+  const blocker = review.blockers[0];
+  if (blocker) {
+    throw new HttpError(409, blocker.messageBn, blocker.code, {
+      actionBn: blocker.actionBn,
+      blockers: review.blockers,
+      hardConflicts: review.hardConflicts,
+    });
+  }
+
+  // §5. Warnings do not block, but publishing over them is a decision and
+  // has to be made deliberately. The refusal carries the warnings, so a
+  // client that has not shown them can -- and the second attempt, with
+  // `confirmWarnings`, is the person's answer rather than a retry loop.
+  if (review.warnings.length > 0 && !opts.confirmWarnings) {
+    throw new HttpError(409,
+      'এই রুটিনে কিছু সতর্কতা আছে। প্রকাশ করার আগে দেখে নিন।',
+      'warnings_unconfirmed',
+      { warnings: review.warnings, fingerprint: review.fingerprint });
+  }
+
   // Writes routines.status ONLY. Migration 068 separated the exam lifecycle
   // from the routine lifecycle after publishing an exam ROUTINE was found to
   // set exams.status = 'published', which made the exam permanently
@@ -1076,8 +1131,8 @@ async function publish(c: Client, ctx: Ctx, routineId: string) {
   //
   // `trg_routines_cross_shift` fires here and raises check_violation (23514)
   // when the same teacher is booked in both shifts at one hour. That is a
-  // business refusal, not a server fault — B-70(a), in this path — so it is a
-  // 409 carrying the trigger's own sentence, which names the teacher.
+  // business refusal, not a server fault -- B-70(a), in this path -- so it is
+  // a 409 carrying the trigger's own sentence, which names the teacher.
   await tryWrite(c, async () => {
     await c.query(
       `UPDATE routines SET status = 'active', published_at = now(), published_by = $2 WHERE id = $1`,
@@ -1090,7 +1145,7 @@ async function publish(c: Client, ctx: Ctx, routineId: string) {
     if (e.code === '23P01') {
       const named = await firstPublishClash(c, routineId);
       if (named) return named;
-      return new HttpError(409, 'রুটিনে সময়ের সংঘর্ষ আছে — প্রকাশ করা যায়নি।', 'slot_conflict');
+      return new HttpError(409, 'রুটিনে সময়ের সংঘর্ষ আছে — প্রকাশ করা যায়নি।', 'slot_conflict');
     }
     // uq_routine_active: at most one ACTIVE routine per (tenant, year, shift).
     // A school replacing its timetable supersedes the old one rather than
@@ -1103,17 +1158,42 @@ async function publish(c: Client, ctx: Ctx, routineId: string) {
     return new HttpError(409,
       e.message ?? 'অন্য শিফটের সাথে রুটিন সংঘর্ষ করছে।', 'cross_shift_conflict');
   });
+  // §10. What was published, by whom, and what was known to be wrong with it
+  // at the time. The warning codes are part of the record precisely because
+  // publishing over them was allowed: a school asking six months later why
+  // the timetable had a hole gets the answer that the hole was visible and
+  // accepted, not a bare status change.
   await writeAudit(c as never, ctx, {
     action: 'rms.routine.publish',
     entityType: 'routine',
     entityId: routineId,
-    after: { status: 'active', unfilled: Number(rt.unfilled) },
+    after: {
+      status: 'active',
+      fromStatus: review.status,
+      version: review.version,
+      slots: review.slots,
+      hardConflicts: review.hardConflicts,
+      warnings: review.warnings.map((w) => w.code),
+    },
   });
-  // The unfilled count travels with the success, not as a blocker: §8.1 marks
-  // gaps ⚠ but does not forbid publishing a routine that still has them — a
-  // school often publishes with a known hole while it hires. (§8.3's exam
-  // routine is the one that genuinely blocks, and it does so elsewhere.)
-  return { ok: true, unfilled: Number(rt.unfilled) };
+  // The warnings travel with the success rather than being forgotten: §8.1
+  // marks gaps but does not forbid publishing a routine that still has them --
+  // a school often publishes with a known hole while it hires. What it accepted
+  // is therefore part of both the answer and the audit record.
+  return {
+    ok: true,
+    slots: review.slots,
+    version: review.version,
+    warnings: review.warnings,
+  };
+}
+
+/** The editor's own publish button. Same rules, same function. */
+async function publish(c: Client, ctx: Ctx, routineId: string, body: SlotBody) {
+  return publishRoutine(c, ctx, routineId, {
+    fingerprint: body.fingerprint,
+    confirmWarnings: body.confirmWarnings === true,
+  });
 }
 
 /* ------------------------------------------------------------------ P9-5 */

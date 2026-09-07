@@ -1494,3 +1494,58 @@ measures a dialog that way.
 
 **Both themes**: dialog `#FFFFFF` / `#241E1A`, body text `#53443D` /
 `#EDE7DA`.
+
+
+## P9-7 — routine review and publish (2026-09-07)
+
+`#/routinepublish` — `apps/pwa/src/routine-publish-view.ts`. One card per
+shift, newest version first.
+
+**The screen reports; the server decides.** `canPublish`, the blockers, the
+warnings, the card's one-line verdict and the confirmation's paragraph are
+all composed by `services/rms-svc` and rendered here. That follows the rule
+P9-3's generate screen states about its own verdict — a browser that
+assembles a sentence from the counters printed beside it drifts from them the
+first time either changes — and it matters most on the only irreversible
+button in the workstream. The publish button is still disabled when there are
+blockers, but as a courtesy: §3 says the UI is not authoritative.
+
+**The confirmation names the consequence, not the action.** "আপনি কি
+নিশ্চিত?" carries no information and teaches people to click through. This
+one says how many lessons, who will see them ("শিক্ষক, শিক্ষার্থী ও অভিভাবক
+সবাই"), which live version it replaces, every warning being accepted
+("মেনে নেওয়া হচ্ছে: …"), and that it cannot be edited afterwards. It is
+`role="alertdialog"`, not dismissible by clicking away, danger-styled, and
+**focus starts on বাতিল**.
+
+**Two decisions kept apart.** "পর্যালোচনার জন্য পাঠান" hands the draft to the
+head; "প্রকাশ করুন" makes it real. Neither is required — in most Bangladeshi
+schools one person does both — but a school where the coordinator builds and
+the head signs off now has somewhere to do it.
+
+**Every count carries the word that says what it counts.** "৫৬০ / ২০ / ২৩"
+makes a reader guess. Hard conflicts are shown even at zero: a head who reads
+"০টি" has been told, whereas an absent row leaves them to assume.
+
+**A live routine is not described as broken.** Found in the browser against
+the real API: immediately after publishing, the card showed
+"যা ঠিক করতে হবে — এই রুটিন আগেই প্রকাশিত।" That blocker exists so the
+endpoint refuses a *second* publish. Blockers are no longer drawn for a
+published routine; the warnings stay, because what it carries is still worth
+reading after it goes live.
+
+**Offline is explained, not hidden.** Publishing cannot be queued, so the
+action is disabled with the reason in a sentence — a coordinator who cannot
+find the button concludes the feature is broken.
+
+**Dates use the product's own formatters.** `Intl.DateTimeFormat('bn-BD')`
+produced "৭ সেপ্টেম্বর, ২০২৬ এ ১০:৩৮ AM" — a Latin meridiem inside a Bangla
+sentence. `formatDayMonth` + `formatTime` write the 24-hour clock Bangla
+uses. The API also had to start emitting real ISO 8601: Postgres renders a
+timestamptz with a two-digit offset (`+00`), which Chrome's `new Date()`
+refuses, so every timestamp had been printing as an em-dash.
+
+**Responsive**: no horizontal overflow at a real 375px viewport, where the
+confirmation is exactly 375 wide.
+
+**Both themes**: card `#FFFFFF` / `#241E1A`, body text `#53443D` / `#EDE7DA`.

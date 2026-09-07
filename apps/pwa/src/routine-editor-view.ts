@@ -298,12 +298,21 @@ export class RoutineEditorView {
         method: 'POST',
         body: JSON.stringify({ action: 'publish', routineId: routine.id }),
       });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; unfilled?: number };
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean; message?: string;
+        warnings?: Array<{ code: string; messageBn: string }>;
+      };
       if (res.ok && body.ok) {
         this.busy = false;
         await this.loadGrid(this.grid!.sectionId);
-        this.notice = body.unfilled
-          ? { text: `প্রকাশিত হয়েছে — তবে ${formatCount(body.unfilled, 'bn')}টি ঘর এখনো খালি।`, tone: 'warn' }
+        // What was accepted, in the server's own words. The old version of
+        // this line counted teaching slots with no teacher, which migration
+        // 006's CHECK constraint makes impossible — so it could only ever
+        // say ০টি, and the demo was the only thing that ever made it
+        // say otherwise.
+        const accepted = body.warnings ?? [];
+        this.notice = accepted.length > 0
+          ? { text: `প্রকাশিত হয়েছে — ${accepted[0].messageBn}`, tone: 'warn' }
           : { text: 'রুটিন প্রকাশিত হয়েছে।', tone: 'ok' };
         this.render();
         return;

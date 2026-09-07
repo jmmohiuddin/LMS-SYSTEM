@@ -101,7 +101,17 @@ const IMMUTABLE = /\/_next\/static\/|\/assets\/|\.(?:woff2|css|js|svg|png|webp|i
  * served instantly (offline still works, first paint is unchanged) and the
  * network copy replaces it in the background, so the NEXT load is current.
  */
-const UNHASHED_ENTRY_ASSETS = new Set(['/app.js', '/app.css', '/manifest.webmanifest']);
+// B-109 adds `/demo.js`. It is an entry bundle with no content hash, exactly
+// like `/app.js`, so without this it would match IMMUTABLE on its extension
+// and pin a demo visitor to the first build their browser ever downloaded —
+// the `/platform.js` defect described above, in a second place.
+//
+// It is deliberately NOT in PRECACHE: the demo is an online shopfront, and
+// precaching it would put its 94 kB back on every school's device by another
+// route, which is the entire thing the split removed.
+const UNHASHED_ENTRY_ASSETS = new Set([
+  '/app.js', '/app.css', '/manifest.webmanifest', '/demo.js',
+]);
 
 /** Does this path belong to the shikhonBD operations console? */
 export function isPlatformPath(path: string): boolean {
@@ -253,6 +263,11 @@ function decide(request: { url: string; method: string; mode?: string }): RouteD
     || path.startsWith('/api/v1/rms/editor')
     || path.startsWith('/api/v1/rms/setup')
     || path.startsWith('/api/v1/rms/generate')
+    // P9-7. The review a head publishes from. A cached one would show
+    // last week's conflict count and last week's fingerprint — and the
+    // fingerprint is the very thing that decides whether the routine
+    // being approved is the one on screen.
+    || path.startsWith('/api/v1/rms/publish')
     || path.startsWith('/api/v1/rms/assignments')
     || path.startsWith('/api/v1/academics/exams')
     || path.startsWith('/api/v1/finance/feestructures')) {

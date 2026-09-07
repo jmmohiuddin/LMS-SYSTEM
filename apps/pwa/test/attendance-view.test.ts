@@ -264,6 +264,29 @@ describe('service-worker routing policy', () => {
     assert.equal(route({ url: 'https://a.bd/api/v1/sync/pull', method: 'GET' }).strategy, 'network-only');
     assert.equal(route({ url: 'https://a.bd/api/v1/ai/chat', method: 'GET' }).strategy, 'network-only');
     assert.equal(route({ url: 'https://a.bd/api/v1/finance/payments', method: 'GET' }).strategy, 'network-only');
+    // P9-7. The review a head publishes from. A cached one would show last
+    // week's conflict count and last week's fingerprint — and the fingerprint
+    // is what decides whether the routine being approved is the one on
+    // screen, so a stale copy turns the concurrency check into a formality.
+    const pub = route({ url: 'https://a.bd/api/v1/rms/publish?yearId=x', method: 'GET' });
+    assert.equal(pub.strategy, 'network-only');
+    // B-104's tenant partitioning applies to what is STORED, and this is
+    // stored nowhere — the stronger guarantee, not a weaker one.
+    assert.equal(pub.cache, undefined);
+    assert.equal(pub.tenantScoped, undefined);
+  });
+
+  test('B-109 — the demo bundle is versioned like an entry, and never precached', () => {
+    // `/demo.js` has no content hash, so IMMUTABLE would match it on its
+    // extension alone and pin a demo visitor to the first build their browser
+    // downloaded — the `/platform.js` defect, in a second place.
+    const d = route({ url: 'https://a.bd/demo.js', method: 'GET' });
+    assert.equal(d.strategy, 'stale-while-revalidate');
+    assert.equal(d.cache, CACHE_SHELL);
+    // And it stays off every school's device: precaching it would put the
+    // 94 kB the split removed back by another route.
+    assert.equal(PRECACHE.includes('/demo.js'), false);
+    assert.equal(PRECACHE.includes('/app.js'), true, 'the real entry still is');
   });
 
   test('navigations fall back to the app shell so a cold offline start works', () => {

@@ -1696,6 +1696,30 @@ generation: 9.6× / 9.5× / 21.5× / 48×** at 20 / 40 / 80 / 120 sections, with
 the share of the week touched falling from 4.8% to 0.9%. One undo entry per
 instruction (migration 075). Publish, role outputs and print remain.
 
+**P9-7 — routine review and publish.** *Delivered 2026-09-07.* The brief's
+starting point, `POST /api/v1/academics/publish`, publishes **exam results**
+and answered `404 exam_not_found` for a routine id; the routine publish was a
+button in the editor that published whatever was on screen without ever
+saying what that was. Both are now exercised against the real database.
+`routine_status` has carried `review` since migration 006 with **nothing ever
+writing it** — the fourth control in P9 that existed, was enforced, and could
+not be reached (after `section_subject_teachers`, the bell schedule and
+`is_pinned`). DRAFT → REVIEW → PUBLISHED is now a lifecycle a coordinator and
+a head can share, and a routine in review stays invisible to the school
+(proved: 560 slots propagated, `app.student_day` returns 0 rows). One gate,
+`src/publish-gate.ts`, both draws the review and enforces the publish, so the
+screen cannot say "ready" about a routine the server would refuse — with a
+test whose only job is that they never disagree. **§4's hard-conflict refusal
+is now genuinely exercised**: a teacher double-booking is the one a draft can
+hold, and the earlier probe's failure to plant one was recorded as NOT
+exercised rather than as a pass. Removed an `unfilled` count that migration
+006's CHECK constraint makes provably zero and that only `demo.ts` had ever
+made non-zero. Publishing is **online only** and says why. The screen also cost more than
+the 180 KB critical path had left, which forced `demo.ts` — 94.1 kB, 10.7%
+of the bundle, downloaded by every school so they could never open it — out
+into its own lazily-loaded bundle (`B-109`); app.js fell to 159 kB gzipped
+with the limit unchanged. Role outputs and print remain.
+
 **B-104 — cross-tenant client cache.** *Closed 2026-09-07, before P9-5.*
 Found by P9-4's own browser acceptance and fixed as its own piece of work,
 because tenant isolation is one of the six things that may interrupt the

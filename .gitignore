@@ -15,6 +15,9 @@ apps/pwa/public/app.js
 apps/pwa/public/sw.js
 # R-7: the operator console bundle, generated the same way as app.js.
 apps/pwa/public/platform.js
+# B-109: the demo bundle, split out of app.js so a school's device never
+# downloads 94 kB of sample data. Generated the same way.
+apps/pwa/public/demo.js
 
 # The api/ tree is DELIBERATELY COMMITTED, and it used to be ignored here.
 #

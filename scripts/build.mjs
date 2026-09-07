@@ -38,6 +38,31 @@ await build({
   format: 'esm',
   outfile: 'apps/pwa/public/app.js',
   define: { 'process.env.NODE_ENV': '"production"' },
+  // B-109. `app.ts` reaches the demo through `await import('/demo.js')`, and
+  // without this esbuild would resolve it and inline the module straight back
+  // into the bundle the split exists to shrink. External leaves the dynamic
+  // import for the browser, which fetches it only when a demo visitor is the
+  // one asking.
+  external: ['/demo.js'],
+});
+
+// B-109. The demo is a SEPARATE bundle, for the same reason the platform
+// console below is one: a school's device should not download it.
+//
+// It was 94.1 kB minified inside app.js — the largest single module there,
+// 10.7% of the whole bundle — and the critical path is budgeted at 180 KB
+// gzipped for a phone on 2G. A sales fixture is the last thing that budget
+// should be spent on.
+//
+// It is NOT precached (see PRECACHE in sw-router.ts): the demo is an online
+// shopfront, not the offline story, and precaching it would put the bytes
+// back on every device by another route.
+await build({
+  ...BROWSER,
+  entryPoints: ['apps/pwa/src/demo.ts'],
+  format: 'esm',
+  outfile: 'apps/pwa/public/demo.js',
+  define: { 'process.env.NODE_ENV': '"production"' },
 });
 
 // R-7. The platform console is a SEPARATE bundle from the tenant app, not a

@@ -2952,6 +2952,13 @@ function scrubMachineText(text) {
   if (!text) return text;
   return text.replace(uuidPattern(), "\u09B6\u09A8\u09BE\u0995\u09CD\u09A4\u0995\u09BE\u09B0\u09C0").replace(/["'`]([a-zA-Z][a-zA-Z0-9_]*)["'`]/g, (whole, token) => isMachineToken(token) || token in CAPABILITY_BN ? capabilityLabelBn(token) : whole).replace(machineToken(), (token) => CAPABILITY_BN[token] ?? "\u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7");
 }
+var SHIFT_BN2 = {
+  morning: "\u09B8\u0995\u09BE\u09B2",
+  day: "\u09A6\u09BF\u09AC\u09BE",
+  evening: "\u09B8\u09BE\u09A8\u09CD\u09A7\u09CD\u09AF",
+  single: "\u098F\u0995\u0995"
+};
+var shiftLabelBn = (shift) => SHIFT_BN2[shift] ?? shift;
 var UNPLACED_REASON_BN = {
   no_free_slot: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0993 \u09B6\u09BE\u0996\u09BE \u2014 \u09A6\u09C1\u099C\u09A8\u09C7\u09B0\u0987 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AB\u09BE\u0981\u0995\u09BE \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
   no_capable_room: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u09A8\u09C7\u0987",
@@ -3332,17 +3339,277 @@ async function claimNewest(c, routineId, actorId) {
   } : null;
 }
 
+// services/rms-svc/src/rescope.ts
+var DAY_BN2 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var BN_DIGITS4 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn2 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS4[Number(d)]);
+function whenBn(dayOfWeek, periodNo) {
+  return `${DAY_BN2[dayOfWeek] ?? ""} ${bn2(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`;
+}
+function slotLine(s) {
+  return [
+    s.sectionLabel ?? "\u09B6\u09BE\u0996\u09BE",
+    s.subjectBn ?? "\u09AC\u09BF\u09B7\u09AF\u09BC",
+    s.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995",
+    whenBn(s.dayOfWeek, s.periodNo)
+  ].join(" \xB7 ");
+}
+var SELECT_SLOTS = `
+  SELECT s.id, s.day_of_week, s.period_no, s.primary_section_id, s.subject_id,
+         s.teacher_id, s.room_id, s.is_pinned, s.row_version,
+         cl.name_bn || '-' || sec.name AS section_label,
+         sub.name_bn AS subject_bn,
+         u.full_name_bn AS teacher_bn,
+         COALESCE(rm.name_bn, rm.code) AS room_label
+    FROM routine_slots s
+    LEFT JOIN sections sec ON sec.id = s.primary_section_id
+    LEFT JOIN classes cl   ON cl.id = sec.class_id
+    LEFT JOIN subjects sub ON sub.id = s.subject_id
+    LEFT JOIN users u      ON u.id = s.teacher_id
+    LEFT JOIN rooms rm     ON rm.id = s.room_id
+   WHERE s.routine_id = $1 AND s.status = 'active' AND s.slot_kind = 'teaching'`;
+var toSlot = (r) => ({
+  id: r.id,
+  dayOfWeek: r.day_of_week,
+  periodNo: r.period_no,
+  sectionId: r.primary_section_id,
+  subjectId: r.subject_id,
+  teacherId: r.teacher_id,
+  roomId: r.room_id,
+  sectionLabel: r.section_label,
+  subjectBn: r.subject_bn,
+  teacherBn: r.teacher_bn,
+  roomLabel: r.room_label,
+  isPinned: r.is_pinned,
+  rowVersion: r.row_version
+});
+async function allSlots(c, routineId) {
+  const { rows } = await c.query(
+    `${SELECT_SLOTS} ORDER BY s.day_of_week, s.period_no`,
+    [routineId]
+  );
+  return rows.map(toSlot);
+}
+async function slotsInScope(c, routineId, scope) {
+  const where = {
+    teacher: "AND s.teacher_id = $2",
+    section: "AND s.primary_section_id = $2",
+    room: "AND s.room_id = $2",
+    day: "AND s.day_of_week = $2"
+  }[scope.kind];
+  const arg = scope.kind === "teacher" ? scope.teacherId : scope.kind === "section" ? scope.sectionId : scope.kind === "room" ? scope.roomId : scope.dayOfWeek;
+  const { rows } = await c.query(
+    `${SELECT_SLOTS} ${where} ORDER BY s.day_of_week, s.period_no`,
+    [routineId, arg]
+  );
+  return rows.map(toSlot);
+}
+async function fingerprint(c, routineId) {
+  const { rows } = await c.query(
+    `SELECT count(*)::text || ':' || COALESCE(sum(row_version), 0)::text AS fp
+       FROM routine_slots
+      WHERE routine_id = $1 AND status = 'active'`,
+    [routineId]
+  );
+  return rows[0]?.fp ?? "0:0";
+}
+function summarise(before, after, scoped) {
+  const key = (s) => `${s.sectionId ?? ""}|${s.subjectId ?? ""}`;
+  const at = (s) => `${s.dayOfWeek}|${s.periodNo}`;
+  const afterIds = new Set(after.map((s) => s.id));
+  const unchanged = before.filter((s) => afterIds.has(s.id));
+  const pinnedPreserved = scoped.filter((s) => s.isPinned).length;
+  const groupBy = (rows) => {
+    const m = /* @__PURE__ */ new Map();
+    for (const s of rows) {
+      const list2 = m.get(key(s));
+      if (list2) list2.push(s);
+      else m.set(key(s), [s]);
+    }
+    return m;
+  };
+  const beforeIds = new Set(before.map((s) => s.id));
+  const byKeyBefore = groupBy(before.filter((s) => !afterIds.has(s.id)));
+  const byKeyAfter = groupBy(after.filter((s) => !beforeIds.has(s.id)));
+  const moved = [];
+  let lost = 0;
+  for (const [k, gone] of byKeyBefore) {
+    const arrived = byKeyAfter.get(k) ?? [];
+    const goneMoved = gone.filter((g) => !arrived.some((a) => at(a) === at(g)));
+    const arrivedNew = arrived.filter((a) => !gone.some((g) => at(g) === at(a)));
+    for (let i = 0; i < goneMoved.length; i++) {
+      const from = goneMoved[i];
+      const to = arrivedNew[i];
+      if (to) {
+        moved.push({
+          beforeBn: slotLine(from),
+          afterBn: slotLine(to),
+          sectionLabel: from.sectionLabel,
+          subjectBn: from.subjectBn
+        });
+      } else {
+        lost++;
+        moved.push({
+          beforeBn: slotLine(from),
+          afterBn: "\u0995\u09CB\u09A5\u09BE\u0993 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+          sectionLabel: from.sectionLabel,
+          subjectBn: from.subjectBn
+        });
+      }
+    }
+  }
+  return {
+    affected: scoped.length,
+    pinnedPreserved,
+    removed: before.length - unchanged.length,
+    placed: after.length - unchanged.length,
+    unchanged: unchanged.length,
+    moved,
+    lost
+  };
+}
+
+// services/rms-svc/src/publish-gate.ts
+var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn3 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS5[Number(d)]);
+var PUBLISHABLE = /* @__PURE__ */ new Set(["draft", "review"]);
+async function countHardConflicts(c, routineId) {
+  const clash = (partition, where) => `
+    SELECT count(*) FROM (
+      SELECT starts_at < max(ends_at) OVER (
+               PARTITION BY ${partition} ORDER BY starts_at, ends_at
+               ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+        FROM mine WHERE ${where}) q
+     WHERE hit`;
+  const { rows } = await c.query(
+    `WITH mine AS (
+       SELECT routine_id, teacher_id, room_id, primary_section_id, parallel_pool,
+              day_of_week, starts_at, ends_at, slot_kind
+         FROM routine_slots WHERE routine_id = $1 AND status = 'active'
+     )
+     SELECT (
+        (${clash(
+      "teacher_id, day_of_week",
+      `teacher_id IS NOT NULL AND slot_kind IN ('teaching','exam')`
+    )})
+      + (${clash(
+      "room_id, day_of_week",
+      `room_id IS NOT NULL AND slot_kind IN ('teaching','exam')`
+    )})
+      + (${clash(
+      "routine_id, primary_section_id, day_of_week",
+      "primary_section_id IS NOT NULL AND parallel_pool IS NULL"
+    )})
+     )::text AS n`,
+    [routineId]
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+async function reviewRoutine(c, routineId) {
+  const { rows } = await c.query(
+    `SELECT r.id, r.status::text AS status, r.version, r.shift::text AS shift,
+            r.name_bn, y.label AS year_label, r.soft_violations AS soft,
+            (SELECT count(*) FROM routine_slots s
+              WHERE s.routine_id = r.id AND s.status = 'active')::text AS slots,
+            (SELECT count(DISTINCT s.primary_section_id) FROM routine_slots s
+              WHERE s.routine_id = r.id AND s.status = 'active')::text AS sections,
+            (SELECT count(DISTINCT s.teacher_id) FROM routine_slots s
+              WHERE s.routine_id = r.id AND s.status = 'active'
+                AND s.teacher_id IS NOT NULL)::text AS teachers,
+            (SELECT count(*) FROM routine_slots s
+              WHERE s.routine_id = r.id AND s.status = 'active'
+                AND s.is_pinned)::text AS pinned,
+            -- ISO 8601, not the plain ::text cast this used first: Postgres
+            -- renders a timestamptz with a TWO-digit offset (+00), which is
+            -- not valid ISO and which new Date() refuses in Chrome \u2014 so the
+            -- review screen printed an em-dash for every timestamp.
+            -- (Backticks are also deliberately absent: this comment lives
+            -- inside a JS template literal, and one would end the string.)
+            (SELECT to_char(max(s.updated_at) AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+               FROM routine_slots s WHERE s.routine_id = r.id) AS last_modified
+       FROM routines r
+       JOIN academic_years y ON y.id = r.academic_year_id
+      WHERE r.id = $1`,
+    [routineId]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const stored = r.soft ?? {};
+  const hardConflicts = await countHardConflicts(c, routineId);
+  const slots = Number(r.slots);
+  const unplacedDemands = Array.isArray(stored.unplaced) ? stored.unplaced.length : 0;
+  const softViolations = Array.isArray(stored.soft) ? stored.soft.length : 0;
+  const blockers = [];
+  const warnings = [];
+  if (!PUBLISHABLE.has(r.status)) {
+    blockers.push({
+      code: "already_published",
+      messageBn: "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7\u0987 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4\u0964",
+      actionBn: "\u09AC\u09A6\u09B2\u09BE\u09A4\u09C7 \u09B9\u09B2\u09C7 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964"
+    });
+  }
+  if (hardConflicts > 0) {
+    blockers.push({
+      code: "hard_conflict",
+      messageBn: `${bn3(hardConflicts)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u098F\u0995\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995, \u0995\u0995\u09CD\u09B7 \u09AC\u09BE \u09B6\u09BE\u0996\u09BE\u09B0 \u09B8\u0999\u09CD\u0997\u09C7 \u09AA\u09A1\u09BC\u09C7 \u0997\u09C7\u099B\u09C7\u0964`,
+      actionBn: "\u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09AE\u09CD\u09AA\u09BE\u09A6\u09A8\u09BE \u09AA\u09BE\u09A4\u09BE\u09AF\u09BC \u0997\u09BF\u09AF\u09BC\u09C7 \u09B8\u0982\u0998\u09B0\u09CD\u09B7\u0997\u09C1\u09B2\u09CB \u09B8\u09B0\u09BE\u09A8 \u2014 \u09A4\u09BE\u09B0\u09AA\u09B0 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7\u0964"
+    });
+  }
+  if (slots === 0) {
+    blockers.push({
+      code: "empty_routine",
+      messageBn: "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u098F\u0995\u099F\u09BF\u0993 \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964",
+      actionBn: "\u0986\u0997\u09C7 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964"
+    });
+  }
+  if (unplacedDemands > 0) {
+    warnings.push({
+      code: "unplaced",
+      messageBn: `${bn3(unplacedDemands)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u0995\u09BF\u099B\u09C1 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`,
+      actionBn: "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7, \u09A4\u09AC\u09C7 \u0993\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u0997\u09C1\u09B2\u09CB \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964"
+    });
+  }
+  if (softViolations > 0) {
+    warnings.push({
+      code: "soft",
+      messageBn: `${bn3(softViolations)}\u099F\u09BF \u0995\u09CD\u09B7\u09C7\u09A4\u09CD\u09B0\u09C7 \u09AA\u099B\u09A8\u09CD\u09A6\u09C7\u09B0 \u09A8\u09BF\u09AF\u09BC\u09AE \u099B\u09BE\u09A1\u09BC \u09A6\u09BF\u09A4\u09C7 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
+      actionBn: "\u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09B2\u09AC\u09C7 \u2014 \u09AC\u09BF\u09B8\u09CD\u09A4\u09BE\u09B0\u09BF\u09A4 \u09AC\u09CD\u09AF\u09BE\u0996\u09CD\u09AF\u09BE\u09AF\u09BC \u0995\u09C0 \u099B\u09BE\u09A1\u09BC \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u09A6\u09C7\u0996\u09BE \u09AF\u09BE\u09AC\u09C7\u0964"
+    });
+  }
+  return {
+    routineId: r.id,
+    status: r.status,
+    version: r.version,
+    shift: r.shift,
+    nameBn: r.name_bn,
+    yearLabel: r.year_label,
+    slots,
+    sections: Number(r.sections),
+    teachers: Number(r.teachers),
+    pinned: Number(r.pinned),
+    hardConflicts,
+    softViolations,
+    unplacedDemands,
+    lastModified: r.last_modified,
+    fingerprint: await fingerprint(c, routineId),
+    blockers,
+    warnings,
+    canPublish: blockers.length === 0
+  };
+}
+
 // services/rms-svc/api/editor.ts
 var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var EDITOR_ROLES = ["principal", "school_owner", "academic_coordinator"];
 var EDITABLE = /* @__PURE__ */ new Set(["draft", "review"]);
-var DAY_BN2 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var DAY_BN3 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
 async function teachingDays(c) {
   const r = await c.query(
     `SELECT weekend_days FROM tenants WHERE id = app.current_tenant()`
   );
   const weekend = new Set((r.rows[0]?.weekend_days ?? [5, 6]).map(Number));
-  return [0, 1, 2, 3, 4, 5, 6].filter((d) => !weekend.has(d)).map((d) => ({ dow: d, bn: DAY_BN2[d] }));
+  return [0, 1, 2, 3, 4, 5, 6].filter((d) => !weekend.has(d)).map((d) => ({ dow: d, bn: DAY_BN3[d] }));
 }
 async function handler6(req, res) {
   const cors = corsHeaders();
@@ -3396,7 +3663,7 @@ async function handler6(req, res) {
         return;
       }
       if (body.action === "publish") {
-        json(res, 200, await write((c) => publish(c, ctx, body.routineId ?? "")), cors);
+        json(res, 200, await write((c) => publish(c, ctx, body.routineId ?? "", body)), cors);
         return;
       }
       throw new HttpError(
@@ -4190,20 +4457,33 @@ async function firstPublishClash(c, routineId) {
     "room_busy"
   );
 }
-async function publish(c, ctx, routineId) {
+async function publishRoutine(c, ctx, routineId, opts = {}) {
   if (!UUID_RE5.test(routineId)) throw new HttpError(400, "routineId must be a valid uuid", "invalid_routine_id");
-  const r = await c.query(
-    `SELECT rt.status,
-            (SELECT count(*) FROM routine_slots s
-              WHERE s.routine_id = rt.id AND s.status = 'active'
-                AND s.slot_kind = 'teaching' AND s.teacher_id IS NULL) AS unfilled
-       FROM routines rt WHERE rt.id = $1`,
-    [routineId]
-  );
-  const rt = r.rows[0];
-  if (!rt) throw new HttpError(404, "routine not found", "routine_not_found");
-  if (!EDITABLE.has(rt.status)) {
-    throw new HttpError(409, "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7\u0987 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4\u0964", "already_published");
+  const review = await reviewRoutine(c, routineId);
+  if (!review) throw new HttpError(404, "routine not found", "routine_not_found");
+  if (opts.fingerprint && opts.fingerprint !== review.fingerprint) {
+    throw new HttpError(
+      409,
+      "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09AA\u09B0\u09CD\u09A6\u09BE\u09DF \u09A6\u09C7\u0996\u09BE\u09A8\u09CB\u09B0 \u09AA\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09C7\u0989 \u09AC\u09A6\u09B2\u09C7 \u09AB\u09C7\u09B2\u09C7\u099B\u09C7\u09A8\u0964 \u09A8\u09A4\u09C1\u09A8 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09A6\u09C7\u0996\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+      "stale_routine",
+      { fingerprint: review.fingerprint }
+    );
+  }
+  const blocker = review.blockers[0];
+  if (blocker) {
+    throw new HttpError(409, blocker.messageBn, blocker.code, {
+      actionBn: blocker.actionBn,
+      blockers: review.blockers,
+      hardConflicts: review.hardConflicts
+    });
+  }
+  if (review.warnings.length > 0 && !opts.confirmWarnings) {
+    throw new HttpError(
+      409,
+      "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09BF\u099B\u09C1 \u09B8\u09A4\u09B0\u09CD\u0995\u09A4\u09BE \u0986\u099B\u09C7\u0964 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE\u09B0 \u0986\u0997\u09C7 \u09A6\u09C7\u0996\u09C7 \u09A8\u09BF\u09A8\u0964",
+      "warnings_unconfirmed",
+      { warnings: review.warnings, fingerprint: review.fingerprint }
+    );
   }
   await tryWrite(c, async () => {
     await c.query(
@@ -4214,7 +4494,7 @@ async function publish(c, ctx, routineId) {
     if (e.code === "23P01") {
       const named = await firstPublishClash(c, routineId);
       if (named) return named;
-      return new HttpError(409, "\u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09B8\u0982\u0998\u09B0\u09CD\u09B7 \u0986\u099B\u09C7 \u2014 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "slot_conflict");
+      return new HttpError(409, "\u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u09B8\u09AE\u09DF\u09C7\u09B0 \u09B8\u0982\u0998\u09B0\u09CD\u09B7 \u0986\u099B\u09C7 \u2014 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09DF\u09A8\u09BF\u0964", "slot_conflict");
     }
     if (e.code === "23505") {
       return new HttpError(
@@ -4233,9 +4513,27 @@ async function publish(c, ctx, routineId) {
     action: "rms.routine.publish",
     entityType: "routine",
     entityId: routineId,
-    after: { status: "active", unfilled: Number(rt.unfilled) }
+    after: {
+      status: "active",
+      fromStatus: review.status,
+      version: review.version,
+      slots: review.slots,
+      hardConflicts: review.hardConflicts,
+      warnings: review.warnings.map((w) => w.code)
+    }
   });
-  return { ok: true, unfilled: Number(rt.unfilled) };
+  return {
+    ok: true,
+    slots: review.slots,
+    version: review.version,
+    warnings: review.warnings
+  };
+}
+async function publish(c, ctx, routineId, body) {
+  return publishRoutine(c, ctx, routineId, {
+    fingerprint: body.fingerprint,
+    confirmWarnings: body.confirmWarnings === true
+  });
 }
 async function slotLabel(c, slotId) {
   const { rows } = await c.query(
@@ -4250,10 +4548,10 @@ async function slotLabel(c, slotId) {
   );
   const r = rows[0];
   if (!r) return "\u098F\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8";
-  return `${r.section_label ?? "\u09B6\u09BE\u0996\u09BE"} \xB7 ${r.subject_bn ?? "\u09AC\u09BF\u09B7\u09AF\u09BC"} \xB7 ${DAY_BN2[r.dow] ?? ""} ${bnNum2(r.period_no)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`;
+  return `${r.section_label ?? "\u09B6\u09BE\u0996\u09BE"} \xB7 ${r.subject_bn ?? "\u09AC\u09BF\u09B7\u09AF\u09BC"} \xB7 ${DAY_BN3[r.dow] ?? ""} ${bnNum2(r.period_no)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`;
 }
-var BN_DIGITS4 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bnNum2 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS4[Number(d)]);
+var BN_DIGITS6 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bnNum2 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS6[Number(d)]);
 async function requireVersion(c, slotId, expected) {
   if (expected === void 0 || expected === null) return;
   const { rows } = await c.query(
@@ -4688,7 +4986,7 @@ async function update(db, ctx, req) {
 var UUID_RE7 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var ASSIGN_ROLES = ["principal", "school_owner", "academic_coordinator"];
 var MAX_CHANGES = 500;
-var bn2 = (n) => String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
+var bn4 = (n) => String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
 async function loadGrid2(c, yearId, classId) {
   const { rows: classes } = await c.query(
     `SELECT DISTINCT cl.id, cl.name_bn, cl.level_no
@@ -4897,7 +5195,7 @@ async function handler8(req, res) {
       if (changes.length > MAX_CHANGES) {
         throw new HttpError(
           400,
-          `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn2(MAX_CHANGES)}\u099F\u09BF \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC`,
+          `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn4(MAX_CHANGES)}\u099F\u09BF \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC`,
           "too_many_changes"
         );
       }
@@ -4925,11 +5223,11 @@ var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 var TIME_RE2 = /^([01]\d|2[0-3]):[0-5]\d$/;
 var SETUP_ROLES = ["principal", "school_owner", "academic_coordinator"];
 var AVAILABILITY_ROLES = [...SETUP_ROLES, "dept_head"];
-var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn3 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS5[Number(d)]);
+var BN_DIGITS7 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn5 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS7[Number(d)]);
 var PERIOD_KINDS = ["teaching", "assembly", "tiffin", "prayer", "games", "study", "break"];
 var AVAILABILITY_KINDS = ["unavailable", "preferred", "admin_duty"];
-var DAY_BN3 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var DAY_BN4 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
 async function readiness(c, yearId) {
   const steps = [];
   const { rows: ten } = await c.query(
@@ -4941,7 +5239,7 @@ async function readiness(c, yearId) {
     id: "workingdays",
     titleBn: "\u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u0995\u09B0\u09CD\u09AE\u09A6\u09BF\u09AC\u09B8",
     state: teaching.length > 0 ? "ok" : "blocked",
-    detailBn: teaching.length > 0 ? `\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn3(teaching.length)} \u09A6\u09BF\u09A8 \u0995\u09CD\u09B2\u09BE\u09B8 \u2014 ${teaching.map((d) => DAY_BN3[d]).join(", ")}` : "\u0995\u09CB\u09A8\u09CB \u0995\u09B0\u09CD\u09AE\u09A6\u09BF\u09AC\u09B8 \u09A8\u09C7\u0987 \u2014 shikhonBD-\u098F\u09B0 \u09B8\u0999\u09CD\u0997\u09C7 \u09AF\u09CB\u0997\u09BE\u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8",
+    detailBn: teaching.length > 0 ? `\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn5(teaching.length)} \u09A6\u09BF\u09A8 \u0995\u09CD\u09B2\u09BE\u09B8 \u2014 ${teaching.map((d) => DAY_BN4[d]).join(", ")}` : "\u0995\u09CB\u09A8\u09CB \u0995\u09B0\u09CD\u09AE\u09A6\u09BF\u09AC\u09B8 \u09A8\u09C7\u0987 \u2014 shikhonBD-\u098F\u09B0 \u09B8\u0999\u09CD\u0997\u09C7 \u09AF\u09CB\u0997\u09BE\u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8",
     done: teaching.length,
     total: 7
   });
@@ -4960,7 +5258,7 @@ async function readiness(c, yearId) {
     id: "periods",
     titleBn: "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0993 \u09AC\u09BF\u09B0\u09A4\u09BF",
     state: teachingPeriods > 0 ? "ok" : "blocked",
-    detailBn: teachingPeriods > 0 ? `\u09AA\u09CD\u09B0\u09A4\u09BF\u09A6\u09BF\u09A8 ${bn3(Number(periods[0]?.teaching_periods ?? 0))}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1` + (periods.length > 1 ? ` \xB7 ${bn3(periods.length)}\u099F\u09BF \u09B6\u09BF\u09AB\u099F` : "") : "\u0995\u09CB\u09A8\u09CB \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE",
+    detailBn: teachingPeriods > 0 ? `\u09AA\u09CD\u09B0\u09A4\u09BF\u09A6\u09BF\u09A8 ${bn5(Number(periods[0]?.teaching_periods ?? 0))}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1` + (periods.length > 1 ? ` \xB7 ${bn5(periods.length)}\u099F\u09BF \u09B6\u09BF\u09AB\u099F` : "") : "\u0995\u09CB\u09A8\u09CB \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE",
     done: teachingPeriods,
     total: teachingPeriods || 1
   });
@@ -4974,7 +5272,7 @@ async function readiness(c, yearId) {
     id: "structure",
     titleBn: "\u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \u0993 \u09B6\u09BE\u0996\u09BE",
     state: sections > 0 ? "ok" : "blocked",
-    detailBn: sections > 0 ? `${bn3(Number(struct[0].classes))}\u099F\u09BF \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \xB7 ${bn3(sections)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE` : "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE \u09A8\u09C7\u0987",
+    detailBn: sections > 0 ? `${bn5(Number(struct[0].classes))}\u099F\u09BF \u09B6\u09CD\u09B0\u09C7\u09A3\u09BF \xB7 ${bn5(sections)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE` : "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7\u09C7 \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE \u09A8\u09C7\u0987",
     done: sections,
     total: sections || 1
   });
@@ -4992,7 +5290,7 @@ async function readiness(c, yearId) {
     id: "demand",
     titleBn: "\u09AC\u09BF\u09B7\u09AF\u09BC \u0993 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1",
     state: subjects === 0 ? "blocked" : zero > 0 ? "warn" : "ok",
-    detailBn: subjects === 0 ? "\u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09BF\u09A4 \u09A8\u09C7\u0987" : zero > 0 ? `${bn3(zero)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B6\u09C2\u09A8\u09CD\u09AF \u2014 \u09B8\u09C7\u0997\u09C1\u09B2\u09CB \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0986\u09B8\u09AC\u09C7 \u09A8\u09BE` : `${bn3(subjects)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC \xB7 \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u09AE\u09CB\u099F ${bn3(Number(demand[0].weekly))}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`,
+    detailBn: subjects === 0 ? "\u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09BF\u09A4 \u09A8\u09C7\u0987" : zero > 0 ? `${bn5(zero)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B6\u09C2\u09A8\u09CD\u09AF \u2014 \u09B8\u09C7\u0997\u09C1\u09B2\u09CB \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0986\u09B8\u09AC\u09C7 \u09A8\u09BE` : `${bn5(subjects)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC \xB7 \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u09AE\u09CB\u099F ${bn5(Number(demand[0].weekly))}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`,
     done: subjects - zero,
     total: subjects || 1
   });
@@ -5012,7 +5310,7 @@ async function readiness(c, yearId) {
     id: "assignments",
     titleBn: "\u0995\u09C7 \u0995\u09CB\u09A8 \u09AC\u09BF\u09B7\u09AF\u09BC \u09AA\u09A1\u09BC\u09BE\u09A8",
     state: required === 0 ? "blocked" : assigned >= required ? "ok" : "blocked",
-    detailBn: required === 0 ? "\u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE\u09B0 \u09AE\u09A4\u09CB \u0995\u09BF\u099B\u09C1 \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u09AC\u09BF\u09B7\u09AF\u09BC \u0993 \u09B6\u09BE\u0996\u09BE \u09A0\u09BF\u0995 \u0995\u09B0\u09C1\u09A8" : assigned >= required ? `${bn3(required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn3(required)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3` : `${bn3(required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn3(assigned)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 ${bn3(required - assigned)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`,
+    detailBn: required === 0 ? "\u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09BE\u09B0 \u09AE\u09A4\u09CB \u0995\u09BF\u099B\u09C1 \u09A8\u09C7\u0987 \u2014 \u0986\u0997\u09C7 \u09AC\u09BF\u09B7\u09AF\u09BC \u0993 \u09B6\u09BE\u0996\u09BE \u09A0\u09BF\u0995 \u0995\u09B0\u09C1\u09A8" : assigned >= required ? `${bn5(required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn5(required)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3` : `${bn5(required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn5(assigned)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u2014 ${bn5(required - assigned)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`,
     done: assigned,
     total: required || 1
   });
@@ -5028,7 +5326,7 @@ async function readiness(c, yearId) {
     id: "availability",
     titleBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE",
     state: "warn",
-    detailBn: teacherCount === 0 ? "\u0986\u0997\u09C7 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8" : withRows === 0 ? "\u0995\u09BE\u09B0\u0993 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09B8\u09AC\u09BE\u0987\u0995\u09C7 \u09B8\u09AC \u09B8\u09AE\u09AF\u09BC \u09AB\u09BE\u0981\u0995\u09BE \u09A7\u09B0\u09BE \u09B9\u09AC\u09C7" : `${bn3(teacherCount)} \u099C\u09A8\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn3(withRows)} \u099C\u09A8\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u0986\u099B\u09C7`,
+    detailBn: teacherCount === 0 ? "\u0986\u0997\u09C7 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8" : withRows === 0 ? "\u0995\u09BE\u09B0\u0993 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 \u09B8\u09AC\u09BE\u0987\u0995\u09C7 \u09B8\u09AC \u09B8\u09AE\u09AF\u09BC \u09AB\u09BE\u0981\u0995\u09BE \u09A7\u09B0\u09BE \u09B9\u09AC\u09C7" : `${bn5(teacherCount)} \u099C\u09A8\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn5(withRows)} \u099C\u09A8\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u0986\u099B\u09C7`,
     done: withRows,
     total: teacherCount || 1
   });
@@ -5050,7 +5348,7 @@ async function readiness(c, yearId) {
     id: "rooms",
     titleBn: "\u0995\u0995\u09CD\u09B7 \u0993 \u09B2\u09CD\u09AF\u09BE\u09AC",
     state: roomCount === 0 ? "blocked" : needed > 0 && caps < needed ? "warn" : "ok",
-    detailBn: roomCount === 0 ? "\u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09A8\u09C7\u0987 \u2014 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB\u09B0 \u099C\u09BE\u09AF\u09BC\u0997\u09BE \u09B2\u09BE\u0997\u09AC\u09C7" : needed > 0 && caps < needed ? `${bn3(roomCount)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \xB7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09B8\u09AC \u09A7\u09B0\u09A8\u09C7\u09B0 \u09B2\u09CD\u09AF\u09BE\u09AC \u09A8\u09C7\u0987` : `${bn3(roomCount)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u0997\u09C7\u099B\u09C7`,
+    detailBn: roomCount === 0 ? "\u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09A8\u09C7\u0987 \u2014 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB\u09B0 \u099C\u09BE\u09AF\u09BC\u0997\u09BE \u09B2\u09BE\u0997\u09AC\u09C7" : needed > 0 && caps < needed ? `${bn5(roomCount)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \xB7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09B8\u09AC \u09A7\u09B0\u09A8\u09C7\u09B0 \u09B2\u09CD\u09AF\u09BE\u09AC \u09A8\u09C7\u0987` : `${bn5(roomCount)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u0997\u09C7\u099B\u09C7`,
     done: roomCount,
     total: roomCount || 1
   });
@@ -5154,7 +5452,7 @@ async function savePeriods(c, templateId, list2) {
     throw new HttpError(400, "\u0985\u09A8\u09CD\u09A4\u09A4 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09BF\u09A8", "no_periods");
   }
   if (list2.length > 20) {
-    throw new HttpError(400, `\u098F\u0995\u099F\u09BF \u09B6\u09BF\u09AB\u099F\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn3(20)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`, "too_many_periods");
+    throw new HttpError(400, `\u098F\u0995\u099F\u09BF \u09B6\u09BF\u09AB\u099F\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn5(20)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`, "too_many_periods");
   }
   const clean2 = list2.map((p, i) => {
     const startsAt = String(p.startsAt ?? "");
@@ -5165,7 +5463,7 @@ async function savePeriods(c, templateId, list2) {
     if (!TIME_RE2.test(startsAt) || !TIME_RE2.test(endsAt)) {
       throw new HttpError(
         400,
-        `${bn3(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC \u09E8\u09EA-\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09AB\u09B0\u09AE\u09CD\u09AF\u09BE\u099F\u09C7 \u09A6\u09BF\u09A8`,
+        `${bn5(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC \u09E8\u09EA-\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09AB\u09B0\u09AE\u09CD\u09AF\u09BE\u099F\u09C7 \u09A6\u09BF\u09A8`,
         "invalid_time",
         { field: "startsAt", periodNo }
       );
@@ -5173,7 +5471,7 @@ async function savePeriods(c, templateId, list2) {
     if (endsAt <= startsAt) {
       throw new HttpError(
         400,
-        `${bn3(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 ${startsAt}-\u098F \u09B6\u09C1\u09B0\u09C1 \u09B9\u09AF\u09BC\u09C7 ${endsAt}-\u098F \u09B6\u09C7\u09B7 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE`,
+        `${bn5(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 ${startsAt}-\u098F \u09B6\u09C1\u09B0\u09C1 \u09B9\u09AF\u09BC\u09C7 ${endsAt}-\u098F \u09B6\u09C7\u09B7 \u09B9\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7 \u09A8\u09BE`,
         "ends_before_start",
         { field: "endsAt", periodNo }
       );
@@ -5181,7 +5479,7 @@ async function savePeriods(c, templateId, list2) {
     if (!labelBn) {
       throw new HttpError(
         400,
-        `${bn3(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09A8\u09BE\u09AE \u09A6\u09BF\u09A8`,
+        `${bn5(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u09A8\u09BE\u09AE \u09A6\u09BF\u09A8`,
         "invalid_label",
         { field: "labelBn", periodNo }
       );
@@ -5225,7 +5523,7 @@ async function savePeriods(c, templateId, list2) {
 async function saveDemand(c, yearId, list2) {
   if (list2.length === 0) throw new HttpError(400, "\u0995\u09CB\u09A8\u09CB \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09A8\u09BF", "no_changes");
   if (list2.length > 200) {
-    throw new HttpError(400, `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn3(200)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC`, "too_many_rows");
+    throw new HttpError(400, `\u098F\u0995\u09AC\u09BE\u09B0\u09C7 \u09B8\u09B0\u09CD\u09AC\u09CB\u099A\u09CD\u099A ${bn5(200)}\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC`, "too_many_rows");
   }
   let changed = 0;
   for (const row of list2) {
@@ -5238,7 +5536,7 @@ async function saveDemand(c, yearId, list2) {
     if (!Number.isInteger(perWeek) || perWeek < 0 || perWeek > 20) {
       throw new HttpError(
         400,
-        `\u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09E6 \u09A5\u09C7\u0995\u09C7 ${bn3(20)}-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8`,
+        `\u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09E6 \u09A5\u09C7\u0995\u09C7 ${bn5(20)}-\u098F\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u09A6\u09BF\u09A8`,
         "invalid_periods",
         { field: "periodsPerWeek" }
       );
@@ -5254,7 +5552,7 @@ async function saveDemand(c, yearId, list2) {
     if (doubles * 2 > perWeek) {
       throw new HttpError(
         409,
-        `${bn3(doubles)}\u099F\u09BF \u09A1\u09BE\u09AC\u09B2 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0985\u09A8\u09CD\u09A4\u09A4 ${bn3(doubles * 2)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B2\u09BE\u0997\u09AC\u09C7`,
+        `${bn5(doubles)}\u099F\u09BF \u09A1\u09BE\u09AC\u09B2 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0985\u09A8\u09CD\u09A4\u09A4 ${bn5(doubles * 2)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B2\u09BE\u0997\u09AC\u09C7`,
         "doubles_exceed_week",
         { field: "doublePeriodsPerWeek" }
       );
@@ -5288,7 +5586,7 @@ async function addAvailability(c, b) {
   if (endsAt <= startsAt) {
     throw new HttpError(
       400,
-      `${DAY_BN3[day2]}\u09AC\u09BE\u09B0\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC\u099F\u09BF \u09B6\u09C1\u09B0\u09C1\u09B0 \u0986\u0997\u09C7\u0987 \u09B6\u09C7\u09B7 \u09B9\u099A\u09CD\u099B\u09C7`,
+      `${DAY_BN4[day2]}\u09AC\u09BE\u09B0\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC\u099F\u09BF \u09B6\u09C1\u09B0\u09C1\u09B0 \u0986\u0997\u09C7\u0987 \u09B6\u09C7\u09B7 \u09B9\u099A\u09CD\u099B\u09C7`,
       "ends_before_start",
       { field: "endsAt" }
     );
@@ -5405,8 +5703,8 @@ async function handler9(req, res) {
 }
 
 // services/rms-svc/src/explain.ts
-var BN_DIGITS6 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn4 = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS6[Number(d)]);
+var BN_DIGITS8 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn6 = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS8[Number(d)]);
 function dominant(t) {
   if (!t || t.candidates === 0) return null;
   const ranked = [
@@ -5418,14 +5716,14 @@ function dominant(t) {
   return ranked[0] ?? null;
 }
 function share(count, of) {
-  return `${bn4(of)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AD\u09BE\u09AC\u09CD\u09AF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn4(count)}\u099F\u09BF\u09A4\u09C7`;
+  return `${bn6(of)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AD\u09BE\u09AC\u09CD\u09AF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn6(count)}\u099F\u09BF\u09A4\u09C7`;
 }
 function unplacedExplanation(u, index) {
   const t = u.blockers;
   const who = [u.sectionName, u.subjectBn, ...u.teacherBn ? [u.teacherBn] : []];
-  const currentBn = `${bn4(u.required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn4(u.placed)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn4(u.missing)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`;
-  const impactBn = `${u.sectionName}-\u098F ${u.subjectBn} \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964`;
-  const titleBn = `${u.sectionName} \xB7 ${u.subjectBn} \u2014 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09C7\u09A8\u09BF`;
+  const currentBn = `${bn6(u.required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn6(u.placed)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn6(u.missing)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`;
+  const impactBn = `${u.sectionName}-\u098F ${u.subjectBn} \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn6(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964`;
+  const titleBn = `${u.sectionName} \xB7 ${u.subjectBn} \u2014 ${bn6(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09C7\u09A8\u09BF`;
   const base = {
     id: `unplaced:${u.sectionId}:${u.subjectId}:${index}`,
     severity: "error",
@@ -5458,9 +5756,9 @@ function unplacedExplanation(u, index) {
       severity: "warning",
       category: "double_period",
       titleBn: `${u.sectionName} \xB7 ${u.subjectBn} \u2014 \u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF`,
-      whatBn: `${u.subjectBn} \u098F\u09B0 ${bn4(u.missing)}\u099F\u09BF \u099C\u09CB\u09A1\u09BC\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09B0\u09AA\u09B0 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF; \u0986\u09B2\u09BE\u09A6\u09BE \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B9\u09BF\u09B8\u09C7\u09AC\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
+      whatBn: `${u.subjectBn} \u098F\u09B0 ${bn6(u.missing)}\u099F\u09BF \u099C\u09CB\u09A1\u09BC\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09B0\u09AA\u09B0 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF; \u0986\u09B2\u09BE\u09A6\u09BE \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B9\u09BF\u09B8\u09C7\u09AC\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
       whyBn: "\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u09A6\u09BF\u09A8\u09C7\u0987 \u09AA\u09BE\u09B6\u09BE\u09AA\u09BE\u09B6\u09BF \u09A6\u09C1\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u0996\u09BE\u09B2\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
-      currentBn: `${bn4(u.missing)}\u099F\u09BF \u099C\u09CB\u09A1\u09BC\u09BE \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B9\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7`,
+      currentBn: `${bn6(u.missing)}\u099F\u09BF \u099C\u09CB\u09A1\u09BC\u09BE \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B9\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7`,
       impactBn: "\u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8 \u09A6\u09C1\u0987 \u09AD\u09BE\u0997\u09C7 \u09B9\u09B2\u09C7 \u09B8\u09B0\u099E\u09CD\u099C\u09BE\u09AE \u0997\u09CB\u099B\u09BE\u09A4\u09C7\u0987 \u09B8\u09AE\u09AF\u09BC \u099A\u09B2\u09C7 \u09AF\u09BE\u09AF\u09BC\u0964",
       suggestions: [
         {
@@ -5477,7 +5775,7 @@ function unplacedExplanation(u, index) {
     if ((u.capableRooms ?? 0) > 1) {
       suggestions2.push({
         textBn: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7\u0997\u09C1\u09B2\u09CB\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u0995\u09CB\u09A8\u099F\u09BF\u09A4\u09C7 \u0995\u0996\u09A8 \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099B\u09C7 \u09A6\u09C7\u0996\u09C7 \u098F\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09B8\u09B0\u09BE\u09A8",
-        evidenceBn: `\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF ${bn4(u.capableRooms ?? 0)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4`
+        evidenceBn: `\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF ${bn6(u.capableRooms ?? 0)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4`
       });
     } else {
       suggestions2.push({
@@ -5488,7 +5786,7 @@ function unplacedExplanation(u, index) {
     if (crossed2) {
       suggestions2.push({
         textBn: `${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u09B8\u09BE\u09A5\u09C7 \u0995\u0995\u09CD\u09B7 \u09AD\u09BE\u0997\u09BE\u09AD\u09BE\u0997\u09BF\u09B0 \u09B8\u09AE\u09AF\u09BC \u09AC\u09A6\u09B2\u09BE\u09A8`,
-        evidenceBn: `${bn4(t.crossShift)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u0985\u09A8\u09CD\u09AF \u09B6\u09BF\u09AB\u099F \u0995\u0995\u09CD\u09B7\u099F\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u099B\u09BF\u09B2`
+        evidenceBn: `${bn6(t.crossShift)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u0985\u09A8\u09CD\u09AF \u09B6\u09BF\u09AB\u099F \u0995\u0995\u09CD\u09B7\u099F\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u099B\u09BF\u09B2`
       });
     }
     return {
@@ -5506,7 +5804,7 @@ function unplacedExplanation(u, index) {
     return {
       ...base,
       category: "insufficient_slots",
-      whatBn: `${u.sectionName}-\u098F ${u.subjectBn} \u098F\u09B0 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`,
+      whatBn: `${u.sectionName}-\u098F ${u.subjectBn} \u098F\u09B0 ${bn6(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`,
       whyBn: "\u0995\u09CB\u09A8 \u09AC\u09BE\u09A7\u09BE\u09AF\u09BC \u0986\u099F\u0995\u09C7\u099B\u09C7 \u09A4\u09BE \u098F\u0987 \u09B0\u09BE\u09A8\u09C7 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09A8\u09BF\u09B0\u09CD\u09A3\u09AF\u09BC \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
       suggestions: []
     };
@@ -5520,7 +5818,7 @@ function unplacedExplanation(u, index) {
       suggestions: [
         {
           textBn: `${u.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0"} \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u0986\u09AC\u09BE\u09B0 \u09A6\u09C7\u0996\u09C7 \u09A8\u09BF\u09A8 \u2014 \u0995\u09CB\u09A8\u09CB \u098F\u0995\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09C1\u09B2\u09C7 \u09A6\u09BF\u09B2\u09C7 \u098F\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u099F\u09BF \u09AC\u09B8\u09C7 \u09AF\u09BE\u09AC\u09C7`,
-          evidenceBn: `${bn4(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE\u0987 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u09AC\u09BE\u09A7\u09BE \u099B\u09BF\u09B2`
+          evidenceBn: `${bn6(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE\u0987 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u09AC\u09BE\u09A7\u09BE \u099B\u09BF\u09B2`
         },
         {
           textBn: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0985\u09A8\u09CD\u09AF \u098F\u0995\u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8",
@@ -5549,7 +5847,7 @@ function unplacedExplanation(u, index) {
       ] : [
         {
           textBn: "\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B8\u09B0\u09BF\u09AF\u09BC\u09C7 \u099C\u09BE\u09AF\u09BC\u0997\u09BE \u0995\u09B0\u09C1\u09A8",
-          evidenceBn: `${bn4(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B6\u09BE\u0996\u09BE\u099F\u09BF\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09CD\u09B2\u09BE\u09B8 \u099B\u09BF\u09B2`
+          evidenceBn: `${bn6(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B6\u09BE\u0996\u09BE\u099F\u09BF\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09CD\u09B2\u09BE\u09B8 \u099B\u09BF\u09B2`
         }
       ]
     };
@@ -5558,7 +5856,7 @@ function unplacedExplanation(u, index) {
   const suggestions = [
     {
       textBn: `${u.teacherBn ?? "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0"} \u0985\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE\u09B0 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B8\u09B0\u09BF\u09AF\u09BC\u09C7 \u098F\u0987 \u09B8\u09AE\u09AF\u09BC\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u0995\u09B0\u09C1\u09A8`,
-      evidenceBn: `${bn4(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF\u09A4\u09CD\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09BF\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8`
+      evidenceBn: `${bn6(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF\u09A4\u09CD\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09BF\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8`
     },
     {
       textBn: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0986\u09B0\u0993 \u098F\u0995\u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8",
@@ -5568,14 +5866,14 @@ function unplacedExplanation(u, index) {
   if (crossed) {
     suggestions.push({
       textBn: `${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7 \u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8 \u0995\u09AE\u09BE\u09A8`,
-      evidenceBn: `${bn4(t.crossShift)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF \u09B6\u09BF\u09AB\u099F\u09C7 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8`
+      evidenceBn: `${bn6(t.crossShift)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF \u09B6\u09BF\u09AB\u099F\u09C7 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8`
     });
   }
   return {
     ...base,
     category: crossed ? "cross_shift" : "teacher_conflict",
-    whatBn: `${u.sectionName}-\u098F ${u.subjectBn} \u098F\u09B0 \u0986\u09B0\u0993 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u0964 ${u.teacherBn ?? "\u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09BF\u09A4 \u09B6\u09BF\u0995\u09CD\u09B7\u0995"} \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u09B8\u09AC \u09B8\u09AE\u09AF\u09BC\u09C7\u0987 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8\u0964`,
-    whyBn: crossed ? `${share(d.count, t.candidates)} \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF\u09A4\u09CD\u09B0 \u09AA\u09A1\u09BC\u09BE\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8, \u09AF\u09BE\u09B0 ${bn4(t.crossShift)}\u099F\u09BF ${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0964` : `${share(d.count, t.candidates)} \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09BF\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8\u0964`,
+    whatBn: `${u.sectionName}-\u098F ${u.subjectBn} \u098F\u09B0 \u0986\u09B0\u0993 ${bn6(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u0964 ${u.teacherBn ?? "\u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09BF\u09A4 \u09B6\u09BF\u0995\u09CD\u09B7\u0995"} \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u09B8\u09AC \u09B8\u09AE\u09AF\u09BC\u09C7\u0987 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8\u0964`,
+    whyBn: crossed ? `${share(d.count, t.candidates)} \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF\u09A4\u09CD\u09B0 \u09AA\u09A1\u09BC\u09BE\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8, \u09AF\u09BE\u09B0 ${bn6(t.crossShift)}\u099F\u09BF ${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0964` : `${share(d.count, t.candidates)} \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09BF\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8\u0964`,
     suggestions
   };
 }
@@ -5604,11 +5902,11 @@ function group(items) {
       out.push({
         ...first,
         id: `group:${key}`,
-        titleBn: `${bn4(members.length)}\u099F\u09BF \u0995\u09CD\u09B7\u09C7\u09A4\u09CD\u09B0\u09C7 \u09A8\u09B0\u09AE \u09B6\u09B0\u09CD\u09A4\u09C7 \u099B\u09BE\u09A1\u09BC \u2014 ${first.titleBn}`,
-        whatBn: `\u098F\u0995\u0987 \u09A7\u09B0\u09A8\u09C7\u09B0 ${bn4(members.length)}\u099F\u09BF \u099B\u09BE\u09A1\u09BC \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
+        titleBn: `${bn6(members.length)}\u099F\u09BF \u0995\u09CD\u09B7\u09C7\u09A4\u09CD\u09B0\u09C7 \u09A8\u09B0\u09AE \u09B6\u09B0\u09CD\u09A4\u09C7 \u099B\u09BE\u09A1\u09BC \u2014 ${first.titleBn}`,
+        whatBn: `\u098F\u0995\u0987 \u09A7\u09B0\u09A8\u09C7\u09B0 ${bn6(members.length)}\u099F\u09BF \u099B\u09BE\u09A1\u09BC \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
         whyBn: first.whyBn,
-        affectedBn: members.slice(0, NAMED_MEMBERS).map((m) => m.titleBn).concat(members.length > NAMED_MEMBERS ? [`\u0986\u09B0\u0993 ${bn4(members.length - NAMED_MEMBERS)}\u099F\u09BF`] : []),
-        currentBn: `${bn4(members.length)}\u099F\u09BF \u099B\u09BE\u09A1\u09BC`,
+        affectedBn: members.slice(0, NAMED_MEMBERS).map((m) => m.titleBn).concat(members.length > NAMED_MEMBERS ? [`\u0986\u09B0\u0993 ${bn6(members.length - NAMED_MEMBERS)}\u099F\u09BF`] : []),
+        currentBn: `${bn6(members.length)}\u099F\u09BF \u099B\u09BE\u09A1\u09BC`,
         impactBn: first.impactBn
       });
       continue;
@@ -5625,16 +5923,16 @@ function group(items) {
     out.push({
       ...first,
       id: `group:${key}`,
-      titleBn: `${subjectBn} \u2014 ${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09AE\u09CB\u099F ${bn4(periods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09C7\u09A8\u09BF`,
-      whatBn: `${subjectBn} \u098F\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 ${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u0995\u09BE\u09B0\u09A3 \u09B8\u09AC\u0997\u09C1\u09B2\u09CB\u09A4\u09C7 \u098F\u0995\u0987 \u2014 ${first.whatBn}`,
+      titleBn: `${subjectBn} \u2014 ${bn6(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09AE\u09CB\u099F ${bn6(periods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09C7\u09A8\u09BF`,
+      whatBn: `${subjectBn} \u098F\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 ${bn6(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u0995\u09BE\u09B0\u09A3 \u09B8\u09AC\u0997\u09C1\u09B2\u09CB\u09A4\u09C7 \u098F\u0995\u0987 \u2014 ${first.whatBn}`,
       // One representative's evidence, and it is labelled as one.
       whyBn: `${first.whyBn} (${sections[0]}-\u098F\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC; \u09AC\u09BE\u0995\u09BF\u0997\u09C1\u09B2\u09CB\u09A4\u09C7\u0993 \u098F\u0995\u0987 \u09AC\u09BE\u09A7\u09BE)`,
       affectedBn: sections.length > NAMED_MEMBERS ? [
         ...sections.slice(0, NAMED_MEMBERS),
-        `\u0986\u09B0\u0993 ${bn4(sections.length - NAMED_MEMBERS)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE`
+        `\u0986\u09B0\u0993 ${bn6(sections.length - NAMED_MEMBERS)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE`
       ] : sections,
-      currentBn: `${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE \xB7 \u09AE\u09CB\u099F ${bn4(periods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09BE\u0995\u09BF`,
-      impactBn: `${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC ${subjectBn} \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964`
+      currentBn: `${bn6(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE \xB7 \u09AE\u09CB\u099F ${bn6(periods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09BE\u0995\u09BF`,
+      impactBn: `${bn6(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC ${subjectBn} \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964`
     });
   }
   return out;
@@ -5646,11 +5944,11 @@ function explain(input) {
       id: "hard:conflicts",
       severity: "error",
       category: "hard_conflict",
-      titleBn: `${bn4(input.hardConflicts)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u098F\u0995\u0987 \u099C\u09BE\u09AF\u09BC\u0997\u09BE\u09AF\u09BC \u09AA\u09A1\u09BC\u09C7\u099B\u09C7`,
+      titleBn: `${bn6(input.hardConflicts)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u098F\u0995\u0987 \u099C\u09BE\u09AF\u09BC\u0997\u09BE\u09AF\u09BC \u09AA\u09A1\u09BC\u09C7\u099B\u09C7`,
       whatBn: "\u098F\u0995\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995, \u0995\u0995\u09CD\u09B7 \u09AC\u09BE \u09B6\u09BE\u0996\u09BE\u09B0 \u099C\u09A8\u09CD\u09AF \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u098F\u0995\u09BE\u09A7\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964",
       whyBn: "\u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7\u09B0 \u09B8\u09BE\u09B0\u09BF\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09AA\u09A1\u09BC\u09C7 \u098F\u0987 \u09B8\u0982\u0996\u09CD\u09AF\u09BE\u099F\u09BF \u0997\u09CB\u09A8\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964",
       affectedBn: [],
-      currentBn: `${bn4(input.hardConflicts)}\u099F\u09BF \u09B8\u0982\u0998\u09BE\u09A4`,
+      currentBn: `${bn6(input.hardConflicts)}\u099F\u09BF \u09B8\u0982\u0998\u09BE\u09A4`,
       impactBn: "\u098F\u0987 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC \u09A1\u09C7\u099F\u09BE\u09AC\u09C7\u099C \u0986\u099F\u0995\u09C7 \u09A6\u09C7\u09AC\u09C7\u0964",
       suggestions: [
         {
@@ -5669,16 +5967,16 @@ function explain(input) {
       category: s.capableRooms === 0 ? "capability_missing" : "room_conflict",
       titleBn: s.subjectsBn.length > 0 ? `${s.subjectsBn.join(", ")} \u2014 \u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7 \u0995\u09AE \u09AA\u09A1\u09BC\u09C7\u099B\u09C7` : "\u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7 \u0995\u09AE \u09AA\u09A1\u09BC\u09C7\u099B\u09C7",
       whatBn: s.detailBn,
-      whyBn: `\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn4(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0 \u099B\u09BF\u09B2; \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 ${bn4(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 ${bn4(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2\u0964`,
+      whyBn: `\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn6(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0 \u099B\u09BF\u09B2; \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 ${bn6(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 ${bn6(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2\u0964`,
       affectedBn: s.subjectsBn,
-      currentBn: `${bn4(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \xB7 ${bn4(s.freePeriods)}\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u09B8\u09AE\u09AF\u09BC`,
+      currentBn: `${bn6(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \xB7 ${bn6(s.freePeriods)}\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u09B8\u09AE\u09AF\u09BC`,
       impactBn: "\u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u09AA\u09C1\u09B0\u09CB\u09AA\u09C1\u09B0\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
       suggestions: s.capableRooms === 0 ? [{
         textBn: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u098F\u0995\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u0995\u09B0\u09C1\u09A8",
         evidenceBn: "\u098F\u0987 \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u0995\u09CD\u09B7 \u098F\u0996\u09A8 \u09B6\u09C2\u09A8\u09CD\u09AF"
       }] : [{
         textBn: "\u0986\u09B0\u0993 \u098F\u0995\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 \u098F\u0987 \u09B8\u09C1\u09AC\u09BF\u09A7\u09BE \u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u09B0\u09C1\u09A8",
-        evidenceBn: `\u099A\u09BE\u09B9\u09BF\u09A6\u09BE ${bn4(s.demandedPeriods)}, \u0996\u09BE\u09B2\u09BF \u09B8\u09AE\u09AF\u09BC ${bn4(s.freePeriods)}`
+        evidenceBn: `\u099A\u09BE\u09B9\u09BF\u09A6\u09BE ${bn6(s.demandedPeriods)}, \u0996\u09BE\u09B2\u09BF \u09B8\u09AE\u09AF\u09BC ${bn6(s.freePeriods)}`
       }]
     });
   }
@@ -5744,8 +6042,8 @@ function severityCounts(items) {
 // services/rms-svc/api/generate.ts
 var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var GENERATE_ROLES = ["principal", "school_owner", "academic_coordinator"];
-var BN_DIGITS7 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn5 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS7[Number(d)]);
+var BN_DIGITS9 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn7 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS9[Number(d)]);
 async function nameShortages(c, yearId, shortages) {
   if (shortages.length === 0) return [];
   const caps = shortages.map((s) => s.capability);
@@ -5767,7 +6065,7 @@ async function nameShortages(c, yearId, shortages) {
       // Rewritten around the subject, so no machine code reaches a person.
       // Where the school named a capability no subject uses any more, the
       // code is all there is — and saying so is better than saying nothing.
-      detailBn: subjects.length > 0 ? `${subjects.join(", ")} \u2014 ${bn5(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0; ${capabilityLabelBn(s.capability)} ${bn5(s.capableRooms)}\u099F\u09BF\u09A4\u09C7 ${bn5(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2` : scrubMachineText(s.detailBn)
+      detailBn: subjects.length > 0 ? `${subjects.join(", ")} \u2014 ${bn7(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0; ${capabilityLabelBn(s.capability)} ${bn7(s.capableRooms)}\u099F\u09BF\u09A4\u09C7 ${bn7(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2` : scrubMachineText(s.detailBn)
     };
   });
 }
@@ -5863,7 +6161,7 @@ async function draftFor(c, ctx, yearId, shift) {
       yearId,
       tpl[0].template_id,
       shift,
-      `\u09B8\u09CD\u09AC\u09AF\u09BC\u0982\u0995\u09CD\u09B0\u09BF\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 v${bn5(v[0].next)}`,
+      `\u09B8\u09CD\u09AC\u09AF\u09BC\u0982\u0995\u09CD\u09B0\u09BF\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 v${bn7(v[0].next)}`,
       v[0].next,
       tpl[0].year_starts,
       ctx.userId
@@ -5880,7 +6178,7 @@ async function shiftsOf(c, yearId) {
   );
   return rows.map((r) => r.code);
 }
-async function countHardConflicts(c, routineIds) {
+async function countHardConflicts2(c, routineIds) {
   if (routineIds.length === 0) return 0;
   const clash = (partition, where) => `
     SELECT count(*) FROM (
@@ -5914,7 +6212,7 @@ async function countHardConflicts(c, routineIds) {
   );
   return Number(rows[0].n);
 }
-function summarise(results, hardConflicts, ms) {
+function summarise2(results, hardConflicts, ms) {
   const totalDemand = results.reduce((n, r) => n + r.totalDemand, 0);
   const placed = results.reduce((n, r) => n + r.placed, 0);
   const unplacedPeriods = results.reduce(
@@ -5935,7 +6233,7 @@ function summarise(results, hardConflicts, ms) {
     // The one sentence the summary exists for. A hard conflict outranks
     // everything else in it: a routine carrying one cannot be published, so
     // saying "all 2,360 periods placed" would be true and useless.
-    verdictBn: hardConflicts > 0 ? `${bn5(hardConflicts)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09B8\u0982\u0998\u09BE\u09A4 \u09B0\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7 \u2014 \u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE` : unplacedPeriods === 0 ? `\u09B8\u09AC ${bn5(totalDemand)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7` : `${bn5(totalDemand)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn5(placed)}\u099F\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn5(unplacedPeriods)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`
+    verdictBn: hardConflicts > 0 ? `${bn7(hardConflicts)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09B8\u0982\u0998\u09BE\u09A4 \u09B0\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7 \u2014 \u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE` : unplacedPeriods === 0 ? `\u09B8\u09AC ${bn7(totalDemand)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7` : `${bn7(totalDemand)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn7(placed)}\u099F\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn7(unplacedPeriods)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`
   };
 }
 function dedupeBy(rows, key) {
@@ -6062,7 +6360,7 @@ async function handler10(req, res) {
     }
     const hardConflicts = await db.withTenant(
       ctx,
-      (c) => countHardConflicts(c, results.map((r) => r.routineId))
+      (c) => countHardConflicts2(c, results.map((r) => r.routineId))
     );
     const explanations = explain({
       unplaced: results.flatMap((r) => r.unplaced),
@@ -6110,7 +6408,7 @@ async function handler10(req, res) {
         }),
         shortages: r.shortages
       })),
-      summary: summarise(results, hardConflicts, Date.now() - startedAt),
+      summary: summarise2(results, hardConflicts, Date.now() - startedAt),
       explanations,
       severity: severityCounts(explanations)
     }, cors);
@@ -6131,136 +6429,6 @@ async function handler10(req, res) {
     console.error("[rms/generate]", err);
     json(res, 500, { error: "internal_error", message: "\u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF" }, cors);
   }
-}
-
-// services/rms-svc/src/rescope.ts
-var DAY_BN4 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
-var BN_DIGITS8 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn6 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS8[Number(d)]);
-function whenBn(dayOfWeek, periodNo) {
-  return `${DAY_BN4[dayOfWeek] ?? ""} ${bn6(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`;
-}
-function slotLine(s) {
-  return [
-    s.sectionLabel ?? "\u09B6\u09BE\u0996\u09BE",
-    s.subjectBn ?? "\u09AC\u09BF\u09B7\u09AF\u09BC",
-    s.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995",
-    whenBn(s.dayOfWeek, s.periodNo)
-  ].join(" \xB7 ");
-}
-var SELECT_SLOTS = `
-  SELECT s.id, s.day_of_week, s.period_no, s.primary_section_id, s.subject_id,
-         s.teacher_id, s.room_id, s.is_pinned, s.row_version,
-         cl.name_bn || '-' || sec.name AS section_label,
-         sub.name_bn AS subject_bn,
-         u.full_name_bn AS teacher_bn,
-         COALESCE(rm.name_bn, rm.code) AS room_label
-    FROM routine_slots s
-    LEFT JOIN sections sec ON sec.id = s.primary_section_id
-    LEFT JOIN classes cl   ON cl.id = sec.class_id
-    LEFT JOIN subjects sub ON sub.id = s.subject_id
-    LEFT JOIN users u      ON u.id = s.teacher_id
-    LEFT JOIN rooms rm     ON rm.id = s.room_id
-   WHERE s.routine_id = $1 AND s.status = 'active' AND s.slot_kind = 'teaching'`;
-var toSlot = (r) => ({
-  id: r.id,
-  dayOfWeek: r.day_of_week,
-  periodNo: r.period_no,
-  sectionId: r.primary_section_id,
-  subjectId: r.subject_id,
-  teacherId: r.teacher_id,
-  roomId: r.room_id,
-  sectionLabel: r.section_label,
-  subjectBn: r.subject_bn,
-  teacherBn: r.teacher_bn,
-  roomLabel: r.room_label,
-  isPinned: r.is_pinned,
-  rowVersion: r.row_version
-});
-async function allSlots(c, routineId) {
-  const { rows } = await c.query(
-    `${SELECT_SLOTS} ORDER BY s.day_of_week, s.period_no`,
-    [routineId]
-  );
-  return rows.map(toSlot);
-}
-async function slotsInScope(c, routineId, scope) {
-  const where = {
-    teacher: "AND s.teacher_id = $2",
-    section: "AND s.primary_section_id = $2",
-    room: "AND s.room_id = $2",
-    day: "AND s.day_of_week = $2"
-  }[scope.kind];
-  const arg = scope.kind === "teacher" ? scope.teacherId : scope.kind === "section" ? scope.sectionId : scope.kind === "room" ? scope.roomId : scope.dayOfWeek;
-  const { rows } = await c.query(
-    `${SELECT_SLOTS} ${where} ORDER BY s.day_of_week, s.period_no`,
-    [routineId, arg]
-  );
-  return rows.map(toSlot);
-}
-async function fingerprint(c, routineId) {
-  const { rows } = await c.query(
-    `SELECT count(*)::text || ':' || COALESCE(sum(row_version), 0)::text AS fp
-       FROM routine_slots
-      WHERE routine_id = $1 AND status = 'active'`,
-    [routineId]
-  );
-  return rows[0]?.fp ?? "0:0";
-}
-function summarise2(before, after, scoped) {
-  const key = (s) => `${s.sectionId ?? ""}|${s.subjectId ?? ""}`;
-  const at = (s) => `${s.dayOfWeek}|${s.periodNo}`;
-  const afterIds = new Set(after.map((s) => s.id));
-  const unchanged = before.filter((s) => afterIds.has(s.id));
-  const pinnedPreserved = scoped.filter((s) => s.isPinned).length;
-  const groupBy = (rows) => {
-    const m = /* @__PURE__ */ new Map();
-    for (const s of rows) {
-      const list2 = m.get(key(s));
-      if (list2) list2.push(s);
-      else m.set(key(s), [s]);
-    }
-    return m;
-  };
-  const beforeIds = new Set(before.map((s) => s.id));
-  const byKeyBefore = groupBy(before.filter((s) => !afterIds.has(s.id)));
-  const byKeyAfter = groupBy(after.filter((s) => !beforeIds.has(s.id)));
-  const moved = [];
-  let lost = 0;
-  for (const [k, gone] of byKeyBefore) {
-    const arrived = byKeyAfter.get(k) ?? [];
-    const goneMoved = gone.filter((g) => !arrived.some((a) => at(a) === at(g)));
-    const arrivedNew = arrived.filter((a) => !gone.some((g) => at(g) === at(a)));
-    for (let i = 0; i < goneMoved.length; i++) {
-      const from = goneMoved[i];
-      const to = arrivedNew[i];
-      if (to) {
-        moved.push({
-          beforeBn: slotLine(from),
-          afterBn: slotLine(to),
-          sectionLabel: from.sectionLabel,
-          subjectBn: from.subjectBn
-        });
-      } else {
-        lost++;
-        moved.push({
-          beforeBn: slotLine(from),
-          afterBn: "\u0995\u09CB\u09A5\u09BE\u0993 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
-          sectionLabel: from.sectionLabel,
-          subjectBn: from.subjectBn
-        });
-      }
-    }
-  }
-  return {
-    affected: scoped.length,
-    pinnedPreserved,
-    removed: before.length - unchanged.length,
-    placed: after.length - unchanged.length,
-    unchanged: unchanged.length,
-    moved,
-    lost
-  };
 }
 
 // services/rms-svc/api/resolve.ts
@@ -6297,13 +6465,13 @@ function parseScope(raw) {
   );
 }
 function verdictBn(sum, scopedCount) {
-  const bn7 = (n) => String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
+  const bn9 = (n) => String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
   if (scopedCount === 0) return "\u098F\u0987 \u0985\u0982\u09B6\u09C7 \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB\u09B0 \u09AE\u09A4\u09CB \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964";
   if (sum.lost > 0) {
-    return `${bn7(sum.moved.length - sum.lost)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09B8\u09B0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7, ${bn7(sum.lost)}\u099F\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AC\u09C8\u09A7 \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`;
+    return `${bn9(sum.moved.length - sum.lost)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09B8\u09B0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7, ${bn9(sum.lost)}\u099F\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AC\u09C8\u09A7 \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`;
   }
   if (sum.moved.length === 0) return "\u09B9\u09BF\u09B8\u09BE\u09AC \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 \u0995\u09BF\u099B\u09C1\u0987 \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB\u09B0 \u09A6\u09B0\u0995\u09BE\u09B0 \u09B9\u09AF\u09BC\u09A8\u09BF\u0964";
-  return `${bn7(sum.moved.length)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09A4\u09C1\u09A8 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`;
+  return `${bn9(sum.moved.length)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09A4\u09C1\u09A8 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`;
 }
 async function run(c, ctx, o) {
   const rt = await c.query(
@@ -6340,7 +6508,7 @@ async function run(c, ctx, o) {
     alsoBookedAgainst: sib.rows.map((r) => r.id)
   });
   const after = await allSlots(c, o.routineId);
-  const summary = summarise2(before, after, scoped);
+  const summary = summarise(before, after, scoped);
   const payload = {
     ok: true,
     preview: o.preview,
@@ -6454,6 +6622,210 @@ async function handler11(req, res) {
   }
 }
 
+// services/rms-svc/api/publish.ts
+var UUID_RE11 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var REVIEW_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var UNPUBLISHED = /* @__PURE__ */ new Set(["draft", "review"]);
+var STATUS_BN = {
+  draft: "\u0996\u09B8\u09A1\u09BC\u09BE",
+  review: "\u09AA\u09B0\u09CD\u09AF\u09BE\u09B2\u09CB\u099A\u09A8\u09BE\u09AF\u09BC",
+  active: "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4",
+  superseded: "\u09AC\u09BE\u09A4\u09BF\u09B2 \u2014 \u09A8\u09A4\u09C1\u09A8 \u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09BE\u09B2\u09C1",
+  archived: "\u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09BF\u09A4"
+};
+async function head(c, yearId) {
+  const { rows } = await c.query(
+    `SELECT t.name_bn AS tenant_name, y.label AS year_label
+       FROM academic_years y
+       JOIN tenants t ON t.id = y.tenant_id
+      WHERE y.id = $1`,
+    [yearId]
+  );
+  const r = rows[0];
+  return r ? { tenantNameBn: r.tenant_name, yearId, yearLabel: r.year_label } : null;
+}
+async function routinesForYear(c, yearId) {
+  const { rows } = await c.query(
+    `SELECT id FROM routines
+      WHERE academic_year_id = $1 AND status <> 'archived'
+      ORDER BY shift, version DESC`,
+    [yearId]
+  );
+  return rows.map((r) => r.id);
+}
+var BN_DIGITS10 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn8 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS10[Number(d)]);
+function consequenceBn(r, shiftBn, supersedes) {
+  const lines = [
+    `${shiftBn} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 ${bn8(r.slots)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099C \u09A5\u09C7\u0995\u09C7 \u09B8\u09AC\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u09A6\u09C7\u0996\u09BE \u09AF\u09BE\u09AC\u09C7 \u2014 \u09B6\u09BF\u0995\u09CD\u09B7\u0995, \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0 \u0993 \u0985\u09AD\u09BF\u09AD\u09BE\u09AC\u0995 \u09B8\u09AC\u09BE\u0987\u0964`
+  ];
+  if (supersedes) {
+    lines.push(`\u098F\u0996\u09A8 \u099A\u09BE\u09B2\u09C1 ${bn8(supersedes.version)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u09AC\u09BE\u09A4\u09BF\u09B2 \u09B9\u09AF\u09BC\u09C7 \u09AF\u09BE\u09AC\u09C7\u0964`);
+  }
+  for (const w of r.warnings) lines.push(`\u09AE\u09C7\u09A8\u09C7 \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u099A\u09CD\u099B\u09C7: ${w.messageBn}`);
+  lines.push("\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09C7\u09B0 \u09AA\u09B0 \u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u09AC\u09A6\u09B2\u09BE\u09A4\u09C7 \u09B9\u09B2\u09C7 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964");
+  return lines;
+}
+async function decorate(c, r) {
+  const { rows } = await c.query(
+    `SELECT to_char(rt.published_at AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS published_at,
+            u.full_name_bn AS publisher,
+            live.version AS live_version,
+            to_char(live.published_at AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS live_published_at
+       FROM routines rt
+       LEFT JOIN users u ON u.id = rt.published_by
+       LEFT JOIN routines live
+              ON live.academic_year_id = rt.academic_year_id
+             AND live.shift = rt.shift
+             AND live.status = 'active'
+             AND live.id <> rt.id
+      WHERE rt.id = $1`,
+    [r.routineId]
+  );
+  const x = rows[0];
+  const shiftBn = shiftLabelBn(r.shift);
+  const supersedes = x?.live_version != null ? { version: x.live_version, publishedAt: x.live_published_at } : null;
+  return {
+    ...r,
+    shiftBn,
+    statusBn: STATUS_BN[r.status] ?? r.status,
+    publishedAt: x?.published_at ?? null,
+    publishedByBn: x?.publisher ?? null,
+    supersedes,
+    consequenceBn: consequenceBn(r, shiftBn, supersedes),
+    verdictBn: r.status === "active" ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09BE\u09B2\u09C1 \u0986\u099B\u09C7\u0964" : r.canPublish ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7\u0964" : "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u098F\u0996\u09A8\u0987 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE\u0964"
+  };
+}
+async function moveStatus(c, ctx, routineId, to) {
+  if (!UUID_RE11.test(routineId)) {
+    throw new HttpError(400, "routineId must be a valid uuid", "invalid_routine_id");
+  }
+  const { rows } = await c.query(
+    `SELECT status::text AS status FROM routines WHERE id = $1`,
+    [routineId]
+  );
+  const from = rows[0]?.status;
+  if (!from) throw new HttpError(404, "routine not found", "routine_not_found");
+  if (!UNPUBLISHED.has(from)) {
+    throw new HttpError(
+      409,
+      "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u09AC\u09BE\u09B0 \u0996\u09B8\u09A1\u09BC\u09BE\u09AF\u09BC \u09AB\u09C7\u09B0\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "already_published"
+    );
+  }
+  if (from === to) {
+    throw new HttpError(
+      409,
+      to === "review" ? "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7 \u09A5\u09C7\u0995\u09C7\u0987 \u09AA\u09B0\u09CD\u09AF\u09BE\u09B2\u09CB\u099A\u09A8\u09BE\u09AF\u09BC \u0986\u099B\u09C7\u0964" : "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7 \u09A5\u09C7\u0995\u09C7\u0987 \u0996\u09B8\u09A1\u09BC\u09BE \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09AF\u09BC \u0986\u099B\u09C7\u0964",
+      "already_in_status"
+    );
+  }
+  await c.query(`UPDATE routines SET status = $2 WHERE id = $1`, [routineId, to]);
+  await writeAudit(c, ctx, {
+    action: to === "review" ? "rms.routine.submit" : "rms.routine.withdraw",
+    entityType: "routine",
+    entityId: routineId,
+    after: { status: to, fromStatus: from }
+  });
+  return {
+    ok: true,
+    status: to,
+    statusBn: STATUS_BN[to],
+    messageBn: to === "review" ? "\u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u09AA\u09B0\u09CD\u09AF\u09BE\u09B2\u09CB\u099A\u09A8\u09BE\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09BE\u09A0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964 \u098F\u0996\u09A8\u09CB \u0995\u09C7\u0989 \u098F\u099F\u09BF \u09A6\u09C7\u0996\u09A4\u09C7 \u09AA\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE\u0964" : "\u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u0986\u09AC\u09BE\u09B0 \u0996\u09B8\u09A1\u09BC\u09BE\u09AF\u09BC \u09AB\u09C7\u09B0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964"
+  };
+}
+async function handler12(req, res) {
+  const cors = corsHeaders([], "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, REVIEW_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method === "GET") {
+      const url = new URL(req.url ?? "/", "http://internal");
+      const yearId = url.searchParams.get("yearId") ?? "";
+      const routineId2 = url.searchParams.get("routineId") ?? "";
+      if (UUID_RE11.test(routineId2)) {
+        const out2 = await db.withTenant(ctx, async (c) => {
+          const r = await reviewRoutine(c, routineId2);
+          if (!r) throw new HttpError(404, "routine not found", "routine_not_found");
+          return decorate(c, r);
+        });
+        json(res, 200, { ok: true, routine: out2 }, cors);
+        return;
+      }
+      if (!UUID_RE11.test(yearId)) {
+        throw new HttpError(400, "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_year_id");
+      }
+      const out = await db.withTenant(ctx, async (c) => {
+        const h = await head(c, yearId);
+        if (!h) throw new HttpError(404, "academic year not found", "year_not_found");
+        const ids = await routinesForYear(c, yearId);
+        const entries = [];
+        for (const id of ids) {
+          const r = await reviewRoutine(c, id);
+          if (r) entries.push(await decorate(c, r));
+        }
+        return { ok: true, ...h, routines: entries };
+      });
+      json(res, 200, out, cors);
+      return;
+    }
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    const body = await readJson(req);
+    const routineId = String(body.routineId ?? "");
+    const action = String(body.action ?? "");
+    if (action === "submit" || action === "withdraw") {
+      const out = await db.withTenant(
+        ctx,
+        (c) => moveStatus(c, ctx, routineId, action === "submit" ? "review" : "draft"),
+        { write: true }
+      );
+      json(res, 200, out, cors);
+      return;
+    }
+    if (action === "publish") {
+      const out = await db.withTenant(ctx, (c) => publishRoutine(c, ctx, routineId, {
+        fingerprint: typeof body.fingerprint === "string" && body.fingerprint ? body.fingerprint : void 0,
+        confirmWarnings: body.confirmWarnings === true
+      }), { write: true });
+      json(res, 200, {
+        ...out,
+        messageBn: "\u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0993 \u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0\u09BE \u098F\u0996\u09A8 \u098F\u099F\u09BF \u09A6\u09C7\u0996\u09A4\u09C7 \u09AA\u09BE\u09AC\u09C7\u09A8\u0964"
+      }, cors);
+      return;
+    }
+    throw new HttpError(
+      400,
+      "action must be 'submit', 'withdraw' or 'publish'",
+      "unknown_action"
+    );
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    console.error("[rms/publish]", err);
+    json(res, 500, {
+      error: "internal_error",
+      // §7. The publish is one UPDATE inside one transaction; a failure
+      // leaves the routine exactly as it was, and saying so is what stops a
+      // coordinator publishing twice.
+      messageBn: "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF \u2014 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09A4\u09C7\u0987 \u0986\u099B\u09C7\u0964"
+    }, cors);
+  }
+}
+
 // services/rms-svc/api/index.ts
 var ROUTES = {
   routine: handler,
@@ -6472,9 +6844,11 @@ var ROUTES = {
   generate: handler10,
   // P9-6. Recalculate one teacher, section, room or day — the same solver,
   // told to fill only the gaps a scoped removal just made.
-  resolve: handler11
+  resolve: handler11,
+  // P9-7. The review surface and the DRAFT -> REVIEW -> PUBLISHED lifecycle.
+  publish: handler12
 };
-async function handler12(req, res) {
+async function handler13(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -6489,5 +6863,5 @@ async function handler12(req, res) {
   return route(req, res);
 }
 export {
-  handler12 as default
+  handler13 as default
 };

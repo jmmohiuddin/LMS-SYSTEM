@@ -12835,3 +12835,257 @@ marks a teacher unavailable must then ask for that teacher's scope to be
 recalculated. Wiring the change itself to offer it is a P9-7-or-later
 convenience, and inventing it here would have meant guessing which of eleven
 inputs should trigger what.
+
+---
+
+# P9-7 — the review nobody could read, and the state nobody could write (2026-09-07)
+
+## What §1 asked for, and what was actually there
+
+The brief says to execute `POST /api/v1/academics/publish` against the real
+database rather than trusting that it typechecks. Executed:
+
+```
+POST /academics/publish { examId: <a routine id> }  →  404 exam_not_found
+```
+
+That endpoint publishes **exam results**. The routine publish was
+`POST /rms/editor { action: 'publish' }` — a button in the editor that
+published whatever was on screen without ever saying what that was. Both are
+now exercised; the distinction is OBSERVED rather than inferred from a header
+comment.
+
+## The status the schema had carried since migration 006
+
+`routine_status` is `draft | review | active | superseded | archived`.
+Nothing in the product had ever written `review`.
+
+That is the fourth time this shape has turned up in P9 — after
+`section_subject_teachers` (P9-1), the bell schedule (P9-2) and `is_pinned`
+(P9-5): **a control that exists, is enforced, and that nothing can reach.**
+
+It matters because publishing is not one person's act in a Bangladeshi
+school. A coordinator builds the timetable; the head decides it is the
+school's. Without `review` the coordinator's only two options are "still
+mine" and "live to three thousand guardians".
+
+`submit` is deliberately NOT gated on the routine being clean. A coordinator
+who has done what they can with a timetable that still has a conflict needs
+to hand it over and say so; refusing the handover would leave the two of them
+with no way to discuss it inside the product. Publishing is where the
+conflict blocks, and that is the right place — it is the point at which the
+school's day would actually become wrong.
+
+Proved from the database: a routine in review propagates `review` to all 560
+slots, and `app.student_day` returns **0 rows**.
+
+## One gate, two callers
+
+`src/publish-gate.ts` decides what blocks and what merely warns.
+`api/publish.ts`'s GET renders its answer; `publishRoutine` enforces it. A
+second copy of these rules is the defect the file exists to prevent — P9-4
+found that exact shape twice, in two readers of the same routines disagreeing
+about hard conflicts. There is a test whose only job is that the two never
+disagree.
+
+The explicit gate does not replace the exclusion constraints, and the
+constraint handling is still there. The gate READS; the constraints hold
+under concurrency. Between the count and the UPDATE another editor can place
+the very slot that collides, and that race is what the database is for. What
+the gate changes is WHO the coordinator hears it from: a number on the review
+screen while there is still something to do, instead of a 409 after pressing
+the button.
+
+## §4 — the refusal the earlier probe could not exercise
+
+The first probe tried to plant a conflict by duplicating a lesson into
+another SECTION at the same hour. Every section was busy, and
+`rs_no_section_double_booking` applies to drafts anyway, so that route could
+never have worked. It reported `plantedConflict: 0` and a `200` that was
+actually the legitimate publish — which is why it was recorded as NOT
+exercised rather than as a pass.
+
+A **teacher** double-booking is the one a draft can hold:
+`rs_no_teacher_double_booking` is `WHERE status='active' AND
+routine_status='active'`, and a draft's slots are `routine_status='draft'`.
+Give two lessons at the same hour the same teacher and the state exists.
+
+Now proved, with the conflict confirmed at DB level by a query independent of
+the endpoint, so the test cannot pass by the gate being wired to a constant:
+
+```
+conflicts in the database   2 (the pairwise join sees both directions)
+review says                 hardConflicts 1 · canPublish false
+publish (confirmWarnings)   409 hard_conflict
+after the refusal           status draft · published_at null · live slots 0
+conflict removed            200
+```
+
+## §5 — a warning is a decision, so it is made once and recorded
+
+Warnings do not block. That is the existing contract, not a new one: §8.1
+marks gaps and permits publishing over them, because a school routinely
+publishes a timetable with a known hole while it hires. Turning that into a
+blocker would stop schools using the product for a situation the product
+exists to survive.
+
+But publishing over one is a decision, so the server refuses an unconfirmed
+publish and hands back what it wanted confirmed — the second attempt, with
+`confirmWarnings`, is the person's answer rather than a retry. The accepted
+warnings then travel with the success AND into the audit row, because a
+school asking six months later why the timetable had a hole should get "it
+was visible and accepted", not a bare status change.
+
+## A count that could not be anything but zero
+
+`publish()` had returned an `unfilled` count since §8.1 — teaching slots with
+no teacher — and the editor rendered it: "প্রকাশিত হয়েছে — তবে ১টি ঘর এখনো
+খালি।"
+
+`routine_slots` has carried this since migration 006:
+
+```sql
+CHECK (slot_kind <> 'teaching'
+       OR (primary_section_id IS NOT NULL AND subject_id IS NOT NULL
+           AND teacher_id IS NOT NULL))
+```
+
+So the set is empty by construction. The number was a tautology reported as a
+measurement, the sentence could only ever say "০টি", and the **only** place
+it had ever said otherwise was `demo.ts`, which hard-coded `unfilled: 1` —
+manufacturing the state the schema forbids.
+
+Found by writing a test that tried to create the state and being refused by
+the database. Removed rather than tested around: the gap a school actually
+has is a DEMAND the solver could not place, which the solver already reports
+and the review already warns about.
+
+## The sentences are the server's
+
+The first version of the confirmation composed its paragraph in the browser
+out of `slots`, `supersedes.version` and the warnings. P9-3's generate screen
+states the rule that breaks: *"the verdict is rendered, never composed here —
+a browser that assembled its own sentence from the counters would drift from
+the numbers beside it the first time either changed."*
+
+The same rule applies with more force to the only irreversible button in the
+workstream, so `consequenceBn` and `verdictBn` are composed in
+`api/publish.ts`. It also takes a paragraph of Bangla off a 2G phone's
+critical path, where every byte is budgeted.
+
+## What the browser found
+
+**A live routine was described as broken.** Immediately after a successful
+publish the card showed "যা ঠিক করতে হবে — এই রুটিন আগেই প্রকাশিত।" That
+blocker exists so the endpoint refuses a *second* publish; rendered under
+"what must be fixed" it told a head their working timetable needed repair.
+Blockers are no longer drawn for a published routine. The warnings stay —
+what the routine carries is still worth reading after it goes live.
+
+**Every timestamp printed an em-dash.** `max(updated_at)::text` gives
+`2026-09-07 04:38:43.975379+00`; a **two-digit** offset is not valid ISO and
+Chrome's `new Date()` refuses it. The API now emits real ISO 8601.
+
+**A Latin meridiem in a Bangla sentence.** `Intl.DateTimeFormat('bn-BD')`
+produced "৭ সেপ্টেম্বর, ২০২৬ এ ১০:৩৮ AM". Replaced with the product's own
+`formatDayMonth` + `formatTime`, which write the 24-hour clock Bangla uses —
+the same class of leak P9-4 spent a section removing.
+
+**A dari before a clause.** "এই রুটিন চালু আছে। — ৭ সেপ্টেম্বর" closes the
+sentence and then continues it.
+
+## Evidence
+
+- **2004 tests, all passing** across 13 workspaces — 22 new API
+  (`publish.test.ts`), 18 new view (`routine-publish-view.test.ts`), 1 new
+  service-worker assertion
+- 26/26 SQL suites run **three times**; the four routine API suites three
+  times (71/71 each)
+- typecheck 0/0/0 · **75/75 migrations, and P9-7 needed none** — the enum
+  already had `review` and `audit.activity_log.action` has no DB constraint
+- **Security probe 29/29** against the running deployment
+- **D11 brand boundary**: tenant surfaces clean, all three platform surfaces
+  branded
+- **Browser, real API, a generated 20-section school:** draft → "পর্যালোচনার
+  জন্য পাঠান" → badge "পর্যালোচনায়" with "এখনো কেউ এটি দেখতে পাচ্ছে না" →
+  "প্রকাশ করুন" → a confirmation naming 560 lessons, who will see them, and
+  both accepted warnings, focus on বাতিল → published, "প্রকাশ করেছেন প্রধান
+  শিক্ষক", every lifecycle button gone
+- A second draft beside it reads "প্রকাশ করলে এখনকার চালু রুটিনটি (নম্বর ১)
+  বাতিল হবে"
+- **375px**: no horizontal overflow, dialog exactly 375 wide,
+  `role="alertdialog"`, focus on বাতিল
+- **Both themes**: dialog `#FFFFFF` / `#241E1A`, text `#53443D` / `#EDE7DA`
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**Publishing is online only, and the screen says so.** It cannot be queued:
+whether a routine may go live depends on every other routine in the school at
+that instant, so two offline devices could queue two publications that are
+each valid alone and together are not. Offline the action is disabled with
+that reason in a sentence — not hidden, because a coordinator who cannot find
+the button concludes the feature is broken. The review itself still reads.
+
+**The fingerprint tracks application edits, not raw SQL.**
+`routine_slots.row_version` is bumped by the editor's writes, not by a
+trigger, so a change made directly in the database does not move it. That is
+the concurrency case it exists for — two coordinators in the editor — and it
+was already documented in P9-6 as a fingerprint rather than a guarantee.
+
+**"সর্বশেষ পরিবর্তন" moves when the status does.**
+`trg_routines_propagate_status` touches every slot on a status change, so
+submitting for review updates the timestamp. The rows genuinely changed; it
+just is not the edit a head has in mind when they read the label.
+
+**A replacement draft generated while one is live is mostly empty.**
+OBSERVED: v1 published with 560 slots, then a fresh generation placed **193**,
+with 125 of 129 unplaced demands reading `no_free_slot`. The live routine's
+slots are `routine_status='active'`, so the year-scoped teacher and room
+exclusions bind them and the new draft cannot use those hours. P9-7 did not
+cause this — it made it visible, because publishing is now reachable.
+Recorded as **B-108**; fixing it means teaching `generate` to treat the
+routine being replaced as not-a-constraint, which is a solver-input change
+and belongs to whichever phase owns re-generation.
+
+## The budget said no, and it was right (B-109)
+
+Adding the screen put `app.js` **401 bytes over** the 180 KB gzipped
+critical-path budget, which fails CI. HEAD had 1,738 bytes of headroom and a
+screen costs about 2,000 — so the *next* screen would have failed too,
+whatever it contained. The new view is 9.3 kB minified, the smallest of the
+routine screens and smaller than `rooms-view.ts`; there was no fat in it.
+
+The cause was `demo.ts`: **94.1 kB minified, 10.7% of the bundle**, larger
+than the next four views combined, downloaded by every school on a 2G
+connection so they could not open it.
+
+`platform.js` had already set the precedent — a separate bundle "so a school's
+device never downloads the console's code". The demo is the same argument with
+a bigger number, and `DemoAuth` is constructed at exactly ONE seam inside an
+already-`async` `main()`. `app.ts` now holds an `import type` (erased at
+compile time) plus `await import('/demo.js')`, and the app build marks
+`/demo.js` **external** so esbuild leaves the import for the browser rather
+than inlining the module back into the bundle the split exists to shrink.
+
+**app.js: 184,721 → 159,352 bytes gzipped. 24,968 of headroom, against the
+same limit.**
+
+Verified in the browser, not inferred: a production `/app` load's resource
+list is `/app.css`, `/app.js` and its API calls — **no `/demo.js`**. `?demo=1`
+fetches it, and all six roles work on both demo tenants.
+
+`/demo.js` joins `UNHASHED_ENTRY_ASSETS` rather than being left to
+`IMMUTABLE`, which matches on the `.js` extension and would have pinned a
+visitor to the first demo build their browser ever downloaded — the
+`/platform.js` defect the file already documents, in a second place. It is
+deliberately NOT precached: the demo is an online shopfront, and precaching it
+would put the 94 kB back on every device by another route.
+
+Two things the split itself exposed. The demo's review payload hard-coded one
+school's name, so tenant B's screen showed tenant A's — the demo carries two
+institutions precisely so that is visible. And a refused ACTION was calling
+`refuseUnlessOk`, which throws into the permission panel: the demo's
+"this build does not write" 403 wiped the review it had just drawn and told a
+head they were not allowed to see their own timetable. A refused action is now
+a notice; the denial panel stays for a refused READ, where it is the truth.

@@ -1003,6 +1003,52 @@ leave. Two views had `hasUnsavedChanges()` and nothing called either.
 13 ms at 20 / 40 / 80 / 120 sections. It reads one section's week and an undo
 stack capped at twelve, so nothing in it scales with the institution.
 
+**Review and publish (P9-7).** `GET /api/v1/rms/publish?yearId=…` returns,
+per shift, what would go live: total scheduled periods, sections, teachers,
+pinned slots, hard conflicts, unplaced demand, soft violations, last
+modified, the draft version, what publishing would replace, and the
+blocking/warning findings in Bangla. `POST` carries `submit`, `withdraw` and
+`publish`.
+
+`routine_status` has held `review` since migration 006 and nothing had ever
+written it — the fourth control in P9 that existed, was enforced, and could
+not be reached. DRAFT → REVIEW → PUBLISHED now works, and a routine in review
+stays invisible to the school: the status propagates to every slot and
+`app.student_day` returns nothing, verified against the live database.
+
+`src/publish-gate.ts` is the single gate. The review renders its answer and
+the publish enforces it, so a screen saying "প্রকাশ করা যাবে" about a routine
+the server would refuse is not expressible — a test exists whose only job is
+that the two never disagree. Hard conflicts and an empty routine BLOCK;
+unplaced demand and soft-constraint trades WARN and require one explicit
+confirmation, which is then recorded in the audit row alongside what was
+published. The gate does not replace the exclusion constraints, which still
+hold under concurrency between the count and the UPDATE; it changes who the
+coordinator hears it from.
+
+**Removed:** an `unfilled` count returned since §8.1 and rendered by the
+editor. `routine_slots` has carried `CHECK (slot_kind <> 'teaching' OR …
+teacher_id IS NOT NULL)` since migration 006, so the set is empty by
+construction — a tautology reported as a measurement, whose sentence only
+`demo.ts` had ever made non-zero by hard-coding the state the schema forbids.
+
+**Publishing is online only.** It cannot be queued: whether a routine may go
+live depends on every other routine in the school at that instant, so two
+offline devices could queue two publications that are each valid alone and
+together are not. The action is disabled without a connection, with that
+reason in a sentence; the review itself still reads.
+
+**The demo is its own bundle (B-109, closed in P9-7).** `demo.ts` was 94.1 kB
+minified inside `app.js` — the largest module there, 10.7% of a bundle
+budgeted at 180 KB gzipped for a phone on 2G. It is now
+`apps/pwa/public/demo.js`, loaded by `await import('/demo.js')` on the one
+path a demo visitor takes, with `/demo.js` marked `external` in the app build
+so esbuild does not inline it back. **app.js fell from 184,721 to 159,352
+bytes gzipped.** A production `/app` load never requests it — verified in the
+browser. It is served stale-while-revalidate like `/app.js` (it has no
+content hash, so `cache-first` would pin a visitor to their first demo build)
+and is not precached.
+
 **Scoped re-solve (P9-6).** `POST /api/v1/rms/resolve { routineId, scope,
 preview?, fingerprint? }` recalculates one teacher, section, room or day.
 There is no second solver: `RmsSolver` places `periodsPerWeek −

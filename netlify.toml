@@ -119,6 +119,14 @@
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
 
+# B-109: the demo bundle, split out of app.js. Unhashed like the two above,
+# so it gets the same revalidation — a hard-cached copy would pin a visitor
+# to whichever demo build their browser downloaded first.
+[[headers]]
+  for = "/demo.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
 [[headers]]
   for = "/*"
   [headers.values]

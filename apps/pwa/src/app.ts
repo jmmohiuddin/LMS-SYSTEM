@@ -13,7 +13,10 @@ import { SyncEngine } from '../../../packages/offline/src/sync-engine.ts';
 import { AttendanceScreen } from './attendance-screen.ts';
 import { FetchTransport } from './transport.ts';
 import { Auth } from './auth.ts';
-import { DemoAuth } from './demo.ts';
+// B-109. TYPE only — erased at compile time, so `demo.ts` and its 94 kB of
+// sample data do not enter this bundle. The class arrives at runtime from
+// `/demo.js`, and only when a demo visitor asks for it.
+import type { DemoAuth as DemoAuthClass } from './demo.ts';
 import { LoginView } from './login-view.ts';
 import { Shell, type ShellRoute } from './shell.ts';
 import { RosterView } from './roster-view.ts';
@@ -30,6 +33,7 @@ import { RoutineEditorView } from './routine-editor-view.ts';
 import { TeachingAssignmentsView } from './teaching-assignments-view.ts';
 import { RoutineSetupView } from './routine-setup-view.ts';
 import { RoutineGenerateView } from './routine-generate-view.ts';
+import { RoutinePublishView } from './routine-publish-view.ts';
 import { SubjectChoiceView } from './subject-choice-view.ts';
 import { ClassPerfView } from './class-perf-view.ts';
 import { ImportView } from './import-view.ts';
@@ -369,6 +373,24 @@ function dashboardFor(role: string): DashCards {
   }
 }
 
+/**
+ * Fetch the demo bundle. Called on exactly one path: `?demo=1` or a demo
+ * surface. (B-109)
+ *
+ * The specifier is a `string`-typed constant rather than a literal so that
+ * neither TypeScript nor esbuild resolves it at build time — `/demo.js` is
+ * also listed in the app build's `external`, and the two together are what
+ * keep the module out of `app.js`.
+ *
+ * A normal `/app` load never reaches this line, so it issues no request.
+ */
+const DEMO_BUNDLE: string = '/demo.js';
+
+async function loadDemoAuth(): Promise<new () => DemoAuthClass> {
+  const mod = await import(DEMO_BUNDLE) as { DemoAuth: new () => DemoAuthClass };
+  return mod.DemoAuth;
+}
+
 async function main() {
   const rootEl = document.getElementById('root');
   if (!rootEl) return;
@@ -397,7 +419,7 @@ async function main() {
   // existed to avoid does not exist.
   const realAuth = new Auth({ apiBase, deviceId: deviceId('d') });
   const demoMode = params.get('demo') === '1' || isDemoSurface();
-  const auth = demoMode ? new DemoAuth() : realAuth;
+  const auth = demoMode ? new (await loadDemoAuth())() : realAuth;
   // F-1503. One tracker for the session; flushed on boot (draining
   // whatever a previous offline session queued) and after login.
   const tracker = new Tracker({ auth });
@@ -629,6 +651,7 @@ async function main() {
               { path: 'rooms', glyph: 'layers', titleBn: 'কক্ষ ব্যবস্থাপনা', subtitleBn: 'শ্রেণিকক্ষ, ল্যাব ও ধারণক্ষমতা' },
               { path: 'routinesetup', glyph: 'check-square', titleBn: 'রুটিন তৈরির প্রস্তুতি', subtitleBn: 'কী কী বাকি আছে — এক নজরে' },
               { path: 'routinegenerate', glyph: 'clock', titleBn: 'রুটিন তৈরি করুন', subtitleBn: 'পুরো প্রতিষ্ঠানের রুটিন — এক ধাপে' },
+              { path: 'routinepublish', glyph: 'check-square', titleBn: 'রুটিন প্রকাশ', subtitleBn: 'দেখে নিন, তারপর সবার জন্য চালু করুন' },
               { path: 'teachingassignments', glyph: 'users', titleBn: 'কে কোন বিষয় পড়ান', subtitleBn: 'রুটিন তৈরির আগের সবচেয়ে জরুরি ধাপ' },
               { path: 'feestructures', glyph: 'percent', titleBn: 'ফি নির্ধারণ', subtitleBn: 'কোন ফি কত — মাসিক বিলের ভিত্তি' },
               { path: 'exams', glyph: 'clipboard', titleBn: 'পরীক্ষা ব্যবস্থাপনা', subtitleBn: 'পরীক্ষা তৈরি — নম্বর ও ফলাফলের ভিত্তি' },
@@ -951,6 +974,22 @@ async function main() {
         hidden: true,
         mount: (container) => {
           new RoutineGenerateView({
+            root: container, doc: document, auth,
+            onNavigate: (path) => { location.hash = `#/${path}`; },
+          });
+        },
+      },
+      {
+        // P9-7. DRAFT -> REVIEW -> PUBLISHED. The review is a read of
+        // `publish-gate.ts`, which is also what the publish endpoint
+        // enforces — so the screen cannot say "ready" about a routine the
+        // server would refuse.
+        path: 'routinepublish',
+        labelBn: 'রুটিন প্রকাশ',
+        glyph: 'check-square',
+        hidden: true,
+        mount: (container) => {
+          new RoutinePublishView({
             root: container, doc: document, auth,
             onNavigate: (path) => { location.hash = `#/${path}`; },
           });

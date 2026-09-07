@@ -112,6 +112,10 @@ export type AuditAction =
   // instruction; the record needs the scope they chose, not only the rows.
   | 'rms.routine.resolve'
   | 'rms.routine.publish'
+  // P9-7. The DRAFT -> REVIEW -> PUBLISHED lifecycle: who handed the
+  // timetable to the head, and who handed it back.
+  | 'rms.routine.submit'
+  | 'rms.routine.withdraw'
   // P-writers/B-48. Money taken at the counter. The only receipt writer before
   // this was the MFS webhook, and POST /finance/pay is kill-switched.
   | 'finance.payment.record'

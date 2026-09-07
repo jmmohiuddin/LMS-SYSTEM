@@ -52,6 +52,7 @@
     "apps/pwa/test/push-ui.test.ts",
     "apps/pwa/test/routine-editor-lock-undo.test.ts",
     "apps/pwa/test/routine-generate-view.test.ts",
+    "apps/pwa/test/routine-publish-view.test.ts",
     "apps/pwa/test/routine-setup-view.test.ts",
     "apps/pwa/test/shell-desktop.test.ts",
     "apps/pwa/test/shell-tabs.test.ts",

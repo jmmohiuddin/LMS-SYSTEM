@@ -1105,6 +1105,27 @@ page names its class and lists the sections on it. `board=1` is the
 notice-board sheet: the same grid, larger type, and a cap that knows a 22%
 larger face costs 45% more page.
 
+**Sized in POINTS, not px** (2026-09-08). Chrome prints CSS at 96dpi, so
+1px = 0.75pt and the first version's `font-size:11.5px` was **8.6pt** on A4 —
+the teacher 7.9pt, the clock 7.1pt, 96% of every character below 10pt.
+Subject is now 11.25pt, teacher 10.25pt, period 11.5pt, clock 10.25pt, day
+header 12.5pt, class heading 16.5pt. **No routine content prints below 10pt**;
+the 9pt residue is the page footer. A regression test reads those off the
+shipped CSS in points.
+
+Two findings came out of that work. `white-space:nowrap` had been dropped from
+the period column, so every row's HEADER wrapped to four lines and set the
+height of the whole grid — restoring it took a class page from 225mm to 121mm.
+And with nowrap a narrow column CLIPS rather than wraps: the sheet printed
+`সকাল ৭:৩০–৮:` with the rest outside the column, which no measurement caught
+because clipping is not overflow. Only looking at the page did.
+
+**Every sheet is landscape**, including section, teacher and room. A week is
+six columns; portrait A4 gives ~30mm a day, which held a lesson at 8.6pt and
+holds a third of one at 11.25pt — a portrait room sheet measured 303mm on a
+297mm page. And **one section a page**: two need 24.4mm a row against 18mm
+available, so the booklet splits at section boundaries rather than compress.
+
 **Verified by rasterisation** (headless Chrome → PDF → PyMuPDF, both already
 on the machine; nothing added to the repo). One document page is one sheet of
 A4 on all 24 sheets — twenty across four benchmark profiles, four more across

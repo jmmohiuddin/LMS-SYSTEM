@@ -1752,3 +1752,11 @@ asserted the screen's clock. One now does, and one asserts the two use the
 same functions. The accessible label carries the same ordinal and clock as the
 visible column — it used to carry `formatCount(period_no)`, so a screen-reader
 user heard the off-by-one everyone else had already been spared.
+
+**Print typography is independent of the screen (§N).** The sheet is sized in
+POINTS for A4 — subject 11.25pt, teacher 10.25pt, clock 10.25pt, day header
+12.5pt, class heading 16.5pt — with a 10pt floor for anything a person reads
+off the grid. The screen keeps its own responsive scale; the same data, two
+presentations. The document's Bangla face is now Hind Siliguri, matching
+`--font-bn` on screen, where the document stack had been Noto Sans Bengali
+with Hind Siliguri absent entirely.

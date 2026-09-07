@@ -202,11 +202,12 @@ describe('P9-9 — the printed routine sheet', () => {
       [...b.bodyHtml.matchAll(/rt-line rt-s(\d)/g)].map((m) => m[1]),
       ['0', '1', '2', '3']);
     assert.match(b.bodyHtml, /<span class="rt-sec">ক<\/span>/);
-    assert.match(b.bodyHtml, /<b>গণিত<\/b>/);
-    assert.match(b.bodyHtml, /<span class="rt-who">রফিক স্যার<\/span>/);
-    // The room is NOT here, and that is the measurement talking: with it
-    // every line wraps to two and one section fits a page instead of two.
-    assert.doesNotMatch(b.bodyHtml, /১০১ নম্বর কক্ষ/);
+    // §D. Subject on its own line, who and where beneath it.
+    assert.match(b.bodyHtml, /<b class="rt-sub">গণিত<\/b>/);
+    assert.match(b.bodyHtml,
+      /<span class="rt-who">রফিক স্যার · ১০১ নম্বর কক্ষ<\/span>/);
+    // The room is back: the cell is two lines by design at §B's floor, so it
+    // rides the second beside the teacher and costs nothing structural.
   });
 
   test('§1/§10 — the tint is the SECOND signal, and every one is near-neutral', () => {
@@ -289,25 +290,126 @@ describe('P9-9 — the printed routine sheet', () => {
 
   /* ────────────────────── §12/§13 paper and pages ────────────────────── */
 
-  test('density and orientation are the SAME decision, not two lists', () => {
+  test('§B — every sheet is landscape, because a week is six columns', () => {
+    // Density still decides what a CELL holds. It no longer decides the
+    // paper: at a 10pt floor a portrait day column is ~30mm and holds a
+    // third of a lesson. Measured — a portrait room sheet came out 303mm on
+    // a 297mm page with every cell wrapped to three lines.
     for (const s of ['institution', 'class', 'group', 'stream'] as RoutineScope[]) {
       assert.equal(routineIsDense(s), true, s);
-      assert.equal(routineOrientation(s), 'landscape', s);
     }
     for (const s of ['section', 'teacher', 'room', 'student'] as RoutineScope[]) {
       assert.equal(routineIsDense(s), false, s);
-      assert.equal(routineOrientation(s), 'portrait', s);
+    }
+    for (const s of ['institution', 'class', 'group', 'stream',
+                     'section', 'teacher', 'room', 'student'] as RoutineScope[]) {
+      assert.equal(routineOrientation(s), 'landscape', s);
     }
   });
 
-  test('§12 — the page box is A4 in the orientation chosen', () => {
-    const p = routineSheetCss('portrait');
+  /* ───────────────── §A/§B physical type on the paper ────────────────── */
+
+  /**
+   * The size a RULER would read off the printed page.
+   *
+   * Chrome prints CSS at 96dpi, so 1px = 0.75pt. The selector is looked up by
+   * string rather than by regex on purpose — a `.` in a class name is a regex
+   * metacharacter, and escaping it through two layers of quoting is how the
+   * first version of this helper silently matched nothing and passed.
+   */
+  const ptOf = (css: string, sel: string): number => {
+    const i = css.indexOf(sel + '{');
+    assert.ok(i >= 0, `no rule for ${sel}`);
+    const rule = css.slice(i, css.indexOf('}', i));
+    const m = rule.match(/font-size:([\d.]+)px/);
+    assert.ok(m, `${sel} sets no font-size`);
+    return Number(m![1]) * 0.75;
+  };
+
+  test('THE PRINT ONE — no routine content prints below 10pt', () => {
+    // The first version set `font-size:11.5px`, which is 8.6pt on A4 — the
+    // teacher 7.9pt, the clock 7.1pt, the word "পিরিয়ড" 6pt. Measured from
+    // the rendered PDF, 96% of every character on a class sheet fell below
+    // 10pt. It was structurally right and physically unreadable.
+    //
+    // This is the floor, in the unit a ruler measures, read off the CSS the
+    // document actually ships — so a px edit that undoes the phase fails here.
+    for (const board of [false, true]) {
+      const css = routineSheetCss('landscape', board);
+      for (const sel of ['.rt-grid', '.rt-no', '.rt-time', '.rt-sec',
+                         '.rt-who', '.rt-band-name', '.doc-note']) {
+        const pt = ptOf(css, sel);
+        assert.ok(pt >= 10,
+          `${sel} is ${pt}pt on paper (board=${board}) — below the 10pt floor`);
+      }
+      assert.ok(ptOf(css, '.rt-grid thead th') >= 12, 'day header');
+      assert.ok(ptOf(css, '.doc-title') >= 16, 'class heading');
+      assert.ok(ptOf(css, '.doc-org') >= 18, 'institution name');
+    }
+  });
+
+  test('§B — the sizes step down in the order §9 asks for', () => {
+    const css = routineSheetCss('landscape');
+    const pt = (sel: string) => ptOf(css, sel);
+    assert.ok(pt('.doc-org') > pt('.doc-title'), 'institution over class');
+    assert.ok(pt('.doc-title') > pt('.rt-grid thead th'), 'class over day');
+    assert.ok(pt('.rt-grid thead th') > pt('.rt-no'), 'day over period');
+    assert.ok(pt('.rt-no') > pt('.rt-grid'), 'period over subject');
+    assert.ok(pt('.rt-grid') > pt('.rt-who'), 'subject over teacher');
+    assert.ok(pt('.rt-who') >= pt('.rt-time'), 'teacher at or over clock');
+  });
+
+  test('§A — the period column is wide enough that its clock is never clipped', () => {
+    // `white-space:nowrap` is what stops the row header wrapping to four
+    // lines and doubling every row on the sheet. It also means a column too
+    // narrow CLIPS instead of wrapping — and clipping is not overflow, so no
+    // measurement catches it. Only looking at the rendered page did: the
+    // sheet read "সকাল ৭:৩০–৮:" with the rest outside the column.
+    for (const board of [false, true]) {
+      const css = routineSheetCss('landscape', board);
+      assert.match(css, /\.rt-time\{[^}]*white-space:nowrap/);
+      assert.match(css, /\.rt-no\{[^}]*white-space:nowrap/);
+      const colMm = Number(css.match(/\.rt-period-col\{width:([\d.]+)mm/)![1]);
+      const clockPt = ptOf(css, '.rt-time');
+      // Not a text-metrics model — modelling Bangla advance widths from a
+      // guessed em fraction is how the first version of this assertion got a
+      // number that contradicted the rendered page. This is the RATIO that
+      // was measured to work: 34mm of column to a 10.25pt clock, and 38mm to
+      // 11.5pt, verified clip-free across 24 rasterised sheets. It guards the
+      // real invariant, which is that the column never shrinks relative to
+      // the clock it has to hold.
+      assert.ok(colMm / clockPt >= 3.28,
+        `period column ${colMm}mm is too narrow for a ${clockPt}pt clock `
+        + `(ratio ${(colMm / clockPt).toFixed(2)}, needs 3.28)`);
+    }
+  });
+
+  test('§M — the board sheet is a different document, not the reading copy enlarged', () => {
+    const read = routineSheetCss('landscape', false);
+    const board = routineSheetCss('landscape', true);
+    assert.ok(ptOf(board, '.rt-grid') > ptOf(read, '.rt-grid'),
+      'the subject is larger on the wall');
+    // …and it carries ONE line, not two: a two-line cell at board size needs
+    // 18.2mm a row against 16.3mm available on an eight-period day, so
+    // keeping the teacher forces the TYPE down and defeats the mode.
+    const b = buildRoutineSheet(data({
+      scopeKind: 'class', board: true,
+      lessons: [lesson({ sectionLabel: 'ক' })],
+    }));
+    assert.match(b.bodyHtml, /<b class="rt-sub">গণিত<\/b>/);
+    assert.doesNotMatch(b.bodyHtml, /রফিক স্যার/, 'no teacher on the wall copy');
+    assert.doesNotMatch(b.bodyHtml, /১০১ নম্বর কক্ষ/, 'and no room');
+    // The reading copy, a step closer, still has both.
+    const r = buildRoutineSheet(data({
+      scopeKind: 'class', lessons: [lesson({ sectionLabel: 'ক' })] }));
+    assert.match(r.bodyHtml, /রফিক স্যার · ১০১ নম্বর কক্ষ/);
+  });
+
+  test('§12 — the page box is A4 landscape, and the doc box follows it', () => {
     const l = routineSheetCss('landscape');
-    assert.match(p, /@page\{size:A4 portrait/);
     assert.match(l, /@page\{size:A4 landscape/);
     // Without this the letterhead keeps a 210mm column in a 297mm sheet.
     assert.match(l, /\.doc\{max-width:297mm;min-height:210mm/);
-    assert.doesNotMatch(p, /max-width:297mm/);
   });
 
   test('§6 — the rules that keep a grid readable across pages are present', () => {

@@ -154,46 +154,58 @@ const MAX_BULK = 120;
 /**
  * How much of a landscape A4 the grid gets, and what one section costs in it.
  *
- * MEASURED, by printing the real document to a real PDF with headless Chrome
- * and reading element heights back out of the rendered page. The first attempt
- * at this phase asserted a page box of 297mm x 210mm from computed style and
- * was satisfied; the rasterisation showed EVERY class page spilling onto a
- * second and third sheet, because the letterhead, the title row and R-5's
- * signature block were spending 76mm before an hour was drawn. Trimmed, and
- * with the meta laid out in a row instead of a stack, they spend 48mm.
+ * MEASURED on the rendered page, re-measured whenever the type changes — and
+ * it has changed twice. The numbers below are from the §B typography, where
+ * the subject sets at 11.25pt and the teacher at 10.75pt:
  *
- *   GRID_MM       162mm is what is left of the 210mm page.
+ *   GRID_MM       158mm of the 210mm page, once the padding (14mm), the
+ *                 letterhead (11.1mm), the title row (7.9mm), the section
+ *                 legend (6.7mm) and the signature footer (14.3mm) have taken
+ *                 theirs. Bigger type costs at the top of the page too.
  *
- *   SECTION_MM    A section's line costs ~5.8mm where the subject fits the
- *                 column and ~9.8mm where it wraps — and the names that wrap
- *                 are the real ones: `বাংলাদেশ ও বিশ্বপরিচয়`, `তথ্য ও যোগাযোগ
- *                 প্রযুক্তি`. 8mm is that spread, weighted toward the wrap,
- *                 because a page that fits only when no subject is long is a
- *                 page that spills at the first madrasa.
+ *   SECTION_MM    A section's two-line cell costs 12.2mm where the subject
+ *                 fits the column and 22.3mm where it wraps — measured, on
+ *                 rows carrying `বাংলাদেশ ও বিশ্বপরিচয়` and
+ *                 `তথ্য ও যোগাযোগ প্রযুক্তি`. 15mm is that spread weighted
+ *                 toward the wrap, because a page that fits only when no
+ *                 subject is long is a page that spills at the first madrasa.
  *
- * A WARNING ABOUT MEASURING THIS. Headless Chrome lays out at 800px unless
- * told otherwise, which constrains `.doc` to ~212mm rather than 297mm and
- * wraps almost every cell. Measured that way a section appears to cost 11mm
- * and the cap comes out at 1 — one page per section, which is the booklet
- * this phase set out to replace. Measure with `--window-size=1123,794`.
+ * WHAT THIS ARITHMETIC SAYS, and it is worth saying out loud: at a 10pt
+ * floor, a landscape A4 holds the week of ONE section. Seven teaching rows
+ * at 18.3mm each is 128mm, and two sections need 24.4mm a row before any
+ * wrapping. There is no arrangement of a 297x210 page that carries a
+ * four-section class at a size a person can read from a metre away — the
+ * previous version fitted two only by setting the teacher at 7.9pt.
  *
- * The cap divides one by the other, per TEACHING row, because what fills a
- * page is `rows x sections` and schools differ in the first: a madrasa
- * running ten hours cannot fit the sections a primary school running five
- * can. A constant would have been right for one of them.
+ * So the booklet is one page per section, ordered by class, each page naming
+ * its class and its section. That is §H's instruction taken literally:
+ * readable output that splits at section boundaries, rather than a one-page
+ * sheet nobody can read.
  */
-const GRID_MM = 162;
-const SECTION_MM = 8;
-const HEAD_AND_BANDS_MM = 20;
+const GRID_MM = 158;
+const SECTION_MM = 15;
+const HEAD_AND_BANDS_MM = 24;
 /**
  * What a section costs on §9's notice-board sheet, relative to the reading
- * copy. The type is 22% larger, and the cost is 45% larger — because a wider
- * glyph does not just take more room, it takes a whole extra LINE the moment
- * a subject name stops fitting the column, and the names that stop fitting
- * are the common ones. Scaling by the type ratio alone was tried and the
- * rasterisation caught it: 10 pages of board sheet came out as 13.
+ * copy — and it is LESS, which is the opposite of what it was.
+ *
+ * The board sheet carries the subject and nothing else, so its cell is one
+ * line where the reading copy's is two. Measured, that is ~8mm a section
+ * against 15mm, even with the type up at 16pt. Bigger letters, cheaper rows,
+ * because the row is paying for one line instead of two.
+ *
+ * Scaling by the type RATIO was tried twice and the rasterisation caught it
+ * both times — first at 1.25 (10 board pages printed as 13), then at 1.45.
+ * The lesson is that a mode which changes what is IN the cell cannot be
+ * modelled as the same cell at a different size.
+ *
+ * 0.72 puts every board page at ONE section. Two fitted a seven-period day
+ * on one seeding of the benchmark and spilled on the next, because which
+ * subjects land where decides how many cells wrap — a bound that holds only
+ * for a favourable draw is not a bound. A notice-board sheet is one section
+ * a page, which is also the only thing a wall can usefully carry.
  */
-const BOARD_SCALE = 1.45;
+const BOARD_SCALE = 0.72;
 
 const MONTHS_BN = [
   'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
@@ -416,7 +428,7 @@ async function routineSheet(
     };
 
     if (!booklet) {
-      specs.push({ ...common, scopeTitle: t.titleBn, lessons: mine });
+      specs.push({ ...common, scopeTitle: t.titleBn, lessons: mine, board });
       continue;
     }
 
@@ -448,7 +460,7 @@ async function routineSheet(
           // The page stays a CLASS page even when a class needs several of
           // them — the title says the class, and the sheet's own caption says
           // which sections are on this one.
-          ...common, scopeKind: 'class', scopeTitle: classBn,
+          ...common, scopeKind: 'class', scopeTitle: classBn, board,
           lessons: lessons.filter((l) => chunk.has(l.sectionLabel ?? '')),
         });
       }

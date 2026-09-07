@@ -134,7 +134,15 @@ export function brandedDocumentCss(branding: Branding): string {
   const watermark = safeAsset('watermarkUrl', branding.watermarkUrl);
   return [
     '*{box-sizing:border-box}',
-    'body{margin:0;font-family:"Noto Sans Bengali",system-ui,sans-serif;color:#1f2937;background:#fff}',
+    // §C. Hind Siliguri leads, as it does on screen. Both are `local()`
+    // only — no webfont is shipped — so the face a school actually gets is
+    // whichever of these its own machine has, and a machine with neither
+    // falls to the system Bangla face (Nirmala UI on Windows). That is the
+    // same bargain B-108 §16 documented for the numeric face, and it is why
+    // the PDFs measured in this repo embed NirmalaUI: this machine has
+    // neither installed. The ORDER is what this line fixes.
+    'body{margin:0;font-family:"Hind Siliguri","Noto Sans Bengali",system-ui,sans-serif;'
+      + 'color:#1f2937;background:#fff}',
     '.doc{position:relative;max-width:210mm;min-height:297mm;margin:0 auto;padding:16mm 14mm;background:#fff}',
     watermark
       ? '.doc-watermark{position:absolute;inset:0;background-image:url("' + watermark + '");'

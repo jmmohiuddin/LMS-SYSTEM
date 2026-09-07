@@ -1905,3 +1905,14 @@ it exists for — made that exam permanently unmarkable (`B-68`), and four
 tests asserted that this was correct. "Backend complete" has not once meant
 "a school can do it", and a green suite has not once meant "this works".
 
+*Typography re-derived from the paper, 2026-09-08.* Sizes are declared in
+POINTS now: Chrome prints CSS at 96dpi so 1px = 0.75pt, and the sheet's
+`11.5px` was **8.6pt** with the teacher at 7.9pt — 96% of a class sheet below
+10pt, measured from the rendered PDF. Subject 11.25pt, teacher 10.25pt, clock
+10.25pt, day header 12.5pt, and a test reads them off the shipped CSS. Two
+consequences follow from the floor and both are arithmetic rather than taste:
+**every sheet is landscape** (a portrait day column is ~30mm and holds a third
+of a lesson at 11.25pt), and **a landscape A4 holds one section's week**, so
+the booklet splits at section boundaries. The notice-board copy is a different
+document, not the reading copy enlarged — it carries the subject alone, which
+is why it can be larger at all.

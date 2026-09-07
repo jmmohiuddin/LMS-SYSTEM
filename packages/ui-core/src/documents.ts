@@ -635,6 +635,18 @@ export interface RoutineSheetData {
   /** §12 — "পৃষ্ঠা ৩ / ৭" at the foot. Omitted for a single-page sheet. */
   pageNo?: number;
   pageCount?: number;
+  /**
+   * §9/§K — the notice-board sheet, read from a metre or two away.
+   *
+   * It is a DIFFERENT document, not the reading copy enlarged. Measured: a
+   * two-line cell carrying subject and teacher needs 18.2mm a row, and an
+   * eight-period week then wants 180mm of a 156mm budget — so keeping the
+   * teacher forces the type DOWN to about 12pt, at which nothing on the
+   * sheet is legible at two metres and the mode has defeated itself. The
+   * subject alone, set large, is what a person at that distance reads; the
+   * teacher and the room are on the reading copy, a step closer.
+   */
+  board?: boolean;
 }
 
 export type RoutineScope =
@@ -676,30 +688,40 @@ export function routineIsDense(scope: RoutineScope): boolean {
  * is what a one-line lesson needs. §14 asks for a real `@page` size and this
  * is where it is decided.
  */
-export function routineOrientation(scope: RoutineScope): 'portrait' | 'landscape' {
-  return routineIsDense(scope) ? 'landscape' : 'portrait';
+export function routineOrientation(_scope: RoutineScope): 'portrait' | 'landscape' {
+  // EVERY routine sheet is landscape, and this is a §B consequence rather
+  // than a preference. A week is six columns — the hour plus five days — and
+  // the paper has to give each day enough width that a subject and a teacher
+  // do not wrap. Portrait A4 leaves 178mm for that, so ~30mm a day; at the
+  // 8.6pt this document used to set, 30mm held a lesson. At 11.25pt it holds
+  // a third of one, and the measurement is brutal: a portrait room sheet came
+  // out 303mm on a 297mm page, every cell wrapped to three lines.
+  //
+  // Landscape leaves 279mm, so ~48mm a day, and the same sheet fits.
+  // Portrait was right for small type and is wrong for readable type.
+  return 'landscape';
 }
 
 /**
  * What a cell need not carry: what the page is already about, and — on a
  * dense sheet — what there is no width for.
  *
- * The second half is measured. A landscape A4 gives a day column ~50mm, and a
- * dense cell spends it on one line per section. `বাংলাদেশ ও বিশ্বপরিচয়`
- * with a teacher's name already fills it; adding the room wraps EVERY line to
- * a second, and a second line costs ~3.9mm on every row of every page. The
- * room is on the section's own sheet, on the teacher's, and on the room's —
- * three places a person can look. A class notice board answers a different
- * question: which subject, and who is taking it.
- *
- * Measured on the small profile, per section per row:
- *   subject + teacher + room   11.2mm   -> 1 section a page
- *   subject + teacher           8.4mm   -> 2 sections a page
+ * Only the page it is about, now. The room was ALSO dropped from dense
+ * sheets for a while, because a dense cell was one line and the room forced
+ * every one of them to wrap into a second — 11.2mm a section against 8.4mm.
+ * That trade bought a section a page and it is no longer available to buy:
+ * §B's 10pt floor makes the cell two lines by design, so the room rides the
+ * second line beside the teacher and costs nothing structural. §D names it
+ * as part of the cell's hierarchy, and a school reading a class sheet on a
+ * door does want to know which room.
  */
-function omit(scope: RoutineScope): { teacher: boolean; room: boolean; section: boolean } {
+function omit(
+  scope: RoutineScope, board = false,
+): { teacher: boolean; room: boolean; section: boolean } {
+  const far = board && routineIsDense(scope);
   return {
-    teacher: scope === 'teacher',
-    room: scope === 'room' || routineIsDense(scope),
+    teacher: scope === 'teacher' || far,
+    room: scope === 'room' || far,
     section: scope === 'section' || scope === 'student',
   };
 }
@@ -753,7 +775,7 @@ function sectionKeys(labels: string[], locale: Locale): Map<string, string> {
 
 export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): DocumentBody {
   const bn = locale === 'bn';
-  const skip = omit(d.scopeKind);
+  const skip = omit(d.scopeKind, d.board);
   const dense = routineIsDense(d.scopeKind);
 
   const byCell = new Map<string, RoutineLesson[]>();
@@ -821,10 +843,16 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
         if (dense && !skip.section) {
           const label = l.sectionLabel ?? '';
           const t = tintOf.get(label);
+          // §D. Subject on its own line, who and where beneath it. The two
+          // used to run together and wrap wherever the column ran out, which
+          // put a teacher's name halfway up a subject at unpredictable
+          // points. A deliberate second line is both readable and a height
+          // the page budget can be computed from.
           return `<div class="rt-line${t === undefined ? '' : ` rt-s${t}`}">`
             + `<span class="rt-sec">${escapeHtml(keys.get(label) ?? '·')}</span>`
-            + `<span class="rt-what">${subject}`
-            + (who ? ` <span class="rt-who">${who}</span>` : '') + split
+            + `<span class="rt-what"><b class="rt-sub">${escapeHtml(
+                l.subjectBn ?? (bn ? 'ক্লাস' : 'Class'))}</b>${split}`
+            + (who ? `<span class="rt-who">${who}</span>` : '')
             + '</span></div>';
         }
         // One lesson in the cell: it can afford a second line.
@@ -950,52 +978,90 @@ export function routineSheetCss(
 ): string {
   // The numeric face, for the spans whose content is a figure or a clock.
   const NUM = 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif';
-  const s = board
-    ? { grid: 14, no: 18, pd: 10, time: 12.5, who: 12.5, band: 16,
-        pad: '4px 5px', col: 30, sec: 7, chip: 11 }
-    : { grid: 11.5, no: 14, pd: 8, time: 9.5, who: 10.5, band: 13,
-        pad: '3px 4px', col: 24, sec: 5, chip: 9 };
+
+  // ── §A/§B. Sizes are declared in POINTS, because points are what a ruler
+  // on the paper measures. Chrome prints CSS at 96dpi, so
+  //
+  //     1 CSS px = 1/96 inch = 0.75pt        px = pt / 0.75
+  //
+  // and the first version's `font-size:11.5px` was **8.6pt** on A4 — with
+  // the teacher at 7.9pt, the clock at 7.1pt and the word "পিরিয়ড" at 6pt.
+  // Measured from the rendered PDF, 96% of every character on a class sheet
+  // fell below 10pt. It was structurally right and physically unreadable.
+  //
+  // The floor is 10pt for anything a person reads off the grid. The footer
+  // and the section legend sit just under it deliberately: they are the
+  // sheet's own metadata, not the routine.
+  const PT = board
+    // Sized by measurement, twice down from where it started. 16pt was
+    // 20.8mm over — at that size even a subject ALONE wraps in a 48mm day
+    // column. 13.5pt fitted a seven-period day and was 15mm over an
+    // eight-period one, which most secondary schools run.
+    //
+    // So the honest finding is that an eight-period week does not fit one
+    // landscape A4 at a size meaningfully larger than the reading copy, and
+    // what makes this sheet scannable from a distance is not the type — it
+    // is that a cell holds ONE line, the subject, where the reading copy
+    // holds two. A bigger board sheet needs A3 or two pages, and neither is
+    // something to decide by quietly letting the content overflow.
+    ? { org: 23, title: 19, day: 14, no: 13.5, pd: 10.5, time: 11.5,
+        grid: 13.5, who: 11, band: 16, legend: 10.5, foot: 10 }
+    : { org: 19.5, title: 16.5, day: 12.5, no: 11.5, pd: 9, time: 10.25,
+        grid: 11.25, who: 10.25, band: 13.5, legend: 10, foot: 9 };
+  const px = (pt: number): number => Math.round((pt / 0.75) * 100) / 100;
+  const s = {
+    grid: px(PT.grid), no: px(PT.no), pd: px(PT.pd), time: px(PT.time),
+    who: px(PT.who), band: px(PT.band), legend: px(PT.legend),
+    foot: px(PT.foot), chip: px(PT.who),
+    pad: board ? '4px 6px' : '2px 5px',
+    col: board ? 38 : 34,
+    sec: board ? 8 : 7,
+  };
 
   return [
     `@page{size:A4 ${orientation};margin:0}`,
     // Landscape needs the letterhead's page box to follow it, or the document
     // keeps a 210mm column in the middle of a 297mm sheet.
-    orientation === 'landscape'
-      ? '.doc{max-width:297mm;min-height:210mm;padding:9mm 9mm}'
-      : '',
+    '.doc{max-width:297mm;min-height:210mm;padding:7mm 9mm}',
     // §8. A landscape A4 is 210mm tall and the letterhead, the title row and
     // the signature were spending 76mm of it before a single hour was drawn.
     // These overrides are the routine sheet's alone — a receipt and a
     // transfer certificate are portrait and have the room. Every one was
     // sized against a rasterised page, not chosen for looks.
-    orientation === 'landscape'
-      ? '.doc-head{padding-bottom:5px}.doc-logo{width:42px;height:42px}'
-        + '.doc-org{font-size:16px}.doc-addr,.doc-contact{font-size:10px}'
-        + '.doc-title-row{margin:7px 0 5px;align-items:baseline}'
-        + '.doc-title{font-size:15px}'
-        + '.doc-meta{font-size:10px;display:flex;flex-wrap:wrap;gap:2px 12px}'
-        + '.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}'
-      : '',
+    // The SIZES apply to both papers — a portrait sheet kept R-5's 11px meta,
+    // which is 8.25pt, and had no reason to. Only the space-SAVING rules
+    // below are landscape-only, because landscape is where the vertical
+    // budget is scarce.
+    `.doc-org{font-size:${px(PT.org)}px}`
+      + `.doc-addr,.doc-contact{font-size:${px(PT.foot)}px}`
+      + `.doc-title{font-size:${px(PT.title)}px}`
+      + `.doc-meta{font-size:${px(PT.legend)}px}`,
+    '.doc-head{padding-bottom:5px}.doc-logo{width:46px;height:46px}'
+      + '.doc-title-row{margin:5px 0 4px;align-items:baseline}'
+      + '.doc-meta{display:flex;flex-wrap:wrap;gap:2px 12px}'
+      + '.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}',
     // §2. A heavier rule around the outside and under the day header, so the
     // grid reads as a grid from across a corridor rather than as grey text.
     `.rt-grid{table-layout:fixed;font-size:${s.grid}px;border:1.5px solid #374151}`,
     `.rt-grid th,.rt-grid td{vertical-align:top;padding:${s.pad}}`,
-    '.rt-grid thead th{border-bottom:1.5px solid #374151;text-align:center;'
-      + 'font-size:1.05em;letter-spacing:.01em}',
+    '.rt-grid thead th{border-bottom:1.5px solid #374151;text-align:center;padding:3px 5px;'
+      + `font-size:${px(PT.day)}px;letter-spacing:.01em}`,
     `.rt-period-col{width:${s.col}mm}`,
     `.rt-period{width:${s.col}mm;background:#f3f4f6;text-align:center;`
       + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
     // §2/§3. The ordinal leads, the word "পিরিয়ড" follows it small, and the
     // clock sits under both. Three things, not one ambiguous number.
-    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.2;${NUM}}`,
+    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.2;`
+      + `white-space:nowrap;${NUM}}`,
     `.rt-pd{font-weight:400;font-size:${s.pd}px;color:#4b5563;margin-inline-start:3px;`
       + 'font-family:"Hind Siliguri",system-ui,sans-serif}',
-    `.rt-time{display:block;font-size:${s.time}px;color:#374151;line-height:1.25;${NUM}}`,
+    `.rt-time{display:block;font-size:${s.time}px;color:#374151;line-height:1.25;`
+      + `white-space:nowrap;${NUM}}`,
 
     // ── §4 the break band ──
     // Full width, ruled top and bottom, centred. This is the one row on the
     // sheet that is not a lesson and it must not look like one.
-    '.rt-band td{background:#e5e7eb;text-align:center;padding:5px 6px;'
+    '.rt-band td{background:#e5e7eb;text-align:center;padding:3px 6px;'
       + 'border-top:2px solid #374151;border-bottom:2px solid #374151;'
       + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
     `.rt-band-name{font-weight:700;font-size:${s.band}px;letter-spacing:.08em}`,
@@ -1003,7 +1069,7 @@ export function routineSheetCss(
 
     // ── the cell ──
     // A dense sheet: one line per section, tinted, chip first.
-    '.rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 2px;'
+    '.rt-line{display:flex;gap:3px;line-height:1.18;padding:0 2px;'
       + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
     '.rt-line+.rt-line{border-top:1px dotted #9ca3af;margin-top:1px;padding-top:2px}',
     // §5/§9. The chip: fixed width so the keys align into a column the eye can
@@ -1020,15 +1086,22 @@ export function routineSheetCss(
     '.rt-lesson{padding:1px 0;line-height:1.35}',
     '.rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}',
     `.rt-who{color:#374151;font-size:${s.who}px}`,
-    '.rt-lesson .rt-who{display:block}',
+    '.rt-lesson .rt-who,.rt-line .rt-who{display:block}',
     `.rt-line i,.rt-lesson i{font-size:${s.pd}px;color:#4b5563}`,
+    // §D. The chip must not compete with the subject: same size, lighter
+    // weight than the subject's bold, and a rule around it instead.
+    `.rt-sub{font-weight:700;font-size:${s.grid}px}`,
     '.rt-empty{color:#9ca3af;text-align:center}',
 
     // ── §1 the section tints ──
     ...SECTION_TINT.map((c, i) => `.rt-s${i}{background:${c}}`),
 
     // ── §5 the legend ──
-    `.rt-legend{margin:0 0 5px;font-size:${s.who}px;color:#1f2937;`
+    // R-5's `.doc-note` is 11.5px — 8.62pt — and it carries the sentence a
+    // two-shift teacher's sheet shows for the shift they do not teach. A
+    // sentence a person reads is not metadata.
+    `.doc-note{font-size:${s.grid}px}`,
+    `.rt-legend{margin:0 0 5px;font-size:${s.legend}px;color:#1f2937;`
       + 'display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px}',
     '.rt-legend-t{font-weight:700;color:#4b5563}',
     '.rt-legend-t::after{content:":"}',
@@ -1038,11 +1111,11 @@ export function routineSheetCss(
 
     // §12. Version, date and page x of y, at the foot of every page.
     '.rt-foot{display:flex;justify-content:space-between;align-items:flex-end;'
-      + `gap:12px;margin-top:5px;font-size:${s.time}px;color:#4b5563}`,
+      + `gap:12px;margin-top:5px;font-size:${s.foot}px;color:#4b5563}`,
     // The signature LINE: room to sign above it, the caption under it. ~11mm
     // against the block's ~30mm, which is most of what made a class page
     // spill onto a second sheet.
-    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 8 : 9}mm;`
+    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 3 : 6}mm;`
       + 'text-align:center;border-top:1px solid #374151;padding-top:3px;'
       + 'color:#1f2937;font-weight:600}',
 

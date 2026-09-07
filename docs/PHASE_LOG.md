@@ -14180,3 +14180,155 @@ values and have not been seen come out of a mono laser, and the 9mm page
 margin has not met a printer's own unprintable edge. This needs one office
 printer and one look, and no amount of further work in this environment can
 supply it. **NOT OBSERVED / EXTERNAL.**
+
+---
+
+# P9-9 PRINT TYPOGRAPHY — the size a ruler reads (2026-09-08)
+
+The layout was right and the type was too small. This phase measured how
+small, in the unit paper is measured in, and fixed it.
+
+## The conversion that made it arithmetic instead of opinion
+
+Chrome prints CSS at 96dpi, so **1 CSS px = 0.75pt**. That single line turns
+every size in this document from a guess into a number:
+
+| what | was | on paper | §B target |
+|---|---|---|---|
+| subject | 11.5px | **8.6pt** | 11–12pt |
+| teacher | 10.5px | **7.9pt** | 10.5–11pt |
+| clock | 9.5px | **7.1pt** | 10–10.5pt |
+| section chip | 9px | **6.75pt** | 10.5–11pt |
+| the word "পিরিয়ড" | 8px | **6.0pt** | — |
+
+Measured from the rendered PDF with PyMuPDF, which reports each drawn span's
+size in points: **96% of every character on a class sheet was below 10pt.**
+Sizes are now declared in POINTS in `routineSheetCss` and converted once.
+
+## The bug that was making every row twice as tall
+
+The type increase alone should have cost ~30% more page. It cost more than
+double, and the reason was not the type.
+
+`white-space:nowrap` had been on `.rt-time` since P9-9's first pass and was
+dropped by accident in the typography rewrite. Without it `সকাল ১০:২০–১০:৫৫`
+and `১ম পিরিয়ড` each wrapped inside the period column, so **every row's
+HEADER was four lines against the cell's two** — the row header, not the
+lesson, was setting the height of the entire grid.
+
+Restoring it took a class page from 225mm of grid to 121mm on a 159mm budget.
+Every sheet fitted immediately.
+
+Then a **visual** check caught what no measurement could: with nowrap, a
+column too narrow CLIPS rather than wraps, and the sheet was printing
+`সকাল ৭:৩০–৮:` with the rest outside the column. Clipping is not overflow —
+`overflow_pt` stayed 0 on all 24 sheets. Only looking at the page found it.
+The column went 26mm → 34mm, and a check now extracts every clock from every
+rendered PDF and asserts it matches `PART D:DD–D:DD` in full: **0 clipped**.
+
+## What the arithmetic then said about §H
+
+At a 10pt floor a landscape A4 holds the week of **one section**. Seven
+teaching rows at ~18mm is 128mm of a 134mm budget, and two sections need
+24.4mm a row before any subject wraps. There is no arrangement of 297×210
+that carries a four-section class readably — the previous version fitted two
+only by setting the teacher at 7.9pt.
+
+So the booklet is one page per section, ordered by class, each page naming its
+class and its section. That is §H taken literally: split at section
+boundaries rather than compress.
+
+**Portrait went with it.** A week is six columns; portrait A4 leaves ~30mm a
+day, which held a lesson at 8.6pt and holds a third of one at 11.25pt. A
+portrait room sheet measured **303mm on a 297mm page**, every cell wrapped to
+three lines. Every sheet is landscape now — a consequence of the floor, not a
+preference.
+
+## §M — the board sheet is a different document
+
+Sized by measurement, twice down from where it started. At 16pt even a
+subject ALONE wraps in a 48mm day column (20.8mm over). At 13.5pt a
+seven-period day fits and an eight-period one is 15mm over.
+
+The honest finding: **an eight-period week does not fit one landscape A4 at a
+size meaningfully larger than the reading copy.** What makes the wall copy
+scannable is not the type — it is that its cell holds ONE line, the subject,
+where the reading copy holds two. So the board sheet drops the teacher and
+the room (both a step away on the reading copy) and sets the subject at
+13.5pt against 11.25pt.
+
+`BOARD_SCALE` went from 1.45 to **0.72** — a board section costs LESS page
+than a reading-copy one, because the row pays for one line instead of two.
+Modelling a mode that changes what is IN the cell as the same cell at a
+different size was wrong twice, and the rasterisation caught it both times.
+
+## §J — physical calculation, measured from the rendered PDF
+
+Every sheet A4 landscape, **297×210mm**, one document page to one sheet on all
+28 rendered documents, no horizontal overflow anywhere.
+
+| profile | sections | institution | class | section | teacher | room | board |
+|---|---|---|---|---|---|---|---|
+| small | 20 | 20 pp · 900 kB | 4 | 1 | 1 | 1 | 20 pp |
+| medium | 40 | 40 pp · 1.8 MB | 4 | 1 | 1 | 1 | 40 pp |
+| large (2 shifts) | 80 | 80 pp · 3.7 MB | 8 | 2 | 2 | 2 | 80 pp |
+| college (2 shifts) | 120 | 120 pp · 5.5 MB | 30 | 2 | 2 | 2 | 120 pp |
+
+Reading copy: **smallest 9.0pt** (the page footer — metadata, not routine),
+largest 19.5pt, average row 3.3mm, worst row 13.5mm. **No routine content
+below 10pt on any sheet.** Board copy: smallest **10.0pt**, largest 23pt.
+
+## §I — long names, re-measured at the new type
+
+`ক` · `বিজ্ঞান` · `বিজ্ঞান ও প্রযুক্তি শাখা` ·
+`ব্যবসায় শিক্ষা ও ব্যবস্থাপনা বিজ্ঞান শাখা` — **one page each, no horizontal
+overflow, no truncation, worst row 13.8mm.** Long names are still keyed to a
+numeral with the full name in the legend; there is no `text-overflow` and no
+`line-clamp` in this sheet's CSS and a test asserts their absence.
+
+## §C — the document had the wrong Bangla face
+
+The screen has had Hind Siliguri as its primary Bangla face since the Ata Ekta
+rebuild (`--font-bn`). The DOCUMENT's stack was `"Noto Sans Bengali",
+system-ui` with Hind Siliguri absent entirely — same product, two Bangla
+faces, and only the paper was wrong. Hind Siliguri now leads.
+
+Both are `local()` only; no webfont is shipped, which is the bargain B-108 §16
+documented for the numeric face. **This machine has neither installed, so the
+PDFs measured here embed NirmalaUI.** The ORDER is what was fixed; which face
+a school gets depends on that school's machine.
+
+Verified in the rendered PDF: `১ ২ ৩ ৪`, `১০:০০–১০:৪৫`, `সকাল ১০:০০–১০:৪৫`,
+`দুপুর ১:০০–১:৩০` — all correct, no Latin digit in any sheet's routine text.
+
+## Evidence
+
+- **2045 tests passing** — 1994 in the standard sweep plus platform-svc's 51;
+  4 new typography regressions (the 10pt floor read off the shipped CSS, the
+  weight ladder, the clock-column ratio, and board as its own document)
+- typecheck 0/0/0 · build clean · **26/26 SQL** · 75/75 migrations
+- **Security probe 29/29** · **D11** clean on 28 rendered documents
+- **D13**: builder, API, UI, PDF and browser all exercised; the live server's
+  own output measured at 11.25pt subject / 10.25pt teacher / 12.5pt day header
+- `app.js` **165,544 / 184,320** gzipped
+- Landing page byte-identical at `496199bd`
+
+## One defect found on the way, in someone else's file
+
+Re-seeding the benchmark repeatedly to measure page counts churned the fixture
+tables, and an `academics-svc` import test started failing: a school being told
+`শাখা "ঘ" নেই — 9 শ্রেণিতে খ,ক` where it had been `ক,খ`. The snapshot query
+behind that message had no `ORDER BY`, so the Map it fills kept Postgres's
+physical row order and a school's list of its OWN sections changed for no
+reason it could see. One line, and the message is alphabetical and stable.
+
+Not P9-9's code and not on the backlog — it only became visible because this
+phase hammered the fixtures harder than the suite normally does.
+
+## B-115 — NOT OBSERVED / EXTERNAL
+
+Still no sheet on paper. Everything above is measured from a rasterised PDF,
+which is the right instrument for geometry and type size and cannot answer
+ink: whether the near-neutral tints separate on a mono laser, and whether the
+7mm page margin survives a printer's own unprintable edge. One office printer
+and one look. **NOT OBSERVED / EXTERNAL.**

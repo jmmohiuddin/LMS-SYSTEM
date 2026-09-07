@@ -4111,9 +4111,16 @@ async function runStudentImport(client, o) {
     );
   }
   const sectionRows = await client.query(
+    // ORDERED. The Map below keeps insertion order, and `validateStudents`
+    // prints its keys back to a school when a section name is not found:
+    // `শাখা "ঘ" নেই — 9 শ্রেণিতে ক,খ`. Without an ORDER BY those names came
+    // out in the table's physical row order, so the same school got "ক,খ"
+    // one day and "খ,ক" after enough churn — a listing of its OWN sections
+    // that changes for no reason it can see.
     `SELECT c.level_no, s.name, s.id
        FROM sections s JOIN classes c ON c.id = s.class_id
-      WHERE s.academic_year_id = $1`,
+      WHERE s.academic_year_id = $1
+      ORDER BY c.level_no, s.name`,
     [o.academicYearId]
   );
   const sections = /* @__PURE__ */ new Map();

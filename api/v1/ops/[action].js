@@ -4976,7 +4976,14 @@ function brandedDocumentCss(branding) {
   const watermark = safeAsset("watermarkUrl", branding.watermarkUrl);
   return [
     "*{box-sizing:border-box}",
-    'body{margin:0;font-family:"Noto Sans Bengali",system-ui,sans-serif;color:#1f2937;background:#fff}',
+    // §C. Hind Siliguri leads, as it does on screen. Both are `local()`
+    // only — no webfont is shipped — so the face a school actually gets is
+    // whichever of these its own machine has, and a machine with neither
+    // falls to the system Bangla face (Nirmala UI on Windows). That is the
+    // same bargain B-108 §16 documented for the numeric face, and it is why
+    // the PDFs measured in this repo embed NirmalaUI: this machine has
+    // neither installed. The ORDER is what this line fixes.
+    'body{margin:0;font-family:"Hind Siliguri","Noto Sans Bengali",system-ui,sans-serif;color:#1f2937;background:#fff}',
     ".doc{position:relative;max-width:210mm;min-height:297mm;margin:0 auto;padding:16mm 14mm;background:#fff}",
     watermark ? '.doc-watermark{position:absolute;inset:0;background-image:url("' + watermark + '");background-repeat:no-repeat;background-position:center;background-size:60% auto;opacity:.07;pointer-events:none;z-index:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' : "",
     ".doc-body,.doc-head,.doc-title-row,.doc-foot{position:relative;z-index:1}",
@@ -5283,13 +5290,14 @@ var ROUTINE_SCOPE_BN = {
 function routineIsDense(scope) {
   return scope === "institution" || scope === "class" || scope === "group" || scope === "stream";
 }
-function routineOrientation(scope) {
-  return routineIsDense(scope) ? "landscape" : "portrait";
+function routineOrientation(_scope) {
+  return "landscape";
 }
-function omit(scope) {
+function omit(scope, board = false) {
+  const far = board && routineIsDense(scope);
   return {
-    teacher: scope === "teacher",
-    room: scope === "room" || routineIsDense(scope),
+    teacher: scope === "teacher" || far,
+    room: scope === "room" || far,
     section: scope === "section" || scope === "student"
   };
 }
@@ -5317,7 +5325,7 @@ function sectionKeys(labels, locale) {
 }
 function buildRoutineSheet(d, locale = "bn") {
   const bn = locale === "bn";
-  const skip = omit(d.scopeKind);
+  const skip = omit(d.scopeKind, d.board);
   const dense = routineIsDense(d.scopeKind);
   const byCell = /* @__PURE__ */ new Map();
   for (const l of d.lessons) {
@@ -5358,7 +5366,9 @@ function buildRoutineSheet(d, locale = "bn") {
         if (dense && !skip.section) {
           const label = l.sectionLabel ?? "";
           const t = tintOf.get(label);
-          return `<div class="rt-line${t === void 0 ? "" : ` rt-s${t}`}"><span class="rt-sec">${escapeHtml(keys.get(label) ?? "\xB7")}</span><span class="rt-what">${subject}` + (who ? ` <span class="rt-who">${who}</span>` : "") + split + "</span></div>";
+          return `<div class="rt-line${t === void 0 ? "" : ` rt-s${t}`}"><span class="rt-sec">${escapeHtml(keys.get(label) ?? "\xB7")}</span><span class="rt-what"><b class="rt-sub">${escapeHtml(
+            l.subjectBn ?? (bn ? "\u0995\u09CD\u09B2\u09BE\u09B8" : "Class")
+          )}</b>${split}` + (who ? `<span class="rt-who">${who}</span>` : "") + "</span></div>";
         }
         const line2 = [
           skip.section || !l.sectionLabel ? "" : escapeHtml(
@@ -5415,61 +5425,83 @@ function buildRoutineSheet(d, locale = "bn") {
 }
 function routineSheetCss(orientation, board = false) {
   const NUM = 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif';
-  const s = board ? {
-    grid: 14,
-    no: 18,
-    pd: 10,
-    time: 12.5,
-    who: 12.5,
+  const PT = board ? {
+    org: 23,
+    title: 19,
+    day: 14,
+    no: 13.5,
+    pd: 10.5,
+    time: 11.5,
+    grid: 13.5,
+    who: 11,
     band: 16,
-    pad: "4px 5px",
-    col: 30,
-    sec: 7,
-    chip: 11
+    legend: 10.5,
+    foot: 10
   } : {
-    grid: 11.5,
-    no: 14,
-    pd: 8,
-    time: 9.5,
-    who: 10.5,
-    band: 13,
-    pad: "3px 4px",
-    col: 24,
-    sec: 5,
-    chip: 9
+    org: 19.5,
+    title: 16.5,
+    day: 12.5,
+    no: 11.5,
+    pd: 9,
+    time: 10.25,
+    grid: 11.25,
+    who: 10.25,
+    band: 13.5,
+    legend: 10,
+    foot: 9
+  };
+  const px = (pt) => Math.round(pt / 0.75 * 100) / 100;
+  const s = {
+    grid: px(PT.grid),
+    no: px(PT.no),
+    pd: px(PT.pd),
+    time: px(PT.time),
+    who: px(PT.who),
+    band: px(PT.band),
+    legend: px(PT.legend),
+    foot: px(PT.foot),
+    chip: px(PT.who),
+    pad: board ? "4px 6px" : "2px 5px",
+    col: board ? 38 : 34,
+    sec: board ? 8 : 7
   };
   return [
     `@page{size:A4 ${orientation};margin:0}`,
     // Landscape needs the letterhead's page box to follow it, or the document
     // keeps a 210mm column in the middle of a 297mm sheet.
-    orientation === "landscape" ? ".doc{max-width:297mm;min-height:210mm;padding:9mm 9mm}" : "",
+    ".doc{max-width:297mm;min-height:210mm;padding:7mm 9mm}",
     // §8. A landscape A4 is 210mm tall and the letterhead, the title row and
     // the signature were spending 76mm of it before a single hour was drawn.
     // These overrides are the routine sheet's alone — a receipt and a
     // transfer certificate are portrait and have the room. Every one was
     // sized against a rasterised page, not chosen for looks.
-    orientation === "landscape" ? ".doc-head{padding-bottom:5px}.doc-logo{width:42px;height:42px}.doc-org{font-size:16px}.doc-addr,.doc-contact{font-size:10px}.doc-title-row{margin:7px 0 5px;align-items:baseline}.doc-title{font-size:15px}.doc-meta{font-size:10px;display:flex;flex-wrap:wrap;gap:2px 12px}.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}" : "",
+    // The SIZES apply to both papers — a portrait sheet kept R-5's 11px meta,
+    // which is 8.25pt, and had no reason to. Only the space-SAVING rules
+    // below are landscape-only, because landscape is where the vertical
+    // budget is scarce.
+    `.doc-org{font-size:${px(PT.org)}px}.doc-addr,.doc-contact{font-size:${px(PT.foot)}px}.doc-title{font-size:${px(PT.title)}px}.doc-meta{font-size:${px(PT.legend)}px}`,
+    ".doc-head{padding-bottom:5px}.doc-logo{width:46px;height:46px}.doc-title-row{margin:5px 0 4px;align-items:baseline}.doc-meta{display:flex;flex-wrap:wrap;gap:2px 12px}.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}",
     // §2. A heavier rule around the outside and under the day header, so the
     // grid reads as a grid from across a corridor rather than as grey text.
     `.rt-grid{table-layout:fixed;font-size:${s.grid}px;border:1.5px solid #374151}`,
     `.rt-grid th,.rt-grid td{vertical-align:top;padding:${s.pad}}`,
-    ".rt-grid thead th{border-bottom:1.5px solid #374151;text-align:center;font-size:1.05em;letter-spacing:.01em}",
+    `.rt-grid thead th{border-bottom:1.5px solid #374151;text-align:center;padding:3px 5px;font-size:${px(PT.day)}px;letter-spacing:.01em}`,
     `.rt-period-col{width:${s.col}mm}`,
     `.rt-period{width:${s.col}mm;background:#f3f4f6;text-align:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}`,
     // §2/§3. The ordinal leads, the word "পিরিয়ড" follows it small, and the
     // clock sits under both. Three things, not one ambiguous number.
-    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.2;${NUM}}`,
+    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.2;white-space:nowrap;${NUM}}`,
     `.rt-pd{font-weight:400;font-size:${s.pd}px;color:#4b5563;margin-inline-start:3px;font-family:"Hind Siliguri",system-ui,sans-serif}`,
-    `.rt-time{display:block;font-size:${s.time}px;color:#374151;line-height:1.25;${NUM}}`,
+    `.rt-time{display:block;font-size:${s.time}px;color:#374151;line-height:1.25;white-space:nowrap;${NUM}}`,
     // ── §4 the break band ──
     // Full width, ruled top and bottom, centred. This is the one row on the
     // sheet that is not a lesson and it must not look like one.
-    ".rt-band td{background:#e5e7eb;text-align:center;padding:5px 6px;border-top:2px solid #374151;border-bottom:2px solid #374151;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".rt-band td{background:#e5e7eb;text-align:center;padding:3px 6px;border-top:2px solid #374151;border-bottom:2px solid #374151;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     `.rt-band-name{font-weight:700;font-size:${s.band}px;letter-spacing:.08em}`,
     `.rt-band-time{margin-inline-start:10px;font-size:${s.time}px;color:#374151;${NUM}}`,
     // ── the cell ──
     // A dense sheet: one line per section, tinted, chip first.
-    ".rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".rt-line{display:flex;gap:3px;line-height:1.18;padding:0 2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     ".rt-line+.rt-line{border-top:1px dotted #9ca3af;margin-top:1px;padding-top:2px}",
     // §5/§9. The chip: fixed width so the keys align into a column the eye can
     // follow, bordered so it reads as a chip on a photocopy where the tint
@@ -5482,22 +5514,29 @@ function routineSheetCss(orientation, board = false) {
     ".rt-lesson{padding:1px 0;line-height:1.35}",
     ".rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}",
     `.rt-who{color:#374151;font-size:${s.who}px}`,
-    ".rt-lesson .rt-who{display:block}",
+    ".rt-lesson .rt-who,.rt-line .rt-who{display:block}",
     `.rt-line i,.rt-lesson i{font-size:${s.pd}px;color:#4b5563}`,
+    // §D. The chip must not compete with the subject: same size, lighter
+    // weight than the subject's bold, and a rule around it instead.
+    `.rt-sub{font-weight:700;font-size:${s.grid}px}`,
     ".rt-empty{color:#9ca3af;text-align:center}",
     // ── §1 the section tints ──
     ...SECTION_TINT.map((c, i) => `.rt-s${i}{background:${c}}`),
     // ── §5 the legend ──
-    `.rt-legend{margin:0 0 5px;font-size:${s.who}px;color:#1f2937;display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px}`,
+    // R-5's `.doc-note` is 11.5px — 8.62pt — and it carries the sentence a
+    // two-shift teacher's sheet shows for the shift they do not teach. A
+    // sentence a person reads is not metadata.
+    `.doc-note{font-size:${s.grid}px}`,
+    `.rt-legend{margin:0 0 5px;font-size:${s.legend}px;color:#1f2937;display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px}`,
     ".rt-legend-t{font-weight:700;color:#4b5563}",
     '.rt-legend-t::after{content:":"}',
     ".rt-legend-i{display:inline-flex;align-items:center;gap:3px;border:1px solid #d1d5db;border-radius:3px;padding:1px 5px 1px 2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     // §12. Version, date and page x of y, at the foot of every page.
-    `.rt-foot{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-top:5px;font-size:${s.time}px;color:#4b5563}`,
+    `.rt-foot{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-top:5px;font-size:${s.foot}px;color:#4b5563}`,
     // The signature LINE: room to sign above it, the caption under it. ~11mm
     // against the block's ~30mm, which is most of what made a class page
     // spill onto a second sheet.
-    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 8 : 9}mm;text-align:center;border-top:1px solid #374151;padding-top:3px;color:#1f2937;font-weight:600}`,
+    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 3 : 6}mm;text-align:center;border-top:1px solid #374151;padding-top:3px;color:#1f2937;font-weight:600}`,
     "@media print{",
     // §6. A routine row is one hour of the school's week and must not be cut
     // in half by a page boundary; the header repeats so page two is readable
@@ -5904,10 +5943,10 @@ var CONTENT_SERVICE = {
   attendance_sheet: "attendance"
 };
 var MAX_BULK = 120;
-var GRID_MM = 162;
-var SECTION_MM = 8;
-var HEAD_AND_BANDS_MM = 20;
-var BOARD_SCALE = 1.45;
+var GRID_MM = 158;
+var SECTION_MM = 15;
+var HEAD_AND_BANDS_MM = 24;
+var BOARD_SCALE = 0.72;
 var MONTHS_BN = [
   "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
   "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
@@ -6089,7 +6128,7 @@ async function routineSheet(c, ctx, q) {
       periods
     };
     if (!booklet) {
-      specs.push({ ...common, scopeTitle: t.titleBn, lessons: mine });
+      specs.push({ ...common, scopeTitle: t.titleBn, lessons: mine, board });
       continue;
     }
     const byClass = /* @__PURE__ */ new Map();
@@ -6118,6 +6157,7 @@ async function routineSheet(c, ctx, q) {
           ...common,
           scopeKind: "class",
           scopeTitle: classBn,
+          board,
           lessons: lessons.filter((l) => chunk.has(l.sectionLabel ?? ""))
         });
       }

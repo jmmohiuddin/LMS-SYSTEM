@@ -267,12 +267,15 @@ describe('P9-9 — the printed routine', { skip }, () => {
 
   test('§2 — all five required sheets print', async () => {
     await publishAll();
+    // All landscape. A week is six columns and, at the 10pt floor §B sets, a
+    // portrait day column (~30mm) holds a third of a lesson — a portrait room
+    // sheet measured 303mm on a 297mm page with every cell wrapped to three.
     const cases: Array<[string, string, 'portrait' | 'landscape']> = [
       ['institution', '', 'landscape'],
       ['class', KLASS, 'landscape'],
-      ['section', SEC_A, 'portrait'],
-      ['teacher', RAFIQ, 'portrait'],
-      ['room', ROOM_A, 'portrait'],
+      ['section', SEC_A, 'landscape'],
+      ['teacher', RAFIQ, 'landscape'],
+      ['room', ROOM_A, 'landscape'],
     ];
     for (const [scope, id, orientation] of cases) {
       const h = await html(`type=routine_sheet&scope=${scope}${id ? `&id=${id}` : ''}`, headTok);
@@ -297,18 +300,29 @@ describe('P9-9 — the printed routine', { skip }, () => {
   test('the institution prints as a booklet, one page per class', async () => {
     await publishAll();
     const h = await html('type=routine_sheet&scope=institution', headTok);
-    assert.equal(pageCount(h), 1, 'this fixture has one class, so one page');
+    // ONE SECTION A PAGE. At §B's typography a landscape A4 holds one
+    // section's week: seven teaching rows at ~18mm, and two sections need
+    // 24mm a row before any wrapping. This fixture's class has two sections,
+    // so the booklet is two pages — §H's "split at section boundaries when
+    // readable type makes one page impossible", taken literally.
+    assert.equal(pageCount(h), 2, 'two sections, one page each');
     assert.match(h, /শ্রেণির রুটিন — নবম/,
-      'and the page says which class it is, not just the school');
-    // Two sections in the class, so a cell holds two — well inside the bound.
-    assert.equal(worstCell(h), 2);
+      'and every page says which class it is, not just the school');
+    assert.equal(worstCell(h), 1);
+    // Each page names the section it carries, so a reader knows which is theirs.
+    assert.match(h, /<p class="rt-legend">/);
   });
 
   test('§8 — a booklet page carries its own number, a single sheet does not', async () => {
     await publishAll();
-    // This fixture is one class of two sections, which is exactly one page,
-    // and "page 1 of 1" is noise on a sheet somebody pins to a door.
-    const one = await html('type=routine_sheet&scope=institution', headTok);
+    // Two sections, so two pages, and each says which of the two it is.
+    const many = await html('type=routine_sheet&scope=institution', headTok);
+    assert.equal(pageCount(many), 2);
+    assert.match(many, /পৃষ্ঠা ১ \/ ২/);
+    assert.match(many, /পৃষ্ঠা ২ \/ ২/);
+    // A SINGLE sheet still carries no "page 1 of 1", which is noise on a
+    // sheet somebody pins to a door.
+    const one = await html(`type=routine_sheet&scope=section&id=${SEC_A}`, headTok);
     assert.equal(pageCount(one), 1);
     assert.doesNotMatch(one, /পৃষ্ঠা/);
     // Every page still foots with the version and the date, so a sheet torn
@@ -333,15 +347,20 @@ describe('P9-9 — the printed routine', { skip }, () => {
 
   test('§13 — a dense sheet spends its width on the subject, not the room', async () => {
     await publishAll();
-    // The class page answers "which subject, and who takes it". Carrying the
-    // room as well wraps every line to two and halves what fits on a sheet —
-    // measured, and the reason this rule exists rather than a preference.
+    // §D. The class page's cell is a stack at §B's typography — subject on
+    // its own line, who and where beneath it — so the room rides the second
+    // line at no structural cost. It was dropped only while the cell was ONE
+    // line and the room forced every one of them to wrap.
     const klass = await html(`type=routine_sheet&scope=class&id=${KLASS}`, headTok);
-    assert.match(klass, /<span class="rt-who">রফিক স্যার<\/span>/);
-    assert.doesNotMatch(klass, /R-1/, 'the room is not on a class sheet');
-    // The section's own sheet has one lesson per cell and the room to say it.
-    const sec = await html(`type=routine_sheet&scope=section&id=${SEC_A}`, headTok);
-    assert.match(sec, /R-1/, 'but it IS on the section sheet');
+    assert.match(klass, /<b class="rt-sub">/, 'the subject leads its own line');
+    assert.match(klass, /<span class="rt-who">রফিক স্যার · R-1<\/span>/);
+    // §M. The BOARD copy is the one that drops them: a two-line cell at wall
+    // size needs 18.2mm a row against 16.3mm available, so keeping the
+    // teacher forces the type down and defeats the mode.
+    const board = await html(
+      `type=routine_sheet&scope=class&id=${KLASS}&board=1`, headTok);
+    assert.doesNotMatch(board, /রফিক স্যার/, 'no teacher on the wall copy');
+    assert.match(board, /<b class="rt-sub">/, 'but the subject, larger');
   });
 
   test('§5 — a break the school observes reaches the paper', async () => {

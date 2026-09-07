@@ -32,6 +32,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
+import { scrubMachineText } from '../src/presentation.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RMS_ROLES = ['principal', 'school_owner', 'academic_coordinator', 'dept_head'];
@@ -166,6 +167,42 @@ async function report(client: Client, routineId: string) {
       ORDER BY rs.day_of_week, rs.period_no`,
     [routineId]);
 
+  // P9-4. COUNTED, not assumed.
+  //
+  // This said `hardViolations: 0` with a comment explaining that the three
+  // exclusion constraints made a violation unstorable. Read their predicates
+  // and that holds only for an ACTIVE routine: `rs_no_teacher_double_booking`
+  // and `rs_no_room_double_booking` both carry `routine_status = 'active'`,
+  // so a DRAFT — which is what a generated routine is — is protected on
+  // sections alone. P9-3 found 40 real ones in an 80-section school while
+  // its summary said zero. `generate.ts` was fixed then; this endpoint is the
+  // other reader of the same routines and had the same constant.
+  const conflicts = await client.query<{ n: string }>(
+    `WITH mine AS (
+       SELECT routine_id, teacher_id, room_id, primary_section_id, parallel_pool,
+              day_of_week, starts_at, ends_at, slot_kind
+         FROM routine_slots WHERE routine_id = $1 AND status = 'active'
+     )
+     SELECT (
+        (SELECT count(*) FROM (SELECT starts_at < max(ends_at) OVER (
+             PARTITION BY teacher_id, day_of_week ORDER BY starts_at, ends_at
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+           FROM mine WHERE teacher_id IS NOT NULL
+             AND slot_kind IN ('teaching','exam')) q WHERE hit)
+      + (SELECT count(*) FROM (SELECT starts_at < max(ends_at) OVER (
+             PARTITION BY room_id, day_of_week ORDER BY starts_at, ends_at
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+           FROM mine WHERE room_id IS NOT NULL
+             AND slot_kind IN ('teaching','exam')) q WHERE hit)
+      + (SELECT count(*) FROM (SELECT starts_at < max(ends_at) OVER (
+             PARTITION BY routine_id, primary_section_id, day_of_week
+             ORDER BY starts_at, ends_at
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+           FROM mine WHERE primary_section_id IS NOT NULL
+             AND parallel_pool IS NULL) q WHERE hit)
+     )::text AS n`,
+    [routineId]);
+
   return {
     routine: {
       id: row.id, nameBn: row.name_bn, status: row.status, shift: row.shift,
@@ -173,14 +210,17 @@ async function report(client: Client, routineId: string) {
       objectiveScore: row.objective_score === null ? null : Number(row.objective_score),
       solverSeconds: row.solver_seconds === null ? null : Number(row.solver_seconds),
     },
-    // Always zero for a stored routine: the three exclusion constraints
-    // make a hard violation unstorable. Shown because "০" is the statement
-    // that the guarantee is real, not a computed result.
-    hardViolations: 0,
+    hardViolations: Number(conflicts.rows[0]?.n ?? 0),
     soft: stored.soft ?? [],
     unplaced: stored.unplaced ?? [],
     notEvaluated: stored.notEvaluated ?? [],
-    shortages: stored.shortages ?? [],
+    // P9-4 §9. Written by the solver, possibly months ago, and it embeds the
+    // raw capability code: `"computer_lab" কক্ষে ৮০টি পিরিয়ড দরকার`. Fixing
+    // the writer would not fix a row already in the database, so it is
+    // rewritten on the way out.
+    shortages: (stored.shortages ?? []).map((sh) => ({
+      ...sh, detailBn: scrubMachineText(sh.detailBn),
+    })),
     slots: slots.rows.map((s) => ({
       id: s.id, dayOfWeek: s.day_of_week, periodNo: s.period_no,
       startsAt: s.starts_at.slice(0, 5), sectionLabel: s.section_label,

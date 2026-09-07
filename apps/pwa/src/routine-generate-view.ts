@@ -36,7 +36,7 @@
 import {
   el, pageHeader, card, button, buttonRow, statusBadge, sectionHeading,
   statRow, statCard, permissionState, deniedMessage, deniedContact,
-  announce, inlineLoader, listSkeleton,
+  announce, inlineLoader, listSkeleton, openDrawer, successNote,
 } from './ui/index.ts';
 import { refuseUnlessOk, isDenied, HttpStatus } from './http-status.ts';
 import type { Auth } from './auth.ts';
@@ -71,7 +71,46 @@ interface Summary {
   shortages: Shortage[]; solverSeconds: number; totalSeconds: number;
   verdictBn: string;
 }
-interface GenerateResult { shifts: ShiftResult[]; summary: Summary }
+/** P9-4. One finding, ready to render — the server composed every sentence. */
+export interface Explanation {
+  id: string;
+  severity: 'error' | 'warning' | 'info';
+  category: string;
+  titleBn: string;
+  whatBn: string;
+  whyBn: string;
+  affectedBn: string[];
+  currentBn: string;
+  impactBn: string;
+  suggestions: Array<{ textBn: string; evidenceBn: string }>;
+}
+
+interface GenerateResult {
+  shifts: ShiftResult[];
+  summary: Summary;
+  explanations?: Explanation[];
+  severity?: { error: number; warning: number; info: number };
+}
+
+/**
+ * §4/§14. The severity, as a WORD as well as a colour.
+ *
+ * A red dot is invisible to a screen reader and to the eight percent of men
+ * who cannot separate it from the amber one, so the label carries the
+ * meaning and the colour only reinforces it.
+ */
+/** How many rows of one severity to print before folding the rest into a count. */
+const ROWS_SHOWN = 25;
+
+const SEVERITY_BN: Record<Explanation['severity'], string> = {
+  error: 'ঠিক করা দরকার', warning: 'সতর্কতা', info: 'তথ্য',
+};
+const SEVERITY_TONE: Record<Explanation['severity'],
+  { state: 'blocked' | 'pending' | 'active'; tone: 'danger' | 'warn' | 'info' }> = {
+  error: { state: 'blocked', tone: 'danger' },
+  warning: { state: 'pending', tone: 'warn' },
+  info: { state: 'active', tone: 'info' },
+};
 interface PriorRun {
   routineId: string; shift: string; version: number; status: string;
   slots: number; solverSeconds: number | null; generatedAt: string | null;
@@ -87,9 +126,6 @@ export interface RoutineGenerateViewOptions {
   /** Injectable so the elapsed counter is testable without a real clock. */
   now?: () => number;
 }
-
-/** How many unplaced rows to print before folding the rest into a count. */
-const UNPLACED_SHOWN = 8;
 
 export class RoutineGenerateView {
   private readonly o: RoutineGenerateViewOptions;
@@ -399,6 +435,164 @@ export class RoutineGenerateView {
 
   /* ─────────────────────────────── result ─────────────────────────────── */
 
+  /**
+   * §4/§12 — the findings, separated by severity, or a calm success state.
+   *
+   * A school with nothing wrong must not be handed a panel of empty headings
+   * to read. The `info` rows still show, because "০ সমস্যা" means "০ of the
+   * rules we checked" and saying which rules were not checked is what makes
+   * the clean report believable — but they sit under a success note rather
+   * than under a warning.
+   */
+  private findingsCard(items: Explanation[], summary: Summary): HTMLElement {
+    const d = this.o.doc;
+    const body = el(d, 'div', { className: 'ui-stack' });
+    const errors = items.filter((i) => i.severity === 'error');
+    const warnings = items.filter((i) => i.severity === 'warning');
+    const infos = items.filter((i) => i.severity === 'info');
+
+    // "No problems found" is a CLAIM, and it is checked against the summary
+    // before it is made. An empty list is not the same as a clean run: a
+    // response from an older build, or one that lost its explanations on the
+    // way, would produce an empty array beside twelve unplaced periods — and
+    // the reassuring sentence would be the only thing on screen that was
+    // wrong. Caught by a P9-3 fixture that predates this field.
+    const clean = summary.unplacedPeriods === 0 && summary.hardConflicts === 0;
+    if (items.length === 0 && !clean) {
+      body.append(el(d, 'p', {
+        className: 'ui-card-lead',
+        text: 'এই ফলাফলের ব্যাখ্যা পাওয়া যায়নি।',
+      }));
+      body.append(el(d, 'p', {
+        className: 'ui-card-note',
+        text: `উপরের সংখ্যাগুলো অনুযায়ী ${bn(summary.unplacedPeriods)}টি পিরিয়ড বাকি আছে — `
+            + 'কারণ জানতে আবার তৈরি করুন।',
+      }));
+      return card(d, { title: 'কী পাওয়া গেল', glyph: 'alert-triangle' }, body);
+    }
+
+    if (errors.length === 0 && warnings.length === 0) {
+      body.append(successNote(d, 'কোনো সমস্যা পাওয়া যায়নি — রুটিনটি ব্যবহারের জন্য প্রস্তুত।'));
+    } else {
+      body.append(el(d, 'p', {
+        className: 'ui-card-lead',
+        text: [
+          errors.length > 0 ? `${bn(errors.length)}টি বিষয় ঠিক করা দরকার` : '',
+          warnings.length > 0 ? `${bn(warnings.length)}টি সতর্কতা` : '',
+        ].filter(Boolean).join(' · '),
+      }));
+      if (errors.length === 0) {
+        // The distinction §4 exists for: nothing here blocks anything.
+        body.append(el(d, 'p', {
+          className: 'ui-card-note',
+          text: 'কোনোটিই রুটিন ব্যবহারে বাধা দেয় না — ঠিক করলে ফলাফল আরও ভালো হবে।',
+        }));
+      }
+    }
+
+    for (const [heading, group] of [
+      ['ঠিক করা দরকার', errors],
+      ['সতর্কতা', warnings],
+      ['যা যাচাই করা হয়নি', infos],
+    ] as const) {
+      if (group.length === 0) continue;
+      body.append(sectionHeading(d, {
+        title: `${heading} — ${bn(group.length)}টি`, level: 3,
+      }));
+      const list = el(d, 'ul', { className: 'gen-findings' });
+      // A backstop, not the mechanism. The server groups the repetitive
+      // findings already; this exists so that a category nobody has grouped
+      // yet cannot put 1,500 interactive rows on a phone — which the
+      // 80-section benchmark did before the grouping landed.
+      for (const item of group.slice(0, ROWS_SHOWN)) list.append(this.findingRow(item));
+      body.append(list);
+      if (group.length > ROWS_SHOWN) {
+        body.append(el(d, 'p', {
+          className: 'ui-card-note',
+          text: `আরও ${bn(group.length - ROWS_SHOWN)}টি একই ধরনের বিষয় আছে।`,
+        }));
+      }
+    }
+    return card(d, { title: 'কী পাওয়া গেল', glyph: 'alert-triangle' }, body);
+  }
+
+  /** One finding: a severity word, the sentence, and a way into the detail. */
+  private findingRow(item: Explanation): HTMLElement {
+    const d = this.o.doc;
+    const li = el(d, 'li', { className: 'gen-finding', data: { severity: item.severity } });
+    const badge = SEVERITY_TONE[item.severity];
+    // The button IS the row, so the whole line is one tap target on a phone
+    // and one stop for a keyboard.
+    const open = el(d, 'button', {
+      className: 'gen-finding-open',
+      attrs: { type: 'button', 'aria-label': `${SEVERITY_BN[item.severity]}: ${item.titleBn}` },
+    });
+    open.append(statusBadge(d, { state: badge.state, label: SEVERITY_BN[item.severity],
+                                 tone: badge.tone }));
+    open.append(el(d, 'span', { className: 'gen-finding-title', text: item.titleBn }));
+    open.append(el(d, 'span', { className: 'gen-finding-more', text: 'কেন?' }));
+    open.addEventListener('click', () => this.openExplanation(item));
+    li.append(open);
+    return li;
+  }
+
+  /**
+   * §6 — the focused panel: কারণ → বর্তমান অবস্থা → প্রভাব → সম্ভাব্য সমাধান.
+   *
+   * `openDrawer` owns the dialog semantics, the focus trap and the return of
+   * focus to the row that opened it, so none of that is re-implemented here.
+   * Every sentence is the server's; nothing on this screen composes an
+   * explanation, because a browser-side rewrite is how a claim drifts away
+   * from the evidence that justified it.
+   */
+  private openExplanation(item: Explanation): void {
+    const d = this.o.doc;
+    const body = el(d, 'div', { className: 'ui-stack' });
+    const badge = SEVERITY_TONE[item.severity];
+    body.append(statusBadge(d, { state: badge.state, label: SEVERITY_BN[item.severity],
+                                 tone: badge.tone }));
+
+    const section = (headingBn: string, ...children: HTMLElement[]) => {
+      body.append(sectionHeading(d, { title: headingBn, level: 3 }));
+      for (const c of children) body.append(c);
+    };
+
+    section('কারণ',
+      el(d, 'p', { className: 'ui-card-lead', text: item.whatBn }),
+      el(d, 'p', { className: 'ui-card-note', text: item.whyBn }));
+
+    if (item.affectedBn.length > 0) {
+      const who = el(d, 'ul', { className: 'gen-affected' });
+      for (const a of item.affectedBn) who.append(el(d, 'li', { text: a }));
+      section('কারা জড়িত', who);
+    }
+
+    section('বর্তমান অবস্থা', el(d, 'p', { className: 'ui-card-note', text: item.currentBn }));
+    section('প্রভাব', el(d, 'p', { className: 'ui-card-note', text: item.impactBn }));
+
+    if (item.suggestions.length > 0) {
+      const list = el(d, 'ul', { className: 'gen-trades' });
+      for (const s of item.suggestions) {
+        const li = el(d, 'li');
+        li.append(el(d, 'span', { className: 'gen-trade-what', text: s.textBn }));
+        // Why this is worth trying HERE. Without it a suggestion is advice;
+        // with it, it is an argument.
+        li.append(el(d, 'span', { className: 'gen-trade-why', text: s.evidenceBn }));
+        list.append(li);
+      }
+      section('সম্ভাব্য সমাধান', list);
+    } else {
+      // Saying so beats an empty heading, and beats inventing one.
+      section('সম্ভাব্য সমাধান', el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'এই তথ্য থেকে নিশ্চিত কোনো সমাধান বলা যাচ্ছে না।',
+      }));
+    }
+
+    openDrawer(d, { title: item.titleBn, body });
+  }
+
+
   private resultCards(): HTMLElement[] {
     const d = this.o.doc;
     const r = this.result as GenerateResult;
@@ -440,36 +634,29 @@ export class RoutineGenerateView {
     ));
     out.push(card(d, { title: 'ফলাফল', glyph: 'award' }, head));
 
+    // P9-4. ONE list of problems, not three. The unplaced rows, the room
+    // shortages, the soft trades and the optional gaps were separate sections
+    // saying overlapping things; a coordinator had to read all of them to
+    // learn what to do first. `explanations` is that list, already ordered,
+    // already worded, already ranked by severity.
+    out.push(this.findingsCard(r.explanations ?? [], s));
+
     if (s.hardConflicts > 0) {
-      const body = el(d, 'div', { className: 'ui-stack' });
-      body.append(el(d, 'p', {
-        className: 'ui-card-lead',
-        text: `${bn(s.hardConflicts)}টি ক্লাস একই সময়ে একই শিক্ষক, কক্ষ বা শাখার সঙ্গে `
-            + 'পড়ে গেছে। এই অবস্থায় রুটিন প্রকাশ করা যাবে না।',
-      }));
-      body.append(el(d, 'p', {
-        className: 'ui-card-note',
-        text: 'রুটিন সম্পাদনা পাতায় গিয়ে সংঘর্ষগুলো সরালে প্রকাশ করা যাবে।',
-      }));
-      body.append(buttonRow(d, button(d, {
-        label: 'রুটিন সম্পাদনা', variant: 'primary',
-        onClick: () => this.o.onNavigate?.('routineeditor'),
-      })));
-      out.push(card(d, { title: 'সংঘর্ষ রয়ে গেছে', glyph: 'alert-triangle', tone: 'warn' }, body));
+      // The one finding that also needs a control: the editor is where it
+      // gets fixed, and a routine carrying one cannot be published.
+      out.push(card(d, { title: 'সংঘর্ষ রয়ে গেছে', glyph: 'alert-triangle', tone: 'warn' },
+        el(d, 'div', { className: 'ui-stack' },
+          el(d, 'p', {
+            className: 'ui-card-note',
+            text: 'রুটিন সম্পাদনা পাতায় গিয়ে সংঘর্ষগুলো সরালে প্রকাশ করা যাবে।',
+          }),
+          buttonRow(d, button(d, {
+            label: 'রুটিন সম্পাদনা', variant: 'primary',
+            onClick: () => this.o.onNavigate?.('routineeditor'),
+          })))));
     }
 
     for (const shift of r.shifts) out.push(this.shiftCard(shift));
-
-    if (s.shortages.length > 0) {
-      const body = el(d, 'div', { className: 'ui-stack' });
-      const list = el(d, 'ul', { className: 'gen-trades' });
-      for (const sh of s.shortages) {
-        list.append(el(d, 'li', {},
-          el(d, 'span', { className: 'gen-trade-what', text: sh.detailBn })));
-      }
-      body.append(list);
-      out.push(card(d, { title: 'যা কম পড়েছে', glyph: 'alert-triangle', tone: 'warn' }, body));
-    }
     return out;
   }
 
@@ -489,30 +676,14 @@ export class RoutineGenerateView {
     body.append(line);
 
     if (shift.unplaced.length > 0) {
-      body.append(sectionHeading(d, {
-        title: `যেগুলো বসানো যায়নি — ${bn(shift.unplaced.length)}টি`,
+      // The rows themselves live in "কী পাওয়া গেল", once, with their
+      // reasons and their fixes. Repeating them per shift gave a coordinator
+      // the same list twice and no way to tell which copy was the real one.
+      body.append(el(d, 'p', {
+        className: 'ui-card-note',
+        text: `${bn(shift.unplaced.length)}টি বিষয়ে পিরিয়ড বাকি আছে — `
+            + 'কারণ ও সমাধান উপরের তালিকায়।',
       }));
-      const list = el(d, 'ul', { className: 'gen-trades' });
-      for (const u of shift.unplaced.slice(0, UNPLACED_SHOWN)) {
-        const li = el(d, 'li');
-        li.append(el(d, 'span', {
-          className: 'gen-trade-what',
-          text: `${u.sectionName} · ${u.subjectBn} — ${bn(u.missing)}টি পিরিয়ড বাকি`
-              + ` (${bn(u.placed)}/${bn(u.required)} বসেছে)`,
-        }));
-        li.append(el(d, 'span', {
-          className: 'gen-trade-why',
-          text: u.teacherBn ? `${u.reasonBn} · ${u.teacherBn}` : u.reasonBn,
-        }));
-        list.append(li);
-      }
-      body.append(list);
-      if (shift.unplaced.length > UNPLACED_SHOWN) {
-        body.append(el(d, 'p', {
-          className: 'ui-card-note',
-          text: `আরও ${bn(shift.unplaced.length - UNPLACED_SHOWN)}টি — বিস্তারিত ব্যাখ্যায় দেখুন।`,
-        }));
-      }
     }
 
     body.append(buttonRow(d,

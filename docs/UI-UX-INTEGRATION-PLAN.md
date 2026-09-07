@@ -1355,3 +1355,53 @@ beside `.ui-card-lead`, with a phone-first two-column grid for the period row.
 but this is the role that builds the timetable. Reading today's routine is a
 teacher's need and remains a tab and a More entry. Every other role reaches
 the screen from More.
+
+## P9-4 — routine explainability (2026-09-07)
+
+No new screen. `routine-generate-view.ts` gained one card and one drawer, on
+the canonical components (`card`, `statusBadge`, `sectionHeading`,
+`successNote`, `openDrawer`). No new primitives, no charting.
+
+**One list, not four.** Unplaced rows, room shortages, soft trades and
+optional setup gaps were four sections saying related things with no order
+between them; a coordinator had to read all four to learn what to do first.
+"কী পাওয়া গেল" is one list, ordered by severity and, within errors, by how
+many periods are missing.
+
+**Severity is a word before it is a colour.** "ঠিক করা দরকার" / "সতর্কতা" /
+"তথ্য" appear in the accessible name of every row; the left rail reinforces
+them. §14 forbids conveying a warning by colour alone, and a red rail is
+invisible to a screen reader and to anyone who cannot separate it from the
+amber one. The three rails resolve to real tokens in both themes —
+`#B3392C`/`#E88C80`, `#7C5C1B`/`#D0A64B`, `#38586B`/`#98B2C1`.
+
+**A warning does not read as a failure.** A school whose only findings are
+optional gaps is told "কোনোটিই রুটিন ব্যবহারে বাধা দেয় না" — because §4's
+whole point is that an optional gap must not send a school off to do an
+afternoon of data entry before it has seen anything work.
+
+**A calm success state, that still admits what it did not check.** Nothing
+wrong gives a success note; the `info` rows stay, because "০ সমস্যা" means
+"০ of the rules we ran" and naming the unrun ones is what makes the clean
+report believable.
+
+**The drawer is the component's, not a copy.** `openDrawer` owns the dialog
+role, the focus trap and the return of focus to the row that opened it.
+Sections in fixed order: কারণ → বর্তমান অবস্থা → প্রভাব → সম্ভাব্য সমাধান.
+Where nothing can honestly be suggested it says so rather than rendering an
+empty heading. Every sentence in it is the server's — a browser-side rewrite
+is how a claim drifts away from the evidence that justified it.
+
+**The whole row is the control**, so it is one tap target on a phone and one
+tab stop for a keyboard, rather than a line of text with a small link at the
+end of it.
+
+**Responsive**: list and open drawer verified at 360, 375, 390, 640, 768,
+1024, 1280, 1440 and 1600 — no horizontal overflow at any width, no tap
+target under 44px, no uuid, no snake_case, no `undefined`, and no Latin
+numeral before a Bangla counter.
+
+**Volume**: an over-subscribed 80-section school produced 1,516 findings.
+Grouping is server-side; the view keeps a 25-per-severity cap as a backstop
+against a category nobody has grouped yet, with the remainder named as a
+count rather than dropped.

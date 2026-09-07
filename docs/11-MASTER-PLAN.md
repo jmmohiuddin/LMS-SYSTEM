@@ -1641,14 +1641,31 @@ existing solver unchanged. **Measured on five realistic institutions** —
 LOCAL only: network, TLS and browser render are excluded, so the product's
 one-minute promise is not yet proven end to end and is not claimed to be.
 
+P9-4 (explainability) is delivered: every unplaced demand, conflict, warning
+and unchecked rule arrives as a Bangla finding with its severity, its
+evidence and — where the data supports one — a suggested fix. The solver's
+single `no_free_slot` code became four categories (teacher, section,
+availability, room) plus cross-shift, by recording which guard rejected each
+candidate hour rather than by re-running anything. **No claim is made without
+a counter behind it**, and no fix is suggested that the school's own data
+cannot support.
+
 Scoped re-solve, publish lifecycle, role outputs and print remain. Closed on
 the way: `B-89` (a student could name themselves the teacher of any section),
 `B-90` (the solver read closed assignments as live demand), `B-92` (a student
 could rewrite the curriculum and block any teacher), `B-93` (a bell schedule
 could contain overlapping periods), `B-94` (in a two-shift school the second
 shift's solve could not see the first, producing routines that publish would
-refuse, while the summary reported zero conflicts) and `B-95` (the routine
-authoring screens were stale-served by the service worker). `B-91` records
+refuse, while the summary reported zero conflicts), `B-95` (the routine
+authoring screens were stale-served by the service worker), `B-97` (the
+solver's single `no_free_slot` code was four different problems with four
+different fixes), `B-98` (the F-503 explainer reported a hard-conflict count
+of zero as a constant — the same defect as B-94, in the other reader of the
+same routines), `B-99` (raw room-capability codes reached the explainer
+screen from rows stored months earlier), `B-100` (an 80-section school
+produced 1,516 findings, close to a megabyte and a list nobody reads),
+`B-101` (the explanation cost 38% of the run it explained) and `B-102` (the
+findings card claimed "no problems found" from an empty list). `B-91` records
 the mechanism behind the RLS-scope family.
 
 The original note stands as written:

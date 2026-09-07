@@ -46,6 +46,10 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { RmsSolver, type SolveResult } from '../src/solve.ts';
+import {
+  capabilityLabelBn, scrubMachineText, unplacedReasonBn,
+} from '../src/presentation.ts';
+import { explain, severityCounts } from '../src/explain.ts';
 import { readiness } from './setup.ts';
 
 type Client = pg.PoolClient;
@@ -79,6 +83,10 @@ interface NamedUnplaced {
   reason: string;
   reasonBn: string;
   capability?: string;
+  /** How many rooms carry the capability this subject needs. Decides which
+   *  suggestion is honest: add a room, or rearrange the ones that exist. */
+  capableRooms?: number;
+  blockers?: SolveResult['unplaced'][number]['blockers'];
 }
 
 /**
@@ -141,27 +149,14 @@ async function nameShortages(
       // code is all there is — and saying so is better than saying nothing.
       detailBn: subjects.length > 0
         ? `${subjects.join(', ')} — ${bn(s.demandedPeriods)}টি পিরিয়ড দরকার; `
-          + `উপযুক্ত ${bn(s.capableRooms)}টি কক্ষে ${bn(s.freePeriods)}টি সময় খালি ছিল`
-        : s.detailBn,
+          + `${capabilityLabelBn(s.capability)} ${bn(s.capableRooms)}টিতে `
+          + `${bn(s.freePeriods)}টি সময় খালি ছিল`
+        // Composed by the solver and possibly stored months ago, so the
+        // machine code is removed on the way out rather than at the writer.
+        : scrubMachineText(s.detailBn),
     };
   });
 }
-
-/**
- * Why a demand could not be met, in a sentence that names the next step.
- *
- * Not the solver's reason code, and deliberately not a paraphrase of it:
- * `no_free_capable_room` means the lab exists and is full, which sends a
- * coordinator somewhere completely different from `no_capable_room`, where
- * the school has no such room at all. §7 is explicit that the four codes are
- * four different errands.
- */
-const REASON_BN: Record<string, string> = {
-  no_free_slot: 'শিক্ষক ও শাখা — দুজনেরই একসাথে ফাঁকা সময় পাওয়া যায়নি',
-  no_capable_room: 'এই বিষয়ের জন্য প্রয়োজনীয় ধরনের কোনো কক্ষ স্কুলে নেই',
-  no_free_capable_room: 'উপযুক্ত কক্ষ আছে, কিন্তু ওই সময়ে সেটি খালি নেই',
-  no_contiguous_pair: 'পরপর দুই পিরিয়ড একসাথে পাওয়া যায়নি — আলাদা করে বসানো হয়েছে',
-};
 
 /**
  * Put names to the ids, and count what actually got stored.
@@ -173,6 +168,7 @@ const REASON_BN: Record<string, string> = {
  */
 async function nameUnplaced(
   c: Client, routineId: string, yearId: string, unplaced: SolveResult['unplaced'],
+  capableRoomsByCapability: Map<string, number> = new Map(),
 ): Promise<NamedUnplaced[]> {
   if (unplaced.length === 0) return [];
   const sectionIds = [...new Set(unplaced.map((u) => u.sectionId))];
@@ -220,8 +216,12 @@ async function nameUnplaced(
       placed: Number(r?.placed ?? 0),
       missing: u.missing,
       reason: u.reason,
-      reasonBn: REASON_BN[u.reason] ?? 'কারণ জানা যায়নি',
-      ...(u.capability ? { capability: u.capability } : {}),
+      reasonBn: unplacedReasonBn(u.reason),
+      ...(u.capability
+        ? { capability: u.capability,
+            capableRooms: capableRoomsByCapability.get(u.capability) ?? 0 }
+        : {}),
+      ...(u.blockers ? { blockers: u.blockers } : {}),
     };
   });
 }
@@ -396,6 +396,17 @@ function summarise(results: ShiftResult[], hardConflicts: number, ms: number) {
   };
 }
 
+/** First occurrence wins. Used for rules reported once per shift. */
+function dedupeBy<T>(rows: T[], key: (row: T) => string): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    const k = key(r);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 /** Re-read a previous run from the database, so a refresh is not an empty page. */
 async function lastResult(c: Client, yearId: string) {
   const { rows } = await c.query<{
@@ -481,10 +492,19 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // database will not object until publish.
       const solved = await new RmsSolver(db).solve(draft.routineId, ctx,
         { alsoBookedAgainst: results.map((r) => r.routineId) });
-      const [named, shortages] = await db.withTenant(ctx, async (c) => [
-        await nameUnplaced(c as Client, draft.routineId, yearId, solved.unplaced),
-        await nameShortages(c as Client, yearId, solved.shortages),
-      ] as const);
+      const [named, shortages] = await db.withTenant(ctx, async (c) => {
+        // The shortage rows already know how many rooms carry each
+        // capability; reusing them keeps `nameUnplaced` to one query and
+        // stops the explanation suggesting "add a room" to a school that
+        // has four of them (§16 — no N+1, no second source of truth).
+        const shorts = await nameShortages(c as Client, yearId, solved.shortages);
+        const capableRooms = new Map(shorts.map((x) => [x.capability, x.capableRooms]));
+        return [
+          await nameUnplaced(c as Client, draft.routineId, yearId,
+                             solved.unplaced, capableRooms),
+          shorts,
+        ] as const;
+      });
       results.push({
         shift,
         routineId: draft.routineId,
@@ -502,11 +522,33 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     const hardConflicts = await db.withTenant(
       ctx, (c) => countHardConflicts(c as Client, results.map((r) => r.routineId)));
 
+    // P9-4. Built from the run that just happened, not by asking the solver
+    // again: the whole explanation is a pure function of the result plus the
+    // readiness the gate already computed. §16's "one generation result,
+    // structured explanation data, efficient lookup" is the shape.
+    const explanations = explain({
+      unplaced: results.flatMap((r) => r.unplaced),
+      soft: results.flatMap((r) => r.soft?.violations ?? []),
+      shortages: results.flatMap((r) => r.shortages),
+      // The same rule can be reported once per shift; a coordinator needs to
+      // read it once.
+      notEvaluated: dedupeBy(
+        results.flatMap((r) => r.soft?.notEvaluated ?? []), (n) => n.ruleBn),
+      // Not recomputed. These are the steps the wizard already marked
+      // optional-and-missing, which is exactly §4's warning example.
+      setupWarnings: ready.steps
+        .filter((step) => step.state === 'warn')
+        .map((step) => ({ titleBn: step.titleBn, detailBn: step.detailBn })),
+      hardConflicts,
+    });
+
     json(res, 200, {
       ok: true,
       yearId,
       shifts: results,
       summary: summarise(results, hardConflicts, Date.now() - startedAt),
+      explanations,
+      severity: severityCounts(explanations),
     }, cors);
   } catch (err) {
     if (err instanceof HttpError) {

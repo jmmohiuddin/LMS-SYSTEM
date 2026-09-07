@@ -110,6 +110,45 @@ export interface UnplacedDemand {
   capability?: string;
   /** Set when this demand belongs to a parallel block (F-504). */
   parallelPool?: string;
+  /**
+   * P9-4. Which guard turned each candidate hour away, counted.
+   *
+   * `reason` is one word for what is often four different problems:
+   * `no_free_slot` is returned whether the section was already full, the
+   * teacher was teaching elsewhere, the teacher had declared the hour
+   * unavailable, or the other shift held the only suitable room. Those send
+   * a coordinator to four different places, and the solver already knows
+   * which it was — it tests each guard in turn and throws the answer away.
+   *
+   * This keeps the tally. It changes no decision: the counters are written
+   * on the path where a candidate has ALREADY been rejected.
+   */
+  blockers?: BlockerTally;
+}
+
+/**
+ * Why the hours a demand could have used were not available.
+ *
+ * Counted over the exhaustive pass (every teaching day × every teaching
+ * period), so the numbers are comparable with each other and with
+ * `candidates`. A demand blocked in 34 of 35 hours by the teacher and in 1
+ * by the section is a teacher problem, and saying so is the whole point.
+ */
+export interface BlockerTally {
+  /** Hours examined in the exhaustive pass. */
+  candidates: number;
+  /** The section already had a lesson at that hour. */
+  sectionBusy: number;
+  /** The teacher was teaching something else. */
+  teacherBusy: number;
+  /** The teacher had declared that hour unavailable. */
+  teacherUnavailable: number;
+  /** No room with the needed capability — or no free classroom — at that hour. */
+  noRoom: number;
+  /** Of the above, how many were held by a routine belonging to another shift. */
+  crossShift: number;
+  /** The shifts that held them, named. Empty when nothing crossed. */
+  crossShiftNames: string[];
 }
 
 export interface SolveResult {
@@ -159,13 +198,21 @@ export interface CapabilityShortage {
  * here would be a structure nobody could read for no measurable gain.
  */
 class IntervalBook {
-  private readonly byKey = new Map<string, Array<[string, string]>>();
+  private readonly byKey = new Map<string, Array<[string, string, string]>>();
 
-  add(resourceId: string, day: number, startsAt: string, endsAt: string): void {
+  /**
+   * @param owner  P9-4. Who holds this interval, for explanation only —
+   *   `''` for a booking this routine made itself, otherwise the shift name
+   *   of the routine that already had it. It never affects `overlaps`, and
+   *   so never affects a placement decision; it is the difference between
+   *   "no hour is free" and "the morning shift is using that room", which
+   *   are the same fact and two entirely different errands.
+   */
+  add(resourceId: string, day: number, startsAt: string, endsAt: string, owner = ''): void {
     const k = `${resourceId}|${day}`;
     const list = this.byKey.get(k);
-    if (list) list.push([startsAt, endsAt]);
-    else this.byKey.set(k, [[startsAt, endsAt]]);
+    if (list) list.push([startsAt, endsAt, owner]);
+    else this.byKey.set(k, [[startsAt, endsAt, owner]]);
   }
 
   overlaps(resourceId: string, day: number, startsAt: string, endsAt: string): boolean {
@@ -177,11 +224,58 @@ class IntervalBook {
     const e = norm(endsAt);
     return list.some(([bs, be]) => s < norm(be) && norm(bs) < e);
   }
+
+  /**
+   * The owner of the FIRST interval blocking this window, or `null` for none.
+   *
+   * Returns the answer `overlaps` would give and the owner in ONE scan, and
+   * allocates nothing. The first version asked twice — `overlaps` in the
+   * guard, then `blockedBy` on the rejection path, which also built an array
+   * per rejected hour. At 120 sections that is tens of thousands of extra
+   * scans and allocations, and it cost the college profile 2.5 seconds of a
+   * 6.4-second run. An explanation must not be paid for by the thing it
+   * explains.
+   *
+   * `''` is a real answer, meaning "this routine's own booking", and is
+   * distinct from `null`.
+   */
+  blockingOwner(
+    resourceId: string, day: number, startsAt: string, endsAt: string,
+  ): string | null {
+    const list = this.byKey.get(`${resourceId}|${day}`);
+    if (!list) return null;
+    const s = norm(startsAt);
+    const e = norm(endsAt);
+    for (const [bs, be, owner] of list) {
+      if (s < norm(be) && norm(bs) < e) return owner;
+    }
+    return null;
+  }
 }
 
 /** '12:30' and '12:30:00' must compare equal. */
 function norm(t: string): string {
   return t.length === 5 ? `${t}:00` : t;
+}
+
+function freshTally(): BlockerTally {
+  return {
+    candidates: 0, sectionBusy: 0, teacherBusy: 0, teacherUnavailable: 0,
+    noRoom: 0, crossShift: 0, crossShiftNames: [],
+  };
+}
+
+/**
+ * Record that another shift held the resource that blocked this hour.
+ *
+ * `owners` carries `''` for a booking this routine made itself, which is not
+ * cross-shift contention and must not be reported as such — a section
+ * colliding with its own earlier lesson is an ordinary full timetable.
+ */
+function noteCrossShift(tally: BlockerTally, owner: string): void {
+  if (owner === '') return;
+  tally.crossShift++;
+  if (!tally.crossShiftNames.includes(owner)) tally.crossShiftNames.push(owner);
 }
 
 /**
@@ -255,6 +349,11 @@ export function groupIntoUnits(
   return units;
 }
 
+/** `shift_code`, as a person says it. Used only in explanation text. */
+const SHIFT_BN: Record<string, string> = {
+  morning: 'সকাল', day: 'দিবা', evening: 'সান্ধ্য', single: 'একক',
+};
+
 const BN_DIGITS = '০১২৩৪৫৬৭৮৯';
 const bnNum = (n: number): string => String(n).replace(/\d/g, (d) => BN_DIGITS[Number(d)]);
 
@@ -323,8 +422,16 @@ export class RmsSolver {
       const placedDoubleGroups = new Map<string, Set<string>>();
 
       for (const row of existing) {
-        if (row.teacher_id) teacherBusy.add(row.teacher_id, row.day_of_week, row.starts_at, row.ends_at);
-        if (row.room_id) roomBusy.add(row.room_id, row.day_of_week, row.starts_at, row.ends_at);
+        // A booking this routine already made is not contention with anyone;
+        // one from another shift's routine is, and is named so the
+        // explanation can say which shift (§11).
+        const owner = row.is_mine ? '' : SHIFT_BN[row.owner_shift] ?? row.owner_shift;
+        if (row.teacher_id) {
+          teacherBusy.add(row.teacher_id, row.day_of_week, row.starts_at, row.ends_at, owner);
+        }
+        if (row.room_id) {
+          roomBusy.add(row.room_id, row.day_of_week, row.starts_at, row.ends_at, owner);
+        }
         // Only THIS routine's slots constrain the section and count toward
         // what is already placed. The other shift's sections are not ours,
         // and counting their periods would leave our own demand short.
@@ -435,10 +542,16 @@ export class RmsSolver {
           });
         }
 
+        // P9-4. The tally from the attempt that failed is what gets
+        // explained; a successful attempt overwrites it and is never read.
+        let tally: BlockerTally = freshTally();
         for (let i = 0; i < remaining; i++) {
           const usedDays = sectionSubjectDays.get(ssKey) ?? new Set<number>();
           let found: { day: number; period: TeachingPeriod;
                        rooms: Array<string | null> } | null = null;
+          // P9-4. Reset per attempt: the tally that survives is the one from
+          // the attempt that failed, which is the one being explained.
+          tally = freshTally();
 
           // Pass 1: prefer a day this (section, subject) hasn't used yet, to
           // spread occurrences across the week. Pass 2: allow any day if
@@ -448,12 +561,44 @@ export class RmsSolver {
             for (const day of teachingDays) {
               if (preferUnusedDay && usedDays.has(day)) continue;
               for (const period of periods) {
+                // Counted on the exhaustive pass only. Pass 1 skips days and
+                // would make the denominator a number nobody could interpret.
+                const count = !preferUnusedDay;
+                if (count) tally.candidates++;
+
                 // The section is busy once for the whole block.
-                if (sectionBusy.overlaps(d.sectionId, day, period.startsAt, period.endsAt)) continue;
+                if (sectionBusy.overlaps(d.sectionId, day, period.startsAt, period.endsAt)) {
+                  if (count) tally.sectionBusy++;
+                  continue;
+                }
                 // Every member needs its own free teacher…
-                if (unit.members.some((m) =>
-                      teacherBusy.overlaps(m.teacherId, day, period.startsAt, period.endsAt)
-                      || isUnavailable(m.teacherId, day, period.startsAt, period.endsAt))) continue;
+                // One pass over the members, answering both questions at
+                // once: is anyone unavailable, and if someone is BUSY, who
+                // holds them. Busy and unavailable are different errands —
+                // one is a timetable to rearrange, the other a person to ask
+                // — so they are counted apart, but neither costs a second
+                // scan of the interval list.
+                let blockedOwner: string | null = null;
+                let unavailable = false;
+                for (const m of unit.members) {
+                  const owner = teacherBusy.blockingOwner(
+                    m.teacherId, day, period.startsAt, period.endsAt);
+                  if (owner !== null) { blockedOwner = owner; break; }
+                  if (isUnavailable(m.teacherId, day, period.startsAt, period.endsAt)) {
+                    unavailable = true; break;
+                  }
+                }
+                if (blockedOwner !== null || unavailable) {
+                  if (count) {
+                    if (blockedOwner !== null) {
+                      tally.teacherBusy++;
+                      if (blockedOwner !== '') noteCrossShift(tally, blockedOwner);
+                    } else {
+                      tally.teacherUnavailable++;
+                    }
+                  }
+                  continue;
+                }
                 // …and two members of one block may not be the same person.
                 if (new Set(unit.members.map((m) => m.teacherId)).size < unit.members.length) {
                   break;
@@ -471,7 +616,31 @@ export class RmsSolver {
                 // cannot share the section's classroom.
                 const rooms = this.pickRoomsForUnit(
                   unit, roomBySection, roomsByCapability, spareRooms, roomBusy, day, period);
-                if (rooms === null) continue;
+                if (rooms === null) {
+                  if (count) {
+                    tally.noRoom++;
+                    // Who is in the rooms that could have taken it. Stops at
+                    // the first foreign holder: the claim is "the other
+                    // shift was using it", and one witness per hour is what
+                    // the count means. Scanning every candidate room to find
+                    // a second one would cost more than the answer is worth.
+                    outer:
+                    for (const m of unit.members) {
+                      const candidates = m.requiresCapability
+                        ? (roomsByCapability.get(m.requiresCapability) ?? [])
+                        : [roomBySection.get(m.sectionId)].filter(Boolean) as string[];
+                      for (const r of candidates) {
+                        const owner = roomBusy.blockingOwner(
+                          r, day, period.startsAt, period.endsAt);
+                        if (owner !== null && owner !== '') {
+                          noteCrossShift(tally, owner);
+                          break outer;
+                        }
+                      }
+                    }
+                  }
+                  continue;
+                }
 
                 found = { day, period, rooms };
                 break;
@@ -532,6 +701,9 @@ export class RmsSolver {
                     : capped ? 'no_free_capable_room' : 'no_capable_room',
               ...(m.requiresCapability ? { capability: m.requiresCapability } : {}),
               ...(unit.pool ? { parallelPool: unit.pool } : {}),
+              // Per member, though the search was per unit: a parallel block
+              // is searched once and every member met the same walls.
+              blockers: tally,
             });
           }
         }
@@ -1054,6 +1226,7 @@ export class RmsSolver {
       room_id: string | null;
       double_group_id: string | null;
       is_mine: boolean;
+      owner_shift: string;
     }>(
       // F-506. This routine's own slots, PLUS every slot in any other
       // ACTIVE routine for the same year — which is the other shift. A
@@ -1067,8 +1240,12 @@ export class RmsSolver {
       // toward our demand.
       `SELECT rs.primary_section_id, rs.subject_id, rs.teacher_id, rs.day_of_week,
               rs.period_no, rs.starts_at, rs.ends_at, rs.room_id, rs.double_group_id,
-              (rs.routine_id = $1) AS is_mine
+              (rs.routine_id = $1) AS is_mine,
+              -- P9-4. Which shift already holds this hour, for the
+              -- explanation only. Nothing places by it.
+              r.shift::text AS owner_shift
          FROM routine_slots rs
+         JOIN routines r ON r.id = rs.routine_id
         WHERE rs.academic_year_id = $2
           AND rs.status = 'active'
           AND rs.slot_kind = 'teaching'

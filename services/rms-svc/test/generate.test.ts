@@ -411,6 +411,24 @@ describe('P9-3 — generating an institution-wide routine', { skip }, () => {
     assert.equal((await read(`yearId=${YEAR}`, studentToken)).status, 403);
   });
 
+  test('P9-4 §15 — nobody outside the three authoring roles sees the diagnostics', async () => {
+    // The explanations name every teacher who was busy, every section that
+    // was full and every room that was taken. That is a picture of the whole
+    // institution's staffing, and it belongs to the people who plan it.
+    const { signAccessToken } = await import('../../../packages/server-core/src/jwt.ts');
+    for (const role of ['subject_teacher', 'class_teacher', 'guardian', 'dept_head']) {
+      const token = await signAccessToken({ sub: RAFIQ, tid: T, role, roles: [role] });
+      assert.equal((await run({ yearId: YEAR }, token)).status, 403, role);
+      assert.equal((await read(`yearId=${YEAR}`, token)).status, 403, role);
+    }
+
+    // And the three that do: generating IS authoring.
+    for (const role of ['principal', 'school_owner', 'academic_coordinator']) {
+      const token = await signAccessToken({ sub: HEAD, tid: T, role, roles: [role] });
+      assert.notEqual((await read(`yearId=${YEAR}`, token)).status, 403, role);
+    }
+  });
+
   test('TENANT ISOLATION — another school cannot generate into this one', async () => {
     await run({ yearId: YEAR });
 
@@ -614,6 +632,43 @@ describe('P9-3 §11 — two shifts sharing one building', { skip }, () => {
                OR (a.room_id = b.room_id AND a.room_id IS NOT NULL))
         WHERE a.tenant_id = $1 AND a.status = 'active' AND b.status = 'active'`, [T2]));
     assert.equal(rows[0].n, '0', 'a room cannot hold two classes at 09:15');
+  });
+
+  test('P9-4 §11 — the day shift is told WHICH shift took its rooms', async () => {
+    // The honest consequence of P9-3's fix, now explained. Two rooms serve
+    // four sections and the handover overlaps, so the day shift loses its
+    // first period every day. Before P9-4 that arrived as `no_free_slot`
+    // against a uuid; a coordinator could not tell it from an ordinary
+    // clash, and the fix for the two is completely different.
+    const r = await call(generate2,
+      { method: 'POST', url: '/', token, body: { yearId: YEAR2 } } as Parameters<typeof call>[1]);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const items = (r.body as unknown as {
+      explanations: Array<{
+        category: string; severity: string; whyBn: string; titleBn: string;
+        suggestions: Array<{ textBn: string; evidenceBn: string }>;
+      }>;
+    }).explanations;
+
+    const crossed = items.filter((i) => i.category === 'cross_shift');
+    assert.ok(crossed.length > 0,
+      `no cross-shift finding: ${JSON.stringify(items.map((i) => i.category))}`);
+
+    const one = crossed[0];
+    assert.match(one.whyBn, /সকাল/,
+      'the shift that actually held the room is named, not "another shift"');
+    assert.equal(one.severity, 'error');
+    assert.ok(one.suggestions.length > 0, 'and it offers a next step');
+    assert.ok(one.suggestions.some((s) => /সকাল/.test(s.textBn)),
+      'one of which is about the shift that is holding it');
+
+    // Evidence, not adjectives: the sentence carries the count it is based on.
+    assert.match(one.whyBn, /[০-৯]+টি/, `no count in: ${one.whyBn}`);
+    // And nothing a developer named reaches it.
+    const text = items.flatMap((i) => [i.titleBn, i.whyBn,
+      ...i.suggestions.flatMap((s) => [s.textBn, s.evidenceBn])]).join(' ');
+    assert.doesNotMatch(text, /[a-z]+_[a-z]+/, `machine identifier: ${text}`);
+    assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}/, 'uuid');
   });
 
   test('the MORNING shift is solved first — the clock decides, not the alphabet', async () => {

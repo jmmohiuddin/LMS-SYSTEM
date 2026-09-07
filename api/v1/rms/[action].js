@@ -1656,11 +1656,19 @@ function scarcestSubject(slots, competent) {
 // services/rms-svc/src/solve.ts
 var IntervalBook = class {
   byKey = /* @__PURE__ */ new Map();
-  add(resourceId, day2, startsAt, endsAt) {
+  /**
+   * @param owner  P9-4. Who holds this interval, for explanation only —
+   *   `''` for a booking this routine made itself, otherwise the shift name
+   *   of the routine that already had it. It never affects `overlaps`, and
+   *   so never affects a placement decision; it is the difference between
+   *   "no hour is free" and "the morning shift is using that room", which
+   *   are the same fact and two entirely different errands.
+   */
+  add(resourceId, day2, startsAt, endsAt, owner = "") {
     const k = `${resourceId}|${day2}`;
     const list2 = this.byKey.get(k);
-    if (list2) list2.push([startsAt, endsAt]);
-    else this.byKey.set(k, [[startsAt, endsAt]]);
+    if (list2) list2.push([startsAt, endsAt, owner]);
+    else this.byKey.set(k, [[startsAt, endsAt, owner]]);
   }
   overlaps(resourceId, day2, startsAt, endsAt) {
     const list2 = this.byKey.get(`${resourceId}|${day2}`);
@@ -1669,9 +1677,49 @@ var IntervalBook = class {
     const e = norm(endsAt);
     return list2.some(([bs, be]) => s < norm(be) && norm(bs) < e);
   }
+  /**
+   * The owner of the FIRST interval blocking this window, or `null` for none.
+   *
+   * Returns the answer `overlaps` would give and the owner in ONE scan, and
+   * allocates nothing. The first version asked twice — `overlaps` in the
+   * guard, then `blockedBy` on the rejection path, which also built an array
+   * per rejected hour. At 120 sections that is tens of thousands of extra
+   * scans and allocations, and it cost the college profile 2.5 seconds of a
+   * 6.4-second run. An explanation must not be paid for by the thing it
+   * explains.
+   *
+   * `''` is a real answer, meaning "this routine's own booking", and is
+   * distinct from `null`.
+   */
+  blockingOwner(resourceId, day2, startsAt, endsAt) {
+    const list2 = this.byKey.get(`${resourceId}|${day2}`);
+    if (!list2) return null;
+    const s = norm(startsAt);
+    const e = norm(endsAt);
+    for (const [bs, be, owner] of list2) {
+      if (s < norm(be) && norm(bs) < e) return owner;
+    }
+    return null;
+  }
 };
 function norm(t) {
   return t.length === 5 ? `${t}:00` : t;
+}
+function freshTally() {
+  return {
+    candidates: 0,
+    sectionBusy: 0,
+    teacherBusy: 0,
+    teacherUnavailable: 0,
+    noRoom: 0,
+    crossShift: 0,
+    crossShiftNames: []
+  };
+}
+function noteCrossShift(tally, owner) {
+  if (owner === "") return;
+  tally.crossShift++;
+  if (!tally.crossShiftNames.includes(owner)) tally.crossShiftNames.push(owner);
 }
 function groupIntoUnits(demand, poolOf) {
   const byPool = /* @__PURE__ */ new Map();
@@ -1710,6 +1758,12 @@ function groupIntoUnits(demand, poolOf) {
   }
   return units;
 }
+var SHIFT_BN = {
+  morning: "\u09B8\u0995\u09BE\u09B2",
+  day: "\u09A6\u09BF\u09AC\u09BE",
+  evening: "\u09B8\u09BE\u09A8\u09CD\u09A7\u09CD\u09AF",
+  single: "\u098F\u0995\u0995"
+};
 var BN_DIGITS2 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
 var bnNum = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS2[Number(d)]);
 var RmsSolver = class {
@@ -1766,8 +1820,13 @@ var RmsSolver = class {
       const placedCount = /* @__PURE__ */ new Map();
       const placedDoubleGroups = /* @__PURE__ */ new Map();
       for (const row of existing) {
-        if (row.teacher_id) teacherBusy.add(row.teacher_id, row.day_of_week, row.starts_at, row.ends_at);
-        if (row.room_id) roomBusy.add(row.room_id, row.day_of_week, row.starts_at, row.ends_at);
+        const owner = row.is_mine ? "" : SHIFT_BN[row.owner_shift] ?? row.owner_shift;
+        if (row.teacher_id) {
+          teacherBusy.add(row.teacher_id, row.day_of_week, row.starts_at, row.ends_at, owner);
+        }
+        if (row.room_id) {
+          roomBusy.add(row.room_id, row.day_of_week, row.starts_at, row.ends_at, owner);
+        }
         if (!row.is_mine) continue;
         sectionBusy.add(row.primary_section_id, row.day_of_week, row.starts_at, row.ends_at);
         const ssKey = `${row.primary_section_id}|${row.subject_id}`;
@@ -1856,15 +1915,50 @@ var RmsSolver = class {
             reason: "no_contiguous_pair"
           });
         }
+        let tally = freshTally();
         for (let i = 0; i < remaining; i++) {
           const usedDays = sectionSubjectDays.get(ssKey) ?? /* @__PURE__ */ new Set();
           let found = null;
+          tally = freshTally();
           for (const preferUnusedDay of [true, false]) {
             for (const day3 of teachingDays2) {
               if (preferUnusedDay && usedDays.has(day3)) continue;
               for (const period2 of periods) {
-                if (sectionBusy.overlaps(d.sectionId, day3, period2.startsAt, period2.endsAt)) continue;
-                if (unit.members.some((m) => teacherBusy.overlaps(m.teacherId, day3, period2.startsAt, period2.endsAt) || isUnavailable(m.teacherId, day3, period2.startsAt, period2.endsAt))) continue;
+                const count = !preferUnusedDay;
+                if (count) tally.candidates++;
+                if (sectionBusy.overlaps(d.sectionId, day3, period2.startsAt, period2.endsAt)) {
+                  if (count) tally.sectionBusy++;
+                  continue;
+                }
+                let blockedOwner = null;
+                let unavailable = false;
+                for (const m of unit.members) {
+                  const owner = teacherBusy.blockingOwner(
+                    m.teacherId,
+                    day3,
+                    period2.startsAt,
+                    period2.endsAt
+                  );
+                  if (owner !== null) {
+                    blockedOwner = owner;
+                    break;
+                  }
+                  if (isUnavailable(m.teacherId, day3, period2.startsAt, period2.endsAt)) {
+                    unavailable = true;
+                    break;
+                  }
+                }
+                if (blockedOwner !== null || unavailable) {
+                  if (count) {
+                    if (blockedOwner !== null) {
+                      tally.teacherBusy++;
+                      if (blockedOwner !== "") noteCrossShift(tally, blockedOwner);
+                    } else {
+                      tally.teacherUnavailable++;
+                    }
+                  }
+                  continue;
+                }
                 if (new Set(unit.members.map((m) => m.teacherId)).size < unit.members.length) {
                   break;
                 }
@@ -1877,7 +1971,28 @@ var RmsSolver = class {
                   day3,
                   period2
                 );
-                if (rooms2 === null) continue;
+                if (rooms2 === null) {
+                  if (count) {
+                    tally.noRoom++;
+                    outer:
+                      for (const m of unit.members) {
+                        const candidates = m.requiresCapability ? roomsByCapability.get(m.requiresCapability) ?? [] : [roomBySection.get(m.sectionId)].filter(Boolean);
+                        for (const r of candidates) {
+                          const owner = roomBusy.blockingOwner(
+                            r,
+                            day3,
+                            period2.startsAt,
+                            period2.endsAt
+                          );
+                          if (owner !== null && owner !== "") {
+                            noteCrossShift(tally, owner);
+                            break outer;
+                          }
+                        }
+                      }
+                  }
+                  continue;
+                }
                 found = { day: day3, period: period2, rooms: rooms2 };
                 break;
               }
@@ -1921,7 +2036,10 @@ var RmsSolver = class {
               missing: remaining - placedForThis,
               reason: m.requiresCapability === null ? "no_free_slot" : capped ? "no_free_capable_room" : "no_capable_room",
               ...m.requiresCapability ? { capability: m.requiresCapability } : {},
-              ...unit.pool ? { parallelPool: unit.pool } : {}
+              ...unit.pool ? { parallelPool: unit.pool } : {},
+              // Per member, though the search was per unit: a parallel block
+              // is searched once and every member met the same walls.
+              blockers: tally
             });
           }
         }
@@ -2350,8 +2468,12 @@ var RmsSolver = class {
       // toward our demand.
       `SELECT rs.primary_section_id, rs.subject_id, rs.teacher_id, rs.day_of_week,
               rs.period_no, rs.starts_at, rs.ends_at, rs.room_id, rs.double_group_id,
-              (rs.routine_id = $1) AS is_mine
+              (rs.routine_id = $1) AS is_mine,
+              -- P9-4. Which shift already holds this hour, for the
+              -- explanation only. Nothing places by it.
+              r.shift::text AS owner_shift
          FROM routine_slots rs
+         JOIN routines r ON r.id = rs.routine_id
         WHERE rs.academic_year_id = $2
           AND rs.status = 'active'
           AND rs.slot_kind = 'teaching'
@@ -2790,6 +2912,39 @@ async function handler4(req, res) {
   }
 }
 
+// services/rms-svc/src/presentation.ts
+var CAPABILITY_BN = {
+  physics_lab: "\u09AA\u09A6\u09BE\u09B0\u09CD\u09A5\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8 \u09B2\u09CD\u09AF\u09BE\u09AC",
+  chemistry_lab: "\u09B0\u09B8\u09BE\u09AF\u09BC\u09A8 \u09B2\u09CD\u09AF\u09BE\u09AC",
+  biology_lab: "\u099C\u09C0\u09AC\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8 \u09B2\u09CD\u09AF\u09BE\u09AC",
+  computer_lab: "\u0995\u09AE\u09CD\u09AA\u09BF\u0989\u099F\u09BE\u09B0 \u09B2\u09CD\u09AF\u09BE\u09AC",
+  computer: "\u0995\u09AE\u09CD\u09AA\u09BF\u0989\u099F\u09BE\u09B0 \u09B8\u09C1\u09AC\u09BF\u09A7\u09BE",
+  projector: "\u09AA\u09CD\u09B0\u099C\u09C7\u0995\u09CD\u099F\u09B0",
+  prayer_hall: "\u09A8\u09BE\u09AE\u09BE\u099C \u0998\u09B0",
+  library: "\u09AA\u09BE\u09A0\u09BE\u0997\u09BE\u09B0",
+  auditorium: "\u09AE\u09BF\u09B2\u09A8\u09BE\u09AF\u09BC\u09A4\u09A8",
+  science_lab: "\u09AC\u09BF\u099C\u09CD\u099E\u09BE\u09A8 \u09B2\u09CD\u09AF\u09BE\u09AC",
+  language_lab: "\u09AD\u09BE\u09B7\u09BE \u09B2\u09CD\u09AF\u09BE\u09AC"
+};
+var machineToken = () => /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b|\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g;
+var uuidPattern = () => /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+var isMachineToken = (s) => /^(?:[a-z][a-z0-9]*(?:_[a-z0-9]+)+|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)$/.test(s);
+function capabilityLabelBn(capability) {
+  if (!capability) return "\u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7";
+  return CAPABILITY_BN[capability] ?? "\u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7";
+}
+function scrubMachineText(text) {
+  if (!text) return text;
+  return text.replace(uuidPattern(), "\u09B6\u09A8\u09BE\u0995\u09CD\u09A4\u0995\u09BE\u09B0\u09C0").replace(/["'`]([a-zA-Z][a-zA-Z0-9_]*)["'`]/g, (whole, token) => isMachineToken(token) || token in CAPABILITY_BN ? capabilityLabelBn(token) : whole).replace(machineToken(), (token) => CAPABILITY_BN[token] ?? "\u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7");
+}
+var UNPLACED_REASON_BN = {
+  no_free_slot: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0993 \u09B6\u09BE\u0996\u09BE \u2014 \u09A6\u09C1\u099C\u09A8\u09C7\u09B0\u0987 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AB\u09BE\u0981\u0995\u09BE \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+  no_capable_room: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u09A8\u09C7\u0987",
+  no_free_capable_room: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u0986\u099B\u09C7, \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B8\u09C7\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u09A8\u09C7\u0987",
+  no_contiguous_pair: "\u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF \u2014 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7"
+};
+var unplacedReasonBn = (reason) => UNPLACED_REASON_BN[reason] ?? "\u0995\u09BE\u09B0\u09A3 \u099C\u09BE\u09A8\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF";
+
 // services/rms-svc/api/generation.ts
 var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var RMS_ROLES2 = ["principal", "school_owner", "academic_coordinator", "dept_head"];
@@ -2891,6 +3046,32 @@ async function report(client, routineId) {
       ORDER BY rs.day_of_week, rs.period_no`,
     [routineId]
   );
+  const conflicts = await client.query(
+    `WITH mine AS (
+       SELECT routine_id, teacher_id, room_id, primary_section_id, parallel_pool,
+              day_of_week, starts_at, ends_at, slot_kind
+         FROM routine_slots WHERE routine_id = $1 AND status = 'active'
+     )
+     SELECT (
+        (SELECT count(*) FROM (SELECT starts_at < max(ends_at) OVER (
+             PARTITION BY teacher_id, day_of_week ORDER BY starts_at, ends_at
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+           FROM mine WHERE teacher_id IS NOT NULL
+             AND slot_kind IN ('teaching','exam')) q WHERE hit)
+      + (SELECT count(*) FROM (SELECT starts_at < max(ends_at) OVER (
+             PARTITION BY room_id, day_of_week ORDER BY starts_at, ends_at
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+           FROM mine WHERE room_id IS NOT NULL
+             AND slot_kind IN ('teaching','exam')) q WHERE hit)
+      + (SELECT count(*) FROM (SELECT starts_at < max(ends_at) OVER (
+             PARTITION BY routine_id, primary_section_id, day_of_week
+             ORDER BY starts_at, ends_at
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS hit
+           FROM mine WHERE primary_section_id IS NOT NULL
+             AND parallel_pool IS NULL) q WHERE hit)
+     )::text AS n`,
+    [routineId]
+  );
   return {
     routine: {
       id: row.id,
@@ -2901,14 +3082,18 @@ async function report(client, routineId) {
       objectiveScore: row.objective_score === null ? null : Number(row.objective_score),
       solverSeconds: row.solver_seconds === null ? null : Number(row.solver_seconds)
     },
-    // Always zero for a stored routine: the three exclusion constraints
-    // make a hard violation unstorable. Shown because "০" is the statement
-    // that the guarantee is real, not a computed result.
-    hardViolations: 0,
+    hardViolations: Number(conflicts.rows[0]?.n ?? 0),
     soft: stored.soft ?? [],
     unplaced: stored.unplaced ?? [],
     notEvaluated: stored.notEvaluated ?? [],
-    shortages: stored.shortages ?? [],
+    // P9-4 §9. Written by the solver, possibly months ago, and it embeds the
+    // raw capability code: `"computer_lab" কক্ষে ৮০টি পিরিয়ড দরকার`. Fixing
+    // the writer would not fix a row already in the database, so it is
+    // rewritten on the way out.
+    shortages: (stored.shortages ?? []).map((sh) => ({
+      ...sh,
+      detailBn: scrubMachineText(sh.detailBn)
+    })),
     slots: slots.rows.map((s) => ({
       id: s.id,
       dayOfWeek: s.day_of_week,
@@ -4860,11 +5045,348 @@ async function handler9(req, res) {
   }
 }
 
+// services/rms-svc/src/explain.ts
+var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn4 = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS5[Number(d)]);
+function dominant(t) {
+  if (!t || t.candidates === 0) return null;
+  const ranked = [
+    { kind: "teacher", count: t.teacherBusy },
+    { kind: "room", count: t.noRoom },
+    { kind: "unavailable", count: t.teacherUnavailable },
+    { kind: "section", count: t.sectionBusy }
+  ].filter((x) => x.count > 0).sort((a, b) => b.count - a.count);
+  return ranked[0] ?? null;
+}
+function share(count, of) {
+  return `${bn4(of)}\u099F\u09BF \u09B8\u09AE\u09CD\u09AD\u09BE\u09AC\u09CD\u09AF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn4(count)}\u099F\u09BF\u09A4\u09C7`;
+}
+function unplacedExplanation(u, index) {
+  const t = u.blockers;
+  const who = [u.sectionName, u.subjectBn, ...u.teacherBn ? [u.teacherBn] : []];
+  const currentBn = `${bn4(u.required)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn4(u.placed)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn4(u.missing)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`;
+  const impactBn = `${u.sectionName}-\u098F ${u.subjectBn} \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964`;
+  const titleBn = `${u.sectionName} \xB7 ${u.subjectBn} \u2014 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09C7\u09A8\u09BF`;
+  const base = {
+    id: `unplaced:${u.sectionId}:${u.subjectId}:${index}`,
+    severity: "error",
+    titleBn,
+    affectedBn: who,
+    currentBn,
+    impactBn
+  };
+  if (u.reason === "no_capable_room") {
+    return {
+      ...base,
+      category: "capability_missing",
+      whatBn: `${u.subjectBn} \u098F\u09B0 \u099C\u09A8\u09CD\u09AF \u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7 \u09A6\u09B0\u0995\u09BE\u09B0, \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u09B8\u09C7\u09B0\u0995\u09AE \u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09BF\u09A4 \u09A8\u09C7\u0987\u0964`,
+      whyBn: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B6\u09C2\u09A8\u09CD\u09AF \u2014 \u09A4\u09BE\u0987 \u0995\u09CB\u09A8\u09CB \u09B8\u09AE\u09AF\u09BC\u09C7\u0987 \u098F\u0987 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+      suggestions: [
+        {
+          textBn: "\u0995\u0995\u09CD\u09B7 \u09AC\u09CD\u09AF\u09AC\u09B8\u09CD\u09A5\u09BE\u09AA\u09A8\u09BE\u09AF\u09BC \u0997\u09BF\u09AF\u09BC\u09C7 \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7\u099F\u09BF \u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8 \u09AC\u09BE \u09AC\u09BF\u09A6\u09CD\u09AF\u09AE\u09BE\u09A8 \u0995\u0995\u09CD\u09B7\u09C7 \u09B8\u09C7\u0987 \u09B8\u09C1\u09AC\u09BF\u09A7\u09BE \u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u09B0\u09C1\u09A8",
+          evidenceBn: "\u098F\u0987 \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u0995\u09CD\u09B7 \u098F\u0996\u09A8 \u09B6\u09C2\u09A8\u09CD\u09AF"
+        },
+        {
+          textBn: `${u.subjectBn} \u098F\u09B0 \u099C\u09A8\u09CD\u09AF \u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u09B6\u09B0\u09CD\u09A4 \u09A4\u09C1\u09B2\u09C7 \u09A6\u09BF\u09A8`,
+          evidenceBn: "\u09B6\u09B0\u09CD\u09A4\u099F\u09BF \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u09B8\u09C7\u099F\u09BF\u0982\u09B8\u09C7 \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u0986\u099B\u09C7"
+        }
+      ]
+    };
+  }
+  if (u.reason === "no_contiguous_pair") {
+    return {
+      ...base,
+      severity: "warning",
+      category: "double_period",
+      titleBn: `${u.sectionName} \xB7 ${u.subjectBn} \u2014 \u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF`,
+      whatBn: `${u.subjectBn} \u098F\u09B0 ${bn4(u.missing)}\u099F\u09BF \u099C\u09CB\u09A1\u09BC\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09B0\u09AA\u09B0 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF; \u0986\u09B2\u09BE\u09A6\u09BE \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B9\u09BF\u09B8\u09C7\u09AC\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
+      whyBn: "\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u09A6\u09BF\u09A8\u09C7\u0987 \u09AA\u09BE\u09B6\u09BE\u09AA\u09BE\u09B6\u09BF \u09A6\u09C1\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u0996\u09BE\u09B2\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+      currentBn: `${bn4(u.missing)}\u099F\u09BF \u099C\u09CB\u09A1\u09BC\u09BE \u0986\u09B2\u09BE\u09A6\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B9\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7`,
+      impactBn: "\u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8 \u09A6\u09C1\u0987 \u09AD\u09BE\u0997\u09C7 \u09B9\u09B2\u09C7 \u09B8\u09B0\u099E\u09CD\u099C\u09BE\u09AE \u0997\u09CB\u099B\u09BE\u09A4\u09C7\u0987 \u09B8\u09AE\u09AF\u09BC \u099A\u09B2\u09C7 \u09AF\u09BE\u09AF\u09BC\u0964",
+      suggestions: [
+        {
+          textBn: "\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09B8\u09AE\u09AF\u09BC\u09B8\u09C2\u099A\u09BF\u09A4\u09C7 \u09AC\u09BF\u09B0\u09A4\u09BF\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09A8 \u09AC\u09A6\u09B2\u09C7 \u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8",
+          evidenceBn: "\u099C\u09CB\u09A1\u09BC\u09BE \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09BF\u09B0\u09A4\u09BF\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BE\u09B6\u09C7 \u09AA\u09A1\u09BC\u09B2\u09C7 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE"
+        }
+      ]
+    };
+  }
+  const d = dominant(t);
+  if (u.reason === "no_free_capable_room" || d?.kind === "room") {
+    const crossed2 = (t?.crossShift ?? 0) > 0 && (t?.crossShiftNames.length ?? 0) > 0;
+    const suggestions2 = [];
+    if ((u.capableRooms ?? 0) > 1) {
+      suggestions2.push({
+        textBn: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7\u0997\u09C1\u09B2\u09CB\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 \u0995\u09CB\u09A8\u099F\u09BF\u09A4\u09C7 \u0995\u0996\u09A8 \u0995\u09CD\u09B2\u09BE\u09B8 \u0986\u099B\u09C7 \u09A6\u09C7\u0996\u09C7 \u098F\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09B8\u09B0\u09BE\u09A8",
+        evidenceBn: `\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF ${bn4(u.capableRooms ?? 0)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4`
+      });
+    } else {
+      suggestions2.push({
+        textBn: "\u0986\u09B0\u0993 \u098F\u0995\u099F\u09BF \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8",
+        evidenceBn: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u09AE\u09BE\u09A4\u09CD\u09B0 \u098F\u0995\u099F\u09BF"
+      });
+    }
+    if (crossed2) {
+      suggestions2.push({
+        textBn: `${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u09B8\u09BE\u09A5\u09C7 \u0995\u0995\u09CD\u09B7 \u09AD\u09BE\u0997\u09BE\u09AD\u09BE\u0997\u09BF\u09B0 \u09B8\u09AE\u09AF\u09BC \u09AC\u09A6\u09B2\u09BE\u09A8`,
+        evidenceBn: `${bn4(t.crossShift)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u0985\u09A8\u09CD\u09AF \u09B6\u09BF\u09AB\u099F \u0995\u0995\u09CD\u09B7\u099F\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u099B\u09BF\u09B2`
+      });
+    }
+    return {
+      ...base,
+      category: crossed2 ? "cross_shift" : "room_conflict",
+      whatBn: `${u.subjectBn} \u098F\u09B0 \u099C\u09A8\u09CD\u09AF \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u09A6\u09B0\u0995\u09BE\u09B0, \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u09AF\u09C7 \u09B8\u09AE\u09AF\u09BC\u0997\u09C1\u09B2\u09CB\u09A4\u09C7 \u09B6\u09BE\u0996\u09BE \u0993 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A6\u09C1\u099C\u09A8\u09C7\u0987 \u09AE\u09C1\u0995\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8, \u09B8\u09C7\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u0995\u0995\u09CD\u09B7\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2 \u09A8\u09BE\u0964`,
+      whyBn: crossed2 ? `${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8 \u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u0995\u0995\u09CD\u09B7\u099F\u09BF \u09A7\u09B0\u09C7 \u09B0\u09C7\u0996\u09C7\u099B\u09BF\u09B2 \u2014 ${share(
+        t.crossShift,
+        t.candidates
+      )} \u098F\u099F\u09BF\u0987 \u09AC\u09BE\u09A7\u09BE \u099B\u09BF\u09B2\u0964` : t ? `${share(t.noRoom, t.candidates)} \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u0964` : "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u0964",
+      suggestions: suggestions2
+    };
+  }
+  if (!d) {
+    return {
+      ...base,
+      category: "insufficient_slots",
+      whatBn: `${u.sectionName}-\u098F ${u.subjectBn} \u098F\u09B0 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`,
+      whyBn: "\u0995\u09CB\u09A8 \u09AC\u09BE\u09A7\u09BE\u09AF\u09BC \u0986\u099F\u0995\u09C7\u099B\u09C7 \u09A4\u09BE \u098F\u0987 \u09B0\u09BE\u09A8\u09C7 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09A8\u09BF\u09B0\u09CD\u09A3\u09AF\u09BC \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+      suggestions: []
+    };
+  }
+  if (d.kind === "unavailable") {
+    return {
+      ...base,
+      category: "availability_conflict",
+      whatBn: `${u.teacherBn ?? "\u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09BF\u09A4 \u09B6\u09BF\u0995\u09CD\u09B7\u0995"} \u09AF\u09C7 \u09B8\u09AE\u09AF\u09BC\u0997\u09C1\u09B2\u09CB\u09A4\u09C7 \u09AA\u09A1\u09BC\u09BE\u09A4\u09C7 \u09AA\u09BE\u09B0\u09AC\u09C7\u09A8 \u09A8\u09BE \u09AC\u09B2\u09C7 \u099C\u09BE\u09A8\u09BF\u09AF\u09BC\u09C7\u099B\u09C7\u09A8, \u09AC\u09BE\u0995\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B6\u09BE\u0996\u09BE\u099F\u09BF \u09AE\u09C1\u0995\u09CD\u09A4 \u099B\u09BF\u09B2 \u09A8\u09BE\u0964`,
+      whyBn: `${share(d.count, t.candidates)} \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u09AC\u09BE\u09A7\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
+      suggestions: [
+        {
+          textBn: `${u.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0"} \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE \u0986\u09AC\u09BE\u09B0 \u09A6\u09C7\u0996\u09C7 \u09A8\u09BF\u09A8 \u2014 \u0995\u09CB\u09A8\u09CB \u098F\u0995\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09C1\u09B2\u09C7 \u09A6\u09BF\u09B2\u09C7 \u098F\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u099F\u09BF \u09AC\u09B8\u09C7 \u09AF\u09BE\u09AC\u09C7`,
+          evidenceBn: `${bn4(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE\u0987 \u098F\u0995\u09AE\u09BE\u09A4\u09CD\u09B0 \u09AC\u09BE\u09A7\u09BE \u099B\u09BF\u09B2`
+        },
+        {
+          textBn: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0985\u09A8\u09CD\u09AF \u098F\u0995\u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8",
+          evidenceBn: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09AC\u09A6\u09B2\u09BE\u09B2\u09C7 \u09B8\u09AE\u09AF\u09BC-\u09B8\u09C0\u09AE\u09BE\u0993 \u09AC\u09A6\u09B2\u09C7 \u09AF\u09BE\u09AF\u09BC"
+        }
+      ]
+    };
+  }
+  if (d.kind === "section") {
+    const full = d.count === t.candidates;
+    return {
+      ...base,
+      category: full ? "insufficient_slots" : "section_conflict",
+      whatBn: full ? `${u.sectionName}-\u098F\u09B0 \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7\u09B0 \u09B8\u09AC \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0987\u09A4\u09BF\u09AE\u09A7\u09CD\u09AF\u09C7 \u09AD\u09B0\u09C7 \u0997\u09C7\u099B\u09C7\u0964` : `${u.sectionName} \u09AF\u09C7 \u09B8\u09AE\u09AF\u09BC\u0997\u09C1\u09B2\u09CB\u09A4\u09C7 \u09AE\u09C1\u0995\u09CD\u09A4 \u099B\u09BF\u09B2, \u09B8\u09C7\u0996\u09BE\u09A8\u09C7 \u0985\u09A8\u09CD\u09AF \u09AC\u09BE\u09A7\u09BE \u099B\u09BF\u09B2\u0964`,
+      whyBn: `${share(d.count, t.candidates)} \u09B6\u09BE\u0996\u09BE\u099F\u09BF\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09CD\u09B2\u09BE\u09B8 \u099A\u09B2\u099B\u09BF\u09B2\u0964`,
+      impactBn: full ? `${u.sectionName}-\u098F\u09B0 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u099A\u09BE\u09B9\u09BF\u09A6\u09BE \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u09AF\u09A4 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0986\u099B\u09C7 \u09A4\u09BE\u09B0 \u099A\u09C7\u09AF\u09BC\u09C7 \u09AC\u09C7\u09B6\u09BF\u0964` : impactBn,
+      suggestions: full ? [
+        {
+          textBn: "\u0998\u09A3\u09CD\u099F\u09BE\u09B0 \u09B8\u09AE\u09AF\u09BC\u09B8\u09C2\u099A\u09BF\u09A4\u09C7 \u09A6\u09BF\u09A8\u09C7 \u0986\u09B0\u0993 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AF\u09CB\u0997 \u0995\u09B0\u09C1\u09A8",
+          evidenceBn: "\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7\u09B0 \u09AA\u09CD\u09B0\u09A4\u09BF\u099F\u09BF \u09B8\u09AE\u09CD\u09AD\u09BE\u09AC\u09CD\u09AF \u09B8\u09AE\u09AF\u09BC\u09C7\u0987 \u09B6\u09BE\u0996\u09BE\u099F\u09BF \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2"
+        },
+        {
+          textBn: "\u09AC\u09BF\u09B7\u09AF\u09BC\u09AD\u09BF\u09A4\u09CD\u09A4\u09BF\u0995 \u09B8\u09BE\u09AA\u09CD\u09A4\u09BE\u09B9\u09BF\u0995 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u0995\u09AE\u09BF\u09AF\u09BC\u09C7 \u09A6\u09BF\u09A8",
+          evidenceBn: "\u09AE\u09CB\u099F \u099A\u09BE\u09B9\u09BF\u09A6\u09BE \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7\u09B0 \u09A7\u09BE\u09B0\u09A3\u0995\u09CD\u09B7\u09AE\u09A4\u09BE\u09B0 \u099A\u09C7\u09AF\u09BC\u09C7 \u09AC\u09C7\u09B6\u09BF"
+        }
+      ] : [
+        {
+          textBn: "\u098F\u0987 \u09B6\u09BE\u0996\u09BE\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B8\u09B0\u09BF\u09AF\u09BC\u09C7 \u099C\u09BE\u09AF\u09BC\u0997\u09BE \u0995\u09B0\u09C1\u09A8",
+          evidenceBn: `${bn4(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B6\u09BE\u0996\u09BE\u099F\u09BF\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09CD\u09B2\u09BE\u09B8 \u099B\u09BF\u09B2`
+        }
+      ]
+    };
+  }
+  const crossed = (t?.crossShift ?? 0) > 0 && (t?.crossShiftNames.length ?? 0) > 0;
+  const suggestions = [
+    {
+      textBn: `${u.teacherBn ?? "\u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0"} \u0985\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09B6\u09BE\u0996\u09BE\u09B0 \u098F\u0995\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09B8\u09B0\u09BF\u09AF\u09BC\u09C7 \u098F\u0987 \u09B8\u09AE\u09AF\u09BC\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u0995\u09B0\u09C1\u09A8`,
+      evidenceBn: `${bn4(d.count)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF\u09A4\u09CD\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09BF\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8`
+    },
+    {
+      textBn: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u0986\u09B0\u0993 \u098F\u0995\u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u09A8\u09BF\u09B0\u09CD\u09A7\u09BE\u09B0\u09A3 \u0995\u09B0\u09C1\u09A8",
+      evidenceBn: "\u098F\u0995\u099C\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09A6\u09C1\u0987 \u099C\u09BE\u09AF\u09BC\u0997\u09BE\u09AF\u09BC \u09A5\u09BE\u0995\u09A4\u09C7 \u09AA\u09BE\u09B0\u09C7\u09A8 \u09A8\u09BE"
+    }
+  ];
+  if (crossed) {
+    suggestions.push({
+      textBn: `${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7 \u098F\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8 \u0995\u09AE\u09BE\u09A8`,
+      evidenceBn: `${bn4(t.crossShift)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7 \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF \u09B6\u09BF\u09AB\u099F\u09C7 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8`
+    });
+  }
+  return {
+    ...base,
+    category: crossed ? "cross_shift" : "teacher_conflict",
+    whatBn: `${u.sectionName}-\u098F ${u.subjectBn} \u098F\u09B0 \u0986\u09B0\u0993 ${bn4(u.missing)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u0964 ${u.teacherBn ?? "\u09A8\u09BF\u09B0\u09CD\u09AC\u09BE\u099A\u09BF\u09A4 \u09B6\u09BF\u0995\u09CD\u09B7\u0995"} \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u09B8\u09AC \u09B8\u09AE\u09AF\u09BC\u09C7\u0987 \u09AC\u09CD\u09AF\u09B8\u09CD\u09A4 \u099B\u09BF\u09B2\u09C7\u09A8\u0964`,
+    whyBn: crossed ? `${share(d.count, t.candidates)} \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF\u09A4\u09CD\u09B0 \u09AA\u09A1\u09BC\u09BE\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8, \u09AF\u09BE\u09B0 ${bn4(t.crossShift)}\u099F\u09BF ${t.crossShiftNames.join(" \u0993 ")} \u09B6\u09BF\u09AB\u099F\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0964` : `${share(d.count, t.candidates)} \u09A4\u09BF\u09A8\u09BF \u0985\u09A8\u09CD\u09AF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09BF\u099A\u09CD\u099B\u09BF\u09B2\u09C7\u09A8\u0964`,
+    suggestions
+  };
+}
+var GROUP_AT = 3;
+var NAMED_MEMBERS = 12;
+function group(items) {
+  const buckets = /* @__PURE__ */ new Map();
+  const order = [];
+  for (const item of items) {
+    const key = item.id.startsWith("unplaced:") ? `${item.category}|${item.affectedBn[1] ?? ""}` : item.id.startsWith("soft:") ? `soft|${item.id.split(":")[1]}` : `single:${item.id}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      order.push(key);
+    }
+    buckets.get(key).push(item);
+  }
+  const out = [];
+  for (const key of order) {
+    const members = buckets.get(key);
+    if (members.length < GROUP_AT) {
+      out.push(...members);
+      continue;
+    }
+    const first = members[0];
+    if (key.startsWith("soft|")) {
+      out.push({
+        ...first,
+        id: `group:${key}`,
+        titleBn: `${bn4(members.length)}\u099F\u09BF \u0995\u09CD\u09B7\u09C7\u09A4\u09CD\u09B0\u09C7 \u09A8\u09B0\u09AE \u09B6\u09B0\u09CD\u09A4\u09C7 \u099B\u09BE\u09A1\u09BC \u2014 ${first.titleBn}`,
+        whatBn: `\u098F\u0995\u0987 \u09A7\u09B0\u09A8\u09C7\u09B0 ${bn4(members.length)}\u099F\u09BF \u099B\u09BE\u09A1\u09BC \u09A6\u09C7\u0993\u09AF\u09BC\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`,
+        whyBn: first.whyBn,
+        affectedBn: members.slice(0, NAMED_MEMBERS).map((m) => m.titleBn).concat(members.length > NAMED_MEMBERS ? [`\u0986\u09B0\u0993 ${bn4(members.length - NAMED_MEMBERS)}\u099F\u09BF`] : []),
+        currentBn: `${bn4(members.length)}\u099F\u09BF \u099B\u09BE\u09A1\u09BC`,
+        impactBn: first.impactBn
+      });
+      continue;
+    }
+    const subjectBn = first.affectedBn[1] ?? "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC";
+    const sections = members.map((m) => m.affectedBn[0]).filter(Boolean);
+    const periods = members.reduce((n, m) => {
+      const match = /([০-৯]+)টি পিরিয়ড বসেনি/.exec(m.titleBn);
+      return n + (match ? Number(match[1].replace(
+        /[০-৯]/g,
+        (d) => String("\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF".indexOf(d))
+      )) : 0);
+    }, 0);
+    out.push({
+      ...first,
+      id: `group:${key}`,
+      titleBn: `${subjectBn} \u2014 ${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09AE\u09CB\u099F ${bn4(periods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09C7\u09A8\u09BF`,
+      whatBn: `${subjectBn} \u098F\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 ${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC \u09B8\u09AE\u09CD\u09AA\u09C2\u09B0\u09CD\u09A3 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u0995\u09BE\u09B0\u09A3 \u09B8\u09AC\u0997\u09C1\u09B2\u09CB\u09A4\u09C7 \u098F\u0995\u0987 \u2014 ${first.whatBn}`,
+      // One representative's evidence, and it is labelled as one.
+      whyBn: `${first.whyBn} (${sections[0]}-\u098F\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC; \u09AC\u09BE\u0995\u09BF\u0997\u09C1\u09B2\u09CB\u09A4\u09C7\u0993 \u098F\u0995\u0987 \u09AC\u09BE\u09A7\u09BE)`,
+      affectedBn: sections.length > NAMED_MEMBERS ? [
+        ...sections.slice(0, NAMED_MEMBERS),
+        `\u0986\u09B0\u0993 ${bn4(sections.length - NAMED_MEMBERS)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE`
+      ] : sections,
+      currentBn: `${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE \xB7 \u09AE\u09CB\u099F ${bn4(periods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09BE\u0995\u09BF`,
+      impactBn: `${bn4(sections.length)}\u099F\u09BF \u09B6\u09BE\u0996\u09BE\u09AF\u09BC ${subjectBn} \u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 \u0995\u09AE \u09AA\u09A1\u09BC\u09AC\u09C7\u0964`
+    });
+  }
+  return out;
+}
+function explain(input) {
+  const out = [];
+  if (input.hardConflicts > 0) {
+    out.push({
+      id: "hard:conflicts",
+      severity: "error",
+      category: "hard_conflict",
+      titleBn: `${bn4(input.hardConflicts)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u098F\u0995\u0987 \u099C\u09BE\u09AF\u09BC\u0997\u09BE\u09AF\u09BC \u09AA\u09A1\u09BC\u09C7\u099B\u09C7`,
+      whatBn: "\u098F\u0995\u0987 \u09B6\u09BF\u0995\u09CD\u09B7\u0995, \u0995\u0995\u09CD\u09B7 \u09AC\u09BE \u09B6\u09BE\u0996\u09BE\u09B0 \u099C\u09A8\u09CD\u09AF \u098F\u0995\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u098F\u0995\u09BE\u09A7\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964",
+      whyBn: "\u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7\u09B0 \u09B8\u09BE\u09B0\u09BF\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09AA\u09A1\u09BC\u09C7 \u098F\u0987 \u09B8\u0982\u0996\u09CD\u09AF\u09BE\u099F\u09BF \u0997\u09CB\u09A8\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964",
+      affectedBn: [],
+      currentBn: `${bn4(input.hardConflicts)}\u099F\u09BF \u09B8\u0982\u0998\u09BE\u09A4`,
+      impactBn: "\u098F\u0987 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE \u2014 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09C7\u09B0 \u09B8\u09AE\u09AF\u09BC \u09A1\u09C7\u099F\u09BE\u09AC\u09C7\u099C \u0986\u099F\u0995\u09C7 \u09A6\u09C7\u09AC\u09C7\u0964",
+      suggestions: [
+        {
+          textBn: "\u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09AE\u09CD\u09AA\u09BE\u09A6\u09A8\u09BE \u09AA\u09BE\u09A4\u09BE\u09AF\u09BC \u0997\u09BF\u09AF\u09BC\u09C7 \u09B8\u0982\u0998\u09B0\u09CD\u09B7\u09C7 \u09AA\u09A1\u09BC\u09BE \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u09B8\u09B0\u09BE\u09A8",
+          evidenceBn: "\u09B8\u0982\u0998\u09BE\u09A4\u0997\u09C1\u09B2\u09CB \u09B8\u0982\u09B0\u0995\u09CD\u09B7\u09BF\u09A4 \u09B8\u09BE\u09B0\u09BF\u09A4\u09C7\u0987 \u0986\u099B\u09C7"
+        }
+      ]
+    });
+  }
+  const sorted = [...input.unplaced].sort((a, b) => b.missing - a.missing);
+  sorted.forEach((u, i) => out.push(unplacedExplanation(u, i)));
+  for (const [i, s] of input.shortages.entries()) {
+    out.push({
+      id: `shortage:${i}`,
+      severity: "warning",
+      category: s.capableRooms === 0 ? "capability_missing" : "room_conflict",
+      titleBn: s.subjectsBn.length > 0 ? `${s.subjectsBn.join(", ")} \u2014 \u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7 \u0995\u09AE \u09AA\u09A1\u09BC\u09C7\u099B\u09C7` : "\u09AC\u09BF\u09B6\u09C7\u09B7 \u0995\u0995\u09CD\u09B7 \u0995\u09AE \u09AA\u09A1\u09BC\u09C7\u099B\u09C7",
+      whatBn: s.detailBn,
+      whyBn: `\u09B8\u09AA\u09CD\u09A4\u09BE\u09B9\u09C7 ${bn4(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0 \u099B\u09BF\u09B2; \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 ${bn4(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 ${bn4(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2\u0964`,
+      affectedBn: s.subjectsBn,
+      currentBn: `${bn4(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7 \xB7 ${bn4(s.freePeriods)}\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u09B8\u09AE\u09AF\u09BC`,
+      impactBn: "\u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0\u09BF\u0995 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u09AA\u09C1\u09B0\u09CB\u09AA\u09C1\u09B0\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964",
+      suggestions: s.capableRooms === 0 ? [{
+        textBn: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u098F\u0995\u099F\u09BF \u0995\u0995\u09CD\u09B7 \u09A8\u09BF\u09AC\u09A8\u09CD\u09A7\u09A8 \u0995\u09B0\u09C1\u09A8",
+        evidenceBn: "\u098F\u0987 \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u0995\u09CD\u09B7 \u098F\u0996\u09A8 \u09B6\u09C2\u09A8\u09CD\u09AF"
+      }] : [{
+        textBn: "\u0986\u09B0\u0993 \u098F\u0995\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 \u098F\u0987 \u09B8\u09C1\u09AC\u09BF\u09A7\u09BE \u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u09B0\u09C1\u09A8",
+        evidenceBn: `\u099A\u09BE\u09B9\u09BF\u09A6\u09BE ${bn4(s.demandedPeriods)}, \u0996\u09BE\u09B2\u09BF \u09B8\u09AE\u09AF\u09BC ${bn4(s.freePeriods)}`
+      }]
+    });
+  }
+  for (const [i, v] of input.soft.entries()) {
+    out.push({
+      id: `soft:${v.code}:${i}`,
+      severity: "warning",
+      category: "soft_tradeoff",
+      titleBn: v.detailBn,
+      whatBn: v.detailBn,
+      // The cause is claimed only when `soft-constraints.ts` computed one.
+      whyBn: v.causeBn ?? "\u09B0\u09C1\u099F\u09BF\u09A8 \u09AC\u09B8\u09BE\u09A4\u09C7 \u0997\u09BF\u09AF\u09BC\u09C7 \u098F\u0987 \u09AA\u099B\u09A8\u09CD\u09A6\u099F\u09BF \u099B\u09BE\u09A1\u09BC \u09A6\u09BF\u09A4\u09C7 \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964",
+      affectedBn: [],
+      currentBn: v.detailBn,
+      impactBn: "\u09B0\u09C1\u099F\u09BF\u09A8 \u099A\u09B2\u09AC\u09C7, \u09A4\u09AC\u09C7 \u098F\u099F\u09BF \u0986\u09A6\u09B0\u09CD\u09B6 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09A8\u09AF\u09BC\u0964",
+      suggestions: []
+    });
+  }
+  for (const [i, w] of input.setupWarnings.entries()) {
+    out.push({
+      id: `setup:${i}`,
+      severity: "warning",
+      category: "setup_gap",
+      titleBn: w.titleBn,
+      whatBn: w.detailBn,
+      whyBn: "\u098F\u0987 \u09A4\u09A5\u09CD\u09AF\u099F\u09BF \u0990\u099A\u09CD\u099B\u09BF\u0995 \u2014 \u09A8\u09BE \u09A6\u09BF\u09B2\u09C7\u0993 \u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964",
+      affectedBn: [],
+      currentBn: w.detailBn,
+      impactBn: "\u09A4\u09A5\u09CD\u09AF\u099F\u09BF \u09A6\u09BF\u09B2\u09C7 \u09AA\u09B0\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u09B0\u0993 \u09AC\u09BE\u09B8\u09CD\u09A4\u09AC\u09B8\u09AE\u09CD\u09AE\u09A4 \u09B9\u09AC\u09C7\u0964",
+      suggestions: [
+        {
+          textBn: "\u09B0\u09C1\u099F\u09BF\u09A8 \u09A4\u09C8\u09B0\u09BF\u09B0 \u09AA\u09CD\u09B0\u09B8\u09CD\u09A4\u09C1\u09A4\u09BF \u09AA\u09BE\u09A4\u09BE\u09AF\u09BC \u0997\u09BF\u09AF\u09BC\u09C7 \u09A4\u09A5\u09CD\u09AF\u099F\u09BF \u09A6\u09BF\u09A8",
+          evidenceBn: "\u09A7\u09BE\u09AA\u099F\u09BF \u098F\u0996\u09A8\u09CB \u0990\u099A\u09CD\u099B\u09BF\u0995 \u09B9\u09BF\u09B8\u09C7\u09AC\u09C7 \u09AC\u09BE\u0995\u09BF \u0986\u099B\u09C7"
+        }
+      ]
+    });
+  }
+  for (const [i, n] of input.notEvaluated.entries()) {
+    out.push({
+      id: `unchecked:${i}`,
+      severity: "info",
+      category: "not_evaluated",
+      titleBn: `\u09AF\u09BE\u099A\u09BE\u0987 \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF \u2014 ${n.ruleBn}`,
+      whatBn: `"${n.ruleBn}" \u09A8\u09BF\u09AF\u09BC\u09AE\u099F\u09BF \u098F\u0987 \u09B0\u09BE\u09A8\u09C7 \u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF\u0964`,
+      whyBn: n.whyBn,
+      affectedBn: [],
+      currentBn: "\u09AA\u09B0\u09C0\u0995\u09CD\u09B7\u09BE \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF",
+      impactBn: '\u09A4\u09BE\u0987 "\u0995\u09CB\u09A8\u09CB \u09B8\u09AE\u09B8\u09CD\u09AF\u09BE \u09A8\u09C7\u0987" \u09AC\u09B2\u09A4\u09C7 \u098F\u0987 \u09A8\u09BF\u09AF\u09BC\u09AE\u099F\u09BF \u09A7\u09B0\u09BE \u09B9\u09AF\u09BC\u09A8\u09BF\u0964',
+      suggestions: []
+    });
+  }
+  const rank = { error: 0, warning: 1, info: 2 };
+  return group(out).sort((a, b) => rank[a.severity] - rank[b.severity]);
+}
+function severityCounts(items) {
+  return {
+    error: items.filter((i) => i.severity === "error").length,
+    warning: items.filter((i) => i.severity === "warning").length,
+    info: items.filter((i) => i.severity === "info").length
+  };
+}
+
 // services/rms-svc/api/generate.ts
 var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var GENERATE_ROLES = ["principal", "school_owner", "academic_coordinator"];
-var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn4 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS5[Number(d)]);
+var BN_DIGITS6 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn5 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS6[Number(d)]);
 async function nameShortages(c, yearId, shortages) {
   if (shortages.length === 0) return [];
   const caps = shortages.map((s) => s.capability);
@@ -4886,17 +5408,11 @@ async function nameShortages(c, yearId, shortages) {
       // Rewritten around the subject, so no machine code reaches a person.
       // Where the school named a capability no subject uses any more, the
       // code is all there is — and saying so is better than saying nothing.
-      detailBn: subjects.length > 0 ? `${subjects.join(", ")} \u2014 ${bn4(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0; \u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 ${bn4(s.capableRooms)}\u099F\u09BF \u0995\u0995\u09CD\u09B7\u09C7 ${bn4(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2` : s.detailBn
+      detailBn: subjects.length > 0 ? `${subjects.join(", ")} \u2014 ${bn5(s.demandedPeriods)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09A6\u09B0\u0995\u09BE\u09B0; ${capabilityLabelBn(s.capability)} ${bn5(s.capableRooms)}\u099F\u09BF\u09A4\u09C7 ${bn5(s.freePeriods)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC \u0996\u09BE\u09B2\u09BF \u099B\u09BF\u09B2` : scrubMachineText(s.detailBn)
     };
   });
 }
-var REASON_BN = {
-  no_free_slot: "\u09B6\u09BF\u0995\u09CD\u09B7\u0995 \u0993 \u09B6\u09BE\u0996\u09BE \u2014 \u09A6\u09C1\u099C\u09A8\u09C7\u09B0\u0987 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AB\u09BE\u0981\u0995\u09BE \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
-  no_capable_room: "\u098F\u0987 \u09AC\u09BF\u09B7\u09AF\u09BC\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u09AF\u09BC\u09CB\u099C\u09A8\u09C0\u09AF\u09BC \u09A7\u09B0\u09A8\u09C7\u09B0 \u0995\u09CB\u09A8\u09CB \u0995\u0995\u09CD\u09B7 \u09B8\u09CD\u0995\u09C1\u09B2\u09C7 \u09A8\u09C7\u0987",
-  no_free_capable_room: "\u0989\u09AA\u09AF\u09C1\u0995\u09CD\u09A4 \u0995\u0995\u09CD\u09B7 \u0986\u099B\u09C7, \u0995\u09BF\u09A8\u09CD\u09A4\u09C1 \u0993\u0987 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09B8\u09C7\u099F\u09BF \u0996\u09BE\u09B2\u09BF \u09A8\u09C7\u0987",
-  no_contiguous_pair: "\u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF \u2014 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7"
-};
-async function nameUnplaced(c, routineId, yearId, unplaced) {
+async function nameUnplaced(c, routineId, yearId, unplaced, capableRoomsByCapability = /* @__PURE__ */ new Map()) {
   if (unplaced.length === 0) return [];
   const sectionIds = [...new Set(unplaced.map((u) => u.sectionId))];
   const subjectIds = [...new Set(unplaced.map((u) => u.subjectId))];
@@ -4937,8 +5453,12 @@ async function nameUnplaced(c, routineId, yearId, unplaced) {
       placed: Number(r?.placed ?? 0),
       missing: u.missing,
       reason: u.reason,
-      reasonBn: REASON_BN[u.reason] ?? "\u0995\u09BE\u09B0\u09A3 \u099C\u09BE\u09A8\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
-      ...u.capability ? { capability: u.capability } : {}
+      reasonBn: unplacedReasonBn(u.reason),
+      ...u.capability ? {
+        capability: u.capability,
+        capableRooms: capableRoomsByCapability.get(u.capability) ?? 0
+      } : {},
+      ...u.blockers ? { blockers: u.blockers } : {}
     };
   });
 }
@@ -4984,7 +5504,7 @@ async function draftFor(c, ctx, yearId, shift) {
       yearId,
       tpl[0].template_id,
       shift,
-      `\u09B8\u09CD\u09AC\u09AF\u09BC\u0982\u0995\u09CD\u09B0\u09BF\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 v${bn4(v[0].next)}`,
+      `\u09B8\u09CD\u09AC\u09AF\u09BC\u0982\u0995\u09CD\u09B0\u09BF\u09AF\u09BC \u09B0\u09C1\u099F\u09BF\u09A8 v${bn5(v[0].next)}`,
       v[0].next,
       tpl[0].year_starts,
       ctx.userId
@@ -5056,8 +5576,17 @@ function summarise(results, hardConflicts, ms) {
     // The one sentence the summary exists for. A hard conflict outranks
     // everything else in it: a routine carrying one cannot be published, so
     // saying "all 2,360 periods placed" would be true and useless.
-    verdictBn: hardConflicts > 0 ? `${bn4(hardConflicts)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09B8\u0982\u0998\u09BE\u09A4 \u09B0\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7 \u2014 \u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE` : unplacedPeriods === 0 ? `\u09B8\u09AC ${bn4(totalDemand)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7` : `${bn4(totalDemand)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn4(placed)}\u099F\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn4(unplacedPeriods)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`
+    verdictBn: hardConflicts > 0 ? `${bn5(hardConflicts)}\u099F\u09BF \u09B8\u09AE\u09AF\u09BC\u09C7\u09B0 \u09B8\u0982\u0998\u09BE\u09A4 \u09B0\u09AF\u09BC\u09C7 \u0997\u09C7\u099B\u09C7 \u2014 \u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8 \u09AA\u09CD\u09B0\u0995\u09BE\u09B6 \u0995\u09B0\u09BE \u09AF\u09BE\u09AC\u09C7 \u09A8\u09BE` : unplacedPeriods === 0 ? `\u09B8\u09AC ${bn5(totalDemand)}\u099F\u09BF \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7` : `${bn5(totalDemand)}\u099F\u09BF\u09B0 \u09AE\u09A7\u09CD\u09AF\u09C7 ${bn5(placed)}\u099F\u09BF \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 ${bn5(unplacedPeriods)}\u099F\u09BF \u09AC\u09BE\u0995\u09BF`
   };
+}
+function dedupeBy(rows, key) {
+  const seen = /* @__PURE__ */ new Set();
+  return rows.filter((r) => {
+    const k = key(r);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 async function lastResult(c, yearId) {
   const { rows } = await c.query(
@@ -5145,10 +5674,20 @@ async function handler10(req, res) {
         ctx,
         { alsoBookedAgainst: results.map((r) => r.routineId) }
       );
-      const [named, shortages] = await db.withTenant(ctx, async (c) => [
-        await nameUnplaced(c, draft.routineId, yearId, solved.unplaced),
-        await nameShortages(c, yearId, solved.shortages)
-      ]);
+      const [named, shortages] = await db.withTenant(ctx, async (c) => {
+        const shorts = await nameShortages(c, yearId, solved.shortages);
+        const capableRooms = new Map(shorts.map((x) => [x.capability, x.capableRooms]));
+        return [
+          await nameUnplaced(
+            c,
+            draft.routineId,
+            yearId,
+            solved.unplaced,
+            capableRooms
+          ),
+          shorts
+        ];
+      });
       results.push({
         shift,
         routineId: draft.routineId,
@@ -5166,11 +5705,28 @@ async function handler10(req, res) {
       ctx,
       (c) => countHardConflicts(c, results.map((r) => r.routineId))
     );
+    const explanations = explain({
+      unplaced: results.flatMap((r) => r.unplaced),
+      soft: results.flatMap((r) => r.soft?.violations ?? []),
+      shortages: results.flatMap((r) => r.shortages),
+      // The same rule can be reported once per shift; a coordinator needs to
+      // read it once.
+      notEvaluated: dedupeBy(
+        results.flatMap((r) => r.soft?.notEvaluated ?? []),
+        (n) => n.ruleBn
+      ),
+      // Not recomputed. These are the steps the wizard already marked
+      // optional-and-missing, which is exactly §4's warning example.
+      setupWarnings: ready.steps.filter((step) => step.state === "warn").map((step) => ({ titleBn: step.titleBn, detailBn: step.detailBn })),
+      hardConflicts
+    });
     json(res, 200, {
       ok: true,
       yearId,
       shifts: results,
-      summary: summarise(results, hardConflicts, Date.now() - startedAt)
+      summary: summarise(results, hardConflicts, Date.now() - startedAt),
+      explanations,
+      severity: severityCounts(explanations)
     }, cors);
   } catch (err) {
     if (err instanceof HttpError) {

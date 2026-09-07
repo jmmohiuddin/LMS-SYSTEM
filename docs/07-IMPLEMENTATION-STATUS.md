@@ -970,11 +970,46 @@ drafts it just wrote.
 
 **Measured, and the limit stated.** `scripts/routine-benchmark.mjs` seeds five
 realistic institutions (20/40/80/120 sections; school, two-shift school,
-college, madrasa) and drives the real handler. p95 server-side: 1.06s / 2.21s
-/ 4.26s / 6.43s / 2.03s, zero hard conflicts in every one. These are LOCAL
-container numbers — no network, no TLS, no browser render — so the product's
-"roughly one minute" promise is **not** proven end to end by them and is not
-claimed to be.
+college, madrasa) and drives the real handler. p95 server-side after P9-4:
+1.29s / 2.40s / 5.03s / 6.78s / 1.98s, zero hard conflicts in every one.
+These are LOCAL container numbers — no network, no TLS, no browser render —
+so the product's "roughly one minute" promise is **not** proven end to end by
+them and is not claimed to be.
+
+**Routine explainability (P9-4).** Four explainers, and only the fourth is
+new. `api/generation.ts:explainSlot` answers "why this teacher, this room"
+for a PLACED lesson (F-503); `src/soft-constraints.ts` lists every trade-off
+with its cause where one is computable (F-505); `notEvaluated` names the
+rules this build cannot check. `src/explain.ts` answers the fourth question —
+why a demand was NOT placed — and it is a pure function, so its rules are
+tested against hand-written failures rather than against solver output.
+
+The solver's single `no_free_slot` became eight categories by RECORDING what
+it already computed: `BlockerTally` counts which guard rejected each
+candidate hour, written only where a candidate was already rejected, so no
+placement decision changed. `IntervalBook` carries the shift that owns each
+booking, which is what lets a cross-shift finding name the shift rather than
+say "another shift".
+
+**Claim → evidence is enforced, not intended.** Every sentence carries the
+count and the denominator it rests on ("৩৫টি সম্ভাব্য সময়ের মধ্যে ৩০টিতে");
+where the tally is empty the explanation says so and suggests nothing; a fix
+is offered only when the school's own data supports it — a school with one
+laboratory is told to add another, a school with four to move a class between
+them, a school with none is never told to rearrange its timetable.
+
+**Findings are grouped server-side.** An over-subscribed 80-section school
+produced 1,516 rows; grouping on (category, subject) for demands and on the
+rule for soft trades — and only after each category is decided, so a group is
+one cause — brings that to 12. Every individual soft sentence is kept one
+level in, because F-505's "nothing is silently accepted" still holds.
+
+**`src/presentation.ts` is the one place a machine identifier becomes
+readable.** A map for the capabilities the schema names, a scrubber for
+sentences composed and stored before anyone knew they would be shown, and a
+deliberate fallback to "বিশেষ কক্ষ" for the codes an IT admin invents —
+because `rooms.capabilities` is free text and a lookup that falls through to
+the raw code is the bug itself.
 
 **Two identifier contracts, and they are deliberately different (B-87).**
 `student_profiles.student_code` is **generated** — `studentCodeFor(userId)` in

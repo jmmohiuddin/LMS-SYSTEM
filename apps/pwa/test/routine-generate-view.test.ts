@@ -222,7 +222,12 @@ describe('P9-3 — the generate screen', () => {
     assert.match(t, /রুটিন সম্পাদনা/, 'and it offers the screen that can fix it');
   });
 
-  test('UNPLACED demand names the class, the subject and the reason', async () => {
+  test('a result with NO explanations never claims there are no problems', async () => {
+    // P9-4 moved the unplaced detail into the findings list. This fixture
+    // predates that field, which is exactly the shape an older build or a
+    // truncated response would have — and the first version of the findings
+    // card answered it with "কোনো সমস্যা পাওয়া যায়নি" above a summary
+    // saying twelve periods were missing.
     post = { ok: true, status: 200, body: PARTIAL_RESULT };
     const v = await mount();
     buttonNamed('রুটিন তৈরি করুন')?.click();
@@ -230,11 +235,10 @@ describe('P9-3 — the generate screen', () => {
     v.destroy();
 
     const t = root().textContent ?? '';
-    assert.match(t, /নবম — ক/, 'the class');
-    assert.match(t, /রসায়ন ব্যবহারিক/, 'the subject');
-    assert.match(t, /৩টি পিরিয়ড বাকি/, 'the shortfall');
-    assert.match(t, /ওই সময়ে সেটি খালি নেই/,
-      'and the reason — "no capable room" and "the room is full" are different errands');
+    assert.doesNotMatch(t, /কোনো সমস্যা পাওয়া যায়নি/,
+      'the summary says twelve periods are missing; the claim must agree with it');
+    assert.match(t, /ব্যাখ্যা পাওয়া যায়নি/, 'say what is actually true');
+    assert.match(t, /১২টি পিরিয়ড বাকি/, 'and repeat the number that IS known');
     assert.doesNotMatch(t, /[0-9a-f]{8}-[0-9a-f]{4}/, 'never a raw uuid');
   });
 
@@ -353,5 +357,225 @@ describe('P9-3 — the generate screen', () => {
     await settle();
     v.destroy();
     assert.equal(postCalls, 1, 'a second run would top up a routine mid-solve');
+  });
+});
+
+/**
+ * P9-4 — the explanation on screen.
+ *
+ * The API suite pins what is said. These pin how it reaches a person:
+ *
+ *   1. Three severities read as three different things, in WORDS. A red left
+ *      rail is invisible to a screen reader and to anyone who cannot
+ *      separate it from the amber one.
+ *
+ *   2. A school with nothing wrong sees a calm success state, not a panel of
+ *      empty headings — and still sees what was NOT checked, because "০
+ *      সমস্যা" otherwise means "০ of the rules we happen to run".
+ *
+ *   3. The drawer carries all four sections in order, and every sentence in
+ *      it is the server's. A browser that rewrote one would drift from the
+ *      evidence that justified it.
+ *
+ *   4. No machine identifier survives to the DOM.
+ */
+const EXPLANATIONS = [
+  {
+    id: 'unplaced:s1:j1:0', severity: 'error', category: 'teacher_conflict',
+    titleBn: 'নবম — ক · জীববিজ্ঞান — ১টি পিরিয়ড বসেনি',
+    whatBn: 'নবম — ক-এ জীববিজ্ঞান এর আরও ১টি পিরিয়ড প্রয়োজন। রফিক স্যার উপযুক্ত সব সময়েই ব্যস্ত ছিলেন।',
+    whyBn: '৩৫টি সম্ভাব্য সময়ের মধ্যে ৩০টিতে তিনি অন্য শাখায় ক্লাস নিচ্ছিলেন।',
+    affectedBn: ['নবম — ক', 'জীববিজ্ঞান', 'রফিক স্যার'],
+    currentBn: '৪টির মধ্যে ৩টি পিরিয়ড বসানো হয়েছে — ১টি বাকি',
+    impactBn: 'নবম — ক-এ জীববিজ্ঞান সপ্তাহে ১টি পিরিয়ড কম পড়বে।',
+    suggestions: [
+      { textBn: 'রফিক স্যারের অন্য কোনো শাখার একটি পিরিয়ড সরিয়ে এই সময়টি খালি করুন',
+        evidenceBn: '৩০টি সময়ে তিনি অন্যত্র ক্লাস নিচ্ছিলেন' },
+    ],
+  },
+  {
+    id: 'setup:0', severity: 'warning', category: 'setup_gap',
+    titleBn: 'শিক্ষকের সময়-সীমা',
+    whatBn: 'কারও সময়-সীমা দেওয়া হয়নি — সবাইকে সব সময় ফাঁকা ধরা হবে',
+    whyBn: 'এই তথ্যটি ঐচ্ছিক — না দিলেও রুটিন তৈরি হয়েছে।',
+    affectedBn: [],
+    currentBn: 'কারও সময়-সীমা দেওয়া হয়নি',
+    impactBn: 'তথ্যটি দিলে পরের রুটিন আরও বাস্তবসম্মত হবে।',
+    suggestions: [{ textBn: 'রুটিন তৈরির প্রস্তুতি পাতায় গিয়ে তথ্যটি দিন',
+                    evidenceBn: 'ধাপটি এখনো ঐচ্ছিক হিসেবে বাকি আছে' }],
+  },
+  {
+    id: 'unchecked:0', severity: 'info', category: 'not_evaluated',
+    titleBn: 'যাচাই করা হয়নি — কঠিন বিষয় দিনের শুরুতে রাখা',
+    whatBn: '"কঠিন বিষয় দিনের শুরুতে রাখা" নিয়মটি এই রানে পরীক্ষা করা হয়নি।',
+    whyBn: 'বিষয়ের কাঠিন্য মাত্রা কোথাও সংরক্ষিত নেই',
+    affectedBn: [],
+    currentBn: 'পরীক্ষা করা হয়নি',
+    impactBn: 'তাই "কোনো সমস্যা নেই" বলতে এই নিয়মটি ধরা হয়নি।',
+    suggestions: [],
+  },
+];
+
+const WITH_FINDINGS = {
+  ...CLEAN_RESULT,
+  shifts: [{ ...CLEAN_RESULT.shifts[0], placed: 579,
+             unplaced: [{ sectionName: 'নবম — ক', subjectBn: 'জীববিজ্ঞান',
+                          teacherBn: 'রফিক স্যার', required: 4, placed: 3, missing: 1,
+                          reason: 'no_free_slot', reasonBn: 'সময় পাওয়া যায়নি' }] }],
+  summary: { ...CLEAN_RESULT.summary, unplacedPeriods: 1, placed: 579 },
+  explanations: EXPLANATIONS,
+  severity: { error: 1, warning: 1, info: 1 },
+};
+
+const ALL_GOOD = {
+  ...CLEAN_RESULT,
+  explanations: [EXPLANATIONS[2]],
+  severity: { error: 0, warning: 0, info: 1 },
+};
+
+const drawer = () => dom.window.document.querySelector('[role="dialog"]') as HTMLElement | null;
+const closeDrawer = () => {
+  const b = [...(drawer()?.querySelectorAll('button') ?? [])]
+    .find((x) => (x.getAttribute('aria-label') ?? '').includes('বন্ধ'));
+  b?.click();
+};
+
+describe('P9-4 — the explanation on screen', () => {
+  beforeEach(() => {
+    readiness = READY; runs = []; navigated = []; postCalls = 0; postGate = null;
+    post = { ok: true, status: 200, body: WITH_FINDINGS };
+    drawer()?.remove();
+    dom.window.document.querySelectorAll('.ui-scrim').forEach((n) => n.remove());
+  });
+
+  const generate = async () => {
+    const v = await mount();
+    buttonNamed('রুটিন তৈরি করুন')?.click();
+    await settle();
+    return v;
+  };
+
+  test('THE ONE THAT MATTERS — three severities, said in words', async () => {
+    const v = await generate();
+    v.destroy();
+    const t = root().textContent ?? '';
+    assert.match(t, /ঠিক করা দরকার/, 'error');
+    assert.match(t, /সতর্কতা/, 'warning');
+    assert.match(t, /যা যাচাই করা হয়নি/, 'info');
+
+    // The colour is a reinforcement, never the carrier (§14).
+    const rows = [...root().querySelectorAll('.gen-finding')];
+    assert.equal(rows.length, 3);
+    for (const r of rows) {
+      const label = r.querySelector('button')?.getAttribute('aria-label') ?? '';
+      assert.match(label, /ঠিক করা দরকার|সতর্কতা|তথ্য/,
+        'the severity must be in the accessible name, not only in the border');
+    }
+  });
+
+  test('a warning does not read as a failure', async () => {
+    post = { ok: true, status: 200,
+             body: { ...WITH_FINDINGS,
+                     explanations: [EXPLANATIONS[1], EXPLANATIONS[2]],
+                     severity: { error: 0, warning: 1, info: 1 } } };
+    const v = await generate();
+    v.destroy();
+    assert.match(root().textContent ?? '', /কোনোটিই রুটিন ব্যবহারে বাধা দেয় না/,
+      'a school with only optional gaps must not be sent to fix them first');
+  });
+
+  test('ALL GOOD is a calm success state — and still says what was not checked', async () => {
+    post = { ok: true, status: 200, body: ALL_GOOD };
+    const v = await generate();
+    v.destroy();
+    const t = root().textContent ?? '';
+    assert.match(t, /কোনো সমস্যা পাওয়া যায়নি/);
+    assert.doesNotMatch(t, /ঠিক করা দরকার —/, 'no empty error heading');
+    assert.match(t, /যাচাই করা হয়নি/,
+      '"০ সমস্যা" means "০ of the rules we ran", and saying which is the honest part');
+  });
+
+  test('THE DRAWER carries all four sections, in order, from the server', async () => {
+    const v = await generate();
+    const open = root().querySelector('.gen-finding-open') as HTMLElement;
+    open.click();
+    await settle();
+
+    const dlg = drawer();
+    assert.ok(dlg, 'a focused panel, not a page of raw solver log');
+    const text = dlg.textContent ?? '';
+    for (const heading of ['কারণ', 'বর্তমান অবস্থা', 'প্রভাব', 'সম্ভাব্য সমাধান']) {
+      assert.match(text, new RegExp(heading), `missing section: ${heading}`);
+    }
+    // Order matters: the reason before the state before the impact.
+    const at = (h: string) => text.indexOf(h);
+    assert.ok(at('কারণ') < at('বর্তমান অবস্থা'), 'কারণ first');
+    assert.ok(at('বর্তমান অবস্থা') < at('প্রভাব'), 'then the state');
+    assert.ok(at('প্রভাব') < at('সম্ভাব্য সমাধান'), 'then the impact, then the fix');
+
+    // Verbatim from the server — not recomposed here.
+    assert.match(text, /৩৫টি সম্ভাব্য সময়ের মধ্যে ৩০টিতে/);
+    assert.match(text, /৩০টি সময়ে তিনি অন্যত্র ক্লাস নিচ্ছিলেন/,
+      'the evidence line is what turns advice into an argument');
+    closeDrawer();
+    v.destroy();
+  });
+
+  test('the drawer is a labelled dialog and returns focus when it closes', async () => {
+    const v = await generate();
+    const open = root().querySelector('.gen-finding-open') as HTMLElement;
+    open.focus();
+    open.click();
+    await settle();
+
+    const dlg = drawer() as HTMLElement;
+    assert.equal(dlg.getAttribute('role'), 'dialog');
+    const labelledBy = dlg.getAttribute('aria-labelledby');
+    assert.ok(labelledBy, 'an unlabelled dialog announces nothing');
+    assert.match(
+      dom.window.document.getElementById(labelledBy)?.textContent ?? '',
+      /জীববিজ্ঞান/, 'and it is named for the finding it explains');
+
+    closeDrawer();
+    await settle();
+    assert.equal(drawer(), null);
+    assert.equal(dom.window.document.activeElement, open,
+      'focus goes back to the row that opened it');
+    v.destroy();
+  });
+
+  test('a finding with no honest suggestion says so rather than inventing one', async () => {
+    post = { ok: true, status: 200,
+             body: { ...WITH_FINDINGS, explanations: [EXPLANATIONS[2]],
+                     severity: { error: 0, warning: 0, info: 1 } } };
+    const v = await generate();
+    (root().querySelector('.gen-finding-open') as HTMLElement).click();
+    await settle();
+    assert.match(drawer()?.textContent ?? '', /নিশ্চিত কোনো সমাধান বলা যাচ্ছে না/);
+    closeDrawer();
+    v.destroy();
+  });
+
+  test('NO MACHINE IDENTIFIER reaches the DOM, in the list or the drawer', async () => {
+    const v = await generate();
+    (root().querySelector('.gen-finding-open') as HTMLElement).click();
+    await settle();
+    const text = `${root().textContent ?? ''} ${drawer()?.textContent ?? ''}`;
+    assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}/, 'a uuid');
+    assert.doesNotMatch(text, /computer_lab|teacher_id|no_free_slot/, 'a database code');
+    assert.doesNotMatch(text, /undefined|NaN/, 'a missing value');
+    assert.doesNotMatch(text, /[0-9]+\s*টি/, 'a Latin numeral before a Bangla counter');
+    closeDrawer();
+    v.destroy();
+  });
+
+  test('the per-shift card no longer repeats the list', async () => {
+    // Two copies of the same problems, and no way to tell which was the
+    // real one. The shift card points at the single list instead.
+    const v = await generate();
+    v.destroy();
+    assert.match(root().textContent ?? '', /কারণ ও সমাধান উপরের তালিকায়/);
+    assert.equal(root().querySelectorAll('.gen-finding').length, 3,
+      'exactly one row per finding, once');
   });
 });

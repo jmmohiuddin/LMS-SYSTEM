@@ -12095,3 +12095,211 @@ the database at publish rather than by this number.
 
 **Publish, scoped re-solve and the printed grid remain P9-4 through P9-9.**
 Generation writes draft slots. Nothing here activates a routine.
+
+---
+
+# P9-4 — one code for four problems (2026-09-07)
+
+P9-3 delivered generation and, with it, a screen that said `no_free_slot`
+against a shortfall. That is one word for four entirely different problems —
+the section's week was full, the teacher was teaching elsewhere, the teacher
+had blocked the hour, the other shift held the only suitable room — and each
+sends a coordinator somewhere else. This is the phase that tells them which.
+
+## The inventory came first, and it changed the shape of the work
+
+Three explainers already existed and none was rebuilt:
+
+| what | where | state |
+|---|---|---|
+| why THIS teacher, this room, for a PLACED lesson (F-503) | `api/generation.ts:explainSlot` | READY — evidence-based, counts qualified and free teachers before it claims necessity |
+| every soft constraint traded away (F-505) | `src/soft-constraints.ts` | READY — six rules, each naming a person or a section, cause stated only when computable |
+| rules this build cannot check | `soft-constraints.ts:notEvaluated` | READY |
+| why a demand was NOT placed | — | **MISSING**, and the reason P9-4 exists |
+
+So P9-4 is the fourth question, plus the presentation layer the other three
+turned out to need.
+
+## The solver knew the answer and threw it away
+
+`solve.ts` tests each guard in turn — section busy, teacher busy, teacher
+unavailable, no free room — and reports a single `reason` derived from
+whether a capability was involved. The information was already computed.
+
+`BlockerTally` keeps it: how many of the exhaustive pass's candidate hours
+each guard rejected, and how many of those were held by ANOTHER SHIFT's
+routine. Written only on the path where a candidate has already been
+rejected, so no placement decision changes — every solver suite passed
+unaltered, which is the property that mattered.
+
+`IntervalBook` gained an owner per interval, tagged with the shift of the
+routine that holds it. §17's rule was "do not change the solver algorithm
+unless required to expose existing structured explanation data", and this is
+exactly that: the same intervals, now able to say who booked them.
+
+## Claim → evidence, and it is enforced by the shape of the code
+
+`src/explain.ts` is pure — no database, no clock, no ids. It takes named rows
+and returns sentences, which is what lets 25 tests exercise the RULES against
+hand-written failures rather than against whatever the solver produced today.
+
+Three properties, each with a test that would catch its loss:
+
+**No claim without a counter.** Where the tally is empty — a
+`no_contiguous_pair` finding is reported before the hour search ever runs —
+the explanation says "কোন বাধায় আটকেছে তা এই রানে আলাদা করে নির্ণয় করা যায়নি"
+and offers nothing. Guessing at the commonest cause would be indistinguishable
+from knowing, which is the whole failure mode §8 is about.
+
+**No suggestion that cannot be acted on.** A school with one laboratory is
+told to add another; a school with four is told to move a class between them.
+The difference is `capableRooms`, carried from the shortage rows the same run
+already computed. A school with none is never told to rearrange its
+timetable, because nothing about a timetable can conjure a laboratory.
+
+**Every sentence carries its denominator.** "৩৫টি সম্ভাব্য সময়ের মধ্যে ৩০টিতে
+তিনি অন্য শাখায় ক্লাস নিচ্ছিলেন" is checkable. "The teacher was busy" is not.
+
+## Cross-shift, proved on the real fixture
+
+§11 asked for it because P9-3 found a two-shift bug. The two-shift regression
+school — two rooms, four sections, an overlapping handover — now returns:
+
+> সকাল শিফটের রুটিন ওই সময়ে কক্ষটি ধরে রেখেছিল
+
+with the count behind it, and a suggestion naming that shift. Asserted
+against the real solver and a real database, not a fixture of the shape.
+An ordinary teacher clash with no foreign owner stays `teacher_conflict`;
+`crossShift` is incremented only when the blocking interval belongs to
+another routine.
+
+## 1,516 findings is not an explanation
+
+The 80-section benchmark, deliberately over-subscribed, put **1,516
+interactive rows** on the page: forty saying the same thing about the same
+subject, and 1,358 soft trades one per teacher. Close to a megabyte on a 2G
+connection, and a list nobody reads at all.
+
+Grouping is server-side, on two keys and only after each finding's category
+is decided, so a group is genuinely one cause:
+
+- unplaced demands on (category, subject) — "চারু ও কারুকলা — ৪০টি শাখায় মোট
+  ১৬০টি পিরিয়ড বসেনি", with the sections named in the drawer
+- soft trades on their rule, with every individual sentence kept one level in,
+  because F-505's "nothing is silently accepted" still holds
+
+Two of a kind stay separate; grouping starts at three. Two DIFFERENT walls
+under one subject stay apart, because a group must be one problem.
+
+**1,516 → 12 rows**, observed in the browser. A client-side cap of 25 per
+severity remains as a backstop against a category nobody has grouped yet.
+
+## The explanation must not be paid for by the thing it explains
+
+The first tally cost the college profile **8.89s p95 against P9-3's 6.43s** —
+a 38% tax, because the guard asked the interval list twice (once to decide,
+once to find the owner) and allocated an array per rejected hour.
+`blockingOwner()` answers both in one scan and allocates nothing:
+**6.78s p95**, about 5% over P9-3. Measured with three repeats, each from an
+empty routine.
+
+| profile | sections | demand | placed | p95 | hard |
+|---|---|---|---|---|---|
+| small school | 20 | 580 | 556 | 1.29s | 0 |
+| medium school | 40 | 1160 | 1125 | 2.40s | 0 |
+| large school (2 shifts) | 80 | 2360 | 2325 | 5.03s | 0 |
+| college (2 shifts) | 120 | 3600 | 3477 | 6.78s | 0 |
+| madrasa | 30 | 1050 | 1050 | 1.98s | 0 |
+
+**The one-minute target's status is unchanged: NOT PROVEN END TO END.** These
+are local container numbers with no network, no TLS and no browser render,
+exactly as P9-3 recorded them.
+
+## §9's audit found the same string in a second place
+
+P9-3 fixed `"computer_lab"` in `generate.ts`. The audit found it also reaching
+the F-503 explainer screen, from `routines.soft_violations` where `solve.ts`
+had written it — so fixing the writer would not have fixed a row already in
+the database.
+
+`src/presentation.ts` is now the single mapping, and it is a map AND a
+scrubber for a reason: `rooms.capabilities` is `text[]` with no vocabulary,
+so a lookup table can never be complete and one that falls through to the raw
+code is the bug itself. Known codes get their Bangla name; anything else
+becomes "বিশেষ কক্ষ" — less specific, and true. Stored sentences are rewritten
+on the way out.
+
+A school's own room codes ("R-1", "ভবন-২") are deliberately left alone:
+scrubbing those would be the opposite failure.
+
+## Two defects fixed on the way
+
+**`generation.ts` reported `hardViolations: 0` as a constant**, with a comment
+explaining that the exclusion constraints made a violation unstorable — the
+same claim P9-3 disproved for drafts, in the other reader of the same
+routines. It is counted now, by the same window-function scan.
+
+**The UI claimed "কোনো সমস্যা পাওয়া যায়নি" from an empty explanation list.**
+Found by a P9-3 fixture that predates the field: a response from an older
+build, or one that lost its explanations in transit, produced an empty array
+beside a summary saying twelve periods were missing — and the reassuring
+sentence was the only thing on screen that was wrong. The claim is now
+checked against the summary before it is made.
+
+## The screen
+
+`routine-generate-view.ts` gained one card and one drawer. The four
+overlapping sections it replaced — unplaced rows, shortages, soft trades,
+optional gaps — were four lists saying related things with no order between
+them.
+
+Severity is a **word** before it is a colour (§14): "ঠিক করা দরকার" /
+"সতর্কতা" / "তথ্য" in the accessible name of every row, with the left rail
+reinforcing it. A red dot is invisible to a screen reader and to anyone who
+cannot separate it from the amber one.
+
+A school with nothing wrong gets a calm success note — and still sees what
+was NOT checked, because "০ সমস্যা" otherwise means "০ of the rules we ran".
+
+The drawer is `openDrawer`, so the dialog role, the focus trap and the return
+of focus are the component's, not re-implemented. Sections in order: কারণ →
+বর্তমান অবস্থা → প্রভাব → সম্ভাব্য সমাধান. Where nothing can honestly be
+suggested it says so rather than showing an empty heading.
+
+## Evidence
+
+- **1885 tests, all passing** across 13 workspaces — 25 explanation-model and
+  presentation tests (pure), 3 new API tests (cross-shift on the real
+  two-shift fixture, role authorization across seven roles), 8 new view tests
+- 26/26 SQL suites · typecheck 0/0/0 across three CI configs · 73/73 migrations
+- **Security probe 29/29** against a running deployment (`local-docker-p9-4`)
+- Browser, 80-section two-shift school through the real API: 1,516 → **12
+  findings**; drawer verified to carry all four sections with the server's own
+  sentences; **second tenant** on the same browser sees its own four blocked
+  steps and none of the first school's findings
+- **Nine widths 360–1600**, list and drawer: no horizontal overflow, no tap
+  target under 44px, no uuid, no snake_case, no `undefined`, no Latin numeral
+  before a Bangla counter
+- **Both themes** resolve real tokens: error rail `#B3392C` / `#E88C80`, warn
+  `#7C5C1B` / `#D0A64B`, info `#38586B` / `#98B2C1`
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**The tally describes the search, not the school.** `teacherBusy: 30` means
+thirty candidate hours were rejected because a teacher was teaching — it does
+not mean the teacher is overloaded, and the explanation never says so. The
+soft-constraint report is where load is judged.
+
+**A group's evidence is one member's**, labelled as such
+("প্রথম — ক-এর হিসাব; বাকিগুলোতেও একই বাধা"). The members share a category,
+so the KIND of wall is true of all of them; the exact count is the
+representative's.
+
+**`explainSlot` still answers per placed slot only**, reached from the F-503
+screen. Explaining a placement from the findings list would need a slot to
+point at, and an unplaced demand has none.
+
+**Suggestions are not applied.** Every one names a screen the coordinator
+goes to. Acting on them from the drawer is P9-5's editor and P9-6's scoped
+re-solve.

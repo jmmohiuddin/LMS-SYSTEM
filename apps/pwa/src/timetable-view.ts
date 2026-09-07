@@ -34,6 +34,7 @@ import {
 import { refuseUnlessOk, isDenied } from './http-status.ts';
 import {
   formatCount, formatTime, formatDayMonth, toBanglaDigits,
+  formatClockRange, ordinalBn,
 } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 
@@ -309,6 +310,12 @@ export class TimetableView {
     table.append(thead);
 
     const tbody = el(d, 'tbody');
+    // The ordinal counts TAUGHT hours, not template rows: `period_no` is a
+    // position in the day and tiffin holds one, so numbering by it put '৬'
+    // over the hour the school calls ৫ম. Counting here keeps the screen and
+    // the printed sheet saying the same thing, which is the whole reason
+    // they share one read.
+    let taught = 0;
     for (const p of periods) {
       // §5. Tiffin, assembly and জোহর are rows of this grid, not gaps in it.
       // The read used to filter them out entirely; a school builds its day
@@ -323,23 +330,18 @@ export class TimetableView {
           text: toBanglaDigits(p.labelBn) }));
         td.append(el(d, 'span', {
           className: 'routine-band-time',
-          text: `${formatTime(p.startsAt, 'bn')}\u2013${formatTime(p.endsAt, 'bn')}` }));
+          text: formatClockRange(p.startsAt, p.endsAt, 'bn') }));
         band.append(td);
         tbody.append(band);
         continue;
       }
       const tr = el(d, 'tr');
       const th = el(d, 'th', { className: 'routine-grid-period', attrs: { scope: 'row' } });
-      // The school's own label for the hour, not a number counted off the
-      // teaching rows. `period_no` is a POSITION in the day and tiffin holds
-      // one of them, so the hour a school calls '৫ম' is `period_no` 6 — and
-      // counting printed '৬' over it. `formatCount` remains the fallback for
-      // a template that left the label blank.
-      th.append(el(d, 'span', {
-        className: 'routine-grid-no',
-        text: p.labelBn?.trim()
-          ? toBanglaDigits(p.labelBn.trim())
-          : formatCount(p.periodNo, 'bn') }));
+      taught += 1;
+      const no = el(d, 'span', { className: 'routine-grid-no',
+        text: ordinalBn(taught) });
+      no.append(el(d, 'span', { className: 'routine-grid-pd', text: 'পিরিয়ড' }));
+      th.append(no);
       // Its own class, not `routine-slot-meta`: that one also carries teacher
       // and room NAMES, and `--font-bn-num` on it would move their letters
       // too. This span is a clock time and nothing else.

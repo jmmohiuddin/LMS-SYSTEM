@@ -3012,6 +3012,12 @@ input.ui-sr-only, select.ui-sr-only, textarea.ui-sr-only {
 .routine-band-time { margin-inline-start: 8px; font-size: var(--text-3xs);
   color: var(--c-ink-3); font-family: var(--font-bn-num); }
 
+/* P9-9. The word after the ordinal, small and muted: the column says
+   '৩য় পিরিয়ড' without the word competing with the number. */
+.routine-grid-pd { font-weight: 400; font-size: var(--text-3xs);
+  color: var(--c-ink-3); margin-inline-start: 3px;
+  font-family: 'Hind Siliguri', system-ui, sans-serif; }
+
 .routine-grid-cell { min-width: 108px; }
 .routine-grid-cell > span { display: block; }
 .routine-grid-subject { font-weight: 600; color: var(--c-ink-1); }

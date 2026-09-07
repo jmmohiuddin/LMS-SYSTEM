@@ -13898,3 +13898,159 @@ college is half of what it was and every page is class-grouped, but no layout
 puts thirty sections of one class on a few sheets at a size anybody can read
 from a metre away. That is arithmetic, not a design failure, and the honest
 artefact for such a college is still a stack of sheets.
+
+---
+
+# P9-9 REFINEMENT — the sheet a Bangladeshi school actually reads (2026-09-07)
+
+The redesign made the routine fit a page. This makes it readable at a glance,
+and it fixed two things that were wrong rather than merely dense.
+
+## The "13" and "14" on the sheet were the CLOCK, not period numbers
+
+The review reported confusing Latin/24-hour-looking period identifiers. There
+were none — every period column already said ১ম, ২য়, ৩য়. What it said
+underneath was `১৩:৩০–১৪:১৫`, and a 24-hour clock sitting directly below a
+period ordinal is read as a period number before it is read as a time. The
+complaint was exactly right about the symptom and the cause was one row down.
+
+So the fix is in the clock, not the ordinal: `formatClockRange` gives
+**`দুপুর ১:৩০–২:১৫`** — the part of the day named ONCE from the start, then a
+12-hour range. `সকাল ১১:৩০–১২:১৫`, not `সকাল ১১:৩০–দুপুর ১২:১৫`, because that
+is how the hour is spoken and it is half the width. `dayPartBn` carries the
+everyday boundaries, not astronomical ones: ভোর, সকাল, দুপুর, বিকাল, সন্ধ্যা,
+রাত, so an evening shift does not fall off the table.
+
+## Two right answers that contradicted each other
+
+The brief asked for `ordinalBn`. The previous entry had just REMOVED
+`ordinalBn` from this column, because `ordinalBn(period_no)` printed ৬ষ্ঠ over
+the hour a school calls ৫ম — `period_no` is a position in the day and tiffin
+holds position 5.
+
+Both are correct and neither is the answer. The ordinal is right; the number
+fed to it was wrong. It now counts **taught hours**:
+
+    period_no   0    1    2    3    4    5      6    7    8     9
+    kind        asm  tch  tch  tch  tch  tiffin tch  tch  prayer tch
+    printed     —    ১ম   ২য়   ৩য়   ৪র্থ  —      ৫ম   ৬ষ্ঠ  —      ৭ম
+
+Seven taught hours, seven ordinals, and the bands consume none. That is the
+brief's ordinal system AND the off-by-one still fixed — which reading
+`label_bn` also achieved, but only by accident of the seeded labels.
+
+## §1/§5/§6 — the section problem, and why a chip beats a name
+
+Four sections needed to be distinguishable at a glance, and section names can
+be `ব্যবসায় শিক্ষা ও ব্যবস্থাপনা বিজ্ঞান শাখা`. Those two requirements fight:
+a name long enough to be meaningful is far too long to sit in thirty-five
+cells.
+
+The resolution is a **key and a legend**. A page whose section labels are all
+short (≤4 characters, which is every ordinary school) uses them directly. A
+page with even ONE long label keys them all by numeral and prints a legend
+above the grid carrying every name in full.
+
+All-or-nothing per page, deliberately: a grid where some cells say ক and
+others say ২ is one where the reader must first work out which scheme they
+are looking at. And nothing is ever cut — §5 forbids it, and the legend is
+what makes that possible.
+
+Each key sits in a **chip**: fixed width so the keys align into a column the
+eye runs down, bordered, and `flex:none` so a long subject never squeezes it.
+
+## §1/§10 — tint is the second signal, never the first
+
+Eight tints, each near-neutral (no channel more than ~12 from another), the
+first of them pure white because a page where every row is shaded has nowhere
+for the eye to rest. A test extracts every hex in the sheet's CSS and fails
+any whose channels differ by 40 or more.
+
+Tint is what the page loses first — to a mono laser, a photocopier, a tired
+toner cartridge. So it is never the only signal: a section is told by its
+chip, then the chip's border, then the dotted rule between lines, and the
+tint is fourth. Turn the whole sheet grey and all four of the others survive.
+
+## §5 — measured against the names colleges actually use
+
+Four section-name lengths, each rendered through the real builder and the
+real letterhead and printed to PDF:
+
+| case | example | pages | horizontal overflow |
+|---|---|---|---|
+| short | `ক` | 1 | none |
+| medium | `বিজ্ঞান` | 1 | none |
+| long | `বিজ্ঞান ও প্রযুক্তি শাখা` | 1 | none |
+| very long | `ব্যবসায় শিক্ষা ও ব্যবস্থাপনা বিজ্ঞান শাখা` | 1 | none |
+
+With `অধ্যাপক মোহাম্মদ আব্দুর রহমান চৌধুরী` teaching and
+`তথ্য ও যোগাযোগ প্রযুক্তি` on the timetable, the row grows and the text wraps.
+Nothing is clipped: there is no `text-overflow` and no `line-clamp` anywhere
+in this sheet's CSS, and a test asserts their absence — a silently truncated
+subject on a school's routine is worse than a taller row.
+
+## §14 — the four profiles, printed and counted
+
+Every sheet printed to PDF with headless Chrome, page count read back from
+the PDF and compared with the document's own. **One document page is one
+sheet of A4 on all twenty.**
+
+| profile | sections | institution booklet | per page | ms | kB |
+|---|---|---|---|---|---|
+| small | 20 | 10 pages | 2 | 63 | 112 |
+| medium | 40 | 20 pages | 2 | 66 | 224 |
+| large, 2 shifts | 80 | 40 pages | 2 | 173 | 451 |
+| college, 2 shifts | 120 | 60 pages | 2 | 96 | 669 |
+| college, board | 120 | 120 pages | 1 | 75 | 837 |
+
+The board sheet caught itself again: on an eight-period day it came out
+**3.7mm** over one A4 — three physical sheets per class page — and only the
+rasterisation says so. Reclaimed from the board signature margin and a pixel
+of cell padding.
+
+## §16 — the preview IS the print
+
+Unchanged and worth restating, because it is what keeps this honest: the
+drawer renders the same document the endpoint returns, in a sandboxed
+`srcdoc` iframe with no scripts. There is no separate "pretty" preview to
+drift from the paper. The SCREEN grid is a different thing on purpose (§22),
+and it now shares the two fixes that are about correctness rather than paper:
+the taught-hour ordinal and the 12-hour clock.
+
+## Evidence
+
+- **2031 tests passing** — 1980 in the standard sweep plus platform-svc's 51,
+  which needs `PLATFORM_DATABASE_URL`; 29 builder, 15 endpoint, 22 view
+- typecheck 0/0/0 · build clean · **75/75 migrations, and this needed none**
+- **Security probe 29/29** over 12 areas — published-only and tenant
+  isolation unchanged and re-run
+- **24 sheets rasterised** (20 profile + 4 name-length); document pages equal
+  printed sheets on every one; no horizontal overflow anywhere
+- `app.js` **165,564 / 184,320** gzipped
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**Still no sheet off a printer.** The PDF is real; a mono laser has not
+printed one. The tints are argued from their channel values, not seen on
+paper. **B-115 stays OPEN.**
+
+**The screen was not confirmed in a browser this session either.** The band,
+the ordinal and the clock are covered by 22 passing view tests. The live
+server's session had expired (401 on `auth/refresh`) and I do not have
+credentials. **TESTED, not OBSERVED.**
+
+**The academic year still prints Latin** beside Bangla numerals — `2026` next
+to `সংস্করণ ৩`. Deliberate per field, inconsistent on the page. **B-116.**
+
+**A 1–2 metre reading test was performed on rendered images, not on paper at
+arm's length.** At the reading copy's 11.5px a subject is legible at about a
+metre; the board sheet is what the brief's 1–2 metres actually needs, and it
+is one section a page for that reason. Judging this properly needs the sheet
+on a wall.
+
+**Two sections a page still assumes school-shaped subject names.** It holds
+through `বাংলাদেশ ও বিশ্বপরিচয়` and the college fixture's longest. A school
+with consistently longer ones gets more wrapping and thinner margin — not a
+spill, because the 8mm constant is weighted toward the wrapped case, but the
+headroom is smaller than the table above suggests.

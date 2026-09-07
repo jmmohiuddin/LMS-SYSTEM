@@ -1728,15 +1728,42 @@ parameter". So `routine_sheet` joins `GET /api/v1/ops/document` and imports
 `readTimetable` from rms-svc rather than re-deriving authorisation — one
 authorisation path, so a printed sheet cannot show an hour the screen would
 refuse, and `status = 'active'` makes "published only" true without a check.
-No PDF library, no server renderer (§13). **Orientation follows content**, and
-**pages split until no cell holds more than six lessons** — the second rule was
-forced by measurement: a 120-section college has only FOUR classes, so a
-class-per-page booklet produced a cell of thirty lessons, a row taller than the
-sheet that `page-break-inside: avoid` cannot rescue. It now prints 120 clean
-single-section pages, and a 20-section school prints five, one per class. Also
+No PDF library, no server renderer (§13). **Orientation follows content.** Also
 fixed a gap in all seven documents: a school that had never opened the branding
 screen printed the neutral "শিক্ষা প্রতিষ্ঠান" placeholder instead of its own
-name. Closes `B-112`; `B-113` records that no PDF was captured.
+name. Closes `B-112`.
+
+*Redesigned and refined 2026-09-07, twice, on visual review.* The first pass
+was printable and not readable, and **rasterising it is what proved it** —
+headless Chrome and PyMuPDF, both already on the machine, nothing added to the
+repo. Computed style said the page box was 297mm × 210mm and was right; the PDF
+said every class page spilled onto a second and third sheet. That closed
+`B-113` and `B-114` and found three defects nothing else would have:
+
+- **A lesson was four lines**, so four sections were sixteen lines in a cell.
+  It is now ONE line per section, keyed by a bordered chip carrying that
+  section's tint. The room came off the dense sheet to buy the fit — measured
+  at 11.2mm a section with it against 8.4mm without, which is one page against
+  two — and remains on the section's, teacher's and room's own sheets.
+- **The period ordinals were off by one all afternoon.** `period_no` is a
+  POSITION in the school day and tiffin holds one, so `ordinalBn(period_no)`
+  printed ৬ষ্ঠ over the hour a school calls ৫ম. The ordinal now counts TAUGHT
+  hours, which is both the brief's ordinal system and the bug fixed.
+- **Tiffin was invisible.** `period_kind` has seven values and migration 012
+  seeds four; the read ended `AND pd.kind = 'teaching'` and discarded the rest.
+  A break is now a band across the full width of the grid, ruled top and bottom.
+
+The clock reads the way Bangladesh reads it — `দুপুর ১:৩০–২:১৫`, the part of
+the day named once from the start — because `১৩:৩০` directly beneath a period
+ordinal is read as a period number. A long section name is KEYED with a legend
+carrying it in full, never truncated; there is no `text-overflow` or
+`line-clamp` in this sheet's CSS and a test asserts their absence. Every tint
+is near-neutral and is the FOURTH signal after the chip, its border and the
+rule between lines, so the page survives a photocopier. **One document page is
+one sheet of A4 on all 24 rasterised sheets**, and a 120-section college prints
+60 class-grouped pages where the first pass printed 120 ungrouped ones.
+`B-115` (no physical print) and `B-116` (Latin year beside Bangla numerals)
+remain open.
 
 **P9-8 — role-specific routine outputs.** *Delivered 2026-09-07.* Eight
 audiences, ONE dataset: institution, class, group, stream, section, teacher,

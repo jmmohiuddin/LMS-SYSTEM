@@ -284,10 +284,13 @@ describe('P9-9 — the printed routine', { skip }, () => {
       assert.doesNotMatch(h, /undefined|NaN|\[object/, `${scope} printed undefined`);
       assert.doesNotMatch(h, /ShikhonBD/i, `${scope} carries the platform brand`);
       assert.match(h, /পি৯৯ উচ্চ বিদ্যালয়/, `${scope} is missing the school`);
-      // The school's own name for the hour, not a number counted off the
-      // teaching rows — this fixture labels its periods '১ নম্বর'.
-      assert.match(h, /rt-no">১ নম্বর</, `${scope} has no period label`);
-      assert.match(h, /০৯:০০–০৯:৪৫/, `${scope} has no clock time`);
+      // The ordinal counts TAUGHT hours, not template rows: tiffin holds a
+      // `period_no` of its own, so numbering by it was off by one all
+      // afternoon. And the clock is the one Bangladesh reads — a 24-hour
+      // '১৪:০০' beside a period column is read as a period number.
+      assert.match(h, /rt-no">১ম<span class="rt-pd">পিরিয়ড</, `${scope} ordinal`);
+      assert.match(h, /সকাল ৯:০০–৯:৪৫/, `${scope} has no 12-hour clock`);
+      assert.doesNotMatch(h, /১৩:|১৪:/, `${scope} printed a 24-hour clock`);
     }
   });
 

@@ -257,6 +257,8 @@ becomes a sidebar sub-list; on mobile, a bottom sheet.
 | 26 | Audit viewer | `audit-view.ts` (396) | ❌ none | DataTable + filters | list | `ops/audit` | DataTable, FilterBar | **both** | L |
 | 27 | Import | `import-view.ts` (378) | `s-import` + desktop ✅ | dropzone + error table | steps + error list | `platform/import` | FileUpload | — | M |
 | 28 | Routine / editor | `routine-view`, `routine-editor-view` | `s-routine-editor` + desktop ✅ | grid editor | day list | `rms-svc` | grid | — | M |
+| 28a | Routine — screen grid | `timetable-view.ts` | ✅ | grid + print drawer | day list | `rms/timetable` | grid, drawer | — | M |
+| 28b | Routine — PRINTED sheet | `documents.ts` `buildRoutineSheet` | n/a — paper | A4 landscape grid | A4 portrait | `ops/document?type=routine_sheet` | letterhead, chips, tints | — | M |
 | 29 | Marks entry | `marks-view.ts` (469) | `s-marks` (**no desktop pair**) | **desktop design needed** | keypad grid | offline outbox | — | desktop design | **H** — offline |
 | 30 | Class performance | `class-perf-view.ts` | `s-class-perf` + desktop ✅ | charts | compact charts | `academics/classperf` | chart | — | L |
 | 31 | Learn / Practice / Shikho / Sikhok | 4 views | all 4 have pairs ✅ | as design | as design | `ai-svc` | chat | — | L |
@@ -1707,3 +1709,36 @@ button is reachable at 360.
 **Accessibility**: `role="dialog"`, `aria-labelledby`, focus moves into the
 drawer on open, every control labelled in words, and the failure path is a
 sentence with `role="status"` rather than a colour.
+
+
+## The printed routine — design decisions (P9-9, 2026-09-07)
+
+The sheet is a DOCUMENT, not a screenshot of the screen, and the two are kept
+apart on purpose. What the screen shares with it are the two things that are
+about correctness rather than paper: the period ordinal counts TAUGHT hours
+(not `period_no`, which is a position in the day that tiffin also occupies),
+and the clock is 12-hour with the part of the day — `দুপুর ১:৩০–২:১৫` — because
+`১৩:৩০` printed directly under a period ordinal is read as a period number.
+
+**Reading order, by weight.** Class (the title) → section chip → subject →
+teacher → clock. Five steps, five weights, so a reader lands on the level they
+want without reading the ones above it.
+
+**Sections.** Each gets a bordered chip of fixed width, so the keys align into
+a column the eye runs down, plus one of eight near-neutral tints. Tint is the
+FOURTH signal — after the chip, its border and the dotted rule between lines —
+because tint is what a photocopier loses first. A page whose section labels are
+all short uses them as keys; one long label keys the whole page by numeral and
+prints a legend above the grid with every name in full. Nothing is ever
+truncated: there is no `text-overflow` and no `line-clamp` in this CSS.
+
+**Breaks.** A band across the full width of the grid, ruled top and bottom.
+`period_kind` has seven values and a school's তিফিন, সমাবেশ and জোহর are rows
+of the day, not gaps in it.
+
+**Paper.** Landscape A4 for institution/class/group/stream (a cell carries one
+line per section), portrait for section/teacher/room/student (one lesson a
+cell, which has room for a second line). `board=1` is the notice-board sheet:
+the same grid, larger type, and a page cap that knows a 22% larger face costs
+45% more page. Verified by rasterisation, not by computed style — one document
+page is one sheet of A4 on all 24 sheets measured.

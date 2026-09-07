@@ -1064,11 +1064,27 @@ The room came off the dense sheet to buy the fit: measured, it costs 11.2mm a
 section with the room and 8.4mm without, which is one page against two. It is
 still on the section's, the teacher's and the room's own sheets.
 
-**The hour is called what the school calls it.** `period_no` is a POSITION in
-the day, not a count of teaching hours, and tiffin holds position 5 of the
-seeded day shift — so the hour a school labels `৫ম` is `period_no` 6, and
-numbering the rows printed `৬ষ্ঠ` over it for the whole afternoon. The sheet
-and the screen now read `period_definitions.label_bn`.
+**The hour's ordinal counts TAUGHT hours.** `period_no` is a POSITION in the
+day, not a count of teaching hours, and tiffin holds position 5 of the seeded
+day shift — so `ordinalBn(period_no)` printed `৬ষ্ঠ` over the hour a school
+labels `৫ম`, for the whole afternoon. Counting the taught rows gives ১ম–৭ম
+with the bands consuming none, on the sheet and on the screen alike.
+
+**The clock is the one Bangladesh reads.** `সকাল ১০:০০–১০:৪৫`, `দুপুর ১:৩০–২:১৫`
+— the part of the day named once from the start, then a 12-hour range —
+because `১৩:৩০` printed directly beneath a period ordinal is read as a period
+number before it is read as a time. `formatClockRange` and `dayPartBn` carry
+the everyday boundaries (ভোর/সকাল/দুপুর/বিকাল/সন্ধ্যা/রাত), so an evening
+shift does not fall off the table.
+
+**A section is a chip, a border, a rule and then a tint** — in that order,
+because tint is what a photocopier loses first. Eight near-neutral tints, the
+first pure white so the page has somewhere to rest. A page whose section
+labels are all short uses them as keys; one long label (`ব্যবসায় শিক্ষা ও
+ব্যবস্থাপনা বিজ্ঞান শাখা`) keys the whole page by numeral and prints a legend
+carrying every name IN FULL. Nothing is truncated — there is no
+`text-overflow` and no `line-clamp` in this sheet's CSS, and a test asserts
+their absence.
 
 **Breaks are on the page.** `period_kind` has seven values and migration 012
 seeds সমাবেশ, টিফিন and জোহর into every school; the read ended
@@ -1084,9 +1100,12 @@ larger face costs 45% more page.
 
 **Verified by rasterisation** (headless Chrome → PDF → PyMuPDF, both already
 on the machine; nothing added to the repo). One document page is one sheet of
-A4 on all twenty sheets across four benchmark profiles. That capture is what
-found the real defect: computed style said the page box was 297mm × 210mm and
-every class page was still spilling onto a second and third sheet.
+A4 on all 24 sheets — twenty across four benchmark profiles, four more across
+four section-name lengths up to `ব্যবসায় শিক্ষা ও ব্যবস্থাপনা বিজ্ঞান শাখা`,
+none with horizontal overflow. That capture is what found the real defect:
+computed style said the page box was 297mm × 210mm and every class page was
+still spilling onto a second and third sheet. It caught the notice-board
+sheet a second time, 3.7mm over on an eight-period day.
 
 | profile | sections | institution booklet | ms | kB |
 |---|---|---|---|---|

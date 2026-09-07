@@ -40,7 +40,8 @@
 import { type Branding } from './branding.ts';
 import { escapeHtml } from './branded-doc.ts';
 import {
-  toBanglaDigits, formatBdt, formatDayMonth, formatTime, ordinalBn, type Locale,
+  toBanglaDigits, formatBdt, formatDayMonth, formatTime, formatClockRange,
+  ordinalBn, type Locale,
 } from './format.ts';
 
 /**
@@ -708,6 +709,48 @@ function isBreak(p: RoutinePeriod): boolean {
   return (p.kind ?? 'teaching') !== 'teaching';
 }
 
+/**
+ * The tints that tell one section from the next.  (§1, §10)
+ *
+ * Every one is near-neutral — no channel differs from another by more than
+ * about 12 — so they photocopy, they print on a mono laser as four barely
+ * different greys, and they cost almost no ink. That is deliberate: the tint
+ * is the SECOND signal. The first is the chip, its border and the rule
+ * between lines, all of which survive a fax.
+ *
+ * The first section takes no tint at all. A page where every row is shaded is
+ * a page with no white to rest on, and the eye needs one.
+ */
+const SECTION_TINT = [
+  '#ffffff', '#f1f4f7', '#f8f4ee', '#eef4f0',
+  '#f5f1f6', '#f7f5ec', '#eef2f5', '#f6f0f0',
+] as const;
+
+/** How long a section label may be before the page keys it instead. */
+const SECTION_KEY_MAX = 4;
+
+/**
+ * The order the sections appear in, and the short key each gets.  (§5, §6)
+ *
+ * A section is 'ক' in most schools and `বিজ্ঞান ও প্রযুক্তি শাখা` in some, and
+ * the second cannot go in every one of thirty-five cells — §6 says so and the
+ * arithmetic agrees. So a page whose labels are all short uses them directly,
+ * and a page with even one long label keys them all by number and prints a
+ * legend above the grid.
+ *
+ * All-or-nothing per page on purpose: a grid where some cells say 'ক' and
+ * others say '২' is one where the reader has to work out which scheme they
+ * are looking at. And the name is never CUT — it is in the legend in full,
+ * which is what §5 asks for.
+ */
+function sectionKeys(labels: string[], locale: Locale): Map<string, string> {
+  const bn = locale === 'bn';
+  const short = labels.every((l) => [...l].length <= SECTION_KEY_MAX);
+  return new Map(labels.map((l, i) => [
+    l, short ? l : (bn ? toBanglaDigits(i + 1) : String(i + 1)),
+  ]));
+}
+
 export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): DocumentBody {
   const bn = locale === 'bn';
   const skip = omit(d.scopeKind);
@@ -719,6 +762,13 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
     if (!byCell.has(k)) byCell.set(k, []);
     byCell.get(k)!.push(l);
   }
+
+  // The sections on THIS page, in label order, each with its key and tint.
+  const labels = dense && !skip.section
+    ? [...new Set(d.lessons.map((l) => l.sectionLabel).filter(Boolean) as string[])].sort()
+    : [];
+  const keys = sectionKeys(labels, locale);
+  const tintOf = new Map(labels.map((l, i) => [l, i % SECTION_TINT.length]));
 
   const head = [
     `<th class="rt-period-col">${escapeHtml(bn ? 'পিরিয়ড ও সময়' : 'Period & time')}</th>`,
@@ -733,17 +783,28 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
     return bits.length ? escapeHtml(bits.join(' · ')) : '';
   };
 
+  // §2. The ordinal counts TEACHING hours, not rows of the template. The
+  // template's `period_no` is a position in the day and tiffin holds one of
+  // them, so numbering by it printed "৬ষ্ঠ" over the hour a school calls ৫ম.
+  // Counting the taught hours gives the ordinal the school uses AND keeps the
+  // off-by-one fixed, which reading `label_bn` did but the brief's ordinals
+  // would have undone.
+  let taught = 0;
   const rows = d.periods.map((p) => {
-    // §5. A break is a band across the whole grid, not a row of empty cells.
-    // It is what turns nine numbered hours into a morning and an afternoon.
+    const clock = formatClockRange(p.startsAt, p.endsAt, locale);
+
+    // §4. A break is a band across the whole grid, ruled top and bottom. It is
+    // what turns nine numbered hours into a morning and an afternoon, and it
+    // must never read as an hour nobody teaches.
     if (isBreak(p)) {
       return `<tr class="rt-band"><td colspan="${d.days.length + 1}">`
         + `<span class="rt-band-name">${escapeHtml(
             bn ? toBanglaDigits(p.labelBn) : p.labelBn)}</span>`
-        + `<span class="rt-band-time">${escapeHtml(
-            `${formatTime(p.startsAt, locale)}–${formatTime(p.endsAt, locale)}`)}</span>`
+        + `<span class="rt-band-time">${escapeHtml(clock)}</span>`
         + '</td></tr>';
     }
+    taught += 1;
+    const ord = bn ? ordinalBn(taught) : String(taught);
 
     const cells = d.days.map((day) => {
       const here = byCell.get(`${day.dow}|${p.periodNo}`) ?? [];
@@ -755,12 +816,13 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
         const split = l.isParallel
           ? ` <i>${escapeHtml(bn ? 'বিভাজিত' : 'split')}</i>` : '';
 
-        // ONE LINE per section on a dense sheet, with the section label in a
-        // column of its own so a reader scans down it. This is the whole
-        // difference between the first version and this one.
+        // §1/§6. One line per section, led by a keyed chip carrying that
+        // section's tint, so the eye runs down a section without reading.
         if (dense && !skip.section) {
-          return '<div class="rt-line">'
-            + `<span class="rt-sec">${escapeHtml(l.sectionLabel ?? '·')}</span>`
+          const label = l.sectionLabel ?? '';
+          const t = tintOf.get(label);
+          return `<div class="rt-line${t === undefined ? '' : ` rt-s${t}`}">`
+            + `<span class="rt-sec">${escapeHtml(keys.get(label) ?? '·')}</span>`
             + `<span class="rt-what">${subject}`
             + (who ? ` <span class="rt-who">${who}</span>` : '') + split
             + '</span></div>';
@@ -777,22 +839,14 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
       return `<td>${inner}</td>`;
     }).join('');
 
-    // §5. Both the school's own name for the hour AND its clock time, and
-    // neither of them as small print — this column is how a reader finds
-    // their row at all.
-    // The school's own name for the hour, with its digits in the reader's
-    // numerals. Only the figures are localised; the words are the school's.
-    // There is one label, not one per locale, so an English sheet shows the
-    // same hour by the same name — the alternative is a computed number, and
-    // a computed number is the off-by-one this replaced.
-    const label = p.labelBn?.trim()
-      ? (bn ? toBanglaDigits(p.labelBn.trim()) : p.labelBn.trim())
-      : (bn ? ordinalBn(p.periodNo) : String(p.periodNo));
+    // §2/§3. The hour's ordinal, the word, and the clock beneath — three
+    // separate things rather than one ambiguous number. "১৪:০০" reads as a
+    // period before it reads as a time; "দুপুর ২:০০" cannot.
     return '<tr>'
       + '<th class="rt-period" scope="row">'
-      + `<span class="rt-no">${escapeHtml(label)}</span>`
-      + `<span class="rt-time">${escapeHtml(
-          `${formatTime(p.startsAt, locale)}–${formatTime(p.endsAt, locale)}`)}</span>`
+      + `<span class="rt-no">${escapeHtml(ord)}`
+      + `<span class="rt-pd">${escapeHtml(bn ? 'পিরিয়ড' : 'period')}</span></span>`
+      + `<span class="rt-time">${escapeHtml(clock)}</span>`
       + '</th>' + cells + '</tr>';
   }).join('');
 
@@ -805,15 +859,23 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
     meta.push({ label: bn ? 'প্রকাশ' : 'Published', value: date(d.publishedAt, locale) });
   }
 
-  // §3. A dense page is a CLASS's page, so it says which of that class's
-  // sections are on it. With a wide class split across pages (below), this
-  // caption is the only thing that tells a reader which sheet is theirs.
-  const sections = dense && !skip.section
-    ? [...new Set(d.lessons.map((l) => l.sectionLabel).filter(Boolean))] as string[]
-    : [];
-  const caption = sections.length
-    ? `<p class="rt-sections">${escapeHtml(
-        (bn ? 'শাখা: ' : 'Sections: ') + sections.join(', '))}</p>`
+  // §1/§5. The legend: which chip is which section, each swatch carrying that
+  // section's own tint so the grid below is readable without a caption. When
+  // a class runs to several pages this is also what tells a reader which
+  // sheet is theirs — and it prints the full name, however long, so nothing
+  // on the page is silently cut.
+  const legend = labels.length
+    ? `<p class="rt-legend"><span class="rt-legend-t">${escapeHtml(
+        bn ? 'শাখা' : 'Sections')}</span>`
+      + labels.map((l) => {
+          const k = keys.get(l) ?? '';
+          // Where the chip IS the label there is nothing to expand, and
+          // “ক ক” reads as a mistake. The swatch alone carries the tint.
+          return `<span class="rt-legend-i rt-s${tintOf.get(l)}">`
+            + `<span class="rt-sec">${escapeHtml(k)}</span>`
+            + (k === l ? '' : `<span>${escapeHtml(l)}</span>`) + '</span>';
+        }).join('')
+      + '</p>'
     : '';
 
   // §12. The foot of every page, so a sheet torn off a board still says which
@@ -848,15 +910,14 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
       ? `<p class="doc-note">${escapeHtml(bn
           ? 'এই অংশের জন্য প্রকাশিত রুটিনে কোনো ক্লাস নেই।'
           : 'The published routine has no classes for this selection.')}</p>`
-      : caption
+      : legend
         + `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead>`
         + `<tbody>${rows}</tbody></table>`
         + `<div class="rt-foot"><span>${foot}</span>${pager}${sign}</div>`,
     // A timetable is the institution's statement about its own week and the
     // head signs it — but on a signature LINE in the footer, not in R-5's
     // 190px block with its 56px blank gap. That block is ~30mm at the foot of
-    // every page, and a class page was over a sheet of A4 by about 35mm.
-    // Measured, not guessed: see the rasterisation table in PHASE_LOG.
+    // every page, and a class page was over a sheet of A4 by about that much.
     showSignature: false,
   };
 }
@@ -868,25 +929,29 @@ export function buildRoutineSheet(d: RoutineSheetData, locale: Locale = 'bn'): D
  * rules that make a wide table survive a page break are not ones the receipt
  * or the report card need.
  *
- * ── §10 grayscale ────────────────────────────────────────────────────────
- * Every tone here is a grey, and nothing on the sheet carries meaning by
- * colour alone: the break band is a band because of its RULES and its centred
- * label, the period column because of its weight, an empty hour because it
- * says "—". A school's mono laser prints this the same as a colour one.
+ * ── §10 grayscale, and why tint is never the only signal ─────────────────
+ * Every colour here is near-neutral, so a mono laser and a photocopier render
+ * the same tones a colour printer does. Nothing carries meaning by colour
+ * ALONE: a section is told by its chip and the chip's border first and its
+ * tint second, the break by its rules and its centred label, an empty hour by
+ * "—". Turn the whole page grey and every one of those still reads.
  *
- * ── §9 notice-board mode ─────────────────────────────────────────────────
- * `board` scales the type up for a sheet that will be read standing a metre
- * away. It drops nothing — it only makes the same grid bigger, so a head who
- * prints both gets the same routine twice, not two routines.
+ * ── §9 the hierarchy ─────────────────────────────────────────────────────
+ * Class (the title, 15px bold) → section chip (bold, boxed) → subject (bold)
+ * → teacher (regular, grey) → time (small, numeric face) → room (with the
+ * teacher, and only where the sheet has width for it). Six weights, so a
+ * reader lands on the level they want without reading the ones above it.
  */
 export function routineSheetCss(
   orientation: 'portrait' | 'landscape', board = false,
 ): string {
-  // The numeric face, for the two spans whose whole content is a figure.
+  // The numeric face, for the spans whose content is a figure or a clock.
   const NUM = 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif';
   const s = board
-    ? { grid: 14, no: 19, time: 13, who: 12.5, band: 17, pad: '5px 5px', col: 24, sec: 6 }
-    : { grid: 11.5, no: 14.5, time: 10, who: 10.5, band: 13, pad: '3px 4px', col: 20, sec: 4.5 };
+    ? { grid: 14, no: 18, pd: 10, time: 12.5, who: 12.5, band: 16,
+        pad: '4px 5px', col: 30, sec: 7, chip: 11 }
+    : { grid: 11.5, no: 14, pd: 8, time: 9.5, who: 10.5, band: 13,
+        pad: '3px 4px', col: 24, sec: 5, chip: 9 };
 
   return [
     `@page{size:A4 ${orientation};margin:0}`,
@@ -904,7 +969,7 @@ export function routineSheetCss(
       ? '.doc-head{padding-bottom:5px}.doc-logo{width:42px;height:42px}'
         + '.doc-org{font-size:16px}.doc-addr,.doc-contact{font-size:10px}'
         + '.doc-title-row{margin:7px 0 5px;align-items:baseline}'
-        + '.doc-title{font-size:14px}'
+        + '.doc-title{font-size:15px}'
         + '.doc-meta{font-size:10px;display:flex;flex-wrap:wrap;gap:2px 12px}'
         + '.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}'
       : '',
@@ -917,12 +982,14 @@ export function routineSheetCss(
     `.rt-period-col{width:${s.col}mm}`,
     `.rt-period{width:${s.col}mm;background:#f3f4f6;text-align:center;`
       + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
-    // §5. The hour's own name, large; its clock time under it, still legible.
-    // Neither is metadata — this column is how a reader finds their row.
-    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.25;${NUM}}`,
-    `.rt-time{display:block;font-size:${s.time}px;color:#374151;white-space:nowrap;${NUM}}`,
+    // §2/§3. The ordinal leads, the word "পিরিয়ড" follows it small, and the
+    // clock sits under both. Three things, not one ambiguous number.
+    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.2;${NUM}}`,
+    `.rt-pd{font-weight:400;font-size:${s.pd}px;color:#4b5563;margin-inline-start:3px;`
+      + 'font-family:"Hind Siliguri",system-ui,sans-serif}',
+    `.rt-time{display:block;font-size:${s.time}px;color:#374151;line-height:1.25;${NUM}}`,
 
-    // ── §5 the break band ──
+    // ── §4 the break band ──
     // Full width, ruled top and bottom, centred. This is the one row on the
     // sheet that is not a lesson and it must not look like one.
     '.rt-band td{background:#e5e7eb;text-align:center;padding:5px 6px;'
@@ -932,29 +999,47 @@ export function routineSheetCss(
     `.rt-band-time{margin-inline-start:10px;font-size:${s.time}px;color:#374151;${NUM}}`,
 
     // ── the cell ──
-    // A dense sheet: one flex line per section, the label in a column of its
-    // own so the eye runs down it.
-    '.rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 0}',
-    '.rt-line+.rt-line{border-top:1px dotted #d1d5db;margin-top:1px;padding-top:2px}',
-    `.rt-sec{flex:none;min-width:${s.sec}mm;font-weight:700;color:#111827}`,
-    '.rt-what{min-width:0;overflow-wrap:anywhere}',
+    // A dense sheet: one line per section, tinted, chip first.
+    '.rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 2px;'
+      + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    '.rt-line+.rt-line{border-top:1px dotted #9ca3af;margin-top:1px;padding-top:2px}',
+    // §5/§9. The chip: fixed width so the keys align into a column the eye can
+    // follow, bordered so it reads as a chip on a photocopy where the tint
+    // has washed out, and `flex:none` so a long subject never squeezes it.
+    `.rt-sec{flex:none;min-width:${s.sec}mm;font-weight:700;color:#111827;`
+      + `font-size:${s.chip}px;text-align:center;border:1px solid #9ca3af;`
+      + 'border-radius:2px;background:#fff;padding:0 1px;line-height:1.35;'
+      + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    // §5. A long subject wraps and the row grows; it is never clipped and it
+    // never pushes the cell sideways.
+    '.rt-what{min-width:0;overflow-wrap:anywhere;word-break:break-word}',
     // A single-lesson sheet: subject, then its detail on a second line.
     '.rt-lesson{padding:1px 0;line-height:1.35}',
     '.rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}',
     `.rt-who{color:#374151;font-size:${s.who}px}`,
     '.rt-lesson .rt-who{display:block}',
-    `.rt-line i,.rt-lesson i{font-size:${s.time}px;color:#4b5563}`,
+    `.rt-line i,.rt-lesson i{font-size:${s.pd}px;color:#4b5563}`,
     '.rt-empty{color:#9ca3af;text-align:center}',
-    // §3. Which sections this page carries — the caption that tells a reader
-    // which sheet is theirs when a wide class runs to several.
-    `.rt-sections{margin:0 0 6px;font-size:${s.who}px;color:#374151;font-weight:600}`,
+
+    // ── §1 the section tints ──
+    ...SECTION_TINT.map((c, i) => `.rt-s${i}{background:${c}}`),
+
+    // ── §5 the legend ──
+    `.rt-legend{margin:0 0 5px;font-size:${s.who}px;color:#1f2937;`
+      + 'display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px}',
+    '.rt-legend-t{font-weight:700;color:#4b5563}',
+    '.rt-legend-t::after{content:":"}',
+    '.rt-legend-i{display:inline-flex;align-items:center;gap:3px;'
+      + 'border:1px solid #d1d5db;border-radius:3px;padding:1px 5px 1px 2px;'
+      + '-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+
     // §12. Version, date and page x of y, at the foot of every page.
     '.rt-foot{display:flex;justify-content:space-between;align-items:flex-end;'
       + `gap:12px;margin-top:5px;font-size:${s.time}px;color:#4b5563}`,
     // The signature LINE: room to sign above it, the caption under it. ~11mm
     // against the block's ~30mm, which is most of what made a class page
     // spill onto a second sheet.
-    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 12 : 9}mm;`
+    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 8 : 9}mm;`
       + 'text-align:center;border-top:1px solid #374151;padding-top:3px;'
       + 'color:#1f2937;font-weight:600}',
 

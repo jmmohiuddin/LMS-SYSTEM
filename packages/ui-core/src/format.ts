@@ -189,6 +189,65 @@ export function ordinalBn(n: number): string {
 }
 
 /**
+ * The part of the day a clock time falls in, as Bangladesh says it.
+ *
+ * A school day that runs to 14:00 prints "১৪:০০" on a 24-hour clock, and a
+ * teacher reads that as a period number before they read it as a time — which
+ * is exactly the confusion this exists to remove. Bangla has no bare 12-hour
+ * clock: `১:০০` alone is ambiguous, and the part of the day is what removes
+ * the ambiguity. So the two travel together.
+ *
+ * The boundaries are the everyday ones, not astronomical: দুপুর covers noon
+ * through the early afternoon (দুপুর ১টা, দুপুর ২টা), বিকাল the late
+ * afternoon. A school's periods land in ভোর/সকাল/দুপুর/বিকাল; সন্ধ্যা and
+ * রাত are here so a night shift or an exam slot does not fall off the table.
+ */
+export function dayPartBn(hhmm: string): string {
+  const h = Number(hhmm.split(':')[0]);
+  if (Number.isNaN(h)) return '';
+  if (h >= 4 && h < 6) return 'ভোর';
+  if (h >= 6 && h < 12) return 'সকাল';
+  if (h >= 12 && h < 15) return 'দুপুর';
+  if (h >= 15 && h < 18) return 'বিকাল';
+  if (h >= 18 && h < 20) return 'সন্ধ্যা';
+  return 'রাত';
+}
+
+/**
+ * One period's clock range, the way a Bangladeshi school reads it.
+ *
+ *   bn  →  "সকাল ১০:০০–১০:৪৫",  "দুপুর ১:০০–১:৪৫"
+ *   en  →  "10:00–10:45 AM"
+ *
+ * The part of the day is named ONCE, from the START, and the range follows —
+ * "সকাল ১১:৩০–১২:১৫" rather than "সকাল ১১:৩০–দুপুর ১২:১৫", which is how a
+ * routine is spoken and half the width. A period that genuinely straddles a
+ * boundary is still read correctly: the reader has the start's part of day
+ * and the end is minutes later, not hours.
+ *
+ * The hour loses its leading zero here where `formatTime` keeps it. On a
+ * 24-hour clock the zero aligns a column; with the part of day in front of
+ * it, "সকাল ০৯:০০" is a padded numeral nobody says out loud.
+ */
+export function formatClockRange(
+  startHhmm: string, endHhmm: string, locale: Locale,
+): string {
+  const h12 = (hhmm: string): string => {
+    const [h, m] = hhmm.split(':').map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+    const hour = h % 12 === 0 ? 12 : h % 12;
+    return `${hour}:${String(m).padStart(2, '0')}`;
+  };
+  if (locale !== 'bn') {
+    const [h] = endHhmm.split(':').map(Number);
+    return `${h12(startHhmm)}–${h12(endHhmm)} ${h < 12 ? 'AM' : 'PM'}`;
+  }
+  const part = dayPartBn(startHhmm);
+  const range = toBanglaDigits(`${h12(startHhmm)}–${h12(endHhmm)}`);
+  return part ? `${part} ${range}` : range;
+}
+
+/**
  * Today, on the calendar the person in front of the screen is reading.
  *
  * `new Date().toISOString().slice(0, 10)` is UTC, and Dhaka is six hours

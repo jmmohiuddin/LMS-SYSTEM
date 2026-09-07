@@ -1999,14 +1999,6 @@ function formatDayMonth(isoDate, locale) {
   if (!y || !m || !d) return isoDate;
   return locale === "bn" ? `${toBanglaDigits(d)} ${BN_MONTHS[m - 1]}` : `${d} ${EN_MONTHS[m - 1]}`;
 }
-function formatTime(hhmm, locale) {
-  const [h, m] = hhmm.split(":").map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
-  if (locale === "bn") return toBanglaDigits(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-  const suffix = h < 12 ? "AM" : "PM";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, "0")} ${suffix}`;
-}
 var ORDINAL_BN = [
   "",
   "\u09E7\u09AE",
@@ -2024,6 +2016,31 @@ var ORDINAL_BN = [
 ];
 function ordinalBn(n) {
   return ORDINAL_BN[n] ?? toBanglaDigits(n);
+}
+function dayPartBn(hhmm) {
+  const h = Number(hhmm.split(":")[0]);
+  if (Number.isNaN(h)) return "";
+  if (h >= 4 && h < 6) return "\u09AD\u09CB\u09B0";
+  if (h >= 6 && h < 12) return "\u09B8\u0995\u09BE\u09B2";
+  if (h >= 12 && h < 15) return "\u09A6\u09C1\u09AA\u09C1\u09B0";
+  if (h >= 15 && h < 18) return "\u09AC\u09BF\u0995\u09BE\u09B2";
+  if (h >= 18 && h < 20) return "\u09B8\u09A8\u09CD\u09A7\u09CD\u09AF\u09BE";
+  return "\u09B0\u09BE\u09A4";
+}
+function formatClockRange(startHhmm, endHhmm, locale) {
+  const h12 = (hhmm) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return hhmm;
+    const hour2 = h % 12 === 0 ? 12 : h % 12;
+    return `${hour2}:${String(m).padStart(2, "0")}`;
+  };
+  if (locale !== "bn") {
+    const [h] = endHhmm.split(":").map(Number);
+    return `${h12(startHhmm)}\u2013${h12(endHhmm)} ${h < 12 ? "AM" : "PM"}`;
+  }
+  const part = dayPartBn(startHhmm);
+  const range = toBanglaDigits(`${h12(startHhmm)}\u2013${h12(endHhmm)}`);
+  return part ? `${part} ${range}` : range;
 }
 
 // packages/server-core/src/go-live.ts
@@ -5279,6 +5296,25 @@ function omit(scope) {
 function isBreak(p) {
   return (p.kind ?? "teaching") !== "teaching";
 }
+var SECTION_TINT = [
+  "#ffffff",
+  "#f1f4f7",
+  "#f8f4ee",
+  "#eef4f0",
+  "#f5f1f6",
+  "#f7f5ec",
+  "#eef2f5",
+  "#f6f0f0"
+];
+var SECTION_KEY_MAX = 4;
+function sectionKeys(labels, locale) {
+  const bn = locale === "bn";
+  const short = labels.every((l) => [...l].length <= SECTION_KEY_MAX);
+  return new Map(labels.map((l, i) => [
+    l,
+    short ? l : bn ? toBanglaDigits(i + 1) : String(i + 1)
+  ]));
+}
 function buildRoutineSheet(d, locale = "bn") {
   const bn = locale === "bn";
   const skip = omit(d.scopeKind);
@@ -5289,6 +5325,9 @@ function buildRoutineSheet(d, locale = "bn") {
     if (!byCell.has(k)) byCell.set(k, []);
     byCell.get(k).push(l);
   }
+  const labels = dense && !skip.section ? [...new Set(d.lessons.map((l) => l.sectionLabel).filter(Boolean))].sort() : [];
+  const keys = sectionKeys(labels, locale);
+  const tintOf = new Map(labels.map((l, i) => [l, i % SECTION_TINT.length]));
   const head = [
     `<th class="rt-period-col">${escapeHtml(bn ? "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0993 \u09B8\u09AE\u09AF\u09BC" : "Period & time")}</th>`,
     ...d.days.map((day2) => `<th>${escapeHtml(bn ? `${day2.bn}\u09AC\u09BE\u09B0` : day2.bn)}</th>`)
@@ -5299,14 +5338,16 @@ function buildRoutineSheet(d, locale = "bn") {
     if (!skip.room && l.roomBn) bits.push(l.roomBn);
     return bits.length ? escapeHtml(bits.join(" \xB7 ")) : "";
   };
+  let taught = 0;
   const rows = d.periods.map((p) => {
+    const clock = formatClockRange(p.startsAt, p.endsAt, locale);
     if (isBreak(p)) {
       return `<tr class="rt-band"><td colspan="${d.days.length + 1}"><span class="rt-band-name">${escapeHtml(
         bn ? toBanglaDigits(p.labelBn) : p.labelBn
-      )}</span><span class="rt-band-time">${escapeHtml(
-        `${formatTime(p.startsAt, locale)}\u2013${formatTime(p.endsAt, locale)}`
-      )}</span></td></tr>`;
+      )}</span><span class="rt-band-time">${escapeHtml(clock)}</span></td></tr>`;
     }
+    taught += 1;
+    const ord = bn ? ordinalBn(taught) : String(taught);
     const cells = d.days.map((day2) => {
       const here = byCell.get(`${day2.dow}|${p.periodNo}`) ?? [];
       if (here.length === 0) return '<td class="rt-empty">\u2014</td>';
@@ -5315,7 +5356,9 @@ function buildRoutineSheet(d, locale = "bn") {
         const who = detail(l);
         const split = l.isParallel ? ` <i>${escapeHtml(bn ? "\u09AC\u09BF\u09AD\u09BE\u099C\u09BF\u09A4" : "split")}</i>` : "";
         if (dense && !skip.section) {
-          return `<div class="rt-line"><span class="rt-sec">${escapeHtml(l.sectionLabel ?? "\xB7")}</span><span class="rt-what">${subject}` + (who ? ` <span class="rt-who">${who}</span>` : "") + split + "</span></div>";
+          const label = l.sectionLabel ?? "";
+          const t = tintOf.get(label);
+          return `<div class="rt-line${t === void 0 ? "" : ` rt-s${t}`}"><span class="rt-sec">${escapeHtml(keys.get(label) ?? "\xB7")}</span><span class="rt-what">${subject}` + (who ? ` <span class="rt-who">${who}</span>` : "") + split + "</span></div>";
         }
         const line2 = [
           skip.section || !l.sectionLabel ? "" : escapeHtml(
@@ -5327,10 +5370,7 @@ function buildRoutineSheet(d, locale = "bn") {
       }).join("");
       return `<td>${inner}</td>`;
     }).join("");
-    const label = p.labelBn?.trim() ? bn ? toBanglaDigits(p.labelBn.trim()) : p.labelBn.trim() : bn ? ordinalBn(p.periodNo) : String(p.periodNo);
-    return `<tr><th class="rt-period" scope="row"><span class="rt-no">${escapeHtml(label)}</span><span class="rt-time">${escapeHtml(
-      `${formatTime(p.startsAt, locale)}\u2013${formatTime(p.endsAt, locale)}`
-    )}</span></th>` + cells + "</tr>";
+    return `<tr><th class="rt-period" scope="row"><span class="rt-no">${escapeHtml(ord)}<span class="rt-pd">${escapeHtml(bn ? "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1" : "period")}</span></span><span class="rt-time">${escapeHtml(clock)}</span></th>` + cells + "</tr>";
   }).join("");
   const meta = [
     { label: bn ? "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09AC\u09B0\u09CD\u09B7" : "Year", value: d.yearLabel },
@@ -5340,10 +5380,12 @@ function buildRoutineSheet(d, locale = "bn") {
   if (d.publishedAt) {
     meta.push({ label: bn ? "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6" : "Published", value: date(d.publishedAt, locale) });
   }
-  const sections = dense && !skip.section ? [...new Set(d.lessons.map((l) => l.sectionLabel).filter(Boolean))] : [];
-  const caption = sections.length ? `<p class="rt-sections">${escapeHtml(
-    (bn ? "\u09B6\u09BE\u0996\u09BE: " : "Sections: ") + sections.join(", ")
-  )}</p>` : "";
+  const legend = labels.length ? `<p class="rt-legend"><span class="rt-legend-t">${escapeHtml(
+    bn ? "\u09B6\u09BE\u0996\u09BE" : "Sections"
+  )}</span>` + labels.map((l) => {
+    const k = keys.get(l) ?? "";
+    return `<span class="rt-legend-i rt-s${tintOf.get(l)}"><span class="rt-sec">${escapeHtml(k)}</span>` + (k === l ? "" : `<span>${escapeHtml(l)}</span>`) + "</span>";
+  }).join("") + "</p>" : "";
   const foot = [
     `${escapeHtml(bn ? "\u09B8\u0982\u09B8\u09CD\u0995\u09B0\u09A3" : "Version")} ${escapeHtml(num(d.version, locale))}`,
     d.publishedAt ? `${escapeHtml(bn ? "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6" : "Published")} ${escapeHtml(date(d.publishedAt, locale))}` : ""
@@ -5360,18 +5402,39 @@ function buildRoutineSheet(d, locale = "bn") {
     // Every other scope names the part it is of, which the letterhead cannot.
     title: d.scopeKind === "institution" ? ROUTINE_SCOPE_BN[d.scopeKind] : `${ROUTINE_SCOPE_BN[d.scopeKind]} \u2014 ${d.scopeTitle}`,
     meta,
-    bodyHtml: empty ? `<p class="doc-note">${escapeHtml(bn ? "\u098F\u0987 \u0985\u0982\u09B6\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964" : "The published routine has no classes for this selection.")}</p>` : caption + `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table><div class="rt-foot"><span>${foot}</span>${pager}${sign3}</div>`,
+    bodyHtml: empty ? `<p class="doc-note">${escapeHtml(bn ? "\u098F\u0987 \u0985\u0982\u09B6\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964" : "The published routine has no classes for this selection.")}</p>` : legend + `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table><div class="rt-foot"><span>${foot}</span>${pager}${sign3}</div>`,
     // A timetable is the institution's statement about its own week and the
     // head signs it — but on a signature LINE in the footer, not in R-5's
     // 190px block with its 56px blank gap. That block is ~30mm at the foot of
-    // every page, and a class page was over a sheet of A4 by about 35mm.
-    // Measured, not guessed: see the rasterisation table in PHASE_LOG.
+    // every page, and a class page was over a sheet of A4 by about that much.
     showSignature: false
   };
 }
 function routineSheetCss(orientation, board = false) {
   const NUM = 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif';
-  const s = board ? { grid: 14, no: 19, time: 13, who: 12.5, band: 17, pad: "5px 5px", col: 24, sec: 6 } : { grid: 11.5, no: 14.5, time: 10, who: 10.5, band: 13, pad: "3px 4px", col: 20, sec: 4.5 };
+  const s = board ? {
+    grid: 14,
+    no: 18,
+    pd: 10,
+    time: 12.5,
+    who: 12.5,
+    band: 16,
+    pad: "4px 5px",
+    col: 30,
+    sec: 7,
+    chip: 11
+  } : {
+    grid: 11.5,
+    no: 14,
+    pd: 8,
+    time: 9.5,
+    who: 10.5,
+    band: 13,
+    pad: "3px 4px",
+    col: 24,
+    sec: 5,
+    chip: 9
+  };
   return [
     `@page{size:A4 ${orientation};margin:0}`,
     // Landscape needs the letterhead's page box to follow it, or the document
@@ -5382,7 +5445,7 @@ function routineSheetCss(orientation, board = false) {
     // These overrides are the routine sheet's alone — a receipt and a
     // transfer certificate are portrait and have the room. Every one was
     // sized against a rasterised page, not chosen for looks.
-    orientation === "landscape" ? ".doc-head{padding-bottom:5px}.doc-logo{width:42px;height:42px}.doc-org{font-size:16px}.doc-addr,.doc-contact{font-size:10px}.doc-title-row{margin:7px 0 5px;align-items:baseline}.doc-title{font-size:14px}.doc-meta{font-size:10px;display:flex;flex-wrap:wrap;gap:2px 12px}.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}" : "",
+    orientation === "landscape" ? ".doc-head{padding-bottom:5px}.doc-logo{width:42px;height:42px}.doc-org{font-size:16px}.doc-addr,.doc-contact{font-size:10px}.doc-title-row{margin:7px 0 5px;align-items:baseline}.doc-title{font-size:15px}.doc-meta{font-size:10px;display:flex;flex-wrap:wrap;gap:2px 12px}.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}" : "",
     // §2. A heavier rule around the outside and under the day header, so the
     // grid reads as a grid from across a corridor rather than as grey text.
     `.rt-grid{table-layout:fixed;font-size:${s.grid}px;border:1.5px solid #374151}`,
@@ -5390,39 +5453,48 @@ function routineSheetCss(orientation, board = false) {
     ".rt-grid thead th{border-bottom:1.5px solid #374151;text-align:center;font-size:1.05em;letter-spacing:.01em}",
     `.rt-period-col{width:${s.col}mm}`,
     `.rt-period{width:${s.col}mm;background:#f3f4f6;text-align:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}`,
-    // §5. The hour's own name, large; its clock time under it, still legible.
-    // Neither is metadata — this column is how a reader finds their row.
-    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.25;${NUM}}`,
-    `.rt-time{display:block;font-size:${s.time}px;color:#374151;white-space:nowrap;${NUM}}`,
-    // ── §5 the break band ──
+    // §2/§3. The ordinal leads, the word "পিরিয়ড" follows it small, and the
+    // clock sits under both. Three things, not one ambiguous number.
+    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.2;${NUM}}`,
+    `.rt-pd{font-weight:400;font-size:${s.pd}px;color:#4b5563;margin-inline-start:3px;font-family:"Hind Siliguri",system-ui,sans-serif}`,
+    `.rt-time{display:block;font-size:${s.time}px;color:#374151;line-height:1.25;${NUM}}`,
+    // ── §4 the break band ──
     // Full width, ruled top and bottom, centred. This is the one row on the
     // sheet that is not a lesson and it must not look like one.
     ".rt-band td{background:#e5e7eb;text-align:center;padding:5px 6px;border-top:2px solid #374151;border-bottom:2px solid #374151;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     `.rt-band-name{font-weight:700;font-size:${s.band}px;letter-spacing:.08em}`,
     `.rt-band-time{margin-inline-start:10px;font-size:${s.time}px;color:#374151;${NUM}}`,
     // ── the cell ──
-    // A dense sheet: one flex line per section, the label in a column of its
-    // own so the eye runs down it.
-    ".rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 0}",
-    ".rt-line+.rt-line{border-top:1px dotted #d1d5db;margin-top:1px;padding-top:2px}",
-    `.rt-sec{flex:none;min-width:${s.sec}mm;font-weight:700;color:#111827}`,
-    ".rt-what{min-width:0;overflow-wrap:anywhere}",
+    // A dense sheet: one line per section, tinted, chip first.
+    ".rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".rt-line+.rt-line{border-top:1px dotted #9ca3af;margin-top:1px;padding-top:2px}",
+    // §5/§9. The chip: fixed width so the keys align into a column the eye can
+    // follow, bordered so it reads as a chip on a photocopy where the tint
+    // has washed out, and `flex:none` so a long subject never squeezes it.
+    `.rt-sec{flex:none;min-width:${s.sec}mm;font-weight:700;color:#111827;font-size:${s.chip}px;text-align:center;border:1px solid #9ca3af;border-radius:2px;background:#fff;padding:0 1px;line-height:1.35;-webkit-print-color-adjust:exact;print-color-adjust:exact}`,
+    // §5. A long subject wraps and the row grows; it is never clipped and it
+    // never pushes the cell sideways.
+    ".rt-what{min-width:0;overflow-wrap:anywhere;word-break:break-word}",
     // A single-lesson sheet: subject, then its detail on a second line.
     ".rt-lesson{padding:1px 0;line-height:1.35}",
     ".rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}",
     `.rt-who{color:#374151;font-size:${s.who}px}`,
     ".rt-lesson .rt-who{display:block}",
-    `.rt-line i,.rt-lesson i{font-size:${s.time}px;color:#4b5563}`,
+    `.rt-line i,.rt-lesson i{font-size:${s.pd}px;color:#4b5563}`,
     ".rt-empty{color:#9ca3af;text-align:center}",
-    // §3. Which sections this page carries — the caption that tells a reader
-    // which sheet is theirs when a wide class runs to several.
-    `.rt-sections{margin:0 0 6px;font-size:${s.who}px;color:#374151;font-weight:600}`,
+    // ── §1 the section tints ──
+    ...SECTION_TINT.map((c, i) => `.rt-s${i}{background:${c}}`),
+    // ── §5 the legend ──
+    `.rt-legend{margin:0 0 5px;font-size:${s.who}px;color:#1f2937;display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px}`,
+    ".rt-legend-t{font-weight:700;color:#4b5563}",
+    '.rt-legend-t::after{content:":"}',
+    ".rt-legend-i{display:inline-flex;align-items:center;gap:3px;border:1px solid #d1d5db;border-radius:3px;padding:1px 5px 1px 2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     // §12. Version, date and page x of y, at the foot of every page.
     `.rt-foot{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-top:5px;font-size:${s.time}px;color:#4b5563}`,
     // The signature LINE: room to sign above it, the caption under it. ~11mm
     // against the block's ~30mm, which is most of what made a class page
     // spill onto a second sheet.
-    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 12 : 9}mm;text-align:center;border-top:1px solid #374151;padding-top:3px;color:#1f2937;font-weight:600}`,
+    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 8 : 9}mm;text-align:center;border-top:1px solid #374151;padding-top:3px;color:#1f2937;font-weight:600}`,
     "@media print{",
     // §6. A routine row is one hour of the school's week and must not be cut
     // in half by a page boundary; the header repeats so page two is readable

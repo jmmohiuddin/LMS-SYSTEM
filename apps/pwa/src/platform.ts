@@ -88,10 +88,46 @@ const LEVEL_RANGE: Record<string, [number, number]> = {
 
 interface TenantRow {
   id: string; slug: string; nameBn: string; nameEn: string;
-  stream: string; level: string; status: string;
+  stream: string; level: string; district: string | null; status: string;
   planCode: string; studentCap: number; studentCount: number;
   trialEndsOn: string | null; createdAt: string;
+  // P10-1. Operational state, graded in the database rather than re-derived
+  // here. The console used to compute its own attention queue from the whole
+  // fleet, which is why it had to load the whole fleet.
+  access: string; opsState: string; billingState: string;
+  userCount: number; classCount: number; sectionCount: number;
+  lastActiveAt: string | null;
+  severity: 'critical' | 'warning' | 'info' | 'none';
 }
+
+/** What page of the fleet is on screen, as the server drew it. */
+interface FleetPage {
+  page: number; size: number; total: number; pages: number;
+  sort: string; dir: string;
+}
+
+/** How many schools need a person, across the WHOLE fleet. */
+interface FleetSummary {
+  total: number;
+  attention: { critical: number; warning: number; info: number };
+  suspended: number; trial: number; overdue: number; active: number;
+}
+
+/** §4's bands, in the order an operator should read them. */
+const BAND_BN: Record<string, string> = {
+  critical: 'জরুরি', warning: 'নজর দিন', info: 'সেটআপ চলছে',
+};
+
+/** The columns a fleet list can be sorted by, and what they are called. */
+const FLEET_SORTS: Array<{ key: string; bn: string }> = [
+  { key: 'name', bn: 'প্রতিষ্ঠান' },
+  { key: 'status', bn: 'অবস্থা' },
+  { key: 'plan', bn: 'প্ল্যান' },
+  { key: 'students', bn: 'শিক্ষার্থী' },
+  { key: 'active', bn: 'সর্বশেষ সক্রিয়' },
+  { key: 'severity', bn: 'অগ্রাধিকার' },
+  { key: 'created', bn: 'তৈরি' },
+];
 
 /** R-8. One line of the go-live posture, as the server computes it. */
 interface GoLiveCheck {
@@ -191,6 +227,13 @@ export class Console_ {
   private error = '';
   private notice = '';
   private search = '';
+  // P10-1. Where in the fleet the operator is, and what they filtered to.
+  // All of it goes to the server: the browser no longer holds the fleet.
+  private fleet: FleetPage = { page: 1, size: 25, total: 0, pages: 1,
+                               sort: 'name', dir: 'asc' };
+  private summary: FleetSummary | null = null;
+  private filterStatus = '';
+  private filterBand = '';
 
   private step = 0;
   /**
@@ -263,8 +306,15 @@ export class Console_ {
 
   constructor(root: HTMLElement) {
     this.root = root;
-    if (this.token && this.key) void this.loadList();
-    else this.render();
+    // Render, and let whichever view is open fetch its own data.
+    //
+    // This used to call `loadList()` unconditionally, which fetched the
+    // PROVISIONING list — a full fleet query — on every console open, even
+    // though the console opens on the operations view and that list is two
+    // clicks away. One wasted round trip of the most expensive query in the
+    // product, every time an operator signed in.
+    this.render();
+    if (this.token && this.key && this.view === 'list') void this.loadList();
   }
 
   // ── Transport ─────────────────────────────────────────────────────────
@@ -293,9 +343,25 @@ export class Console_ {
   private async loadList(): Promise<void> {
     this.loading = true; this.error = ''; this.render();
     try {
-      const r = await this.call<{ tenants: TenantRow[] }>(
-        `tenants?q=${encodeURIComponent(this.search)}`);
+      const p = new URLSearchParams({
+        q: this.search,
+        page: String(this.fleet.page), size: String(this.fleet.size),
+        sort: this.fleet.sort, dir: this.fleet.dir,
+      });
+      if (this.filterStatus) p.set('status', this.filterStatus);
+      if (this.filterBand) p.set('attention', this.filterBand);
+
+      // Two requests, deliberately. The page is what is on screen; the
+      // summary counts the WHOLE fleet, so "৫টি জরুরি" means five in the
+      // country and not five on this screen. Folding them into one response
+      // would tie the badge to the page that happened to be open.
+      const [r, sum] = await Promise.all([
+        this.call<{ tenants: TenantRow[]; page: FleetPage }>(`tenants?${p}`),
+        this.call<FleetSummary>('fleetsummary').catch(() => null),
+      ]);
       this.tenants = r.tenants;
+      this.fleet = r.page;
+      if (sum) this.summary = sum;
     } catch (e) {
       this.error = (e as Error).message;
       this.tenants = [];
@@ -396,8 +462,23 @@ export class Console_ {
    * The operations centre. Owns its own rendering — it is a view with its own
    * loads, drawers and confirmations, not a function that returns markup.
    */
+  /** The ops console's own DOM, kept across shell re-renders. */
+  private opsHost: HTMLElement | null = null;
+
   private renderOps(main: HTMLElement): void {
+    // Built ONCE and re-attached, not rebuilt.
+    //
+    // `PlatformOpsView`'s constructor calls `load()`, and the shell
+    // re-renders for reasons that have nothing to do with the fleet — a
+    // notice appearing, a theme toggle, a tab change elsewhere. Constructing
+    // a new view each time re-ran the whole load every time: measured in the
+    // browser, three full loads on a single page open. That was five queries
+    // each, and before P10 each of those included the one-second
+    // `/overview`.
+    if (this.opsHost && this.opsView) { main.append(this.opsHost); return; }
+
     const host = this.doc.createElement('div');
+    this.opsHost = host;
     main.append(host);
     this.opsView = new PlatformOpsView({
       root: host,
@@ -514,12 +595,46 @@ export class Console_ {
     searchForm.className = 'platform-search';
     const si = d.createElement('input');
     si.type = 'search'; si.className = 'field-input';
-    si.placeholder = 'নাম বা স্লাগ দিয়ে খুঁজুন';
+    si.id = 'fleet-q';
+    si.placeholder = 'নাম, জেলা বা স্লাগ দিয়ে খুঁজুন';
     si.value = this.search;
+    // A search field with only a placeholder has no accessible name once
+    // something is typed into it.
+    si.setAttribute('aria-label', 'প্রতিষ্ঠান খুঁজুন');
     si.addEventListener('input', () => { this.search = si.value; });
     searchForm.append(si);
-    searchForm.addEventListener('submit', (e) => { e.preventDefault(); void this.loadList(); });
+
+    // Status is a SERVER filter now. It used to be impossible: the list had
+    // no filter at all, so an operator looking for the suspended schools
+    // read all 258 rows.
+    const sw = d.createElement('label');
+    sw.className = 'fleet-filter';
+    sw.setAttribute('for', 'fleet-status');
+    sw.append(d.createTextNode('অবস্থা'));
+    const sel = d.createElement('select');
+    sel.className = 'field-input'; sel.id = 'fleet-status';
+    for (const [v, label] of [['', 'সব'], ['active', 'সক্রিয়'],
+                              ['suspended', 'স্থগিত'], ['archived', 'বন্ধ']]) {
+      const op = d.createElement('option');
+      op.value = v; op.textContent = label;
+      if (this.filterStatus === v) op.selected = true;
+      sel.append(op);
+    }
+    sel.addEventListener('change', () => {
+      this.filterStatus = sel.value; this.fleet.page = 1; void this.loadList();
+    });
+    sw.append(sel);
+    searchForm.append(sw);
+
+    searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      // A new search starts at page one. Staying on page 7 of the old result
+      // is how a search comes back empty and looks broken.
+      this.fleet.page = 1;
+      void this.loadList();
+    });
     main.append(searchForm);
+    main.append(this.attentionBar());
 
     if (this.notice) {
       const n = d.createElement('p');
@@ -536,17 +651,58 @@ export class Console_ {
       return;
     }
 
+    // ── The fleet, one page of it ──
+    //
+    // Rendered TWICE, in two shapes, and CSS picks one: a table for a desk
+    // and a list of cards for a phone. §14 asks an operator to be able to do
+    // this from a phone, and a nine-column table squeezed into 360px is a
+    // table nobody can read — the horizontal scroll hides exactly the
+    // columns (status, attention) that the screen exists to show.
     const table = d.createElement('div');
-    table.className = 'table-scroll';
+    table.className = 'table-scroll fleet-wide';
     const t = d.createElement('table');
-    t.className = 'data-table';
+    t.className = 'data-table fleet-table';
     const thead = d.createElement('thead');
     const hr = d.createElement('tr');
+
     // §18's columns, and nothing student-level: the platform list carries
     // counts, never a child's name.
-    for (const label of ['প্রতিষ্ঠান', 'ধরন', 'স্লাগ', 'অবস্থা', 'প্ল্যান',
-                         'শিক্ষার্থী', 'ট্রায়াল শেষ', 'তৈরি', '']) {
-      const th = d.createElement('th'); th.scope = 'col'; th.textContent = label; hr.append(th);
+    const cols: Array<{ bn: string; sort?: string }> = [
+      { bn: 'প্রতিষ্ঠান', sort: 'name' },
+      { bn: 'ধরন' },
+      { bn: 'অবস্থা', sort: 'status' },
+      { bn: 'প্ল্যান', sort: 'plan' },
+      { bn: 'শিক্ষার্থী', sort: 'students' },
+      { bn: 'শ্রেণি / শাখা' },
+      { bn: 'সর্বশেষ সক্রিয়', sort: 'active' },
+      { bn: 'অগ্রাধিকার', sort: 'severity' },
+      { bn: '' },
+    ];
+    for (const c of cols) {
+      const th = d.createElement('th');
+      th.scope = 'col';
+      if (!c.sort) { th.textContent = c.bn; hr.append(th); continue; }
+      // A sortable header is a BUTTON, so it is reachable by keyboard and
+      // announced as pressable. `aria-sort` on the cell is what a screen
+      // reader uses to say which column the table is ordered by.
+      const active = this.fleet.sort === c.sort;
+      th.setAttribute('aria-sort',
+        active ? (this.fleet.dir === 'desc' ? 'descending' : 'ascending') : 'none');
+      const b = d.createElement('button');
+      b.type = 'button';
+      b.className = 'fleet-sort' + (active ? ' is-active' : '');
+      b.textContent = c.bn + (active ? (this.fleet.dir === 'desc' ? ' ↓' : ' ↑') : '');
+      b.setAttribute('aria-label',
+        `${c.bn} অনুসারে সাজান${active && this.fleet.dir === 'asc' ? ' (অবরোহী)' : ''}`);
+      b.addEventListener('click', () => {
+        // Clicking the active column flips it; a new column starts ascending.
+        this.fleet.dir = active && this.fleet.dir === 'asc' ? 'desc' : 'asc';
+        this.fleet.sort = c.sort as string;
+        this.fleet.page = 1;
+        void this.loadList();
+      });
+      th.append(b);
+      hr.append(th);
     }
     thead.append(hr);
     const tbody = d.createElement('tbody');
@@ -554,6 +710,170 @@ export class Console_ {
     t.append(thead, tbody);
     table.append(t);
     main.append(table);
+
+    // The same page as cards. Not a second data path — the same rows.
+    const cards = d.createElement('ul');
+    cards.className = 'fleet-cards';
+    cards.setAttribute('aria-label', 'প্রতিষ্ঠানের তালিকা');
+    for (const row of this.tenants) cards.append(this.tenantCard(row));
+    main.append(cards);
+
+    main.append(this.pager());
+  }
+
+  /**
+   * The severity bar: what needs a person, and a way to see only that.
+   *
+   * The counts are the SERVER's, over the whole fleet. The console used to
+   * compute this in the browser from every row it had loaded, which is both
+   * why it had to load every row and why it flagged 96% of the fleet — one
+   * rule (a school with nobody in it yet) drowned the five that were down.
+   */
+  private attentionBar(): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement('div');
+    wrap.className = 'fleet-bands';
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', 'অগ্রাধিকার অনুসারে ছাঁকুন');
+
+    const s = this.summary;
+    const bands: Array<[string, number]> = [
+      ['critical', s?.attention.critical ?? 0],
+      ['warning', s?.attention.warning ?? 0],
+      ['info', s?.attention.info ?? 0],
+    ];
+    const mk = (key: string, label: string, n: number): HTMLElement => {
+      const b = d.createElement('button');
+      b.type = 'button';
+      const on = this.filterBand === key;
+      b.className = `fleet-band fleet-band-${key || 'all'}${on ? ' is-on' : ''}`;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      // The count is INSIDE the label, so a screen reader hears "জরুরি ৫টি"
+      // rather than a number floating beside a word.
+      b.textContent = `${label} ${bnNum(n)}টি`;
+      b.addEventListener('click', () => {
+        this.filterBand = on ? '' : key;
+        this.fleet.page = 1;
+        void this.loadList();
+      });
+      return b;
+    };
+    wrap.append(mk('', 'সব', s?.total ?? this.fleet.total));
+    for (const [k, n] of bands) wrap.append(mk(k, BAND_BN[k] ?? k, n));
+    return wrap;
+  }
+
+  /**
+   * Which page of how many, and how to move.
+   *
+   * The count is the SERVER's total for the current filter, not the length
+   * of what is on screen. A list that says "২৫টি" because twenty-five fit on
+   * a page is a list an operator stops scrolling.
+   */
+  private pager(): HTMLElement {
+    const d = this.doc;
+    const nav = d.createElement('nav');
+    nav.className = 'fleet-pager';
+    nav.setAttribute('aria-label', 'পৃষ্ঠা');
+
+    const { page, pages, total, size } = this.fleet;
+    const from = total === 0 ? 0 : (page - 1) * size + 1;
+    const to = Math.min(page * size, total);
+
+    const status = d.createElement('p');
+    status.className = 'fleet-count';
+    // Announced, because after pressing "next" the only thing that changed
+    // for a screen-reader user is this sentence.
+    status.setAttribute('aria-live', 'polite');
+    status.textContent = total === 0
+      ? 'কোনো প্রতিষ্ঠান পাওয়া যায়নি'
+      : `${bnNum(from)}–${bnNum(to)} / মোট ${bnNum(total)}টি`;
+    nav.append(status);
+
+    const step = (delta: number, label: string): HTMLElement => {
+      const b = d.createElement('button');
+      b.type = 'button'; b.className = 'btn-ghost btn-small';
+      b.textContent = label;
+      b.disabled = page + delta < 1 || page + delta > pages;
+      b.addEventListener('click', () => {
+        this.fleet.page = page + delta;
+        void this.loadList();
+      });
+      return b;
+    };
+    nav.append(step(-1, '← আগের'),
+               (() => { const p = d.createElement('span');
+                        p.className = 'fleet-page-of';
+                        p.textContent = `পৃষ্ঠা ${bnNum(page)} / ${bnNum(pages)}`;
+                        return p; })(),
+               step(1, 'পরের →'));
+    return nav;
+  }
+
+  /**
+   * One school as a card, for a phone.
+   *
+   * The same row the table draws. §14's list — find, inspect, see status,
+   * see attention — has to work at 360px, and it is the operator standing in
+   * a corridor who most needs it.
+   */
+  private tenantCard(row: TenantRow): HTMLElement {
+    const d = this.doc;
+    const li = d.createElement('li');
+    li.className = 'fleet-card';
+
+    const top = d.createElement('div');
+    top.className = 'fleet-card-top';
+    const name = d.createElement('span');
+    name.className = 'fleet-card-name';
+    name.textContent = row.nameBn;
+    top.append(name);
+    if (row.severity !== 'none') top.append(this.severityChip(row.severity));
+    li.append(top);
+
+    const sub = d.createElement('p');
+    sub.className = 'fleet-card-sub';
+    sub.textContent = [
+      institutionTypeLabel(row.stream, row.level),
+      row.district ?? '',
+      row.planCode,
+    ].filter(Boolean).join(' · ');
+    li.append(sub);
+
+    const facts = d.createElement('dl');
+    facts.className = 'fleet-card-facts';
+    const fact = (k: string, v: string): void => {
+      const dt = d.createElement('dt'); dt.textContent = k;
+      const dd = d.createElement('dd'); dd.textContent = v;
+      facts.append(dt, dd);
+    };
+    fact('অবস্থা', STATUS_BN[row.status] ?? row.status);
+    fact('শিক্ষার্থী', `${bnNum(row.studentCount)} / ${bnNum(row.studentCap)}`);
+    fact('শ্রেণি / শাখা', `${bnNum(row.classCount)} / ${bnNum(row.sectionCount)}`);
+    fact('সক্রিয়', row.lastActiveAt ? bnDate(row.lastActiveAt) : 'কখনো নয়');
+    li.append(facts);
+
+    const open = d.createElement('button');
+    open.type = 'button'; open.className = 'btn-secondary btn-small';
+    open.textContent = 'খুলুন';
+    open.setAttribute('aria-label', `${row.nameBn} খুলুন`);
+    open.addEventListener('click', () => { this.view = 'detail'; void this.loadDetail(row.id); });
+    li.append(open);
+    return li;
+  }
+
+  /**
+   * The band a school is in — never colour alone.
+   *
+   * §10 applies to a screen as much as to paper: the chip carries a WORD, so
+   * an operator who cannot separate amber from red still reads "জরুরি".
+   */
+  private severityChip(sev: string): HTMLElement {
+    const d = this.doc;
+    const c = d.createElement('span');
+    c.className = `status-chip fleet-sev fleet-sev-${sev}`;
+    c.textContent = BAND_BN[sev] ?? sev;
+    return c;
   }
 
   private tenantRow(row: TenantRow): HTMLElement {
@@ -578,13 +898,23 @@ export class Console_ {
 
     tr.append(cell(row.planCode));
     tr.append(cell(`${bnNum(row.studentCount)} / ${bnNum(row.studentCap)}`));
-    tr.append(cell(row.trialEndsOn ? bnDate(row.trialEndsOn) : '—'));
-    tr.append(cell(bnDate(row.createdAt)));
+    tr.append(cell(`${bnNum(row.classCount)} / ${bnNum(row.sectionCount)}`));
+    // "Never" is a real and useful answer here — a school that has never
+    // been signed into is the one an operator most wants to see.
+    tr.append(cell(row.lastActiveAt ? bnDate(row.lastActiveAt) : 'কখনো নয়'));
+
+    const sv = d.createElement('td');
+    if (row.severity !== 'none') sv.append(this.severityChip(row.severity));
+    else sv.textContent = '—';
+    tr.append(sv);
 
     const act = d.createElement('td');
     const open = d.createElement('button');
     open.type = 'button'; open.className = 'btn-ghost btn-small';
     open.textContent = 'খুলুন';
+    // Twenty-five buttons all called "খুলুন" are twenty-five identical
+    // announcements to a screen reader.
+    open.setAttribute('aria-label', `${row.nameBn} খুলুন`);
     open.addEventListener('click', () => { this.view = 'detail'; void this.loadDetail(row.id); });
     act.append(open);
     tr.append(act);

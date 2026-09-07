@@ -105,3 +105,125 @@
    what lets an operator keep the list behind it. */
 .plat-detail { gap: var(--s-4); }
 .plat-detail .ui-facts-val { font-variant-numeric: tabular-nums; }
+
+/* =====================================================================
+   P10 — the fleet at scale, and the console on a phone.
+   =====================================================================
+   This stylesheet had ZERO media queries before P10, while the UI-UX plan
+   has row 22 marked as needing BOTH widths. The console was a desktop table
+   that a phone could scroll sideways, which hides exactly the two columns
+   the screen exists to show — status and attention.
+
+   The list is rendered twice in the DOM, as a table and as cards, and the
+   breakpoint picks one. Two renderings of the same rows, not two data
+   paths: there is one fetch and one page of results behind both.
+   ===================================================================== */
+
+/* ── The severity bar ────────────────────────────────────────────────── */
+.fleet-bands { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.fleet-band {
+  border: 1px solid var(--c-border, #d1d5db);
+  background: var(--c-surface-1, #fff);
+  color: var(--c-ink-1, #1f2937);
+  border-radius: 999px; padding: 4px 12px;
+  font: inherit; font-size: var(--text-xs, 12px); cursor: pointer;
+}
+.fleet-band:hover { background: var(--c-surface-2, #f3f4f6); }
+/* Never colour alone: the pressed band also carries a heavier border and a
+   bolder weight, and the label always spells the band out in words. */
+.fleet-band.is-on { font-weight: 700; border-width: 2px; }
+.fleet-band-critical { border-color: #b91c1c; color: #7f1d1d; }
+.fleet-band-warning  { border-color: #b45309; color: #78350f; }
+.fleet-band-info     { border-color: #6b7280; color: #374151; }
+.fleet-band:focus-visible {
+  outline: 2px solid var(--c-focus, #2563eb); outline-offset: 2px;
+}
+
+.fleet-sev { font-weight: 600; }
+.fleet-sev-critical { background: #fee2e2; color: #7f1d1d; }
+.fleet-sev-warning  { background: #fef3c7; color: #78350f; }
+.fleet-sev-info     { background: #f3f4f6; color: #374151; }
+
+/* ── Sortable headers ───────────────────────────────────────────────── */
+.fleet-sort {
+  background: none; border: 0; padding: 0; font: inherit; font-weight: 700;
+  color: inherit; cursor: pointer; text-align: inherit;
+}
+.fleet-sort:hover { text-decoration: underline; }
+.fleet-sort.is-active { text-decoration: underline; }
+.fleet-sort:focus-visible {
+  outline: 2px solid var(--c-focus, #2563eb); outline-offset: 2px;
+}
+
+/* ── Filters ────────────────────────────────────────────────────────── */
+.platform-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.platform-search .field-input { flex: 1 1 220px; min-width: 0; }
+.fleet-filter {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--text-xs, 12px); color: var(--c-ink-2, #4b5563);
+}
+.fleet-filter .field-input { flex: 0 0 auto; min-width: 120px; }
+
+/* ── The pager ──────────────────────────────────────────────────────── */
+.fleet-pager {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--c-border, #e5e7eb);
+}
+.fleet-count { margin: 0; font-size: var(--text-xs, 12px);
+  color: var(--c-ink-2, #4b5563); flex: 1 1 auto; }
+.fleet-page-of { font-size: var(--text-xs, 12px); color: var(--c-ink-2, #4b5563); }
+
+/* ── Cards, for a phone ─────────────────────────────────────────────── */
+.fleet-cards { display: none; list-style: none; margin: 0; padding: 0; }
+.fleet-card {
+  border: 1px solid var(--c-border, #e5e7eb); border-radius: 8px;
+  padding: 12px; margin-bottom: 8px; background: var(--c-surface-1, #fff);
+}
+.fleet-card-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 2px;
+}
+.fleet-card-name { font-weight: 700; color: var(--c-ink-1, #1f2937); }
+.fleet-card-sub {
+  margin: 0 0 8px; font-size: var(--text-xs, 12px); color: var(--c-ink-3, #6b7280);
+}
+.fleet-card-facts {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 10px;
+  margin: 0 0 10px; font-size: var(--text-xs, 12px);
+}
+.fleet-card-facts dt { color: var(--c-ink-3, #6b7280); margin: 0; }
+.fleet-card-facts dd { margin: 0; color: var(--c-ink-1, #1f2937); font-weight: 600; }
+
+/* =====================================================================
+   Breakpoints.
+
+   1024 and up is the desk: the full table.
+   Below 1024 the table would need horizontal scrolling to show status and
+   attention, so the cards take over instead. 360px is the narrowest phone
+   this product supports and the layout must not scroll sideways there.
+   ===================================================================== */
+@media (max-width: 1023px) {
+  .fleet-wide { display: none; }
+  .fleet-cards { display: block; }
+  .platform-head { flex-wrap: wrap; gap: 8px; }
+  .platform-search { flex-direction: column; align-items: stretch; }
+  .fleet-filter { justify-content: space-between; }
+  .fleet-filter .field-input { flex: 1 1 auto; }
+}
+
+@media (max-width: 480px) {
+  .fleet-bands { gap: 4px; }
+  .fleet-band { padding: 4px 9px; }
+  .fleet-pager { gap: 6px; }
+  /* The count keeps its own line so the two buttons stay side by side and
+     reachable with a thumb rather than wrapping one under the other. */
+  .fleet-count { flex: 1 0 100%; }
+  .fleet-card-facts { grid-template-columns: 1fr; }
+  .fleet-card-facts dt { margin-top: 4px; }
+}
+
+/* A desk wide enough to stop the table stretching its columns to nothing. */
+@media (min-width: 1440px) {
+  .fleet-table { table-layout: auto; }
+}

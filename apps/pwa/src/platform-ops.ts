@@ -165,6 +165,31 @@ export const METHOD_BN: Record<string, string> = {
   cash: 'নগদ', cheque: 'চেক', other: 'অন্যান্য',
 };
 
+/**
+ * What the server counted, over the WHOLE fleet.  (P10-2)
+ *
+ * The dashboard above the list used to sum these in the browser from every
+ * school it had downloaded. That is why the list could not be paginated: page
+ * one of twenty-five would have reported twenty-five schools' students as the
+ * country's total. One 45ms query answers all of it now.
+ */
+export interface FleetSummary {
+  total: number;
+  attention: { critical: number; warning: number; info: number };
+  access: { full: number; readOnly: number; none: number };
+  billing: { trial: number; active: number; grace: number; overdue: number };
+  usage: { students: number; users: number; classes: number; sections: number;
+           paid: number };
+  quiet: number; neverActive: number;
+  planUsage: Record<string, number>;
+}
+
+/** Which page of the fleet is on screen, as the server drew it. */
+export interface FleetPage {
+  page: number; size: number; total: number; pages: number;
+  sort: string; dir: string;
+}
+
 // ── Attention ──────────────────────────────────────────────────────────
 
 export interface Attention {
@@ -322,6 +347,20 @@ export class PlatformOpsView {
   /** §27 — the same trail, across every school. Read once with the list. */
   private feed: AuditRow[] = [];
   private detailTab = 'overview';
+  // P10-1/2. `rows` is now ONE PAGE, not the fleet. Every fleet-wide number
+  // comes from `summary`, so a page of twenty-five can never be mistaken for
+  // the country.
+  private summary: FleetSummary | null = null;
+  private page: FleetPage = { page: 1, size: 25, total: 0, pages: 1,
+                              sort: 'name', dir: 'asc' };
+  /**
+   * The dashboard's queue, fetched on its own.
+   *
+   * It must show the most urgent schools in the FLEET, which is not the same
+   * as the most urgent on whichever page of the institutions tab happens to
+   * be open. One query, ordered by severity, capped at what the card shows.
+   */
+  private queueRows: TenantOverview[] = [];
   private busy = false;
 
   constructor(options: OpsViewOptions) {
@@ -334,14 +373,34 @@ export class PlatformOpsView {
   private async load(): Promise<void> {
     this.loading = true; this.error = ''; this.render();
     try {
-      const [ov, cat, feed] = await Promise.all([
-        this.o.call<{ tenants: TenantOverview[] }>('/overview'),
+      // The page, the fleet-wide counts, the catalogue and the audit feed.
+      // `/overview` is gone from this path: it returned every school on every
+      // request — 142 kB at 258 schools, and a second per request in the
+      // database.
+      const p = new URLSearchParams({
+        q: this.search,
+        page: String(this.page.page), size: String(this.page.size),
+        sort: this.page.sort, dir: this.page.dir,
+      });
+      // The tabs are server filters now, so the count on a tab and the rows
+      // behind it are the same query.
+      if (this.filter !== 'all') p.set('attention',
+        this.filter === 'attention' ? 'action' : this.filter);
+
+      const [list, sum, urgent, cat, feed] = await Promise.all([
+        this.o.call<{ tenants: TenantOverview[]; page: FleetPage }>(`/tenants?${p}`),
+        this.o.call<FleetSummary>('/fleetsummary'),
+        this.o.call<{ tenants: TenantOverview[] }>(
+          `/tenants?attention=action&sort=severity&dir=asc&size=${QUEUE_LIMIT}`),
         this.o.call<{ plans: PlanRow[]; services: ServiceRow[] }>('/catalogue'),
         // Its own failure: a console that cannot show its history is still a
         // console that must show its schools.
         this.o.call<{ entries: AuditRow[] }>('/audit').catch(() => ({ entries: [] })),
       ]);
-      this.rows = ov.tenants;
+      this.rows = list.tenants;
+      this.page = list.page;
+      this.summary = sum;
+      this.queueRows = urgent.tenants;
       this.plans = cat.plans;
       this.services = cat.services;
       this.feed = feed.entries;
@@ -415,7 +474,8 @@ export class PlatformOpsView {
       title: 'প্ল্যাটফর্ম অপারেশনস',
       subtitle: this.loading
         ? 'লোড হচ্ছে…'
-        : `${bn(this.rows.length)}টি প্রতিষ্ঠান পরিচালনায়`,
+        // The fleet, not the page. `rows.length` is 25 now.
+        : `${bn(this.summary?.total ?? this.page.total)}টি প্রতিষ্ঠান পরিচালনায়`,
       actions: [
         button(d, {
           label: 'নতুন প্রতিষ্ঠান', variant: 'primary', glyph: 'star',
@@ -437,7 +497,8 @@ export class PlatformOpsView {
       active: this.tab,
       items: [
         { id: 'dashboard', label: 'ড্যাশবোর্ড' },
-        { id: 'institutions', label: 'প্রতিষ্ঠান', count: this.rows.length },
+        { id: 'institutions', label: 'প্রতিষ্ঠান',
+          count: this.summary?.total ?? this.page.total },
         { id: 'plans', label: 'প্ল্যান', count: this.plans.length },
       ],
       onSelect: (id) => { this.tab = id as Tab; this.render(); },
@@ -456,7 +517,9 @@ export class PlatformOpsView {
   // affected is on the button that does it.
   private renderPlans(root: HTMLElement): void {
     const d = this.o.doc;
-    const usedBy = (code: string) => this.rows.filter((t) => t.planCode === code).length;
+    // From the summary: counting `this.rows` would count one page, and the
+    // number beside a plan is what an operator checks before retiring it.
+    const usedBy = (code: string) => this.summary?.planUsage[code] ?? 0;
 
     root.append(sectionHeading(d, {
       title: 'প্ল্যান',
@@ -507,7 +570,7 @@ export class PlatformOpsView {
   private planForm(existing: PlanRow | null): void {
     const d = this.o.doc;
     const affected = existing
-      ? this.rows.filter((t) => t.planCode === existing.code).length : 0;
+      ? (this.summary?.planUsage[existing.code] ?? 0) : 0;
 
     const code = field(d, {
       label: 'কোড', name: 'code', value: existing?.code ?? '', required: !existing,
@@ -667,53 +730,67 @@ export class PlatformOpsView {
   // ── 1. dashboard ─────────────────────────────────────────────────────
   private renderDashboard(root: HTMLElement): void {
     const d = this.o.doc;
-    const r = this.rows;
-    const by = (f: (t: TenantOverview) => boolean) => r.filter(f).length;
+    // Every number here is the SERVER's, over the whole fleet. They used to
+    // be `this.rows.filter(...).length` over a full download of the fleet,
+    // which is the reason the list could not be paginated: a page of
+    // twenty-five would have reported twenty-five schools as the country.
+    const s = this.summary;
+    const zero: FleetSummary = {
+      total: 0, attention: { critical: 0, warning: 0, info: 0 },
+      access: { full: 0, readOnly: 0, none: 0 },
+      billing: { trial: 0, active: 0, grace: 0, overdue: 0 },
+      usage: { students: 0, users: 0, classes: 0, sections: 0, paid: 0 },
+      quiet: 0, neverActive: 0, planUsage: {},
+    };
+    const f = s ?? zero;
 
     root.append(sectionHeading(d, { title: 'প্রতিষ্ঠান' }));
     root.append(statRow(d,
-      statCard(d, { label: 'মোট', value: bn(r.length), glyph: 'layers' }),
+      statCard(d, { label: 'মোট', value: bn(f.total), glyph: 'layers' }),
       statCard(d, {
-        label: 'পূর্ণ সক্রিয়', value: bn(by((t) => t.access === 'full')),
+        label: 'পূর্ণ সক্রিয়', value: bn(f.access.full),
         glyph: 'check-square', tone: 'success',
       }),
       statCard(d, {
-        label: 'শুধু পড়া', value: bn(by((t) => t.access === 'read_only')),
+        label: 'শুধু পড়া', value: bn(f.access.readOnly),
         glyph: 'lock', tone: 'warn',
         note: 'সীমিত বা রক্ষণাবেক্ষণে',
       }),
       statCard(d, {
-        label: 'স্থগিত', value: bn(by((t) => t.access === 'none')),
+        label: 'স্থগিত', value: bn(f.access.none),
         glyph: 'alert-triangle',
-        tone: by((t) => t.access === 'none') > 0 ? 'accent2' : 'success',
+        tone: f.access.none > 0 ? 'accent2' : 'success',
       }),
     ));
 
     root.append(sectionHeading(d, { title: 'বাণিজ্যিক অবস্থা' }));
     root.append(statRow(d,
       statCard(d, {
-        label: 'ট্রায়ালে', value: bn(by((t) => t.billingState === 'trial')),
+        label: 'ট্রায়ালে', value: bn(f.billing.trial),
         glyph: 'clock', tone: 'info',
       }),
       statCard(d, {
-        label: 'পরিশোধিত', value: bn(by((t) => t.billingState === 'active')),
+        label: 'পরিশোধিত', value: bn(f.billing.active),
         glyph: 'wallet', tone: 'success',
       }),
       statCard(d, {
-        label: 'ছাড়ের মেয়াদে', value: bn(by((t) => t.billingState === 'grace_period')),
+        label: 'ছাড়ের মেয়াদে', value: bn(f.billing.grace),
         glyph: 'clock', tone: 'warn',
       }),
       statCard(d, {
-        label: 'বকেয়া', value: bn(by((t) => t.billingState === 'limited')),
+        label: 'বকেয়া', value: bn(f.billing.overdue),
         glyph: 'alert-triangle',
-        tone: by((t) => t.billingState === 'limited') > 0 ? 'accent2' : 'success',
+        tone: f.billing.overdue > 0 ? 'accent2' : 'success',
       }),
     ));
 
     root.append(sectionHeading(d, { title: 'ব্যবহার' }));
-    const students = r.reduce((n, t) => n + t.studentCount, 0);
-    const users = r.reduce((n, t) => n + t.userCount, 0);
-    const collected = r.reduce((n, t) => n + Number(t.paidTotal || 0), 0);
+    // Summed in the database. These three were `this.rows.reduce(...)`, and
+    // a reduce over one page of twenty-five would have reported a fraction
+    // of the country's students as its total.
+    const students = f.usage.students;
+    const users = f.usage.users;
+    const collected = f.usage.paid;
     root.append(statRow(d,
       statCard(d, { label: 'মোট শিক্ষার্থী', value: bn(students), glyph: 'users' }),
       statCard(d, { label: 'সক্রিয় ব্যবহারকারী', value: bn(users), glyph: 'user', tone: 'info' }),
@@ -728,9 +805,14 @@ export class PlatformOpsView {
     // forty schools is asked about weekly. The dormant card carries a note
     // saying what it counts, because "নিষ্ক্রিয়" on its own could mean four
     // different things.
-    const fresh = r.filter((t) => isRecent(t)).length;
-    const dormant = r.filter((t) => isDormant(t)).length;
-    const quiet = r.filter((t) => isQuiet(t)).length;
+    // `neverActive` is the server's count of schools nobody has ever signed
+    // into — the same population `isDormant` describes, computed over the
+    // fleet rather than over a page. `fresh` stays a page-level number and
+    // is labelled as such below, because "created in the last 30 days" is
+    // not something the summary carries yet.
+    const fresh = this.rows.filter((t) => isRecent(t)).length;
+    const dormant = f.neverActive;
+    const quiet = f.quiet;
     root.append(statRow(d,
       statCard(d, {
         label: 'নতুন যুক্ত', value: bn(fresh), glyph: 'star', tone: 'info',
@@ -751,11 +833,17 @@ export class PlatformOpsView {
     ));
 
     // ── the attention queue ──
-    const queue = attentionQueue(r);
+    //
+    // The SERVER chooses the rows (severity-ordered, fleet-wide) and the
+    // count comes from the summary; `attentionQueue` still supplies the
+    // human reason for each one, which is the part a database column cannot
+    // give. Selection and explanation, split where each is better.
+    const queue = attentionQueue(this.queueRows);
+    const needing = f.attention.critical + f.attention.warning;
     root.append(sectionHeading(d, {
       title: 'যা নজর দেওয়া দরকার',
-      action: queue.length > 0
-        ? statusBadge(d, { state: 'pending', label: `${bn(queue.length)}টি` })
+      action: needing > 0
+        ? statusBadge(d, { state: 'pending', label: `${bn(needing)}টি` })
         : undefined,
     }));
     if (queue.length === 0) {
@@ -865,7 +953,13 @@ export class PlatformOpsView {
       placeholder: 'নাম, স্লাগ বা জেলা',
       onInput: (v) => {
         this.search = v;
-        this.repaintTable();
+        // Debounced: a keystroke is a database query now, not a filter over
+        // an array that is already in memory.
+        if (this.searchTimer !== null) clearTimeout(this.searchTimer);
+        this.searchTimer = setTimeout(() => {
+          this.page.page = 1;
+          void this.load();
+        }, 250) as unknown as number;
       },
     });
     append(root, search.root);
@@ -873,37 +967,93 @@ export class PlatformOpsView {
     root.append(tabs(d, {
       label: 'ছাঁকনি',
       active: this.filter,
+      // The counts are the SERVER's, over the whole fleet, and the tab that
+      // shows them asks for exactly those rows. A tab counted in the browser
+      // over one page would say "৪" and open a list of twenty-seven.
       items: [
-        { id: 'all', label: 'সব', count: this.rows.length },
+        { id: 'all', label: 'সব', count: this.summary?.total ?? 0 },
         { id: 'attention', label: 'নজর দরকার',
-          count: new Set(attentionQueue(this.rows).map((a) => a.tenantId)).size },
+          count: (this.summary?.attention.critical ?? 0)
+               + (this.summary?.attention.warning ?? 0) },
         { id: 'overdue', label: 'বকেয়া',
-          count: this.rows.filter((t) => t.billingState === 'limited').length },
+          count: this.summary?.billing.overdue ?? 0 },
         { id: 'blocked', label: 'স্থগিত / সীমিত',
-          count: this.rows.filter((t) => t.access !== 'full').length },
+          count: (this.summary?.access.readOnly ?? 0)
+               + (this.summary?.access.none ?? 0) },
       ],
-      onSelect: (id) => { this.filter = id; this.render(); },
+      // Changing a tab is a new QUERY now, not a re-filter of what is held.
+      onSelect: (id) => { this.filter = id; this.page.page = 1; void this.load(); },
     }));
 
     const host = el(d, 'div', { className: 'plat-table-host' });
     root.append(host);
     this.tableHost = host;
     this.repaintTable();
+    root.append(this.pager());
+  }
+
+  /**
+   * Which page of how many, and how to move.  (P10-1)
+   *
+   * The count is the SERVER's total for the current filter, not the length of
+   * what is on screen. A list that says "২৫টি" because twenty-five fit on a
+   * page is a list an operator stops scrolling — and with 258 schools that is
+   * two hundred and thirty-three they never see.
+   */
+  private pager(): HTMLElement {
+    const d = this.o.doc;
+    const { page, pages, total, size } = this.page;
+    const nav = el(d, 'nav', { className: 'plat-pager' });
+    nav.setAttribute('aria-label', 'পৃষ্ঠা');
+
+    const from = total === 0 ? 0 : (page - 1) * size + 1;
+    const to = Math.min(page * size, total);
+    const count = el(d, 'p', {
+      className: 'plat-pager-count',
+      text: total === 0
+        ? 'কোনো প্রতিষ্ঠান পাওয়া যায়নি'
+        : `${bn(from)}–${bn(to)} / মোট ${bn(total)}টি`,
+    });
+    // After pressing "next" the only thing that changed for a screen-reader
+    // user is this sentence, so it has to announce itself.
+    count.setAttribute('aria-live', 'polite');
+    nav.append(count);
+
+    const step = (delta: number, label: string): HTMLElement => {
+      const b = button(d, {
+        label, variant: 'ghost',
+        onClick: () => { this.page.page = page + delta; void this.load(); },
+      });
+      if (page + delta < 1 || page + delta > pages) {
+        b.setAttribute('disabled', 'true');
+      }
+      return b;
+    };
+    nav.append(step(-1, '← আগের'));
+    nav.append(el(d, 'span', {
+      className: 'plat-pager-of',
+      text: `পৃষ্ঠা ${bn(page)} / ${bn(pages)}`,
+    }));
+    nav.append(step(1, 'পরের →'));
+    return nav;
   }
 
   private tableHost: HTMLElement | null = null;
 
+  private searchTimer: number | null = null;
+
+  /**
+   * The page the server drew, unfiltered.
+   *
+   * This used to re-filter and re-search `this.rows` in the browser, which
+   * only worked because `this.rows` WAS the entire fleet. Doing it to a page
+   * would silently drop schools that match but happen to be on page four —
+   * a search that answers "not found" about a school that exists. The search
+   * box and the tabs are database queries now, so there is nothing left to
+   * do here but hand back what came.
+   */
   private visible(): TenantOverview[] {
-    const q = this.search.trim().toLowerCase();
-    const flagged = new Set(attentionQueue(this.rows).map((a) => a.tenantId));
-    return this.rows.filter((t) => {
-      if (this.filter === 'attention' && !flagged.has(t.id)) return false;
-      if (this.filter === 'overdue' && t.billingState !== 'limited') return false;
-      if (this.filter === 'blocked' && t.access === 'full') return false;
-      if (!q) return true;
-      return [t.nameBn, t.nameEn, t.slug, t.district ?? '']
-        .some((x) => x.toLowerCase().includes(q));
-    });
+    return this.rows;
   }
 
   /**

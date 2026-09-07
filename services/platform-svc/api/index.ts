@@ -218,7 +218,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 const FLEET_SORTS = ['name', 'students', 'created', 'active', 'status',
                      'plan', 'severity'] as const;
 /** Severity bands, in the order an operator should read them. */
-const FLEET_BANDS = ['critical', 'warning', 'info', 'any'] as const;
+// A severity band, or one of the console's own words. `action` is critical
+// OR warning, which is what "needs attention" has always meant and is not a
+// single band; `overdue` and `blocked` are the other two tabs.
+const FLEET_BANDS = ['critical', 'warning', 'info',
+                     'action', 'overdue', 'blocked', 'any'] as const;
 
 /**
  * One page of the fleet.  (P10-1)
@@ -301,8 +305,17 @@ async function fleetSummary(db: Db) {
   return {
     total: n(r.total),
     attention: { critical: n(r.critical), warning: n(r.warning), info: n(r.info) },
-    suspended: n(r.suspended), trial: n(r.trial),
-    overdue: n(r.overdue), active: n(r.active),
+    // Grouped the way the dashboard reads them, so the screen does not have
+    // to remember which flat field belongs to which heading.
+    access: { full: n(r.access_full), readOnly: n(r.access_read),
+              none: n(r.access_none) },
+    billing: { trial: n(r.trial), active: n(r.billing_active),
+               grace: n(r.grace), overdue: n(r.overdue) },
+    usage: { students: n(r.student_total), users: n(r.user_total),
+             classes: n(r.class_total), sections: n(r.section_total),
+             paid: n(r.paid_total) },
+    quiet: n(r.quiet), neverActive: n(r.never_active),
+    planUsage: (r.plan_usage ?? {}) as Record<string, number>,
   };
 }
 

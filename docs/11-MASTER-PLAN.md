@@ -1835,9 +1835,41 @@ write path (0 rooms in 112 tenants), no routine-creation API, a Ramadan swap tha
 done.
 
 **P10 — operator ergonomics at scale.** Pagination and sort on the fleet list; the attention
-queue (it flags 103 of 110 institutions today); `/platform/health` in the ops drawer; the
-operator directory (B-39); rename/slug/contact editing. Trigger: the overview's quadratic
-term must be fixed before ~50 real tenants.
+queue; the operator directory (B-39); rename/slug/contact editing. Trigger: the overview's
+quadratic term must be fixed before ~50 real tenants.
+
+*Scope re-derived from the repository 2026-09-08, before starting. Two corrections to the
+line above as it was originally written:*
+
+- **`/platform/health` in the ops drawer is DONE**, delivered by R-8 §10. `platform.ts`
+  fetches `health?id=…` beside the tenant detail and renders `healthPanel()`; it is
+  allowed to fail on its own so a health query cannot block an operator reading a school's
+  setup. The audit note that "the ops console never calls it" predates R-8. It carries **no
+  test**, which is the real remaining gap there.
+- **The numbers have moved and are worse.** Measured on the 258-tenant development
+  database rather than quoted from the audit:
+
+  | fact | audit (111 tenants) | measured (258 tenants) |
+  |---|---|---|
+  | `app.platform_overview()` | 0.45 s | **0.68 s warm, 1.62 s cold** |
+  | institutions flagged for attention | 103 of 110 (94%) | **247 of 258 (96%)** |
+  | fleet list payload | — | **142 kB, unpaginated** |
+
+  The attention queue's noise has ONE cause, and it is precise rather than a design
+  failure: of 276 rows, **246 are `onboarding`**. The genuinely actionable kinds —
+  suspended 5, overdue 21, cap_full 1, portal 2, service 1 — are 30 rows across ~11% of
+  the fleet. Tuning one rule is the fix, not rebuilding the queue.
+
+  `app.platform_overview()` is still migration 057's definition: five correlated
+  subqueries per tenant (`enrolments`, `users`, `tenant_payments`, `user_sessions`,
+  `product_events`) plus `CROSS JOIN LATERAL app.tenant_access(t.id)`. Nothing since
+  replaces it.
+
+*Also found while deriving scope, and NOT in the original line:* `apps/pwa/public/platform.css`
+contains **zero `@media` queries**, so the console has no responsive treatment at all, while
+row 22 of the UI-UX integration plan marks it as needing **both** widths. And `listTenants`
+takes a search term but has no `limit`, `offset` or sort — the pagination gap is in the
+service, not only the screen.
 
 **P11 — portability.** Data export, which does not exist in any form today and is the
 clearest customer-trust gap.

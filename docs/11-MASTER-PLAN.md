@@ -1683,6 +1683,19 @@ nothing, so the second of two coordinators won silently (`B-106`). And
 which `ShellRoute.guardLeave` now does. Publish, scoped re-solve, role
 outputs and print remain.
 
+**P9-6 — scoped re-solve.** *Delivered 2026-09-07.* No second solver was
+needed and none was written: `RmsSolver` tops up `periodsPerWeek −
+alreadyPlaced`, so "recalculate this part" is "remove the affected slots and
+run the solver you already have". The dependency closure is exactly the
+selected set, because the solver only adds into free hours and cannot
+displace a lesson that stayed. Pins survive by construction — they are never
+in the removal set. `solve()` gained an optional `client` so the removal and
+the re-solve are ONE transaction, which is what makes failure atomic and
+makes PREVIEW possible: the real solver, rolled back. **Measured against full
+generation: 9.6× / 9.5× / 21.5× / 48×** at 20 / 40 / 80 / 120 sections, with
+the share of the week touched falling from 4.8% to 0.9%. One undo entry per
+instruction (migration 075). Publish, role outputs and print remain.
+
 **B-104 — cross-tenant client cache.** *Closed 2026-09-07, before P9-5.*
 Found by P9-4's own browser acceptance and fixed as its own piece of work,
 because tenant isolation is one of the six things that may interrupt the

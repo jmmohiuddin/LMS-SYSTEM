@@ -1003,6 +1003,31 @@ leave. Two views had `hasUnsavedChanges()` and nothing called either.
 13 ms at 20 / 40 / 80 / 120 sections. It reads one section's week and an undo
 stack capped at twelve, so nothing in it scales with the institution.
 
+**Scoped re-solve (P9-6).** `POST /api/v1/rms/resolve { routineId, scope,
+preview?, fingerprint? }` recalculates one teacher, section, room or day.
+There is no second solver: `RmsSolver` places `periodsPerWeek −
+alreadyPlaced`, so removing the affected slots makes it place exactly those
+back, around everything that stayed. The closure is the selected set and no
+wider, because the solver only adds into free hours — it cannot displace a
+lesson that did not move.
+
+Pinned slots are excluded from the removal set, so they survive without a
+"respect the pins" branch that could be forgotten. The removal and the
+re-solve are one transaction (`solve({ client })`), so a failure leaves the
+previous valid draft exactly as it was — and a PREVIEW is that same
+transaction rolled back, which is the real solver rather than an estimate.
+
+Concurrency is a whole-routine fingerprint, `count(*) || ':' ||
+sum(row_version)`, checked inside the transaction. It is called a fingerprint
+because two changes that cancelled exactly could agree; the exclusion
+constraints remain the thing that cannot be fooled.
+
+One undo entry per instruction (migration 075 widens the action CHECK).
+
+**Measured against full generation** on the same benchmark schools, scoped to
+one teacher: **9.6× / 9.5× / 21.5× / 48×** at 20 / 40 / 80 / 120 sections,
+touching 4.8% → 0.9% of the timetable as the school grows.
+
 **Client cache isolation (B-104).** The service worker's data cache is keyed
 by school. `sw-router.ts:route()` flags every cached `/api/` decision
 `tenantScoped`, at one place rather than on each branch, so a route added

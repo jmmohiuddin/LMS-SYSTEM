@@ -38,7 +38,8 @@ import type { Auth } from './auth.ts';
 import { emptyState, errorState } from './view-states.ts';
 import {
   pageHeader, field, statusBadge, listSkeleton, openDrawer, button, buttonRow,
-  el, append, setBusy, announce, confirmOverlay, type OverlayHandle,
+  el, append, setBusy, announce, confirmOverlay, sectionHeading,
+  type OverlayHandle,
 } from './ui/index.ts';
 import { formatCount, formatTime } from '../../../packages/ui-core/src/format.ts';
 
@@ -66,6 +67,8 @@ interface Slot {
   subjectBn: string | null; teacherName: string | null; roomName: string | null;
   isDouble: boolean; doubleGroupId: string | null;
   parallelPool: string | null; isPinned: boolean; rowVersion: number;
+  /** P9-6. Which teacher, for a teacher-scoped re-solve. */
+  teacherId: string | null;
 }
 interface RoutineMeta {
   id: string; nameBn: string; shift: string; status: string; version: number;
@@ -82,6 +85,7 @@ interface Setup {
   sectionLabel: string; effectiveFrom: string;
 }
 interface UndoEntry { id: string; action: string; labelBn: string; createdAt: string }
+
 interface Grid {
   sectionId: string;
   /** P9-5. What pressing undo would reverse, newest first. Server-owned. */
@@ -139,6 +143,10 @@ export class RoutineEditorView {
   private busy = false;
   /** §17. True while a lesson drawer holds typing nobody has saved yet. */
   private drawerOpen = false;
+  /** P9-6. Slots a scoped re-solve just moved, so the grid can show which. */
+  private changed = new Set<string>();
+  /** P9-6 §10. The routine as this screen last saw it. */
+  private fingerprint = '';
 
   constructor(options: RoutineEditorViewOptions) {
     this.o = options;
@@ -223,6 +231,7 @@ export class RoutineEditorView {
   }
 
   private pick(slot: Slot): void {
+    this.changed.clear();
     // A pinned lesson IS selectable, and that is a P9-5 correction: refusing
     // the selection meant its action bar never opened, so the only control
     // that could unlock it was unreachable. It cannot be MOVED — `place()`
@@ -735,6 +744,14 @@ export class RoutineEditorView {
     if (!this.grid?.routine?.editable) return null;
 
     const wrap = el(d, 'div', { className: 'edit-undo' });
+    // P9-6. Always available while the routine is editable: recalculating a
+    // part is not a recovery action, it is the ordinary response to a change
+    // in the school, and it must not be hidden behind having edited first.
+    wrap.append(button(d, {
+      label: 'আবার হিসাব করুন', variant: 'secondary', size: 'sm', glyph: 'repeat',
+      disabled: this.busy,
+      onClick: () => this.openResolve(),
+    }));
     if (stack.length === 0) {
       // Shown disabled rather than hidden: a control that appears only
       // sometimes is one a person has to hunt for, and its absence reads as
@@ -783,6 +800,194 @@ export class RoutineEditorView {
       danger: true,
       onConfirm,
     });
+  }
+
+  /* ------------------------------------------------------------- P9-6 */
+
+  /**
+   * "আবার হিসাব করুন" — recalculate one part of the routine. (§16)
+   *
+   * Reached from the editor, without leaving it, because the change that
+   * prompts it — a teacher who is now unavailable, a room that closed — is
+   * something a coordinator notices while looking at the grid.
+   *
+   * The scopes offered are derived from what is on screen: this section
+   * always, and the selected lesson's teacher and day when one is held.
+   * Offering "any teacher in the school" would need a picker for a question
+   * nobody asks from this screen.
+   */
+  private openResolve(): void {
+    const d = this.o.doc;
+    const g = this.grid;
+    if (!g?.routine) return;
+    const held = g.slots.find((s) => s.id === this.selected) ?? null;
+
+    const choices: Array<{ value: string; label: string; scope: Record<string, unknown> }> = [
+      { value: 'section', label: `এই শাখার পুরো রুটিন (${g.routine.sectionLabel})`,
+        scope: { kind: 'section', sectionId: g.sectionId } },
+    ];
+    if (held?.teacherName) {
+      choices.push({
+        value: 'teacher',
+        label: `${held.teacherName} — এই শিক্ষকের সব ক্লাস`,
+        scope: { kind: 'teacher', teacherId: held.teacherId ?? '' },
+      });
+    }
+    if (held) {
+      const dayBn = this.days().find((x) => x.dow === held.dayOfWeek)?.bn ?? '';
+      choices.push({
+        value: 'day', label: `${dayBn}বারের সব ক্লাস`,
+        scope: { kind: 'day', dayOfWeek: held.dayOfWeek },
+      });
+    }
+
+    let chosen = choices[0];
+    const body = el(d, 'div', { className: 'ui-stack' });
+    body.append(el(d, 'p', {
+      className: 'ui-card-note',
+      text: 'যে অংশটি আবার হিসাব করতে চান তা বেছে নিন। পিন করা ক্লাসগুলো '
+          + 'অপরিবর্তিত থাকবে, এবং বাকি রুটিনের কিছুই নড়বে না।',
+    }));
+    body.append(field(d, {
+      label: 'কোন অংশ', name: 'scope', kind: 'select', value: chosen.value,
+      options: choices.map((c) => ({ value: c.value, label: c.label })),
+      onChange: (v) => { chosen = choices.find((c) => c.value === v) ?? choices[0]; },
+    }).root);
+
+    const outcome = el(d, 'div', { className: 'ui-stack' });
+    body.append(outcome);
+
+    let handle: OverlayHandle | undefined;
+    let previewed: Record<string, unknown> | null = null;
+
+    const review = button(d, {
+      label: 'পর্যালোচনা করুন', variant: 'secondary',
+      onClick: async () => {
+        setBusy(review, true);
+        previewed = await this.sendResolve(chosen.scope, true);
+        setBusy(review, false);
+        outcome.textContent = '';
+        if (!previewed) {
+          outcome.append(el(d, 'p', { className: 'ui-card-lead', text: this.notice?.text ?? '' }));
+          return;
+        }
+        for (const node of this.resolveSummary(previewed, true)) outcome.append(node);
+        apply.disabled = false;
+        announce(d, String((previewed as { verdictBn?: string }).verdictBn ?? ''));
+      },
+    });
+    // Disabled until a preview has been seen: §17's whole point is that the
+    // draft is not touched before somebody has read what would happen.
+    const apply = button(d, {
+      label: 'প্রয়োগ করুন', variant: 'primary', disabled: true,
+      onClick: async () => {
+        setBusy(apply, true);
+        const before = new Set((this.grid?.slots ?? []).map((s) => s.id));
+        const out = await this.sendResolve(chosen.scope, false);
+        setBusy(apply, false);
+        if (!out) { outcome.textContent = ''; outcome.append(
+          el(d, 'p', { className: 'ui-card-lead', text: this.notice?.text ?? '' })); return; }
+        handle?.close();
+        await this.loadGrid(this.grid!.sectionId);
+        // §16. Which cells actually moved, so the grid shows the answer
+        // rather than making a coordinator hunt for it.
+        this.changed = new Set((this.grid?.slots ?? [])
+          .filter((s) => !before.has(s.id)).map((s) => s.id));
+        this.notice = { text: String((out as { verdictBn?: string }).verdictBn ?? 'হয়ে গেছে।'),
+                        tone: 'ok' };
+        announce(d, this.notice.text);
+        this.render();
+      },
+    });
+
+    handle = openDrawer(d, {
+      title: 'অংশবিশেষ আবার হিসাব',
+      body,
+      actions: [
+        button(d, { label: 'বাতিল', variant: 'secondary',
+                    onClick: () => handle?.close() }),
+        review, apply,
+      ],
+    });
+  }
+
+  /** One request. Returns the payload, or null after setting `this.notice`. */
+  private async sendResolve(
+    scope: Record<string, unknown>, preview: boolean,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const res = await this.o.auth.authedFetch('/api/v1/rms/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          routineId: this.grid?.routine?.id, scope, preview,
+          // §10. The routine as this screen last saw it. A re-solve computed
+          // against somebody else's newer routine is the silent overwrite
+          // this exists to prevent.
+          ...(this.fingerprint && !preview ? { fingerprint: this.fingerprint } : {}),
+        }),
+      });
+      const out = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (res.ok && out.ok) {
+        if (typeof out.fingerprint === 'string') this.fingerprint = out.fingerprint;
+        return out;
+      }
+      this.notice = {
+        text: typeof out.message === 'string' ? out.message : 'আবার হিসাব করা যায়নি।',
+        tone: 'warn',
+      };
+      return null;
+    } catch {
+      this.notice = { text: 'সংযোগ নেই — রুটিন আগের অবস্থাতেই আছে।', tone: 'warn' };
+      return null;
+    }
+  }
+
+  /** §6/§7 — what changed, and what each moved lesson was before and after. */
+  private resolveSummary(out: Record<string, unknown>, isPreview: boolean): HTMLElement[] {
+    const d = this.o.doc;
+    const s = out.summary as {
+      affected: number; pinnedPreserved: number; unchanged: number;
+      lost: number; moved: Array<{ beforeBn: string; afterBn: string }>;
+    };
+    const nodes: HTMLElement[] = [];
+    nodes.push(el(d, 'p', {
+      className: 'ui-card-lead', text: String(out.verdictBn ?? ''),
+    }));
+    // Counts as WORDS beside the numbers (§22): a coordinator reading
+    // "৭ / ২৯ / ২" has to guess which is which.
+    nodes.push(el(d, 'ul', { className: 'gen-trades' },
+      ...[
+        [`প্রভাবিত ক্লাস`, s.affected],
+        [`অপরিবর্তিত থাকবে`, s.unchanged],
+        [`পিন করা — অক্ষত`, s.pinnedPreserved],
+        [`কোথাও বসানো যায়নি`, s.lost],
+      ].map(([label, n]) => el(d, 'li', {},
+        el(d, 'span', { className: 'gen-trade-what',
+                        text: `${label}: ${formatCount(Number(n), 'bn')}টি` })))));
+
+    if (s.moved.length > 0) {
+      nodes.push(sectionHeading(d, { title: 'কোনটি কোথায় যাবে', level: 3 }));
+      const list = el(d, 'ul', { className: 'gen-trades' });
+      for (const m of s.moved.slice(0, 12)) {
+        const li = el(d, 'li');
+        li.append(el(d, 'span', { className: 'gen-trade-what', text: `আগে: ${m.beforeBn}` }));
+        li.append(el(d, 'span', { className: 'gen-trade-why', text: `পরে: ${m.afterBn}` }));
+        list.append(li);
+      }
+      nodes.push(list);
+      if (s.moved.length > 12) {
+        nodes.push(el(d, 'p', { className: 'ui-card-note',
+          text: `আরও ${formatCount(s.moved.length - 12, 'bn')}টি` }));
+      }
+    }
+    if (isPreview) {
+      nodes.push(el(d, 'p', {
+        className: 'ui-card-note',
+        text: 'এখনো কিছুই বদলানো হয়নি। "প্রয়োগ করুন" চাপলে উপরের পরিবর্তনগুলো হবে।',
+      }));
+    }
+    return nodes;
   }
 
   private buildGrid(): HTMLElement {
@@ -864,6 +1069,10 @@ export class RoutineEditorView {
       btn.dataset.selected = String(this.selected === slot.id);
       btn.setAttribute('aria-pressed', String(this.selected === slot.id));
       if (slot.isPinned) btn.dataset.pinned = 'true';
+      // P9-6 §16. The cells a scoped re-solve just moved, marked until the
+      // next action — so a coordinator sees the answer instead of comparing
+      // the grid against their memory of it.
+      if (this.changed.has(slot.id)) btn.dataset.changed = 'true';
 
       const subject = d.createElement('span');
       subject.className = 'routine-slot-subject';
@@ -896,7 +1105,8 @@ export class RoutineEditorView {
         + (slot.teacherName ? `, ${slot.teacherName}` : '')
         + (slot.isPinned
           ? ', পিন করা — আবার রুটিন তৈরি করলে এটি বদলাবে না'
-          : ''));
+          : '')
+        + (this.changed.has(slot.id) ? ', এইমাত্র সরানো হয়েছে' : ''));
       btn.addEventListener('click', () => this.pick(slot));
     } else {
       btn.dataset.filled = 'false';

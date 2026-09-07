@@ -245,8 +245,21 @@ async function seed(db, profile) {
     for (let i = 1; i <= classrooms; i++) {
       roomRows.push([`R-${String(i).padStart(3, '0')}`, `কক্ষ ${bn(i)}`, 60, '{}']);
     }
+    // Named the way a school names a room, not after the capability code.
+    // The fixture used `${cap} ${bn(i)}` — so the editor grid, which
+    // correctly shows a school's OWN room name, displayed "computer_lab ২"
+    // and looked exactly like the machine-identifier leak P9-4 spent a
+    // section eliminating. A fixture that manufactures a false positive
+    // costs more than it saves.
+    const LAB_BN = {
+      computer_lab: 'কম্পিউটার ল্যাব', physics_lab: 'পদার্থ ল্যাব',
+      chemistry_lab: 'রসায়ন ল্যাব', biology_lab: 'জীব ল্যাব',
+    };
     for (const [cap, n] of Object.entries(profile.labs)) {
-      for (let i = 1; i <= n; i++) roomRows.push([`${cap}-${i}`, `${cap} ${bn(i)}`, 40, `{${cap}}`]);
+      for (let i = 1; i <= n; i++) {
+        roomRows.push([`LAB-${cap}-${i}`, `${LAB_BN[cap] ?? 'বিশেষ কক্ষ'} ${bn(i)}`,
+                       40, `{${cap}}`]);
+      }
     }
     await c.query(
       `INSERT INTO rooms (tenant_id, code, name_bn, capacity, capabilities, is_bookable)

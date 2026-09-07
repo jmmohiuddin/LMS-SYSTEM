@@ -29,6 +29,7 @@ import { explain, severityCounts, type ExplainInput } from '../src/explain.ts';
 import type { BlockerTally } from '../src/solve.ts';
 import {
   capabilityLabelBn, scrubMachineText, shiftLabelBn, unplacedReasonBn,
+  possessiveBn,
 } from '../src/presentation.ts';
 
 const tally = (over: Partial<BlockerTally> = {}): BlockerTally => ({
@@ -394,5 +395,35 @@ describe('P9-4 §9 — no machine identifier reaches a person', () => {
       assert.ok(s.length > 10, `${code} needs a sentence, not a word`);
     }
     assert.equal(unplacedReasonBn('something_new'), 'কারণ জানা যায়নি');
+  });
+});
+
+/**
+ * P9-6 — a name joined to a noun, in Bangla.
+ *
+ * "রফিক স্যার ক্লাসগুলো" is not a sentence, and a Bangla reader notices the
+ * missing genitive the way an English reader notices "Rahim classes". The
+ * undo button says this out loud, so it has to be right.
+ */
+describe('P9-6 — the Bangla genitive', () => {
+  test('THE ONE THAT MATTERS — consonant takes ের, vowel takes র', () => {
+    assert.equal(possessiveBn('রফিক স্যার'), 'রফিক স্যারের');
+    assert.equal(possessiveBn('সালমা'), 'সালমার');
+    assert.equal(possessiveBn('ম্যাডাম'), 'ম্যাডামের');
+    assert.equal(possessiveBn('রুবি'), 'রুবির');
+  });
+
+  test('an empty or spacey name does not produce a dangling suffix', () => {
+    assert.equal(possessiveBn(''), '');
+    assert.equal(possessiveBn('   '), '');
+    assert.equal(possessiveBn(' রফিক '), 'রফিকের', 'trimmed before the rule is applied');
+  });
+
+  test('and no Latin letter is treated as a Bangla vowel', () => {
+    // The first draft's vowel set began with a Latin 'a', which would have
+    // given an English-transliterated name the wrong ending.
+    assert.equal(possessiveBn('Rahima'), 'Rahimaের',
+      'a Latin name is not something this rule claims to handle — and it must '
+      + 'not silently pick the vowel branch because of a stray character');
   });
 });

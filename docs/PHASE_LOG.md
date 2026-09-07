@@ -12664,3 +12664,174 @@ server as it is made.
 **Locks are structurally ready for P9-6** and nothing more was built for it.
 `is_pinned` is what a scoped re-solve will read to decide what to leave
 alone; no temporary mechanism was introduced that P9-6 would have to replace.
+
+---
+
+# P9-6 — the scoped re-solve that needed no second solver (2026-09-07)
+
+## The mechanism was already in the building
+
+`RmsSolver` places `periodsPerWeek − alreadyPlaced` for each (section,
+subject), counting whatever is active in the routine. So a fully-placed
+routine is one it will not touch, and a routine missing four lessons is one
+it will place four lessons into.
+
+That makes "re-solve only the affected area" a two-line idea: **remove the
+affected slots, run the solver you already have.** Every constraint, every
+clash check, every room match, every explanation is the existing one, and a
+change to any of them changes this too. §1 said not to build a second solver;
+there was never a reason to.
+
+## The dependency closure is the affected set, and nothing beyond it
+
+§3 asks for the closure and warns against re-solving an arbitrary percentage,
+which reads as a tension until you notice that the solver only ever ADDS into
+free hours — it cannot displace a lesson that stayed. Freeing Rahim's
+Wednesday hour therefore cannot cascade into anyone else's week: the only
+demands short after the removal are the ones removed, and the only slots that
+move are theirs.
+
+Anything wider would be movement a coordinator did not ask for.
+
+## Pins survive by construction, not by a check
+
+A pinned slot is excluded from the removal set, so it is still there when the
+solver counts what is already placed, and the solver works around it exactly
+as it works around every other placed lesson. There is no "respect the pins"
+branch that a later edit could forget.
+
+Proved from the database: pin a lesson, recalculate the very scope it sits
+in, and the row comes back with the same id, the same day and the same
+period.
+
+## Two things needed the solver to join a transaction
+
+`solve()` gained an optional `client`. Without it neither §8 nor §17 is
+possible:
+
+**Atomicity.** The removal and the re-solve are one transaction. Committing
+the removal on one connection and then failing the placement on another
+leaves a school with lessons deleted and nothing put back — the worst
+available outcome for a screen whose whole purpose is a safe small change.
+
+**Preview.** It is the same transaction, rolled back: the real solver, the
+real GiST constraints, the real result, then `ROLLBACK`. Computing a preview
+any other way would be a second implementation of the thing being previewed,
+and would differ from it on exactly the cases that matter.
+
+Every existing caller omits the parameter and behaves as it always did.
+
+## Measured, because §13 says not to claim it otherwise
+
+Same schools as the P9-3 benchmark. The scope is ONE TEACHER — the brief's
+own example, and the smallest useful unit; a section scope would flatter the
+numbers on a large school.
+
+| profile | sections | slots | full generation | scoped p50 | affected | share | speed-up |
+|---|---|---|---|---|---|---|---|
+| small | 20 | 560 | 1,329 ms | 138 ms | 27 | 4.8% | **9.6×** |
+| medium | 40 | 1,125 | 2,287 ms | 241 ms | 29 | 2.6% | **9.5×** |
+| large (2 shifts) | 80 | 2,319 | 4,721 ms | 220 ms | 29 | 1.3% | **21.5×** |
+| college (2 shifts) | 120 | 3,479 | 7,684 ms | 160 ms | 30 | 0.9% | **48×** |
+
+The gain grows with the school, which is the shape that matters: a teacher's
+timetable is roughly constant while the institution is not, so the share of
+the week touched falls from 4.8% to 0.9% and the work falls with it.
+
+## One undo for one instruction
+
+§18 is explicit that a scoped re-solve must not leave dozens of entries.
+Migration 075 widens `routine_edit_log.action` to admit `resolve`, and the
+inverse names every slot to restore and every slot to remove. Order matters
+inside it: the placements go out FIRST, because restoring the originals into
+hours the re-solve filled would collide with the very rows about to be taken
+out.
+
+## Concurrency is a fingerprint, and it is called one
+
+`routines` has no row version and `routine_slots.row_version` is per slot, so
+a re-solve needs a whole-routine answer to "has this changed since you
+looked?". `count(*) || ':' || sum(row_version)` moves when a slot is added,
+removed or edited. Two changes that cancelled exactly could in principle
+agree, which is why it is documented as a fingerprint rather than a
+guarantee — the exclusion constraints remain the thing that cannot be fooled.
+
+Checked INSIDE the transaction, so the answer cannot go stale between the
+check and the work.
+
+## Bangla needed a genitive
+
+The undo label read "রফিক স্যার ক্লাসগুলো আবার হিসাব", which is not a
+sentence — Bangla marks the possessive and a reader notices its absence the
+way an English reader notices "Rahim classes". `possessiveBn` applies the
+ordinary rule: a vowel ending takes র, a consonant takes ের. A section or
+room LABEL does not take it, because "নবম-কের" reads as nonsense; the noun
+after it carries the relationship instead.
+
+## Two things the browser and the probe found
+
+**The benchmark named rooms after capability codes.** `computer_lab ২`
+appeared in the editor grid — and the grid was right, because it shows a
+school's OWN room name and P9-4 deliberately does not scrub those. The
+fixture was manufacturing a false positive for the exact defect P9-4 spent a
+section eliminating. Rooms are now named like rooms.
+
+**The migration probe could not fail.** 075 CHANGES an existing constraint
+rather than adding one, and the name is identical before and after — so a
+rolled-back 075 was reported as applied. Found by running the rollback and
+watching the probe say "fully migrated". `migration-status.mjs` gained a
+`constraint_def` kind that matches the definition text.
+
+## Evidence
+
+- **1964 tests, all passing** across 13 workspaces — 16 new API
+  (`resolve.test.ts`, including the two-shift regression), 10 new view, 3 new
+  presentation
+- 26/26 SQL suites run **three times**; the resolve and editor suites three
+  times
+- typecheck 0/0/0 · build clean · **75/75 migrations**, and 075 proved
+  down → **detected as MISSING** → up
+- **Security probe 29/29** against a running deployment (`local-docker-p9-6`)
+- **Browser, real API, a generated 20-section school:** pin a lesson →
+  "আবার হিসাব করুন" → apply is DISABLED → preview → "প্রভাবিত ক্লাস: ২৯টি ·
+  অপরিবর্তিত থাকবে: ৫৩২টি · পিন করা — অক্ষত: ১টি · কোথাও বসানো যায়নি: ০টি"
+  with "এখনো কিছুই বদলানো হয়নি" — and **the grid did not change during the
+  preview** → apply → 28 cells marked, the pinned one untouched, ONE undo
+  entry reading "সপ্তম-খ শাখার রুটিন আবার হিসাব" → undo → the routine returns
+- **Tenant isolation, live:** school B holding A's routine and section ids
+  gets 404 on resolve, on a day scope and on preview; A's slots and A's undo
+  stack are unchanged
+- **Nine widths 360–1600 and a real 375px viewport**: the drawer is exactly
+  375 wide with no overflow and no horizontal body scroll (the earlier
+  reading was an artifact of forcing `body.width` while a fixed-position
+  dialog sized itself to the real viewport)
+- **Both themes**: dialog `#FFFFFF` / `#241E1A`, text `#53443D` / `#EDE7DA`
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**Four scopes, not a predicate.** Teacher, section, room, day. Each maps to a
+question a school actually asks and each resolves to a set the solver can put
+back; §2 says not to expose an option the solver cannot guarantee, and a
+free-form filter would be one.
+
+**"Unchanged" counts the whole routine, not the scope.** In the browser run,
+29 affected and 532 unchanged out of 560 — 28 non-pinned rows were replaced
+and one pinned row kept its id. The numbers add up but they answer two
+different questions, and the labels are what keep them apart.
+
+**A re-solve that changes nothing still replaces rows.** The solver is
+deterministic, so re-solving the same gaps produces the same week — but with
+new slot ids, which is why the summary pairs before and after on (section,
+subject) rather than on id. A coordinator sees "কিছুই বদলানোর দরকার হয়নি";
+the database sees new rows.
+
+**Preview costs what apply costs.** It runs the real solver. That is
+affordable precisely because the scope is small, and it would not be for a
+whole-school re-solve — which is what `POST /rms/generate` is for.
+
+**Availability changes are not detected automatically.** A coordinator who
+marks a teacher unavailable must then ask for that teacher's scope to be
+recalculated. Wiring the change itself to offer it is a P9-7-or-later
+convenience, and inventing it here would have meant guessing which of eleven
+inputs should trigger what.

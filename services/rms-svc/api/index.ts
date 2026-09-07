@@ -18,6 +18,7 @@ import rooms from './rooms.ts';
 import assignments from './assignments.ts';
 import setup from './setup.ts';
 import generate from './generate.ts';
+import resolve from './resolve.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 
@@ -30,6 +31,9 @@ const ROUTES: Record<string, Handler> = {
   setup,
   // P9-3. READY -> GENERATE -> RESULT, orchestrating the existing solver.
   generate,
+  // P9-6. Recalculate one teacher, section, room or day — the same solver,
+  // told to fill only the gaps a scoped removal just made.
+  resolve,
 };
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {

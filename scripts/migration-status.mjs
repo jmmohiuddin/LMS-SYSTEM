@@ -184,6 +184,12 @@ const SENTINELS = [
   // table at all is what the editor's undo would fail against, loudly, on
   // the first edit — and the policies cannot exist without it anyway.
   ['074_routine_edit_log',             'table',         'public.routine_edit_log'],
+  // The widened CHECK itself: 074's table exists either way, and a
+  // half-applied 075 is a scoped re-solve that cannot record how to undo
+  // itself — which surfaces as a coordinator pressing undo and getting the
+  // edit before the one they meant.
+  ['075_edit_log_resolve',             'constraint_def',
+   "routine_edit_log_action_check|'resolve'"],
 ];
 
 /**
@@ -273,6 +279,14 @@ const QUERIES = {
                      AND p.prosrc LIKE '%' || $2 || '%'`,
   policy: `SELECT 1 FROM pg_policy WHERE polname = $1`,
   constraint: `SELECT 1 FROM pg_constraint WHERE conname = $1`,
+  // `constraint_name|substring`. For a migration that CHANGES an existing
+  // constraint rather than adding one: 075 widens
+  // `routine_edit_log_action_check` and the name is identical before and
+  // after, so a name check reports a rolled-back 075 as applied. Found by
+  // running the rollback and watching the probe say "fully migrated".
+  constraint_def: `SELECT 1 FROM pg_constraint
+                    WHERE conname = split_part($1,'|',1)
+                      AND pg_get_constraintdef(oid) LIKE '%' || split_part($1,'|',2) || '%'`,
   // `table.column`. The natural sentinel for a migration whose whole point is
   // a new column — 068 added `exams.routine_published_at` and creates no
   // function, index or policy that is uniquely its own.

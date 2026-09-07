@@ -1794,10 +1794,24 @@ var RmsSolver = class {
    *   is full. Only the caller knows which drafts are meant to run side by
    *   side, so only the caller may say.
    */
+  /**
+   * @param opts.client
+   *   Run inside the CALLER's transaction instead of opening one. (P9-6)
+   *
+   *   Two things need it, and neither is possible without it. A scoped
+   *   re-solve removes the affected slots and re-places them; if the solve
+   *   commits on its own connection, a failure afterwards leaves the routine
+   *   with the removals applied and nothing put back — the opposite of the
+   *   atomicity §8 requires. And a PREVIEW is the same transaction rolled
+   *   back, which cannot span two connections.
+   *
+   *   Omitted, this behaves exactly as it always has: its own transaction,
+   *   committed on success. Every existing caller omits it.
+   */
   async solve(routineId, ctx, opts = {}) {
     const startedAt = this.now();
     const siblings = [...new Set(opts.alsoBookedAgainst ?? [])].filter((id) => id !== routineId);
-    return this.db.withTenant(ctx, async (client) => {
+    const run2 = async (client) => {
       const routine = await this.loadRoutine(client, routineId);
       const teachingDays2 = this.teachingDays(routine.weekendDays);
       const periods = await this.loadTeachingPeriods(client, routine.periodTemplateId);
@@ -2176,7 +2190,8 @@ var RmsSolver = class {
         objectiveScore,
         solverSeconds
       };
-    });
+    };
+    return opts.client ? run2(opts.client) : this.db.withTenant(ctx, run2);
   }
   /**
    * Names and caps for the soft-constraint report.
@@ -2944,6 +2959,13 @@ var UNPLACED_REASON_BN = {
   no_contiguous_pair: "\u09AA\u09B0\u09AA\u09B0 \u09A6\u09C1\u0987 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u098F\u0995\u09B8\u09BE\u09A5\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF \u2014 \u0986\u09B2\u09BE\u09A6\u09BE \u0995\u09B0\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7"
 };
 var unplacedReasonBn = (reason) => UNPLACED_REASON_BN[reason] ?? "\u0995\u09BE\u09B0\u09A3 \u099C\u09BE\u09A8\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF";
+var BN_VOWEL_ENDINGS = "\u0985\u0986\u0987\u0988\u0989\u098A\u098F\u0990\u0993\u0994\u09BE\u09BF\u09C0\u09C1\u09C2\u09C3\u09C7\u09C8\u09CB\u09CC";
+function possessiveBn(name) {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const last = trimmed[trimmed.length - 1];
+  return BN_VOWEL_ENDINGS.includes(last) ? `${trimmed}\u09B0` : `${trimmed}\u09C7\u09B0`;
+}
 
 // services/rms-svc/api/generation.ts
 var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -3459,7 +3481,10 @@ async function loadGrid(c, sectionId) {
     [routine.period_template_id]
   );
   const slots = await c.query(
-    `SELECT s.id, s.day_of_week, s.period_no,
+    // P9-6 needs `teacher_id`: a scoped re-solve by teacher is the brief's own
+    // example, and the grid could name a teacher without being able to say
+    // which one to the API.
+    `SELECT s.id, s.day_of_week, s.period_no, s.teacher_id,
             sub.name_bn AS subject_bn,
             u.full_name_bn AS teacher_name,
             -- rooms has code (NOT NULL) and name_bn (nullable). It has no
@@ -3547,7 +3572,8 @@ async function loadGrid(c, sectionId) {
       doubleGroupId: s.double_group_id,
       parallelPool: s.parallel_pool,
       isPinned: s.is_pinned,
-      rowVersion: s.row_version
+      rowVersion: s.row_version,
+      teacherId: s.teacher_id
     })),
     // P9-5 §11. What pressing undo would reverse, named — so the button can
     // say "রফিক স্যারের সোমবারের ক্লাস ফিরিয়ে নিন" instead of "undo", and a
@@ -3602,11 +3628,11 @@ async function findClash(c, o) {
   }
   return null;
 }
-async function tryWrite(c, run, onViolation) {
+async function tryWrite(c, run2, onViolation) {
   const sp = `rms_${Math.random().toString(36).slice(2, 10)}`;
   await c.query(`SAVEPOINT ${sp}`);
   try {
-    await run();
+    await run2();
     await c.query(`RELEASE SAVEPOINT ${sp}`);
   } catch (err) {
     await c.query(`ROLLBACK TO SAVEPOINT ${sp}`);
@@ -4356,7 +4382,7 @@ async function undo(c, ctx, b) {
           WHERE id = $1`,
         [inv.slotId, inv.subjectId, inv.teacherId, inv.roomId]
       );
-    } else {
+    } else if (inv.op === "pin") {
       await c.query(
         `UPDATE routine_slots
             SET is_pinned = $2, row_version = row_version + 1,
@@ -4364,6 +4390,23 @@ async function undo(c, ctx, b) {
           WHERE id = $1`,
         [inv.slotId, inv.isPinned]
       );
+    } else {
+      if (inv.remove.length > 0) {
+        await c.query(
+          `UPDATE routine_slots
+              SET status = 'removed', row_version = row_version + 1, updated_at = now()
+            WHERE id = ANY($1::uuid[])`,
+          [inv.remove]
+        );
+      }
+      if (inv.restore.length > 0) {
+        await c.query(
+          `UPDATE routine_slots
+              SET status = 'active', row_version = row_version + 1, updated_at = now()
+            WHERE id = ANY($1::uuid[])`,
+          [inv.restore]
+        );
+      }
     }
   }, async (e) => {
     if (e.code === "23P01") {
@@ -4379,10 +4422,15 @@ async function undo(c, ctx, b) {
   await writeAudit(c, ctx, {
     action: "rms.slot.undo",
     entityType: "routine_slot",
-    entityId: inv.slotId,
+    entityId: inv.op === "resolve" ? null : inv.slotId,
     before: { undidAction: entry.action, labelBn: entry.labelBn }
   });
-  return { ok: true, undid: entry.action, labelBn: entry.labelBn, slotId: inv.slotId };
+  return {
+    ok: true,
+    undid: entry.action,
+    labelBn: entry.labelBn,
+    slotId: inv.op === "resolve" ? null : inv.slotId
+  };
 }
 
 // services/rms-svc/api/rooms.ts
@@ -6085,6 +6133,327 @@ async function handler10(req, res) {
   }
 }
 
+// services/rms-svc/src/rescope.ts
+var DAY_BN4 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+var BN_DIGITS8 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn6 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS8[Number(d)]);
+function whenBn(dayOfWeek, periodNo) {
+  return `${DAY_BN4[dayOfWeek] ?? ""} ${bn6(periodNo)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`;
+}
+function slotLine(s) {
+  return [
+    s.sectionLabel ?? "\u09B6\u09BE\u0996\u09BE",
+    s.subjectBn ?? "\u09AC\u09BF\u09B7\u09AF\u09BC",
+    s.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995",
+    whenBn(s.dayOfWeek, s.periodNo)
+  ].join(" \xB7 ");
+}
+var SELECT_SLOTS = `
+  SELECT s.id, s.day_of_week, s.period_no, s.primary_section_id, s.subject_id,
+         s.teacher_id, s.room_id, s.is_pinned, s.row_version,
+         cl.name_bn || '-' || sec.name AS section_label,
+         sub.name_bn AS subject_bn,
+         u.full_name_bn AS teacher_bn,
+         COALESCE(rm.name_bn, rm.code) AS room_label
+    FROM routine_slots s
+    LEFT JOIN sections sec ON sec.id = s.primary_section_id
+    LEFT JOIN classes cl   ON cl.id = sec.class_id
+    LEFT JOIN subjects sub ON sub.id = s.subject_id
+    LEFT JOIN users u      ON u.id = s.teacher_id
+    LEFT JOIN rooms rm     ON rm.id = s.room_id
+   WHERE s.routine_id = $1 AND s.status = 'active' AND s.slot_kind = 'teaching'`;
+var toSlot = (r) => ({
+  id: r.id,
+  dayOfWeek: r.day_of_week,
+  periodNo: r.period_no,
+  sectionId: r.primary_section_id,
+  subjectId: r.subject_id,
+  teacherId: r.teacher_id,
+  roomId: r.room_id,
+  sectionLabel: r.section_label,
+  subjectBn: r.subject_bn,
+  teacherBn: r.teacher_bn,
+  roomLabel: r.room_label,
+  isPinned: r.is_pinned,
+  rowVersion: r.row_version
+});
+async function allSlots(c, routineId) {
+  const { rows } = await c.query(
+    `${SELECT_SLOTS} ORDER BY s.day_of_week, s.period_no`,
+    [routineId]
+  );
+  return rows.map(toSlot);
+}
+async function slotsInScope(c, routineId, scope) {
+  const where = {
+    teacher: "AND s.teacher_id = $2",
+    section: "AND s.primary_section_id = $2",
+    room: "AND s.room_id = $2",
+    day: "AND s.day_of_week = $2"
+  }[scope.kind];
+  const arg = scope.kind === "teacher" ? scope.teacherId : scope.kind === "section" ? scope.sectionId : scope.kind === "room" ? scope.roomId : scope.dayOfWeek;
+  const { rows } = await c.query(
+    `${SELECT_SLOTS} ${where} ORDER BY s.day_of_week, s.period_no`,
+    [routineId, arg]
+  );
+  return rows.map(toSlot);
+}
+async function fingerprint(c, routineId) {
+  const { rows } = await c.query(
+    `SELECT count(*)::text || ':' || COALESCE(sum(row_version), 0)::text AS fp
+       FROM routine_slots
+      WHERE routine_id = $1 AND status = 'active'`,
+    [routineId]
+  );
+  return rows[0]?.fp ?? "0:0";
+}
+function summarise2(before, after, scoped) {
+  const key = (s) => `${s.sectionId ?? ""}|${s.subjectId ?? ""}`;
+  const at = (s) => `${s.dayOfWeek}|${s.periodNo}`;
+  const afterIds = new Set(after.map((s) => s.id));
+  const unchanged = before.filter((s) => afterIds.has(s.id));
+  const pinnedPreserved = scoped.filter((s) => s.isPinned).length;
+  const groupBy = (rows) => {
+    const m = /* @__PURE__ */ new Map();
+    for (const s of rows) {
+      const list2 = m.get(key(s));
+      if (list2) list2.push(s);
+      else m.set(key(s), [s]);
+    }
+    return m;
+  };
+  const beforeIds = new Set(before.map((s) => s.id));
+  const byKeyBefore = groupBy(before.filter((s) => !afterIds.has(s.id)));
+  const byKeyAfter = groupBy(after.filter((s) => !beforeIds.has(s.id)));
+  const moved = [];
+  let lost = 0;
+  for (const [k, gone] of byKeyBefore) {
+    const arrived = byKeyAfter.get(k) ?? [];
+    const goneMoved = gone.filter((g) => !arrived.some((a) => at(a) === at(g)));
+    const arrivedNew = arrived.filter((a) => !gone.some((g) => at(g) === at(a)));
+    for (let i = 0; i < goneMoved.length; i++) {
+      const from = goneMoved[i];
+      const to = arrivedNew[i];
+      if (to) {
+        moved.push({
+          beforeBn: slotLine(from),
+          afterBn: slotLine(to),
+          sectionLabel: from.sectionLabel,
+          subjectBn: from.subjectBn
+        });
+      } else {
+        lost++;
+        moved.push({
+          beforeBn: slotLine(from),
+          afterBn: "\u0995\u09CB\u09A5\u09BE\u0993 \u09AC\u09B8\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF",
+          sectionLabel: from.sectionLabel,
+          subjectBn: from.subjectBn
+        });
+      }
+    }
+  }
+  return {
+    affected: scoped.length,
+    pinnedPreserved,
+    removed: before.length - unchanged.length,
+    placed: after.length - unchanged.length,
+    unchanged: unchanged.length,
+    moved,
+    lost
+  };
+}
+
+// services/rms-svc/api/resolve.ts
+var UUID_RE10 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var RESOLVE_ROLES = ["principal", "school_owner", "academic_coordinator"];
+var EDITABLE2 = /* @__PURE__ */ new Set(["draft", "review"]);
+var PreviewDone = class extends Error {
+  payload;
+  constructor(payload) {
+    super("preview");
+    this.payload = payload;
+  }
+};
+function parseScope(raw) {
+  const s = raw;
+  const kind = typeof s?.kind === "string" ? s.kind : "";
+  const uuid = (v) => typeof v === "string" && UUID_RE10.test(v) ? v : "";
+  if (kind === "teacher" && uuid(s?.teacherId)) {
+    return { kind: "teacher", teacherId: uuid(s?.teacherId) };
+  }
+  if (kind === "section" && uuid(s?.sectionId)) {
+    return { kind: "section", sectionId: uuid(s?.sectionId) };
+  }
+  if (kind === "room" && uuid(s?.roomId)) {
+    return { kind: "room", roomId: uuid(s?.roomId) };
+  }
+  if (kind === "day" && Number.isInteger(s?.dayOfWeek) && Number(s?.dayOfWeek) >= 0 && Number(s?.dayOfWeek) <= 6) {
+    return { kind: "day", dayOfWeek: Number(s?.dayOfWeek) };
+  }
+  throw new HttpError(
+    400,
+    "\u0995\u09CB\u09A8 \u0985\u0982\u09B6\u099F\u09BF \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC \u0995\u09B0\u09A4\u09C7 \u09B9\u09AC\u09C7 \u09A4\u09BE \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8 \u2014 \u09B6\u09BF\u0995\u09CD\u09B7\u0995, \u09B6\u09BE\u0996\u09BE, \u0995\u0995\u09CD\u09B7 \u09AC\u09BE \u09A6\u09BF\u09A8\u0964",
+    "invalid_scope"
+  );
+}
+function verdictBn(sum, scopedCount) {
+  const bn7 = (n) => String(n).replace(/[0-9]/g, (d) => "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF"[Number(d)]);
+  if (scopedCount === 0) return "\u098F\u0987 \u0985\u0982\u09B6\u09C7 \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB\u09B0 \u09AE\u09A4\u09CB \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964";
+  if (sum.lost > 0) {
+    return `${bn7(sum.moved.length - sum.lost)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09B8\u09B0\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7, ${bn7(sum.lost)}\u099F\u09BF\u09B0 \u099C\u09A8\u09CD\u09AF \u0995\u09CB\u09A8\u09CB \u09AC\u09C8\u09A7 \u09B8\u09AE\u09AF\u09BC \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964`;
+  }
+  if (sum.moved.length === 0) return "\u09B9\u09BF\u09B8\u09BE\u09AC \u0995\u09B0\u09BE \u09B9\u09AF\u09BC\u09C7\u099B\u09C7 \u2014 \u0995\u09BF\u099B\u09C1\u0987 \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB\u09B0 \u09A6\u09B0\u0995\u09BE\u09B0 \u09B9\u09AF\u09BC\u09A8\u09BF\u0964";
+  return `${bn7(sum.moved.length)}\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09A4\u09C1\u09A8 \u09B8\u09AE\u09AF\u09BC\u09C7 \u09AC\u09B8\u09BE\u09A8\u09CB \u09B9\u09AF\u09BC\u09C7\u099B\u09C7\u0964`;
+}
+async function run(c, ctx, o) {
+  const rt = await c.query(
+    `SELECT status::text AS status, academic_year_id, shift::text AS shift
+       FROM routines WHERE id = $1`,
+    [o.routineId]
+  );
+  if (!rt.rows[0]) throw new HttpError(404, "\u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF", "routine_not_found");
+  if (!EDITABLE2.has(rt.rows[0].status)) {
+    throw new HttpError(
+      409,
+      "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "routine_not_editable"
+    );
+  }
+  const before = await allSlots(c, o.routineId);
+  const scoped = await slotsInScope(c, o.routineId, o.scope);
+  const removable = scoped.filter((s) => !s.isPinned);
+  if (removable.length > 0) {
+    await c.query(
+      `UPDATE routine_slots
+          SET status = 'removed', row_version = row_version + 1, updated_at = now()
+        WHERE id = ANY($1::uuid[])`,
+      [removable.map((s) => s.id)]
+    );
+  }
+  const sib = await c.query(
+    `SELECT id FROM routines
+      WHERE academic_year_id = $1 AND status = 'draft' AND id <> $2`,
+    [rt.rows[0].academic_year_id, o.routineId]
+  );
+  const solved = await o.solver.solve(o.routineId, ctx, {
+    client: c,
+    alsoBookedAgainst: sib.rows.map((r) => r.id)
+  });
+  const after = await allSlots(c, o.routineId);
+  const summary = summarise2(before, after, scoped);
+  const payload = {
+    ok: true,
+    preview: o.preview,
+    routineId: o.routineId,
+    scope: o.scope,
+    summary,
+    verdictBn: verdictBn(summary, scoped.length),
+    unplaced: solved.unplaced.length,
+    softViolations: solved.soft?.violations?.length ?? 0,
+    fingerprint: await fingerprint(c, o.routineId)
+  };
+  if (o.preview) throw new PreviewDone(payload);
+  await logEdit(c, {
+    tenantId: ctx.tenantId,
+    routineId: o.routineId,
+    actorId: ctx.userId,
+    action: "resolve",
+    slotId: null,
+    inverse: {
+      op: "resolve",
+      restore: removable.map((s) => s.id),
+      remove: after.filter((s) => !before.some((b) => b.id === s.id)).map((s) => s.id)
+    },
+    labelBn: scopeLabel(o.scope, scoped)
+  });
+  await writeAudit(c, ctx, {
+    action: "rms.routine.resolve",
+    entityType: "routine",
+    entityId: o.routineId,
+    before: { scope: o.scope, affected: scoped.length },
+    after: { moved: summary.moved.length, lost: summary.lost }
+  });
+  return payload;
+}
+function scopeLabel(scope, scoped) {
+  const DAY_BN5 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u0983", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
+  const first = scoped[0];
+  if (scope.kind === "teacher") {
+    return `${possessiveBn(first?.teacherBn ?? "\u09B6\u09BF\u0995\u09CD\u09B7\u0995")} \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
+  }
+  if (scope.kind === "section") {
+    return `${first?.sectionLabel ?? "\u098F\u0987"} \u09B6\u09BE\u0996\u09BE\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
+  }
+  if (scope.kind === "room") {
+    return `${first?.roomLabel ?? "\u098F\u0987"} \u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
+  }
+  return `${DAY_BN5[scope.dayOfWeek] ?? ""}\u09AC\u09BE\u09B0\u09C7\u09B0 \u0995\u09CD\u09B2\u09BE\u09B8\u0997\u09C1\u09B2\u09CB \u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC`;
+}
+async function handler11(req, res) {
+  const cors = corsHeaders([], "POST, OPTIONS");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, cors);
+    res.end();
+    return;
+  }
+  try {
+    const claims = await authenticate(req);
+    requireRole(claims, RESOLVE_ROLES);
+    const db = await sharedDb();
+    const ctx = { tenantId: claims.tid, userId: claims.sub, role: claims.role };
+    if (req.method !== "POST") {
+      json(res, 405, { error: "method_not_allowed" }, cors);
+      return;
+    }
+    const body = await readJson(req);
+    const routineId = String(body.routineId ?? "");
+    if (!UUID_RE10.test(routineId)) {
+      throw new HttpError(400, "\u09B0\u09C1\u099F\u09BF\u09A8 \u09AC\u09C7\u099B\u09C7 \u09A8\u09BF\u09A8", "invalid_routine_id");
+    }
+    const scope = parseScope(body.scope);
+    const preview = body.preview === true;
+    const solver = new RmsSolver(db);
+    try {
+      const out = await db.withTenant(ctx, async (c) => {
+        if (typeof body.fingerprint === "string" && body.fingerprint.length > 0) {
+          const now = await fingerprint(c, routineId);
+          if (now !== body.fingerprint) {
+            throw new HttpError(
+              409,
+              "\u098F\u0987 \u09B0\u09C1\u099F\u09BF\u09A8\u099F\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09AA\u09B0\u09CD\u09A6\u09BE\u09AF\u09BC \u09A6\u09C7\u0996\u09BE\u09A8\u09CB\u09B0 \u09AA\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09C7\u0989 \u09AC\u09A6\u09B2\u09C7 \u09AB\u09C7\u09B2\u09C7\u099B\u09C7\u09A8\u0964 \u09A8\u09A4\u09C1\u09A8 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09A6\u09C7\u0996\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+              "stale_routine",
+              { expected: body.fingerprint, actual: now }
+            );
+          }
+        }
+        return run(c, ctx, { routineId, scope, preview, solver });
+      }, { write: true });
+      json(res, 200, out, cors);
+    } catch (err) {
+      if (err instanceof PreviewDone) {
+        json(res, 200, err.payload, cors);
+        return;
+      }
+      throw err;
+    }
+  } catch (err) {
+    if (err instanceof HttpError) {
+      json(res, err.status, { error: err.code, message: err.message, ...err.detail ?? {} }, cors);
+      return;
+    }
+    const code = err.code;
+    if (code === "NO_TEACHING_PERIODS" || code === "ROUTINE_NOT_DRAFT") {
+      json(res, 409, { error: code, message: err.message }, cors);
+      return;
+    }
+    console.error("[rms/resolve]", err);
+    json(res, 500, {
+      error: "internal_error",
+      message: "\u0986\u09AC\u09BE\u09B0 \u09B9\u09BF\u09B8\u09BE\u09AC \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF \u2014 \u09B0\u09C1\u099F\u09BF\u09A8 \u0986\u0997\u09C7\u09B0 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09A4\u09C7\u0987 \u0986\u099B\u09C7\u0964"
+    }, cors);
+  }
+}
+
 // services/rms-svc/api/index.ts
 var ROUTES = {
   routine: handler,
@@ -6100,9 +6469,12 @@ var ROUTES = {
   // bell times, subject demand and teacher availability being SQL-only.
   setup: handler9,
   // P9-3. READY -> GENERATE -> RESULT, orchestrating the existing solver.
-  generate: handler10
+  generate: handler10,
+  // P9-6. Recalculate one teacher, section, room or day — the same solver,
+  // told to fill only the gaps a scoped removal just made.
+  resolve: handler11
 };
-async function handler11(req, res) {
+async function handler12(req, res) {
   const path = new URL(req.url ?? "/", "http://internal").pathname;
   const sub = path.split("/").filter(Boolean).pop() ?? "";
   const route = ROUTES[sub];
@@ -6117,5 +6489,5 @@ async function handler11(req, res) {
   return route(req, res);
 }
 export {
-  handler11 as default
+  handler12 as default
 };

@@ -108,6 +108,9 @@ export type AuditAction =
   | 'rms.slot.lock'
   | 'rms.slot.unlock'
   | 'rms.slot.undo'
+  // P9-6. A scoped re-solve moves several lessons at once on one person's
+  // instruction; the record needs the scope they chose, not only the rows.
+  | 'rms.routine.resolve'
   | 'rms.routine.publish'
   // P-writers/B-48. Money taken at the counter. The only receipt writer before
   // this was the MFS webhook, and POST /finance/pay is kill-switched.

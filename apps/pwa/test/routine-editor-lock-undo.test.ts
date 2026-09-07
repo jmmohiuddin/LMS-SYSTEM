@@ -67,6 +67,7 @@ const baseGrid = (over: Record<string, unknown> = {}) => ({
     teacherName: 'রফিক স্যার', roomName: 'কক্ষ ১',
     isDouble: false, doubleGroupId: null, parallelPool: null,
     isPinned: false, rowVersion: 7,
+    teacherId: 'aaaaaaaa-0000-4000-8000-00000000000e',
   }],
   undo: [],
   subjects: [], teachers: [], rooms: [],
@@ -299,5 +300,209 @@ describe('P9-5 — the editor’s lock and undo', () => {
     assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}/);
     assert.doesNotMatch(text, /undefined|NaN/);
     assert.doesNotMatch(text, /[0-9]+\s*টি/, 'Bangla numerals before a counter word');
+  });
+});
+
+/**
+ * P9-6 — preview, then apply, from inside the editor.
+ *
+ * The API suite proves the server recalculates the right part and leaves the
+ * rest alone. These are the four things about the SCREEN:
+ *
+ *   1. APPLY IS UNREACHABLE UNTIL A PREVIEW HAS BEEN READ. The draft is a
+ *      school's timetable; changing it should take a deliberate second act,
+ *      and §17 asks for exactly that shape.
+ *
+ *   2. THE PREVIEW SAYS "nothing has changed yet". A screen full of
+ *      before/after lines that has silently already applied them is the
+ *      worst version of this feature.
+ *
+ *   3. THE COUNTS CARRY THEIR OWN LABELS. "৭ / ২৯ / ২" makes a coordinator
+ *      guess which number is which.
+ *
+ *   4. THE MOVED CELLS ARE MARKED, in the accessible name as well as the
+ *      outline — §22 forbids state that is only a colour.
+ */
+const RESOLVE_RESULT = {
+  ok: true,
+  preview: true,
+  routineId: ROUTINE,
+  verdictBn: '২টি ক্লাস নতুন সময়ে বসানো হয়েছে।',
+  fingerprint: '29:141',
+  summary: {
+    affected: 3, pinnedPreserved: 1, unchanged: 26, removed: 2, placed: 2, lost: 0,
+    moved: [
+      { beforeBn: 'নবম-ক · গণিত · রফিক স্যার · রবি ১ নম্বর পিরিয়ড',
+        afterBn: 'নবম-ক · গণিত · রফিক স্যার · সোম ২ নম্বর পিরিয়ড',
+        sectionLabel: 'নবম-ক', subjectBn: 'গণিত' },
+      { beforeBn: 'নবম-ক · বাংলা · সালমা ম্যাডাম · রবি ২ নম্বর পিরিয়ড',
+        afterBn: 'নবম-ক · বাংলা · সালমা ম্যাডাম · সোম ১ নম্বর পিরিয়ড',
+        sectionLabel: 'নবম-ক', subjectBn: 'বাংলা' },
+    ],
+  },
+};
+
+const drawerEl = () =>
+  dom.window.document.querySelector('[role="dialog"]') as HTMLElement | null;
+const drawerButton = (text: string) =>
+  [...(drawerEl()?.querySelectorAll('button') ?? [])]
+    .find((b) => (b.textContent ?? '').includes(text));
+
+describe('P9-6 — scoped re-solve from the editor', () => {
+  beforeEach(() => {
+    grid = baseGrid();
+    sent = [];
+    postReply = { ok: true, body: { ok: true } };
+    drawerEl()?.remove();
+    dom.window.document.querySelectorAll('.ui-scrim').forEach((n) => n.remove());
+    try { localStorage.clear(); } catch { /* jsdom */ }
+  });
+
+  const openResolve = async () => {
+    await mount();
+    buttonNamed('আবার হিসাব করুন')?.click();
+    await settle();
+  };
+
+  test('THE ONE THAT MATTERS — apply is disabled until a preview has been read', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+
+    const apply = drawerButton('প্রয়োগ করুন');
+    assert.ok(apply, 'the control exists');
+    assert.equal(apply.disabled, true,
+      'changing a school’s timetable takes a deliberate second act');
+    assert.equal(sent.length, 0, 'and nothing has been sent yet');
+
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+    assert.equal(sent.at(-1)?.preview, true, 'the review asks for a PREVIEW');
+    assert.equal(drawerButton('প্রয়োগ করুন')?.disabled, false, 'now it is reachable');
+  });
+
+  test('the preview says plainly that nothing has changed yet', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+
+    const text = drawerEl()?.textContent ?? '';
+    assert.match(text, /এখনো কিছুই বদলানো হয়নি/);
+    assert.match(text, /২টি ক্লাস নতুন সময়ে বসানো হয়েছে/, 'the server’s own sentence');
+  });
+
+  test('every count carries the word that says what it counts', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+
+    const text = drawerEl()?.textContent ?? '';
+    for (const label of ['প্রভাবিত ক্লাস', 'অপরিবর্তিত থাকবে', 'পিন করা — অক্ষত',
+                         'কোথাও বসানো যায়নি']) {
+      assert.match(text, new RegExp(label), `missing: ${label}`);
+    }
+    assert.match(text, /পিন করা — অক্ষত: ১টি/, 'the protected count is stated, not implied');
+  });
+
+  test('আগে and পরে are shown for every moved lesson', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+
+    const text = drawerEl()?.textContent ?? '';
+    assert.match(text, /আগে: নবম-ক · গণিত · রফিক স্যার · রবি ১ নম্বর পিরিয়ড/);
+    assert.match(text, /পরে: নবম-ক · গণিত · রফিক স্যার · সোম ২ নম্বর পিরিয়ড/);
+    assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}/, 'no uuid');
+    assert.doesNotMatch(text, /undefined|NaN/);
+  });
+
+  test('applying sends the fingerprint the screen was drawn from', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+    // The preview's response carried the fingerprint; the apply must echo it.
+    postReply = { ok: true, body: { ...RESOLVE_RESULT, preview: false } };
+    drawerButton('প্রয়োগ করুন')?.click();
+    await settle();
+
+    const applied = sent.at(-1) as Record<string, unknown>;
+    assert.equal(applied.preview, false);
+    assert.equal(applied.fingerprint, '29:141',
+      'a re-solve computed against somebody else’s newer routine is the '
+      + 'silent overwrite this prevents');
+  });
+
+  test('a stale routine shows the server’s refusal and applies nothing', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+
+    postReply = { ok: false, body: {
+      error: 'stale_routine',
+      message: 'এই রুটিনটি আপনার পর্দায় দেখানোর পর অন্য কেউ বদলে ফেলেছেন। '
+             + 'নতুন অবস্থা দেখে আবার চেষ্টা করুন।',
+    } };
+    drawerButton('প্রয়োগ করুন')?.click();
+    await settle();
+    assert.match(drawerEl()?.textContent ?? '', /অন্য কেউ বদলে ফেলেছেন/);
+  });
+
+  test('the scope offered follows what is on screen', async () => {
+    // A teacher scope needs a selected lesson to name the teacher; offering
+    // "any teacher in the school" would be a picker for a question nobody
+    // asks from this screen.
+    await mount();
+    buttonNamed('আবার হিসাব করুন')?.click();
+    await settle();
+    const withoutSelection = [...(drawerEl()?.querySelectorAll('option') ?? [])]
+      .map((o) => o.textContent ?? '');
+    assert.equal(withoutSelection.length, 1, 'only the section, with nothing held');
+    assert.match(withoutSelection[0], /নবম-ক/);
+
+    drawerEl()?.remove();
+    dom.window.document.querySelectorAll('.ui-scrim').forEach((n) => n.remove());
+    cell().click();
+    await settle();
+    buttonNamed('আবার হিসাব করুন')?.click();
+    await settle();
+    const withSelection = [...(drawerEl()?.querySelectorAll('option') ?? [])]
+      .map((o) => o.textContent ?? '').join(' | ');
+    assert.match(withSelection, /রফিক স্যার — এই শিক্ষকের সব ক্লাস/);
+    assert.match(withSelection, /বারের সব ক্লাস/);
+  });
+
+  test('§22 — a moved cell is marked in its accessible name, not only its outline', async () => {
+    postReply = { ok: true, body: RESOLVE_RESULT };
+    await openResolve();
+    drawerButton('পর্যালোচনা করুন')?.click();
+    await settle();
+
+    // The apply re-reads the grid; give it a slot id the screen has not seen.
+    grid = baseGrid({
+      slots: [{ ...(baseGrid().slots as Record<string, unknown>[])[0],
+                id: 'ffffffff-0000-4000-8000-00000000000f', dayOfWeek: 1, periodNo: 2 }],
+    });
+    postReply = { ok: true, body: { ...RESOLVE_RESULT, preview: false } };
+    drawerButton('প্রয়োগ করুন')?.click();
+    await settle();
+
+    const moved = root().querySelector('.routine-slot[data-changed="true"]') as HTMLElement;
+    assert.ok(moved, 'the cell that moved is marked');
+    assert.match(moved.getAttribute('aria-label') ?? '', /এইমাত্র সরানো হয়েছে/,
+      'and the fact is in the accessible name, because colour is not a carrier');
+  });
+
+  test('a published routine offers no recalculation at all', async () => {
+    grid = baseGrid({
+      routine: { ...(baseGrid().routine as Record<string, unknown>), status: 'active',
+                 editable: false },
+    });
+    await mount();
+    assert.equal(buttonNamed('আবার হিসাব করুন'), undefined,
+      'draft and published are different things');
   });
 });

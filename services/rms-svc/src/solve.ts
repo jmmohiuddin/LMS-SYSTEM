@@ -387,13 +387,30 @@ export class RmsSolver {
    *   is full. Only the caller knows which drafts are meant to run side by
    *   side, so only the caller may say.
    */
+  /**
+   * @param opts.client
+   *   Run inside the CALLER's transaction instead of opening one. (P9-6)
+   *
+   *   Two things need it, and neither is possible without it. A scoped
+   *   re-solve removes the affected slots and re-places them; if the solve
+   *   commits on its own connection, a failure afterwards leaves the routine
+   *   with the removals applied and nothing put back — the opposite of the
+   *   atomicity §8 requires. And a PREVIEW is the same transaction rolled
+   *   back, which cannot span two connections.
+   *
+   *   Omitted, this behaves exactly as it always has: its own transaction,
+   *   committed on success. Every existing caller omits it.
+   */
   async solve(
     routineId: string, ctx: TenantContext,
-    opts: { alsoBookedAgainst?: readonly string[] } = {},
+    opts: {
+      alsoBookedAgainst?: readonly string[];
+      client?: pg.PoolClient;
+    } = {},
   ): Promise<SolveResult> {
     const startedAt = this.now();
     const siblings = [...new Set(opts.alsoBookedAgainst ?? [])].filter((id) => id !== routineId);
-    return this.db.withTenant(ctx, async (client) => {
+    const run = async (client: pg.PoolClient): Promise<SolveResult> => {
       const routine = await this.loadRoutine(client, routineId);
       const teachingDays = this.teachingDays(routine.weekendDays);
 
@@ -848,7 +865,11 @@ export class RmsSolver {
         routineId, solverRunId, totalDemand, placed: totalPlaced,
         unplaced, soft, shortages, objectiveScore, solverSeconds,
       };
-    });
+    };
+
+    // The caller's transaction, or our own. Nothing inside `run` knows which,
+    // which is what keeps this a reuse rather than a second code path.
+    return opts.client ? run(opts.client) : this.db.withTenant(ctx, run);
   }
 
   /**

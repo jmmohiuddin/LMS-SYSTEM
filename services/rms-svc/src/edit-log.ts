@@ -46,7 +46,10 @@ type Client = {
  */
 export const UNDO_DEPTH = 12;
 
-export type EditAction = 'place' | 'assign' | 'move' | 'remove' | 'lock' | 'unlock';
+export type EditAction =
+  | 'place' | 'assign' | 'move' | 'remove' | 'lock' | 'unlock'
+  /** P9-6. A whole scoped re-solve — one entry for one thing the person asked for. */
+  | 'resolve';
 
 /**
  * What to do to put it back.
@@ -62,7 +65,14 @@ export type Inverse =
   | { op: 'move'; slotId: string; dayOfWeek: number; periodNo: number }
   | { op: 'assign'; slotId: string; subjectId: string | null;
       teacherId: string | null; roomId: string | null }
-  | { op: 'pin'; slotId: string; isPinned: boolean };
+  | { op: 'pin'; slotId: string; isPinned: boolean }
+  /**
+   * P9-6. Put a scoped re-solve back: restore what it removed, remove what
+   * it placed. One entry, because a coordinator asked for one recalculation
+   * and should undo one thing — §18 is explicit that dozens of entries for
+   * one operation is the wrong answer.
+   */
+  | { op: 'resolve'; restore: string[]; remove: string[] };
 
 export interface LogEntry {
   id: string;

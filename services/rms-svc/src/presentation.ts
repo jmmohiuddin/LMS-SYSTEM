@@ -119,3 +119,26 @@ export const UNPLACED_REASON_BN: Record<string, string> = {
 };
 export const unplacedReasonBn = (reason: string): string =>
   UNPLACED_REASON_BN[reason] ?? 'কারণ জানা যায়নি';
+
+/**
+ * A Bangla name in the possessive: "রফিক স্যার" → "রফিক স্যারের".
+ *
+ * Concatenating a name to a noun gives "রফিক স্যার ক্লাসগুলো", which is not
+ * a sentence — Bangla marks the genitive and a reader notices its absence
+ * immediately. The rule is the ordinary one:
+ *
+ *   ends in a vowel (sign or letter)  →  "র"   সালমা → সালমার
+ *   ends in a consonant               →  "ের"  স্যার → স্যারের
+ *
+ * Deliberately not a general morphology engine. This handles the two cases
+ * a person's name actually takes; anything more would be a linguistics
+ * project inside a timetable, and getting the common case right is what
+ * makes the sentence read as written by someone who speaks the language.
+ */
+const BN_VOWEL_ENDINGS = 'অআইঈউঊএঐওঔািীুূৃেৈোৌ';
+export function possessiveBn(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const last = trimmed[trimmed.length - 1];
+  return BN_VOWEL_ENDINGS.includes(last) ? `${trimmed}র` : `${trimmed}ের`;
+}

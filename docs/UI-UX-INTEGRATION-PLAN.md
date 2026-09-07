@@ -1449,3 +1449,48 @@ horizontal overflow at any width (the grid scrolls inside its own
 Latin clock times in the one always-visible column of a Bangla timetable. It
 uses `formatTime(…, 'bn')`, which is the project's convention and was simply
 not being called here.
+
+## P9-6 — scoped re-solve from the editor (2026-09-07)
+
+No new screen. `routine-editor-view.ts` gained one control and one drawer, on
+the canonical components (`openDrawer`, `field`, `button`, `setBusy`,
+`sectionHeading`, `announce`).
+
+**"আবার হিসাব করুন" sits beside undo**, and is available whenever the routine
+is editable — recalculating a part is not a recovery action, it is the
+ordinary response to a change in the school, and hiding it behind having
+edited first would be the wrong mental model.
+
+**The scopes offered follow what is on screen.** This section always; the
+selected lesson's teacher and day when one is held. "Any teacher in the
+school" would be a picker for a question nobody asks from this screen.
+
+**Apply is disabled until a preview has been read.** §17's shape exactly:
+changing a school's timetable takes a deliberate second act. The preview says
+"এখনো কিছুই বদলানো হয়নি" in the same panel as the before/after list, so the
+two facts cannot be separated.
+
+**Every count carries the word that says what it counts** — "প্রভাবিত ক্লাস:
+২৯টি", "পিন করা — অক্ষত: ১টি". "৭ / ২৯ / ২" makes a coordinator guess.
+
+**আগে and পরে, per moved lesson**, as full sentences: "নবম-ক · গণিত · রফিক
+স্যার · রবি ১ নম্বর পিরিয়ড" → "… সোম ২ নম্বর পিরিয়ড". Capped at twelve with
+the remainder counted, because a scoped re-solve that moved forty lessons is
+one nobody reads line by line.
+
+**The moved cells are marked afterwards** with an inset outline AND
+", এইমাত্র সরানো হয়েছে" in the accessible name — §22 forbids state that is
+only a colour. The mark clears on the coordinator's next action rather than
+on a timer: a highlight that vanishes while somebody is still reading is
+worse than none.
+
+**Responsive**: verified at 360, 375, 390, 640, 768, 1024, 1280, 1440 and
+1600, and separately at a REAL 375px viewport where the drawer is exactly
+375 wide with no overflow and no horizontal body scroll. The earlier
+forced-`body.width` reading showed the dialog as over-wide, which was an
+artifact of a fixed-position element sizing itself to the real viewport —
+worth recording, because the same artifact will mislead the next person who
+measures a dialog that way.
+
+**Both themes**: dialog `#FFFFFF` / `#241E1A`, body text `#53443D` /
+`#EDE7DA`.

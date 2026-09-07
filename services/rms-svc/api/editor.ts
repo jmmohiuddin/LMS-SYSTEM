@@ -255,9 +255,12 @@ async function loadGrid(c: Client, sectionId: string) {
     id: string; day_of_week: number; period_no: number;
     subject_bn: string | null; teacher_name: string | null; room_name: string | null;
     is_double: boolean; double_group_id: string | null; parallel_pool: string | null;
-    is_pinned: boolean; row_version: number;
+    is_pinned: boolean; row_version: number; teacher_id: string | null;
   }>(
-    `SELECT s.id, s.day_of_week, s.period_no,
+    // P9-6 needs `teacher_id`: a scoped re-solve by teacher is the brief's own
+    // example, and the grid could name a teacher without being able to say
+    // which one to the API.
+    `SELECT s.id, s.day_of_week, s.period_no, s.teacher_id,
             sub.name_bn AS subject_bn,
             u.full_name_bn AS teacher_name,
             -- rooms has code (NOT NULL) and name_bn (nullable). It has no
@@ -339,6 +342,7 @@ async function loadGrid(c: Client, sectionId: string) {
       subjectBn: s.subject_bn, teacherName: s.teacher_name, roomName: s.room_name,
       isDouble: s.is_double, doubleGroupId: s.double_group_id,
       parallelPool: s.parallel_pool, isPinned: s.is_pinned, rowVersion: s.row_version,
+      teacherId: s.teacher_id,
     })),
     // P9-5 §11. What pressing undo would reverse, named — so the button can
     // say "রফিক স্যারের সোমবারের ক্লাস ফিরিয়ে নিন" instead of "undo", and a
@@ -1296,12 +1300,29 @@ async function undo(c: Client, ctx: Ctx, b: SlotBody) {
                 row_version = row_version + 1, updated_at = now()
           WHERE id = $1`,
         [inv.slotId, inv.subjectId, inv.teacherId, inv.roomId]);
-    } else {
+    } else if (inv.op === 'pin') {
       await c.query(
         `UPDATE routine_slots
             SET is_pinned = $2, row_version = row_version + 1,
                 updated_at = now()
           WHERE id = $1`, [inv.slotId, inv.isPinned]);
+    } else {
+      // P9-6. A whole scoped re-solve, reversed as one thing. Order matters:
+      // the placements go FIRST, because restoring the originals into hours
+      // the re-solve filled would collide with the very rows about to be
+      // taken out.
+      if (inv.remove.length > 0) {
+        await c.query(
+          `UPDATE routine_slots
+              SET status = 'removed', row_version = row_version + 1, updated_at = now()
+            WHERE id = ANY($1::uuid[])`, [inv.remove]);
+      }
+      if (inv.restore.length > 0) {
+        await c.query(
+          `UPDATE routine_slots
+              SET status = 'active', row_version = row_version + 1, updated_at = now()
+            WHERE id = ANY($1::uuid[])`, [inv.restore]);
+      }
     }
   }, async (e) => {
     // The hour it wants to go back to has been taken since. Say which class
@@ -1318,8 +1339,11 @@ async function undo(c: Client, ctx: Ctx, b: SlotBody) {
   await writeAudit(c as never, ctx, {
     action: 'rms.slot.undo',
     entityType: 'routine_slot',
-    entityId: inv.slotId,
+    entityId: inv.op === 'resolve' ? null : inv.slotId,
     before: { undidAction: entry.action, labelBn: entry.labelBn },
   });
-  return { ok: true, undid: entry.action, labelBn: entry.labelBn, slotId: inv.slotId };
+  return {
+    ok: true, undid: entry.action, labelBn: entry.labelBn,
+    slotId: inv.op === 'resolve' ? null : inv.slotId,
+  };
 }

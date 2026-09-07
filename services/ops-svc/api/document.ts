@@ -152,15 +152,48 @@ const CONTENT_SERVICE: Partial<Record<DocumentType, string>> = {
 const MAX_BULK = 120;
 
 /**
- * How many lessons one grid cell may hold before the page splits.  (P9-9 §7)
+ * How much of a landscape A4 the grid gets, and what one section costs in it.
  *
- * Six is what a landscape A4 row can carry and still leave the seven period
- * rows readable. Above it a row stops fitting the sheet AT ALL, and
- * `page-break-inside: avoid` has nothing to do but overflow — measured on the
- * 120-section college profile, where grouping by class alone produced a cell
- * of thirty.
+ * MEASURED, by printing the real document to a real PDF with headless Chrome
+ * and reading element heights back out of the rendered page. The first attempt
+ * at this phase asserted a page box of 297mm x 210mm from computed style and
+ * was satisfied; the rasterisation showed EVERY class page spilling onto a
+ * second and third sheet, because the letterhead, the title row and R-5's
+ * signature block were spending 76mm before an hour was drawn. Trimmed, and
+ * with the meta laid out in a row instead of a stack, they spend 48mm.
+ *
+ *   GRID_MM       162mm is what is left of the 210mm page.
+ *
+ *   SECTION_MM    A section's line costs ~5.8mm where the subject fits the
+ *                 column and ~9.8mm where it wraps — and the names that wrap
+ *                 are the real ones: `বাংলাদেশ ও বিশ্বপরিচয়`, `তথ্য ও যোগাযোগ
+ *                 প্রযুক্তি`. 8mm is that spread, weighted toward the wrap,
+ *                 because a page that fits only when no subject is long is a
+ *                 page that spills at the first madrasa.
+ *
+ * A WARNING ABOUT MEASURING THIS. Headless Chrome lays out at 800px unless
+ * told otherwise, which constrains `.doc` to ~212mm rather than 297mm and
+ * wraps almost every cell. Measured that way a section appears to cost 11mm
+ * and the cap comes out at 1 — one page per section, which is the booklet
+ * this phase set out to replace. Measure with `--window-size=1123,794`.
+ *
+ * The cap divides one by the other, per TEACHING row, because what fills a
+ * page is `rows x sections` and schools differ in the first: a madrasa
+ * running ten hours cannot fit the sections a primary school running five
+ * can. A constant would have been right for one of them.
  */
-const MAX_LESSONS_PER_CELL = 6;
+const GRID_MM = 162;
+const SECTION_MM = 8;
+const HEAD_AND_BANDS_MM = 20;
+/**
+ * What a section costs on §9's notice-board sheet, relative to the reading
+ * copy. The type is 22% larger, and the cost is 45% larger — because a wider
+ * glyph does not just take more room, it takes a whole extra LINE the moment
+ * a subject name stops fitting the column, and the names that stop fitting
+ * are the common ones. Scaling by the type ratio alone was tried and the
+ * rasterisation caught it: 10 pages of board sheet came out as 13.
+ */
+const BOARD_SCALE = 1.45;
 
 const MONTHS_BN = [
   'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
@@ -307,10 +340,19 @@ function routineScopeOf(q: URLSearchParams): RoutineScope {
   return raw as RoutineScope;
 }
 
-/** Paper that follows the content, not the document type. */
+/**
+ * Paper that follows the content, not the document type.
+ *
+ * `board=1` is §9's notice-board sheet: the same grid at a size meant to be
+ * read standing a metre from the wall. It changes only type scale, so the
+ * board copy and the file copy are the same routine — a mode that also
+ * dropped or reordered anything would give a school two documents to
+ * reconcile the next time somebody edited the timetable.
+ */
 function extraCssFor(type: DocumentType, q: URLSearchParams): string {
   if (type !== 'routine_sheet') return '';
-  return routineSheetCss(routineOrientation(routineScopeOf(q)));
+  const board = q.get('board') === '1';
+  return routineSheetCss(routineOrientation(routineScopeOf(q)), board);
 }
 
 /**
@@ -326,6 +368,7 @@ async function routineSheet(
   c: Client, ctx: Ctx, q: URLSearchParams,
 ): Promise<BrandedSection[]> {
   const scope = routineScopeOf(q);
+  const board = q.get('board') === '1';
   const idParam = q.get('id') ?? '';
   const id = idParam === 'self' ? ctx.userId : idParam;
 
@@ -345,34 +388,25 @@ async function routineSheet(
   // period 1 are different hours with the same number, so a single grid keyed
   // on period number would print two different times in one row.
   //
-  // Within a shift, pages are split until NO CELL IS TALLER THAN A PAGE.
-  // That is the only rule that works, and scope alone is not it:
+  // Within a shift, a booklet is one page PER CLASS — that is the grouping a
+  // school reads by, and §8 asks for it to survive. A class wider than one
+  // page splits into further CLASS pages of six sections each, never into
+  // per-section pages: the first version did the latter and turned a
+  // 120-section college into 120 sheets with no class structure left in them.
   //
-  //   a 20-section school, institution scope → 5 classes of 4 sections, so a
-  //   cell holds 4 and a class fits one page. Five pages, one per class.
+  //   20-section school  → 5 classes of 4  → 5 pages, one per class
+  //   120-section college → 4 classes of 30 → 20 pages, 5 per class
   //
-  //   a 120-section college, institution scope → 4 classes of 30 sections.
-  //   Grouping by class gives a cell of THIRTY lessons — measured: ~90 lines,
-  //   far taller than a landscape A4 — and `page-break-inside: avoid` cannot
-  //   rescue a row that does not fit a page at all. Those split again, one
-  //   page per section.
-  //
-  // §7 asks for exactly this: multiple clean pages rather than text shrunk
-  // until nobody can read it. 120 single-section sheets is also what a
-  // college's office actually prints — one for each classroom door.
+  // Each page names its class and lists the sections on it, so a reader
+  // holding sheet three of five knows what they are holding.
   const booklet = scope === 'institution' || scope === 'group'
                   || scope === 'stream' || scope === 'class';
 
-  const depth = (lessons: typeof t.lessons) => {
-    const per = new Map<string, number>();
-    for (const l of lessons) {
-      const k = `${l.dayOfWeek}|${l.periodNo}`;
-      per.set(k, (per.get(k) ?? 0) + 1);
-    }
-    return Math.max(0, ...per.values());
-  };
-
   const pages: BrandedSection[] = [];
+  // §12 needs "page x of y", and y is not known until every page is built.
+  // Collected as data first, rendered once the count is in.
+  const specs: Array<Parameters<typeof buildRoutineSheet>[0]> = [];
+
   for (const r of t.routines) {
     const periods = t.periods.filter((p) => p.routineId === r.id);
     const mine = t.lessons.filter((l) => l.routineId === r.id);
@@ -382,7 +416,7 @@ async function routineSheet(
     };
 
     if (!booklet) {
-      pages.push(buildRoutineSheet({ ...common, scopeTitle: t.titleBn, lessons: mine }));
+      specs.push({ ...common, scopeTitle: t.titleBn, lessons: mine });
       continue;
     }
 
@@ -399,28 +433,31 @@ async function routineSheet(
 
     for (const key of [...byClass.keys()].sort()) {
       const lessons = byClass.get(key)!;
-      const classBn = lessons[0]?.classBn ?? key.split('|')[1];
-      if (depth(lessons) <= MAX_LESSONS_PER_CELL) {
-        pages.push(buildRoutineSheet({
-          // The page is a class's, so it says the class — and its cells then
-          // only have to distinguish the SECTIONS within it.
-          ...common, scopeKind: 'class', scopeTitle: classBn, lessons,
-        }));
-        continue;
-      }
-      const bySection = new Map<string, typeof lessons>();
-      for (const l of lessons) {
-        const k = l.sectionLabel ?? '';
-        if (!bySection.has(k)) bySection.set(k, []);
-        bySection.get(k)!.push(l);
-      }
-      for (const k of [...bySection.keys()].sort()) {
-        pages.push(buildRoutineSheet({
-          ...common, scopeKind: 'section',
-          scopeTitle: `${classBn} — ${k}`, lessons: bySection.get(k)!,
-        }));
+      const classBn = lessons[0]?.classBn ?? key.split('|')[1] ?? '';
+      const sections = [...new Set(lessons.map((l) => l.sectionLabel ?? ''))].sort();
+      // Only TEACHING rows carry lessons; a break is a one-line band.
+      const rows = Math.max(1,
+        periods.filter((p) => (p.kind ?? 'teaching') === 'teaching').length);
+      const perPage = Math.max(1, Math.min(8, Math.floor(
+        (GRID_MM - HEAD_AND_BANDS_MM) / rows
+        / (SECTION_MM * (board ? BOARD_SCALE : 1)))));
+
+      for (let i = 0; i < sections.length; i += perPage) {
+        const chunk = new Set(sections.slice(i, i + perPage));
+        specs.push({
+          // The page stays a CLASS page even when a class needs several of
+          // them — the title says the class, and the sheet's own caption says
+          // which sections are on this one.
+          ...common, scopeKind: 'class', scopeTitle: classBn,
+          lessons: lessons.filter((l) => chunk.has(l.sectionLabel ?? '')),
+        });
       }
     }
+  }
+
+  for (const [i, spec] of specs.entries()) {
+    pages.push(buildRoutineSheet(
+      specs.length > 1 ? { ...spec, pageNo: i + 1, pageCount: specs.length } : spec));
   }
   return pages;
 }

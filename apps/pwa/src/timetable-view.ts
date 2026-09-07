@@ -33,7 +33,7 @@ import {
 } from './ui/index.ts';
 import { refuseUnlessOk, isDenied } from './http-status.ts';
 import {
-  formatCount, formatTime, formatDayMonth,
+  formatCount, formatTime, formatDayMonth, toBanglaDigits,
 } from '../../../packages/ui-core/src/format.ts';
 import type { Auth } from './auth.ts';
 
@@ -57,6 +57,8 @@ export interface RoutineHead {
 }
 export interface Period {
   routineId: string; periodNo: number; labelBn: string; startsAt: string; endsAt: string;
+  /** 'teaching', or the break the school observes at this hour. */
+  kind: string;
 }
 export interface Offer {
   scope: string;
@@ -308,10 +310,36 @@ export class TimetableView {
 
     const tbody = el(d, 'tbody');
     for (const p of periods) {
+      // §5. Tiffin, assembly and জোহর are rows of this grid, not gaps in it.
+      // The read used to filter them out entirely; a school builds its day
+      // around the break, and a grid of nine unbroken hours is not the day
+      // anybody in the building actually works.
+      if ((p.kind ?? 'teaching') !== 'teaching') {
+        const band = el(d, 'tr', { className: 'routine-band' });
+        const td = el(d, 'td', {
+          attrs: { colspan: String(data.days.length + 1) } });
+        td.append(el(d, 'span', {
+          className: 'routine-band-name',
+          text: toBanglaDigits(p.labelBn) }));
+        td.append(el(d, 'span', {
+          className: 'routine-band-time',
+          text: `${formatTime(p.startsAt, 'bn')}\u2013${formatTime(p.endsAt, 'bn')}` }));
+        band.append(td);
+        tbody.append(band);
+        continue;
+      }
       const tr = el(d, 'tr');
       const th = el(d, 'th', { className: 'routine-grid-period', attrs: { scope: 'row' } });
+      // The school's own label for the hour, not a number counted off the
+      // teaching rows. `period_no` is a POSITION in the day and tiffin holds
+      // one of them, so the hour a school calls '৫ম' is `period_no` 6 — and
+      // counting printed '৬' over it. `formatCount` remains the fallback for
+      // a template that left the label blank.
       th.append(el(d, 'span', {
-        className: 'routine-grid-no', text: `${formatCount(p.periodNo, 'bn')}` }));
+        className: 'routine-grid-no',
+        text: p.labelBn?.trim()
+          ? toBanglaDigits(p.labelBn.trim())
+          : formatCount(p.periodNo, 'bn') }));
       // Its own class, not `routine-slot-meta`: that one also carries teacher
       // and room NAMES, and `--font-bn-num` on it would move their letters
       // too. This span is a clock time and nothing else.

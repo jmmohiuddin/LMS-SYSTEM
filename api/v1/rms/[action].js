@@ -7178,10 +7178,11 @@ async function readTimetable(c, scope, id, role, yearId) {
   const { rows: periods } = await c.query(
     `SELECT r.id AS routine_id, pd.period_no, pd.label_bn,
             to_char(pd.starts_at, 'HH24:MI') AS starts_at,
-            to_char(pd.ends_at, 'HH24:MI') AS ends_at
+            to_char(pd.ends_at, 'HH24:MI') AS ends_at,
+            pd.kind::text AS kind
        FROM routines r
        JOIN period_definitions pd ON pd.template_id = r.period_template_id
-      WHERE r.id = ANY($1::uuid[]) AND pd.kind = 'teaching'
+      WHERE r.id = ANY($1::uuid[])
       ORDER BY r.shift, pd.period_no`,
     [routineIds]
   );
@@ -7221,7 +7222,8 @@ async function readTimetable(c, scope, id, role, yearId) {
       periodNo: p.period_no,
       labelBn: p.label_bn,
       startsAt: p.starts_at,
-      endsAt: p.ends_at
+      endsAt: p.ends_at,
+      kind: p.kind
     })),
     lessons: lessons.map((l) => ({
       routineId: l.routine_id,

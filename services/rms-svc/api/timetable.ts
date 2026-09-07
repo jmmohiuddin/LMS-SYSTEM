@@ -87,7 +87,25 @@ interface Lesson {
   classLevel: number | null;
   isParallel: boolean;
 }
-interface Period { routineId: string; periodNo: number; labelBn: string; startsAt: string; endsAt: string }
+interface Period {
+  routineId: string; periodNo: number; labelBn: string;
+  startsAt: string; endsAt: string;
+  /**
+   * 'teaching' | 'tiffin' | 'assembly' | 'prayer' | 'games' | 'study' | 'break'.
+   *
+   * Carried, not filtered. This query used to end `AND pd.kind = 'teaching'`,
+   * which threw away the সমাবেশ, টিফিন and জোহর that migration 012 seeds into
+   * every school's template — so the break a school actually builds its day
+   * around never reached the screen or the printed sheet.
+   *
+   * It also broke the period NUMBERS. `period_no` is a position in the day,
+   * not a count of teaching hours: in the day shift tiffin holds position 5,
+   * so the hour the school itself labels '৫ম' is `period_no` 6. Dropping the
+   * non-teaching rows and then numbering what was left printed '৬ষ্ঠ' over a
+   * period every teacher in the building calls the fifth.
+   */
+  kind: string;
+}
 
 /**
  * May this caller ask for this scope, and about this subject?
@@ -299,14 +317,15 @@ export async function readTimetable(
 
   const { rows: periods } = await c.query<{
     routine_id: string; period_no: number; label_bn: string;
-    starts_at: string; ends_at: string;
+    starts_at: string; ends_at: string; kind: string;
   }>(
     `SELECT r.id AS routine_id, pd.period_no, pd.label_bn,
             to_char(pd.starts_at, 'HH24:MI') AS starts_at,
-            to_char(pd.ends_at, 'HH24:MI') AS ends_at
+            to_char(pd.ends_at, 'HH24:MI') AS ends_at,
+            pd.kind::text AS kind
        FROM routines r
        JOIN period_definitions pd ON pd.template_id = r.period_template_id
-      WHERE r.id = ANY($1::uuid[]) AND pd.kind = 'teaching'
+      WHERE r.id = ANY($1::uuid[])
       ORDER BY r.shift, pd.period_no`,
     [routineIds]);
 
@@ -344,7 +363,7 @@ export async function readTimetable(
     })),
     periods: periods.map((p): Period => ({
       routineId: p.routine_id, periodNo: p.period_no, labelBn: p.label_bn,
-      startsAt: p.starts_at, endsAt: p.ends_at,
+      startsAt: p.starts_at, endsAt: p.ends_at, kind: p.kind,
     })),
     lessons: lessons.map((l): Lesson => ({
       routineId: l.routine_id, dayOfWeek: l.day_of_week, periodNo: l.period_no,

@@ -2998,6 +2998,20 @@ input.ui-sr-only, select.ui-sr-only, textarea.ui-sr-only {
 .routine-grid-time { font-family: var(--font-bn-num); font-size: var(--text-3xs);
   color: var(--c-ink-2); line-height: 1.3; white-space: nowrap; }
 .routine-grid-time { color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
+/* P9-9 §5. The break, on screen. Its own row spanning the whole grid — the
+   same shape the printed sheet gives it, so the screen a head checks and
+   the paper they pin up show the same day. This is SCREEN styling; the
+   sheet's own band is in `routineSheetCss()` and shares nothing but the
+   idea (§22). */
+.routine-band td { background: var(--c-surface-2); text-align: center;
+  border-top: 2px solid var(--c-border-strong, var(--c-ink-3));
+  border-bottom: 2px solid var(--c-border-strong, var(--c-ink-3));
+  padding: 4px 6px !important; }
+.routine-band-name { font-weight: 700; letter-spacing: .08em;
+  color: var(--c-ink-1); }
+.routine-band-time { margin-inline-start: 8px; font-size: var(--text-3xs);
+  color: var(--c-ink-3); font-family: var(--font-bn-num); }
+
 .routine-grid-cell { min-width: 108px; }
 .routine-grid-cell > span { display: block; }
 .routine-grid-subject { font-weight: 600; color: var(--c-ink-1); }

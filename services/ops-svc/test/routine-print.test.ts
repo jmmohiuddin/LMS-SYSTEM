@@ -69,9 +69,13 @@ const html = async (qs: string, token: string): Promise<string> =>
   (await get(qs, token)).raw ?? '';
 
 /** How many lessons sit in the deepest cell of a printed page. */
+// How many LINES the deepest cell holds. A dense sheet's cell is one
+// `rt-line` per section; a single-lesson sheet's is one `rt-lesson`. Counting
+// only the latter reported 0 for every class page and would have let the
+// density regression this phase fixed come straight back.
 const worstCell = (h: string): number => Math.max(0,
   ...[...h.matchAll(/<td>([\s\S]*?)<\/td>/g)]
-    .map((m) => (m[1].match(/rt-lesson/g) ?? []).length));
+    .map((m) => (m[1].match(/rt-line|rt-lesson/g) ?? []).length));
 const pageCount = (h: string) => (h.match(/<main class="doc">/g) ?? []).length;
 
 const publishAll = async () => {
@@ -280,7 +284,9 @@ describe('P9-9 — the printed routine', { skip }, () => {
       assert.doesNotMatch(h, /undefined|NaN|\[object/, `${scope} printed undefined`);
       assert.doesNotMatch(h, /ShikhonBD/i, `${scope} carries the platform brand`);
       assert.match(h, /পি৯৯ উচ্চ বিদ্যালয়/, `${scope} is missing the school`);
-      assert.match(h, /rt-no">১ম</, `${scope} has no Bangla ordinal`);
+      // The school's own name for the hour, not a number counted off the
+      // teaching rows — this fixture labels its periods '১ নম্বর'.
+      assert.match(h, /rt-no">১ নম্বর</, `${scope} has no period label`);
       assert.match(h, /০৯:০০–০৯:৪৫/, `${scope} has no clock time`);
     }
   });
@@ -293,6 +299,64 @@ describe('P9-9 — the printed routine', { skip }, () => {
       'and the page says which class it is, not just the school');
     // Two sections in the class, so a cell holds two — well inside the bound.
     assert.equal(worstCell(h), 2);
+  });
+
+  test('§8 — a booklet page carries its own number, a single sheet does not', async () => {
+    await publishAll();
+    // This fixture is one class of two sections, which is exactly one page,
+    // and "page 1 of 1" is noise on a sheet somebody pins to a door.
+    const one = await html('type=routine_sheet&scope=institution', headTok);
+    assert.equal(pageCount(one), 1);
+    assert.doesNotMatch(one, /পৃষ্ঠা/);
+    // Every page still foots with the version and the date, so a sheet torn
+    // off a board says which routine it is.
+    assert.match(one, /<div class="rt-foot"><span>সংস্করণ/);
+    assert.match(one, /<span class="rt-sign">প্রধান শিক্ষক<\/span>/);
+  });
+
+  test('§9 — the board sheet is the same routine, set larger', async () => {
+    await publishAll();
+    const read  = await html('type=routine_sheet&scope=institution', headTok);
+    const board = await html('type=routine_sheet&scope=institution&board=1', headTok);
+    // Bigger type…
+    const size = (h: string) => Number(h.match(/\.rt-no\{[^}]*font-size:([\d.]+)px/)![1]);
+    assert.ok(size(board) > size(read), `${size(board)} vs ${size(read)}`);
+    // …and the SAME hours, in the same order. A board copy that dropped or
+    // reordered anything would give a school two documents to reconcile.
+    const hours = (h: string) =>
+      [...h.matchAll(/<span class="rt-no">([^<]*)<\/span>/g)].map((m) => m[1]).join();
+    assert.equal(hours(board), hours(read));
+  });
+
+  test('§13 — a dense sheet spends its width on the subject, not the room', async () => {
+    await publishAll();
+    // The class page answers "which subject, and who takes it". Carrying the
+    // room as well wraps every line to two and halves what fits on a sheet —
+    // measured, and the reason this rule exists rather than a preference.
+    const klass = await html(`type=routine_sheet&scope=class&id=${KLASS}`, headTok);
+    assert.match(klass, /<span class="rt-who">রফিক স্যার<\/span>/);
+    assert.doesNotMatch(klass, /R-1/, 'the room is not on a class sheet');
+    // The section's own sheet has one lesson per cell and the room to say it.
+    const sec = await html(`type=routine_sheet&scope=section&id=${SEC_A}`, headTok);
+    assert.match(sec, /R-1/, 'but it IS on the section sheet');
+  });
+
+  test('§5 — a break the school observes reaches the paper', async () => {
+    await publishAll();
+    // `period_definitions.kind` has seven values and this read used to filter
+    // on `kind = 'teaching'`, so tiffin never left the database. A grid of
+    // unbroken hours is not the day anybody in the building works.
+    const { rows } = await asBootstrap(db, head, (c) => c.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM period_definitions
+        WHERE template_id = $1 AND kind <> 'teaching'`, [TPL]));
+    const breaks = rows[0]?.n ?? 0;
+    const h = await html(`type=routine_sheet&scope=class&id=${KLASS}`, headTok);
+    assert.equal((h.match(/<tr class="rt-band">/g) ?? []).length, breaks,
+      'every non-teaching period is a band, and only those');
+    if (breaks > 0) {
+      // Across the whole grid, not a cell in one day column.
+      assert.match(h, /<tr class="rt-band"><td colspan="6">/);
+    }
   });
 
   test('§7 — no cell is ever deep enough to outgrow a page', async () => {

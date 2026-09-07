@@ -1054,13 +1054,46 @@ superseded are unprintable without a check: they answer `409 not_published`.
 
 **Orientation follows content**: portrait for section / teacher / room /
 student (one lesson a cell), landscape for institution / class / group /
-stream (a cell stacks every section running that hour).
+stream (a cell carries one line per section running that hour).
 
-**Pages split until no cell holds more than six lessons.** Forced by
-measurement, not chosen: a 120-section college has only four classes, so
-grouping by class gave a cell of thirty — a row taller than the sheet, which
-`page-break-inside: avoid` cannot rescue. It prints 120 single-section pages
-(worst cell 1, 100 ms, 521 kB); a 20-section school prints five, one per class.
+**A dense cell is one LINE per section** — `ক  গণিত · রফিক` — with the section
+label in a fixed column so the eye runs down it. The first version gave each
+lesson four lines (subject, class-section, teacher, room), so a four-section
+class put sixteen lines in a cell and the grid compressed into a grey band.
+The room came off the dense sheet to buy the fit: measured, it costs 11.2mm a
+section with the room and 8.4mm without, which is one page against two. It is
+still on the section's, the teacher's and the room's own sheets.
+
+**The hour is called what the school calls it.** `period_no` is a POSITION in
+the day, not a count of teaching hours, and tiffin holds position 5 of the
+seeded day shift — so the hour a school labels `৫ম` is `period_no` 6, and
+numbering the rows printed `৬ষ্ঠ` over it for the whole afternoon. The sheet
+and the screen now read `period_definitions.label_bn`.
+
+**Breaks are on the page.** `period_kind` has seven values and migration 012
+seeds সমাবেশ, টিফিন and জোহর into every school; the read ended
+`AND pd.kind = 'teaching'` and threw them away. A break is now a band across
+the full width of the grid, ruled top and bottom.
+
+**A class too wide for a page splits into more CLASS pages**, never into
+per-section pages, at N sections a page — N computed from the school's own
+teaching-period count, because what fills a page is `rows × sections`. Every
+page names its class and lists the sections on it. `board=1` is the
+notice-board sheet: the same grid, larger type, and a cap that knows a 22%
+larger face costs 45% more page.
+
+**Verified by rasterisation** (headless Chrome → PDF → PyMuPDF, both already
+on the machine; nothing added to the repo). One document page is one sheet of
+A4 on all twenty sheets across four benchmark profiles. That capture is what
+found the real defect: computed style said the page box was 297mm × 210mm and
+every class page was still spilling onto a second and third sheet.
+
+| profile | sections | institution booklet | ms | kB |
+|---|---|---|---|---|
+| small | 20 | 10 pages | 41 | 104 |
+| medium | 40 | 20 pages | 48 | 208 |
+| large, 2 shifts | 80 | 40 pages | 65 | 420 |
+| college, 2 shifts | 120 | 60 pages | 87 | 622 |
 
 `CONTENT_SERVICE` maps it to nothing, like `id_card` and
 `transfer_certificate`: there is no `routine` service to switch off, because

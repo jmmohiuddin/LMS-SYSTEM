@@ -5263,19 +5263,26 @@ var ROUTINE_SCOPE_BN = {
   room: "\u0995\u0995\u09CD\u09B7\u09C7\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8",
   student: "\u09B6\u09BF\u0995\u09CD\u09B7\u09BE\u09B0\u09CD\u09A5\u09C0\u09B0 \u09B0\u09C1\u099F\u09BF\u09A8"
 };
+function routineIsDense(scope) {
+  return scope === "institution" || scope === "class" || scope === "group" || scope === "stream";
+}
 function routineOrientation(scope) {
-  return scope === "institution" || scope === "class" || scope === "group" || scope === "stream" ? "landscape" : "portrait";
+  return routineIsDense(scope) ? "landscape" : "portrait";
 }
 function omit(scope) {
   return {
     teacher: scope === "teacher",
-    room: scope === "room",
+    room: scope === "room" || routineIsDense(scope),
     section: scope === "section" || scope === "student"
   };
+}
+function isBreak(p) {
+  return (p.kind ?? "teaching") !== "teaching";
 }
 function buildRoutineSheet(d, locale = "bn") {
   const bn = locale === "bn";
   const skip = omit(d.scopeKind);
+  const dense = routineIsDense(d.scopeKind);
   const byCell = /* @__PURE__ */ new Map();
   for (const l of d.lessons) {
     const k = `${l.dayOfWeek}|${l.periodNo}`;
@@ -5283,30 +5290,45 @@ function buildRoutineSheet(d, locale = "bn") {
     byCell.get(k).push(l);
   }
   const head = [
-    `<th class="rt-period-col">${escapeHtml(bn ? "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1" : "Period")}</th>`,
+    `<th class="rt-period-col">${escapeHtml(bn ? "\u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1 \u0993 \u09B8\u09AE\u09AF\u09BC" : "Period & time")}</th>`,
     ...d.days.map((day2) => `<th>${escapeHtml(bn ? `${day2.bn}\u09AC\u09BE\u09B0` : day2.bn)}</th>`)
   ].join("");
+  const detail = (l) => {
+    const bits = [];
+    if (!skip.teacher && l.teacherBn) bits.push(l.teacherBn);
+    if (!skip.room && l.roomBn) bits.push(l.roomBn);
+    return bits.length ? escapeHtml(bits.join(" \xB7 ")) : "";
+  };
   const rows = d.periods.map((p) => {
+    if (isBreak(p)) {
+      return `<tr class="rt-band"><td colspan="${d.days.length + 1}"><span class="rt-band-name">${escapeHtml(
+        bn ? toBanglaDigits(p.labelBn) : p.labelBn
+      )}</span><span class="rt-band-time">${escapeHtml(
+        `${formatTime(p.startsAt, locale)}\u2013${formatTime(p.endsAt, locale)}`
+      )}</span></td></tr>`;
+    }
     const cells = d.days.map((day2) => {
       const here = byCell.get(`${day2.dow}|${p.periodNo}`) ?? [];
       if (here.length === 0) return '<td class="rt-empty">\u2014</td>';
       const inner = here.map((l) => {
-        const lines = [`<b>${escapeHtml(l.subjectBn ?? (bn ? "\u0995\u09CD\u09B2\u09BE\u09B8" : "Class"))}</b>`];
-        if (!skip.section && l.sectionLabel) {
-          lines.push(escapeHtml(
+        const subject = `<b>${escapeHtml(l.subjectBn ?? (bn ? "\u0995\u09CD\u09B2\u09BE\u09B8" : "Class"))}</b>`;
+        const who = detail(l);
+        const split = l.isParallel ? ` <i>${escapeHtml(bn ? "\u09AC\u09BF\u09AD\u09BE\u099C\u09BF\u09A4" : "split")}</i>` : "";
+        if (dense && !skip.section) {
+          return `<div class="rt-line"><span class="rt-sec">${escapeHtml(l.sectionLabel ?? "\xB7")}</span><span class="rt-what">${subject}` + (who ? ` <span class="rt-who">${who}</span>` : "") + split + "</span></div>";
+        }
+        const line2 = [
+          skip.section || !l.sectionLabel ? "" : escapeHtml(
             `${l.classBn ? `${l.classBn}-` : ""}${l.sectionLabel}`
-          ));
-        }
-        if (!skip.teacher && l.teacherBn) lines.push(escapeHtml(l.teacherBn));
-        if (!skip.room && l.roomBn) lines.push(escapeHtml(l.roomBn));
-        if (l.isParallel) {
-          lines.push(`<i>${escapeHtml(bn ? "\u09AC\u09BF\u09AD\u09BE\u099C\u09BF\u09A4" : "split")}</i>`);
-        }
-        return `<div class="rt-lesson">${lines.join("<br>")}</div>`;
+          ),
+          who
+        ].filter(Boolean).join(" \xB7 ");
+        return `<div class="rt-lesson">${subject}${split}` + (line2 ? `<span class="rt-who">${line2}</span>` : "") + "</div>";
       }).join("");
       return `<td>${inner}</td>`;
     }).join("");
-    return `<tr><th class="rt-period" scope="row"><span class="rt-no">${escapeHtml(bn ? ordinalBn(p.periodNo) : String(p.periodNo))}</span><span class="rt-time">${escapeHtml(
+    const label = p.labelBn?.trim() ? bn ? toBanglaDigits(p.labelBn.trim()) : p.labelBn.trim() : bn ? ordinalBn(p.periodNo) : String(p.periodNo);
+    return `<tr><th class="rt-period" scope="row"><span class="rt-no">${escapeHtml(label)}</span><span class="rt-time">${escapeHtml(
       `${formatTime(p.startsAt, locale)}\u2013${formatTime(p.endsAt, locale)}`
     )}</span></th>` + cells + "</tr>";
   }).join("");
@@ -5318,6 +5340,18 @@ function buildRoutineSheet(d, locale = "bn") {
   if (d.publishedAt) {
     meta.push({ label: bn ? "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6" : "Published", value: date(d.publishedAt, locale) });
   }
+  const sections = dense && !skip.section ? [...new Set(d.lessons.map((l) => l.sectionLabel).filter(Boolean))] : [];
+  const caption = sections.length ? `<p class="rt-sections">${escapeHtml(
+    (bn ? "\u09B6\u09BE\u0996\u09BE: " : "Sections: ") + sections.join(", ")
+  )}</p>` : "";
+  const foot = [
+    `${escapeHtml(bn ? "\u09B8\u0982\u09B8\u09CD\u0995\u09B0\u09A3" : "Version")} ${escapeHtml(num(d.version, locale))}`,
+    d.publishedAt ? `${escapeHtml(bn ? "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6" : "Published")} ${escapeHtml(date(d.publishedAt, locale))}` : ""
+  ].filter(Boolean).join(" \xB7 ");
+  const pager = d.pageNo && d.pageCount ? `<span>${escapeHtml(bn ? `\u09AA\u09C3\u09B7\u09CD\u09A0\u09BE ${num(d.pageNo, locale)} / ${num(d.pageCount, locale)}` : `Page ${d.pageNo} / ${d.pageCount}`)}</span>` : "";
+  const sign3 = `<span class="rt-sign">${escapeHtml(
+    bn ? "\u09AA\u09CD\u09B0\u09A7\u09BE\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995" : "Head of Institution"
+  )}</span>`;
   const empty = d.lessons.length === 0;
   return {
     // The letterhead above already carries the institution's name, so the
@@ -5326,30 +5360,69 @@ function buildRoutineSheet(d, locale = "bn") {
     // Every other scope names the part it is of, which the letterhead cannot.
     title: d.scopeKind === "institution" ? ROUTINE_SCOPE_BN[d.scopeKind] : `${ROUTINE_SCOPE_BN[d.scopeKind]} \u2014 ${d.scopeTitle}`,
     meta,
-    bodyHtml: empty ? `<p class="doc-note">${escapeHtml(bn ? "\u098F\u0987 \u0985\u0982\u09B6\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964" : "The published routine has no classes for this selection.")}</p>` : `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`,
-    // A timetable is the institution's statement about its own week; the head
-    // signs it, exactly as they sign a transfer certificate.
-    signatureCaption: bn ? "\u09AA\u09CD\u09B0\u09A7\u09BE\u09A8 \u09B6\u09BF\u0995\u09CD\u09B7\u0995" : "Head of Institution"
+    bodyHtml: empty ? `<p class="doc-note">${escapeHtml(bn ? "\u098F\u0987 \u0985\u0982\u09B6\u09C7\u09B0 \u099C\u09A8\u09CD\u09AF \u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8\u09C7 \u0995\u09CB\u09A8\u09CB \u0995\u09CD\u09B2\u09BE\u09B8 \u09A8\u09C7\u0987\u0964" : "The published routine has no classes for this selection.")}</p>` : caption + `<table class="doc-table rt-grid"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table><div class="rt-foot"><span>${foot}</span>${pager}${sign3}</div>`,
+    // A timetable is the institution's statement about its own week and the
+    // head signs it — but on a signature LINE in the footer, not in R-5's
+    // 190px block with its 56px blank gap. That block is ~30mm at the foot of
+    // every page, and a class page was over a sheet of A4 by about 35mm.
+    // Measured, not guessed: see the rasterisation table in PHASE_LOG.
+    showSignature: false
   };
 }
-function routineSheetCss(orientation) {
+function routineSheetCss(orientation, board = false) {
+  const NUM = 'font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif';
+  const s = board ? { grid: 14, no: 19, time: 13, who: 12.5, band: 17, pad: "5px 5px", col: 24, sec: 6 } : { grid: 11.5, no: 14.5, time: 10, who: 10.5, band: 13, pad: "3px 4px", col: 20, sec: 4.5 };
   return [
     `@page{size:A4 ${orientation};margin:0}`,
     // Landscape needs the letterhead's page box to follow it, or the document
     // keeps a 210mm column in the middle of a 297mm sheet.
-    orientation === "landscape" ? ".doc{max-width:297mm;min-height:210mm;padding:12mm 14mm}" : "",
-    ".rt-grid{table-layout:fixed;font-size:10.5px}",
-    ".rt-grid th,.rt-grid td{vertical-align:top;padding:3px 4px}",
-    ".rt-period-col{width:22mm}",
-    ".rt-period{width:22mm;background:#f3f4f6;text-align:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
-    // §5. The two spans whose whole content is a figure take the numeric
-    // face; the lesson cells beside them keep Hind Siliguri for their names.
-    '.rt-no{display:block;font-weight:700;font-size:12px;font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif}',
-    '.rt-time{display:block;font-size:9px;color:#4b5563;white-space:nowrap;font-family:"Noto Sans Bengali","Hind Siliguri",system-ui,sans-serif}',
+    orientation === "landscape" ? ".doc{max-width:297mm;min-height:210mm;padding:9mm 9mm}" : "",
+    // §8. A landscape A4 is 210mm tall and the letterhead, the title row and
+    // the signature were spending 76mm of it before a single hour was drawn.
+    // These overrides are the routine sheet's alone — a receipt and a
+    // transfer certificate are portrait and have the room. Every one was
+    // sized against a rasterised page, not chosen for looks.
+    orientation === "landscape" ? ".doc-head{padding-bottom:5px}.doc-logo{width:42px;height:42px}.doc-org{font-size:16px}.doc-addr,.doc-contact{font-size:10px}.doc-title-row{margin:7px 0 5px;align-items:baseline}.doc-title{font-size:14px}.doc-meta{font-size:10px;display:flex;flex-wrap:wrap;gap:2px 12px}.doc-meta div{margin-bottom:0}.doc-table{margin:4px 0}" : "",
+    // §2. A heavier rule around the outside and under the day header, so the
+    // grid reads as a grid from across a corridor rather than as grey text.
+    `.rt-grid{table-layout:fixed;font-size:${s.grid}px;border:1.5px solid #374151}`,
+    `.rt-grid th,.rt-grid td{vertical-align:top;padding:${s.pad}}`,
+    ".rt-grid thead th{border-bottom:1.5px solid #374151;text-align:center;font-size:1.05em;letter-spacing:.01em}",
+    `.rt-period-col{width:${s.col}mm}`,
+    `.rt-period{width:${s.col}mm;background:#f3f4f6;text-align:center;-webkit-print-color-adjust:exact;print-color-adjust:exact}`,
+    // §5. The hour's own name, large; its clock time under it, still legible.
+    // Neither is metadata — this column is how a reader finds their row.
+    `.rt-no{display:block;font-weight:700;font-size:${s.no}px;line-height:1.25;${NUM}}`,
+    `.rt-time{display:block;font-size:${s.time}px;color:#374151;white-space:nowrap;${NUM}}`,
+    // ── §5 the break band ──
+    // Full width, ruled top and bottom, centred. This is the one row on the
+    // sheet that is not a lesson and it must not look like one.
+    ".rt-band td{background:#e5e7eb;text-align:center;padding:5px 6px;border-top:2px solid #374151;border-bottom:2px solid #374151;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    `.rt-band-name{font-weight:700;font-size:${s.band}px;letter-spacing:.08em}`,
+    `.rt-band-time{margin-inline-start:10px;font-size:${s.time}px;color:#374151;${NUM}}`,
+    // ── the cell ──
+    // A dense sheet: one flex line per section, the label in a column of its
+    // own so the eye runs down it.
+    ".rt-line{display:flex;gap:4px;line-height:1.3;padding:1px 0}",
+    ".rt-line+.rt-line{border-top:1px dotted #d1d5db;margin-top:1px;padding-top:2px}",
+    `.rt-sec{flex:none;min-width:${s.sec}mm;font-weight:700;color:#111827}`,
+    ".rt-what{min-width:0;overflow-wrap:anywhere}",
+    // A single-lesson sheet: subject, then its detail on a second line.
     ".rt-lesson{padding:1px 0;line-height:1.35}",
     ".rt-lesson+.rt-lesson{border-top:1px dotted #d1d5db;margin-top:2px;padding-top:2px}",
-    ".rt-lesson i{font-size:9px;color:#4b5563}",
+    `.rt-who{color:#374151;font-size:${s.who}px}`,
+    ".rt-lesson .rt-who{display:block}",
+    `.rt-line i,.rt-lesson i{font-size:${s.time}px;color:#4b5563}`,
     ".rt-empty{color:#9ca3af;text-align:center}",
+    // §3. Which sections this page carries — the caption that tells a reader
+    // which sheet is theirs when a wide class runs to several.
+    `.rt-sections{margin:0 0 6px;font-size:${s.who}px;color:#374151;font-weight:600}`,
+    // §12. Version, date and page x of y, at the foot of every page.
+    `.rt-foot{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-top:5px;font-size:${s.time}px;color:#4b5563}`,
+    // The signature LINE: room to sign above it, the caption under it. ~11mm
+    // against the block's ~30mm, which is most of what made a class page
+    // spill onto a second sheet.
+    `.rt-sign{flex:none;min-width:44mm;margin-top:${board ? 12 : 9}mm;text-align:center;border-top:1px solid #374151;padding-top:3px;color:#1f2937;font-weight:600}`,
     "@media print{",
     // §6. A routine row is one hour of the school's week and must not be cut
     // in half by a page boundary; the header repeats so page two is readable
@@ -5359,7 +5432,7 @@ function routineSheetCss(orientation) {
     "  .rt-grid tr{page-break-inside:avoid;break-inside:avoid}",
     "  .rt-grid thead{display:table-header-group}",
     "  .rt-grid tbody{break-inside:auto}",
-    "  .rt-lesson{page-break-inside:avoid;break-inside:avoid}",
+    "  .rt-lesson,.rt-line{page-break-inside:avoid;break-inside:avoid}",
     "}"
   ].filter(Boolean).join("");
 }
@@ -5628,10 +5701,11 @@ async function readTimetable(c, scope, id, role, yearId) {
   const { rows: periods } = await c.query(
     `SELECT r.id AS routine_id, pd.period_no, pd.label_bn,
             to_char(pd.starts_at, 'HH24:MI') AS starts_at,
-            to_char(pd.ends_at, 'HH24:MI') AS ends_at
+            to_char(pd.ends_at, 'HH24:MI') AS ends_at,
+            pd.kind::text AS kind
        FROM routines r
        JOIN period_definitions pd ON pd.template_id = r.period_template_id
-      WHERE r.id = ANY($1::uuid[]) AND pd.kind = 'teaching'
+      WHERE r.id = ANY($1::uuid[])
       ORDER BY r.shift, pd.period_no`,
     [routineIds]
   );
@@ -5671,7 +5745,8 @@ async function readTimetable(c, scope, id, role, yearId) {
       periodNo: p.period_no,
       labelBn: p.label_bn,
       startsAt: p.starts_at,
-      endsAt: p.ends_at
+      endsAt: p.ends_at,
+      kind: p.kind
     })),
     lessons: lessons.map((l) => ({
       routineId: l.routine_id,
@@ -5754,7 +5829,10 @@ var CONTENT_SERVICE = {
   attendance_sheet: "attendance"
 };
 var MAX_BULK = 120;
-var MAX_LESSONS_PER_CELL = 6;
+var GRID_MM = 162;
+var SECTION_MM = 8;
+var HEAD_AND_BANDS_MM = 20;
+var BOARD_SCALE = 1.45;
 var MONTHS_BN = [
   "\u099C\u09BE\u09A8\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
   "\u09AB\u09C7\u09AC\u09CD\u09B0\u09C1\u09AF\u09BC\u09BE\u09B0\u09BF",
@@ -5901,10 +5979,12 @@ function routineScopeOf(q) {
 }
 function extraCssFor(type, q) {
   if (type !== "routine_sheet") return "";
-  return routineSheetCss(routineOrientation(routineScopeOf(q)));
+  const board = q.get("board") === "1";
+  return routineSheetCss(routineOrientation(routineScopeOf(q)), board);
 }
 async function routineSheet(c, ctx, q) {
   const scope = routineScopeOf(q);
+  const board = q.get("board") === "1";
   const idParam = q.get("id") ?? "";
   const id = idParam === "self" ? ctx.userId : idParam;
   const [t, days] = await Promise.all([
@@ -5919,15 +5999,8 @@ async function routineSheet(c, ctx, q) {
     );
   }
   const booklet = scope === "institution" || scope === "group" || scope === "stream" || scope === "class";
-  const depth = (lessons) => {
-    const per = /* @__PURE__ */ new Map();
-    for (const l of lessons) {
-      const k = `${l.dayOfWeek}|${l.periodNo}`;
-      per.set(k, (per.get(k) ?? 0) + 1);
-    }
-    return Math.max(0, ...per.values());
-  };
   const pages = [];
+  const specs = [];
   for (const r of t.routines) {
     const periods = t.periods.filter((p) => p.routineId === r.id);
     const mine = t.lessons.filter((l) => l.routineId === r.id);
@@ -5941,7 +6014,7 @@ async function routineSheet(c, ctx, q) {
       periods
     };
     if (!booklet) {
-      pages.push(buildRoutineSheet({ ...common, scopeTitle: t.titleBn, lessons: mine }));
+      specs.push({ ...common, scopeTitle: t.titleBn, lessons: mine });
       continue;
     }
     const byClass = /* @__PURE__ */ new Map();
@@ -5952,33 +6025,33 @@ async function routineSheet(c, ctx, q) {
     }
     for (const key of [...byClass.keys()].sort()) {
       const lessons = byClass.get(key);
-      const classBn = lessons[0]?.classBn ?? key.split("|")[1];
-      if (depth(lessons) <= MAX_LESSONS_PER_CELL) {
-        pages.push(buildRoutineSheet({
-          // The page is a class's, so it says the class — and its cells then
-          // only have to distinguish the SECTIONS within it.
+      const classBn = lessons[0]?.classBn ?? key.split("|")[1] ?? "";
+      const sections = [...new Set(lessons.map((l) => l.sectionLabel ?? ""))].sort();
+      const rows = Math.max(
+        1,
+        periods.filter((p) => (p.kind ?? "teaching") === "teaching").length
+      );
+      const perPage = Math.max(1, Math.min(8, Math.floor(
+        (GRID_MM - HEAD_AND_BANDS_MM) / rows / (SECTION_MM * (board ? BOARD_SCALE : 1))
+      )));
+      for (let i = 0; i < sections.length; i += perPage) {
+        const chunk = new Set(sections.slice(i, i + perPage));
+        specs.push({
+          // The page stays a CLASS page even when a class needs several of
+          // them — the title says the class, and the sheet's own caption says
+          // which sections are on this one.
           ...common,
           scopeKind: "class",
           scopeTitle: classBn,
-          lessons
-        }));
-        continue;
-      }
-      const bySection = /* @__PURE__ */ new Map();
-      for (const l of lessons) {
-        const k = l.sectionLabel ?? "";
-        if (!bySection.has(k)) bySection.set(k, []);
-        bySection.get(k).push(l);
-      }
-      for (const k of [...bySection.keys()].sort()) {
-        pages.push(buildRoutineSheet({
-          ...common,
-          scopeKind: "section",
-          scopeTitle: `${classBn} \u2014 ${k}`,
-          lessons: bySection.get(k)
-        }));
+          lessons: lessons.filter((l) => chunk.has(l.sectionLabel ?? ""))
+        });
       }
     }
+  }
+  for (const [i, spec] of specs.entries()) {
+    pages.push(buildRoutineSheet(
+      specs.length > 1 ? { ...spec, pageNo: i + 1, pageCount: specs.length } : spec
+    ));
   }
   return pages;
 }

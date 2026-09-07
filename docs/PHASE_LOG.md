@@ -13701,3 +13701,200 @@ reason P9-4 does not scrub room names.
 **Print is online.** The document is fetched with the caller's token and the
 endpoint is network-only; there is no offline print. That matches the rest of
 the document system rather than being new.
+
+---
+
+# P9-9 REDESIGN — the routine as paper somebody can actually read (2026-09-07)
+
+The first pass was printable and it was not readable. This is what the review
+found, what caused it, and what the numbers say now.
+
+## §16 first — because it decided everything else
+
+The brief said to look for existing headless or PDF tooling before declaring
+the gate blocked. There was some, and it had been here the whole time:
+
+- **Chrome**, at `C:\Program Files\Google\Chrome\Application\chrome.exe`.
+  `--headless --print-to-pdf` honours `@page` and embeds the fonts.
+- **PyMuPDF 1.28.2**, already installed, rasterises the result and reads the
+  page geometry back out.
+
+So **B-113 is closed**: the printed routine has now been rasterised. Nothing
+was added to the repository — no PDF library, no dependency, no second
+pipeline. The harness lives in the scratchpad because it is a review
+instrument, not a shipped feature.
+
+The first pass reported this gate BLOCKED on the grounds that `window.print()`
+opens a dialog that wedges the renderer. That was true and it was the wrong
+conclusion: the dialog is one route to a PDF and not the only one. **"I could
+not do it the way I first tried" is not "it cannot be done"**, and the
+difference here was an hour of looking.
+
+## What the rasterisation caught that computed style could not
+
+The first pass verified the page box from computed style — 297mm x 210mm, the
+break rules resolving to `avoid` and `table-header-group` — and was satisfied.
+Every one of those measurements was correct. The document still printed wrong:
+
+    small-institution      5 document pages  ->  10 sheets of A4
+    college-institution   20 document pages  ->  59 sheets
+    board mode             5 document pages  ->  15 sheets
+
+Every class page spilled onto a second and third sheet. `@page{size:A4}` sets
+the paper; it does not make the content fit on it, and nothing short of
+printing the thing reveals the difference. This is the gap between "the
+browser computed the value I asked for" and "the output is right".
+
+## Three defects, all only visible on paper
+
+**1. A lesson was four lines.** Subject, class-section, teacher and room each
+took a line of their own, so a class of four sections put SIXTEEN lines in one
+cell and the grid compressed into a grey band — the density the review
+rejected. A dense cell is now ONE line per section, with the section label in
+a fixed column so the eye runs straight down it.
+
+**2. The period numbers were off by one, all afternoon.** `period_no` is a
+POSITION in the school day, not a count of teaching hours, and migration 012
+puts tiffin at position 5 of the day shift. So the hour every teacher in the
+building calls **৫ম** is `period_no` 6 — and the sheet, numbering the rows it
+had left after filtering, printed **৬ষ্ঠ** over it. The school had already
+typed the name it uses. `label_bn` is now that name; the ordinal is only a
+fallback for a template that left it blank. The same bug was on the screen,
+which showed `formatCount(period_no)`.
+
+**3. Tiffin was invisible.** `period_kind` has seven values and migration 012
+seeds four of them into every school — সমাবেশ, টিফিন, জোহর. `readTimetable`
+ended `AND pd.kind = 'teaching'` and threw the rest away, so the break the
+whole day is built around never reached the paper or the screen. It is now a
+band across the full width of the grid, ruled top and bottom.
+
+That is the seventh instance this project has found of the same shape: **a
+control exists, is enforced, is seeded — and nothing can reach it.**
+
+## The measurement trap, which cost the most time
+
+Headless Chrome lays out at **800px** unless told otherwise. That constrains
+`.doc` to ~212mm rather than 297mm and wraps almost every cell. Measured that
+way a section appears to cost 11mm of row, the cap comes out at ONE section a
+page, and the booklet is one sheet per section — precisely the outcome this
+redesign existed to replace. The fix is `--window-size=1123,794`.
+
+Two numbers were briefly derived from the bad measurement and gave the right
+answer for the wrong reason. They have been re-derived and the constants in
+`document.ts` now say what was actually measured.
+
+## What a page holds, and why the number is what it is
+
+Trimmed of R-5's stacked meta block and its 190px signature block (a 56px
+blank gap, ~30mm at the foot of every page), a landscape A4 leaves **162mm**
+for the grid. A section's line costs ~5.8mm where the subject fits the column
+and ~9.8mm where it wraps — and the names that wrap are the real ones,
+`বাংলাদেশ ও বিশ্বপরিচয়` and `তথ্য ও যোগাযোগ প্রযুক্তি`. The cap is 8mm,
+weighted toward the wrap, divided per TEACHING row because what fills a page
+is `rows x sections` and a madrasa running ten hours cannot fit what a primary
+school running five can.
+
+The room came off the dense sheet to buy that fit. Measured, per section:
+
+| dense cell carries | per section | sections a page |
+|---|---|---|
+| subject + teacher + room | 11.2mm | 1 |
+| **subject + teacher** | **8.4mm** | **2** |
+| subject only | 7.2mm | 2 |
+
+Dropping the room buys a whole section per page and dropping the teacher buys
+nothing more, so the teacher stays. The room is on the section's own sheet, on
+the teacher's and on the room's — three places a person can look. A class
+notice board answers a different question: which subject, and who is taking it.
+
+## §17/§18 — measured on the four real profiles
+
+Every sheet printed to PDF, page count read from the PDF and compared with the
+document's own page count. **One document page is one sheet of A4, on all
+twenty sheets.**
+
+| profile | sections | classes | institution booklet | per page | ms | kB |
+|---|---|---|---|---|---|---|
+| small | 20 | 5 | 10 pages | 2 sections | 41 | 104 |
+| medium | 40 | 10 | 20 pages | 2 sections | 48 | 208 |
+| large (2 shifts) | 80 | 10 | 40 pages | 2 sections | 65 | 420 |
+| college (2 shifts) | 120 | 4 | **60 pages** | 2 sections | 87 | 622 |
+| college, board | 120 | 4 | 120 pages | 1 section | 74 | 773 |
+
+The 120-section college prints **60 class-grouped pages** where the first pass
+printed 120 ungrouped per-section sheets. Each page names its class and lists
+the sections on it, so a reader holding sheet three of five knows what they
+are holding.
+
+**Board mode had to be told about itself.** §9's sheet sets 22% larger and a
+section costs **45%** more — a wider glyph does not merely take more room, it
+takes a whole extra LINE the moment a subject stops fitting the column.
+Scaling the cap by the type ratio alone was tried, and the rasterisation
+caught it: 10 pages of board sheet came out as 13.
+
+## What the sheet looks like now
+
+Reviewed as images rendered from the PDFs, not as markup:
+
+- The **টিফিন band** runs the full width of the grid, ruled top and bottom,
+  centred, with its clock time — unmistakable, and it is what turns nine
+  numbered hours into a morning and an afternoon.
+- **Days across the top**, from the tenant's own `weekend_days`, so a school
+  that teaches Saturday gets a Saturday column and nobody gets an empty Friday.
+- The **period column** carries the school's own name for the hour at 14.5px
+  and its clock time under it at 10px. Neither is small print.
+- A **class page** is one line per section, section label in its own column.
+- A **section, teacher or room sheet** keeps portrait and a two-line cell,
+  because one lesson an hour has the room for it.
+- Every page foots with **version · date · page x of y** and a signature line.
+
+## §10 grayscale, asserted rather than hoped
+
+Every colour the sheet sets is near-neutral — the test extracts every hex in
+`routineSheetCss` and fails any whose max and min channels differ by 40 or
+more. Nothing carries meaning by colour alone: the break is a band because of
+its rules, the period column because of its weight, an empty hour because it
+says "—". The only hue on the page is the school's own letterhead.
+
+## Evidence
+
+- **2028 tests passing** — 1977 in the standard sweep plus platform-svc's 51,
+  which needs `PLATFORM_DATABASE_URL` and is skipped without it
+- typecheck 0/0/0 · build clean · **75/75 migrations, and this needed none**
+- **Security probe 29/29** over 12 areas
+- **20 sheets rasterised**; document pages equal printed sheets on all 20;
+  no horizontal overflow on any; fonts embedded as real subsets
+- `app.js` **165,223 / 184,320** gzipped
+- Landing page byte-identical at `496199bd`
+- 30 builder tests, 15 endpoint tests, 22 view tests
+
+## Honest limits
+
+**The screen was not confirmed in a browser this session.** The band and the
+period label are covered by 22 passing view tests, including the one that
+matters — a payload cached before `kind` existed must render a grid, not a
+page of bands. The live server's session had expired (401 on `auth/refresh`)
+and I do not have credentials for it. **TESTED, not OBSERVED.**
+
+**No sheet has come off a printer.** The PDF is real and rasterised; a mono
+laser has still not printed one, so the grey tones are argued from their
+channel values rather than seen on paper.
+
+**The academic year prints Latin.** `academic_years.label` is the school's own
+free text — "2026" as the benchmark typed it — and it sits beside "সংস্করণ ১"
+on the sheet. Period labels ARE converted, because a period label is the
+platform's own numbering wearing the school's words. The year is not, for the
+same reason P9-4 does not scrub room names. It looks inconsistent because it
+is, and the inconsistency is deliberate at both ends.
+
+**Two sections a page is a bound with a school-shaped assumption in it.** It
+holds for subject names up to about the length of `বাংলাদেশ ও বিশ্বপরিচয়`. A
+school with longer ones gets more wrapping and less white space, not a spill —
+the 8mm constant is already weighted toward the wrapped case — but the margin
+is thinner than the table above suggests.
+
+**A large institution's booklet is still long.** Sixty pages for a 120-section
+college is half of what it was and every page is class-grouped, but no layout
+puts thirty sections of one class on a few sheets at a size anybody can read
+from a metre away. That is arithmetic, not a design failure, and the honest
+artefact for such a college is still a stack of sheets.

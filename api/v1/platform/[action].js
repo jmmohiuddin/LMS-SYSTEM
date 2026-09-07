@@ -2741,6 +2741,8 @@ async function handler(req, res) {
         return json(res, 200, await listTenants(db, req), cors);
       case "GET fleetsummary":
         return json(res, 200, await fleetSummary(db), cors);
+      case "POST identity":
+        return json(res, 200, await setIdentity(db, op, req), cors);
       case "POST tenants":
         return json(res, 200, await createTenant(db, op, req), cors);
       case "GET tenant":
@@ -2926,6 +2928,77 @@ async function fleetSummary(db) {
     planUsage: r.plan_usage ?? {}
   };
 }
+async function setIdentity(db, op, req) {
+  const b = await readJson(req);
+  const id = (b.tenantId ?? "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, "tenantId must be a uuid", "invalid_id");
+  }
+  const txt = (v, max, field) => {
+    if (v === void 0 || v === null) return null;
+    const t = String(v).trim();
+    if (t.length > max) {
+      throw new HttpError(400, `${field} is too long`, "too_long");
+    }
+    return t;
+  };
+  const nameBn = txt(b.nameBn, 200, "nameBn") ?? "";
+  const nameEn = txt(b.nameEn, 200, "nameEn") ?? "";
+  if (!nameBn || !nameEn) {
+    throw new HttpError(
+      400,
+      "\u09AC\u09BE\u0982\u09B2\u09BE \u0993 \u0987\u0982\u09B0\u09C7\u099C\u09BF \u2014 \u09A6\u09C1\u099F\u09BF \u09A8\u09BE\u09AE\u0987 \u09A6\u09BF\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964",
+      "name_required"
+    );
+  }
+  const eiin = txt(b.eiin, 20, "eiin");
+  if (eiin !== null && eiin !== "" && !/^[0-9]{4,12}$/.test(eiin)) {
+    throw new HttpError(400, "EIIN \u09B6\u09C1\u09A7\u09C1 \u09B8\u0982\u0996\u09CD\u09AF\u09BE \u09B9\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964", "invalid_eiin");
+  }
+  try {
+    const { rows } = await db.pool.query(
+      `SELECT * FROM app.update_tenant_identity(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        op.id,
+        id,
+        nameBn,
+        nameEn,
+        eiin,
+        txt(b.mpoCode, 30, "mpoCode"),
+        txt(b.boardCode, 30, "boardCode"),
+        txt(b.district, 80, "district"),
+        txt(b.upazila, 80, "upazila"),
+        txt(b.addressBn, 400, "addressBn"),
+        txt(b.reason, 200, "reason")
+      ]
+    );
+    const r = rows[0] ?? {};
+    return {
+      tenant: {
+        id: r.id,
+        nameBn: r.name_bn,
+        nameEn: r.name_en,
+        eiin: r.eiin,
+        mpoCode: r.mpo_code,
+        boardCode: r.board_code,
+        district: r.district,
+        upazila: r.upazila,
+        addressBn: r.address_bn
+      }
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (/tenants_eiin_key|duplicate key.*eiin/i.test(msg)) {
+      throw new HttpError(
+        409,
+        "\u098F\u0987 EIIN \u0986\u09B0\u09C7\u0995\u099F\u09BF \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09C3\u09A4 \u09B9\u099A\u09CD\u099B\u09C7\u0964",
+        "eiin_taken"
+      );
+    }
+    throw err;
+  }
+}
 async function getTenant(db, req) {
   const id = (query(req).get("id") ?? "").trim();
   if (!UUID_RE.test(id)) throw new HttpError(400, "id must be a uuid", "invalid_id");
@@ -2940,7 +3013,15 @@ async function getTenant(db, req) {
     { tenantId: id, userId: id, role: "principal" },
     (c) => c.query(
       `SELECT COALESCE(settings->'branding','{}'::jsonb) AS branding,
-              weekend_days AS weekend, shifts::text[] AS shifts
+              weekend_days AS weekend, shifts::text[] AS shifts,
+              -- P10-6. The identity the console can now correct. Read here
+              -- rather than added to app.platform_tenants, whose shape the
+              -- fleet LIST also depends on: a detail screen's needs are not
+              -- a reason to widen every row of a paginated list. (No
+              -- backticks in this comment -- it lives inside a JS template
+              -- literal and a backtick would end the string.)
+              eiin::text, mpo_code::text, board_code::text,
+              district, upazila, address_bn
          FROM tenants WHERE id = app.current_tenant()`
     ),
     {
@@ -2968,7 +3049,13 @@ async function getTenant(db, req) {
       createdAt: r.created_at,
       weekendDays: brand.rows[0]?.weekend ?? [],
       shifts: brand.rows[0]?.shifts ?? [],
-      branding: brand.rows[0]?.branding ?? {}
+      branding: brand.rows[0]?.branding ?? {},
+      eiin: brand.rows[0]?.eiin ?? null,
+      mpoCode: brand.rows[0]?.mpo_code ?? null,
+      boardCode: brand.rows[0]?.board_code ?? null,
+      district: brand.rows[0]?.district ?? null,
+      upazila: brand.rows[0]?.upazila ?? null,
+      addressBn: brand.rows[0]?.address_bn ?? null
     },
     // Derived from real rows, so it reports what actually landed rather than
     // what a stage column believed. §23.

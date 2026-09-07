@@ -148,6 +148,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     switch (`${req.method} ${action}`) {
       case 'GET tenants':   return json(res, 200, await listTenants(db, req), cors);
       case 'GET fleetsummary': return json(res, 200, await fleetSummary(db), cors);
+      case 'POST identity': return json(res, 200, await setIdentity(db, op, req), cors);
       case 'POST tenants':  return json(res, 200, await createTenant(db, op, req), cors);
       case 'GET tenant':    return json(res, 200, await getTenant(db, req), cors);
       case 'GET health':    return json(res, 200, await tenantHealth(db, req), cors);
@@ -319,6 +320,86 @@ async function fleetSummary(db: Db) {
   };
 }
 
+/**
+ * Correct the identity a school is known by outside this system.  (P10-6)
+ *
+ * Confirmed platform-owned before building: `tenants.name_bn`, `name_en`,
+ * `eiin`, `mpo_code`, `board_code`, `district`, `upazila` and `address_bn`
+ * are written once by the onboarding wizard and by nothing else in the
+ * product. A school editing its own BRANDING writes `settings`, which is a
+ * different column and a different thing — a display name it chooses, not
+ * the name on its EIIN registration.
+ *
+ * `slug` is deliberately absent. It is install-link infrastructure, and
+ * changing it migrates everyone's entry point rather than correcting a typo.
+ * The master plan has not moved that ownership, so neither does this.
+ */
+async function setIdentity(db: Db, op: Operator, req: IncomingMessage) {
+  const b = await readJson<Record<string, string | undefined>>(req);
+  const id = (b.tenantId ?? '').trim();
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, 'tenantId must be a uuid', 'invalid_id');
+  }
+
+  // ABSENT and BLANK are different, and the difference is data loss.
+  //
+  // A field the caller did not send comes through as `undefined` and must
+  // reach SQL as NULL, which the function reads as "leave it alone". A field
+  // sent EMPTY reaches SQL as '' and clears the column. Collapsing the two —
+  // which the first version did — means a screen that saves only the name
+  // silently wipes the EIIN, the district and the address.
+  const txt = (v: string | undefined, max: number, field: string): string | null => {
+    if (v === undefined || v === null) return null;
+    const t = String(v).trim();
+    if (t.length > max) {
+      throw new HttpError(400, `${field} is too long`, 'too_long');
+    }
+    return t;
+  };
+
+  // The two the schema will not accept as null, and which every printed
+  // document carries. Refused here as well as in the function, so the
+  // operator gets a sentence rather than a constraint violation.
+  // These two are required, so absent and blank are the same refusal.
+  const nameBn = txt(b.nameBn, 200, 'nameBn') ?? '';
+  const nameEn = txt(b.nameEn, 200, 'nameEn') ?? '';
+  if (!nameBn || !nameEn) {
+    throw new HttpError(400,
+      'বাংলা ও ইংরেজি — দুটি নামই দিতে হবে।', 'name_required');
+  }
+  // EIIN is a government number: digits, and unique across the platform.
+  const eiin = txt(b.eiin, 20, 'eiin');
+  if (eiin !== null && eiin !== '' && !/^[0-9]{4,12}$/.test(eiin)) {
+    throw new HttpError(400, 'EIIN শুধু সংখ্যা হতে হবে।', 'invalid_eiin');
+  }
+
+  try {
+    const { rows } = await db.pool.query(
+      `SELECT * FROM app.update_tenant_identity(
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [op.id, id, nameBn, nameEn, eiin,
+       txt(b.mpoCode, 30, 'mpoCode'), txt(b.boardCode, 30, 'boardCode'),
+       txt(b.district, 80, 'district'), txt(b.upazila, 80, 'upazila'),
+       txt(b.addressBn, 400, 'addressBn'), txt(b.reason, 200, 'reason')]);
+    const r = (rows[0] ?? {}) as Record<string, unknown>;
+    return {
+      tenant: {
+        id: r.id, nameBn: r.name_bn, nameEn: r.name_en, eiin: r.eiin,
+        mpoCode: r.mpo_code, boardCode: r.board_code,
+        district: r.district, upazila: r.upazila, addressBn: r.address_bn,
+      },
+    };
+  } catch (err) {
+    // A duplicate EIIN is an operator mistake with a clear fix, not a 500.
+    const msg = err instanceof Error ? err.message : '';
+    if (/tenants_eiin_key|duplicate key.*eiin/i.test(msg)) {
+      throw new HttpError(409,
+        'এই EIIN আরেকটি প্রতিষ্ঠানে ব্যবহৃত হচ্ছে।', 'eiin_taken');
+    }
+    throw err;
+  }
+}
+
 async function getTenant(db: Db, req: IncomingMessage) {
   const id = (query(req).get('id') ?? '').trim();
   if (!UUID_RE.test(id)) throw new HttpError(400, 'id must be a uuid', 'invalid_id');
@@ -341,9 +422,21 @@ async function getTenant(db: Db, req: IncomingMessage) {
   // console. Found by reading the payload after the branding step.
   const brand = await db.withTenant(
     { tenantId: id, userId: id, role: 'principal' },
-    (c) => c.query<{ branding: unknown; weekend: number[]; shifts: string[] }>(
+    (c) => c.query<{
+      branding: unknown; weekend: number[]; shifts: string[];
+      eiin: string | null; mpo_code: string | null; board_code: string | null;
+      district: string | null; upazila: string | null; address_bn: string | null;
+    }>(
       `SELECT COALESCE(settings->'branding','{}'::jsonb) AS branding,
-              weekend_days AS weekend, shifts::text[] AS shifts
+              weekend_days AS weekend, shifts::text[] AS shifts,
+              -- P10-6. The identity the console can now correct. Read here
+              -- rather than added to app.platform_tenants, whose shape the
+              -- fleet LIST also depends on: a detail screen's needs are not
+              -- a reason to widen every row of a paginated list. (No
+              -- backticks in this comment -- it lives inside a JS template
+              -- literal and a backtick would end the string.)
+              eiin::text, mpo_code::text, board_code::text,
+              district, upazila, address_bn
          FROM tenants WHERE id = app.current_tenant()`), {
     // P7. The console must reach INTO a school the gate would stop — that is
     // how a suspended school gets inspected, and how it gets reopened. This
@@ -362,6 +455,12 @@ async function getTenant(db: Db, req: IncomingMessage) {
       trialEndsOn: r.trial_ends_on, createdAt: r.created_at,
       weekendDays: brand.rows[0]?.weekend ?? [], shifts: brand.rows[0]?.shifts ?? [],
       branding: brand.rows[0]?.branding ?? {},
+      eiin: brand.rows[0]?.eiin ?? null,
+      mpoCode: brand.rows[0]?.mpo_code ?? null,
+      boardCode: brand.rows[0]?.board_code ?? null,
+      district: brand.rows[0]?.district ?? null,
+      upazila: brand.rows[0]?.upazila ?? null,
+      addressBn: brand.rows[0]?.address_bn ?? null,
     },
     // Derived from real rows, so it reports what actually landed rather than
     // what a stage column believed. §23.

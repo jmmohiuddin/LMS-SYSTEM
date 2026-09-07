@@ -1062,6 +1062,7 @@ export class Console_ {
 
     main.append(this.stateChecklist(det.state, det.canActivate));
     main.append(this.healthPanel());
+    main.append(this.identityEditor(det.tenant));
     main.append(this.planEditor(det.tenant));
     main.append(this.accessPanel(det.tenant));
     main.append(this.statusActions(det.tenant, det.canActivate));
@@ -1314,7 +1315,97 @@ export class Console_ {
    * school that outgrew its cap needed SQL, and the refusal an operator sees
    * on an over-cap import named a limit nothing in the console could raise.
    */
-  private planEditor(t: TenantRow): HTMLElement {
+/**
+   * The identity a school is known by outside this system.  (P10-6)
+   *
+   * Set once by the onboarding wizard and, until P10, correctable by nobody:
+   * a school onboarded with a typo in its name kept it, and that name is on
+   * every document the school prints. Confirmed platform-owned before this
+   * was built — the only other writer of `tenants` from a school's side is
+   * its own BRANDING, which is `settings` and a different thing.
+   *
+   * `slug` is not here. It is install-link infrastructure and changing it
+   * migrates everyone's entry point; it is shown, read-only, so an operator
+   * can see it without being invited to edit it.
+   */
+  private identityEditor(t: TenantRow): HTMLElement {
+    const d = this.doc;
+    const wrap = d.createElement('form');
+    wrap.className = 'card platform-state';
+    const h = d.createElement('h2');
+    h.className = 'section-heading';
+    h.textContent = 'প্রতিষ্ঠানের পরিচিতি';
+    wrap.append(h);
+
+    const note = d.createElement('p');
+    note.className = 'page-sub';
+    note.textContent = 'এই নাম প্রতিষ্ঠানের প্রতিটি ছাপা কাগজে যায়। '
+      + 'স্লাগ বদলানো যায় না — ইনস্টল করা অ্যাপ ওটার ওপর নির্ভর করে।';
+    wrap.append(note);
+
+    const nameBn = this.field('বাংলা নাম', 'text', t.nameBn);
+    const nameEn = this.field('English name', 'text', t.nameEn);
+    const eiin = this.field('EIIN', 'text', (t as unknown as Record<string, string | null>).eiin ?? '',
+      'শুধু সংখ্যা, প্ল্যাটফর্মে অদ্বিতীয়');
+    const district = this.field('জেলা', 'text', (t as unknown as Record<string, string | null>).district ?? '');
+    const upazila = this.field('উপজেলা', 'text', (t as unknown as Record<string, string | null>).upazila ?? '');
+    const address = this.field('ঠিকানা', 'text', (t as unknown as Record<string, string | null>).addressBn ?? '');
+    const reason = this.field('কারণ', 'text', '',
+      'অডিটে থাকবে — কেন বদলাচ্ছেন');
+
+    // Read-only, and said so in words rather than only by being disabled.
+    const slug = this.field('স্লাগ (বদলানো যায় না)', 'text', t.slug);
+    slug.input.readOnly = true;
+    slug.input.setAttribute('aria-readonly', 'true');
+    slug.input.className += ' mono';
+
+    const grid = d.createElement('div');
+    grid.className = 'platform-grid';
+    for (const f of [nameBn, nameEn, eiin, district, upazila, address, slug, reason]) {
+      grid.append(f.wrap);
+    }
+    wrap.append(grid);
+
+    const save = d.createElement('button');
+    save.type = 'submit';
+    save.className = 'btn-primary btn-inline';
+    save.textContent = 'পরিচিতি সংরক্ষণ';
+    wrap.append(save);
+
+    wrap.addEventListener('submit', (e) => {
+      e.preventDefault();
+      save.disabled = true;
+      void (async () => {
+        try {
+          const r = await this.call<{ tenant: Record<string, string | null> }>(
+            'identity', {
+              method: 'POST',
+              body: JSON.stringify({
+                tenantId: t.id,
+                nameBn: nameBn.input.value, nameEn: nameEn.input.value,
+                eiin: eiin.input.value, district: district.input.value,
+                upazila: upazila.input.value, addressBn: address.input.value,
+                reason: reason.input.value,
+              }),
+            });
+          // Reload the detail rather than trusting what was typed: the
+          // server trims and turns blanks into nulls. Showing the typed
+          // value would hide that from the person who has to trust this
+          // screen.
+          void r;
+          this.notice = 'পরিচিতি সংরক্ষণ হয়েছে।';
+          this.error = '';
+          await this.loadDetail(t.id);
+        } catch (err) {
+          this.error = (err as Error).message;
+          this.render();
+        }
+      })();
+    });
+    return wrap;
+  }
+
+    private planEditor(t: TenantRow): HTMLElement {
     const d = this.doc;
     const wrap = d.createElement('div');
     wrap.className = 'card platform-state';

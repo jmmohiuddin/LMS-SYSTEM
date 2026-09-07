@@ -72,8 +72,17 @@ const asOperator = (url: string, body?: unknown) =>
  * erase an audit trail would be a test that proves the trail is erasable.
  */
 async function cleanup(): Promise<void> {
+  // Also the P10 fixtures, by PREFIX.
+  //
+  // Those suites create a school per run with a pid in its slug, so a fixed
+  // list cannot name them. Without this they leaked four tenants per run into
+  // a database the whole repository shares — and the symptom was not "the
+  // platform suite is untidy", it was `fee-structures.test.ts` failing to
+  // start, intermittently, in a different service. A test that leaves rows
+  // behind is a test that eventually breaks someone else's.
   const { rows } = await db.pool.query<{ id: string }>(
-    `SELECT id FROM app.platform_tenants(NULL) WHERE slug = ANY($1::citext[])`,
+    `SELECT id FROM app.platform_tenants(NULL)
+      WHERE slug = ANY($1::citext[]) OR slug::text LIKE 'p10-%'`,
     [[SLUG_A, SLUG_B]]);
   for (const r of rows) {
     // Bootstrap: these suites leave schools suspended on purpose, and the
@@ -1003,6 +1012,180 @@ describe('R-7 — platform console', { skip }, () => {
         '/api/v1/platform/health?id=00000000-0000-4000-8000-0000000000ee');
       assert.ok(gone.status === 200 || gone.status === 404,
         `a stale id answered ${gone.status}`);
+    });
+  });
+
+  // ── P10-6 · institution identity ───────────────────────────────────────
+  //
+  // `tenants.name_bn` and friends were written once by the onboarding wizard
+  // and by nothing else in the product. A school onboarded with a typo kept
+  // it, on every document it printed.
+
+  describe('institution identity', () => {
+    let idA = '';
+    let idB = '';
+    /**
+     * EIINs per RUN, not constants — for the same reason DEVICE above is.
+     *
+     * `tenants.eiin` is UNIQUE across the platform and this suite runs
+     * against a database that keeps its rows. A fixed number collided with
+     * the previous run's leftover, and the duplicate-EIIN refusal fired on
+     * the test that was supposed to SET one. It looked like a flaky test and
+     * was the constraint working correctly.
+     */
+    const EIIN_1 = String(200000 + Math.floor(Math.random() * 700000));
+    const EIIN_2 = String(200000 + Math.floor(Math.random() * 700000));
+
+    before(async () => {
+      const a = await asOperator('/api/v1/platform/tenants', {
+        nameBn: 'ভুল বানান বিদ্যালয়', nameEn: 'Typo School',
+        slug: `p10-ident-a-${process.pid}`, stream: 'bangla_medium',
+        level: 'secondary', planCode: 'pilot', studentCap: 100,
+      });
+      idA = (a.body as { tenant: { id: string } }).tenant?.id ?? '';
+      const b = await asOperator('/api/v1/platform/tenants', {
+        nameBn: 'দ্বিতীয় বিদ্যালয়', nameEn: 'Second School',
+        slug: `p10-ident-b-${process.pid}`, stream: 'bangla_medium',
+        level: 'secondary', planCode: 'pilot', studentCap: 100,
+      });
+      idB = (b.body as { tenant: { id: string } }).tenant?.id ?? '';
+    });
+
+    test('THE ONE THAT MATTERS — a typo can be corrected, and the audit says what moved', async () => {
+      const r = await asOperator('/api/v1/platform/identity', {
+        tenantId: idA, nameBn: 'সঠিক বানান বিদ্যালয়', nameEn: 'Correct School',
+        eiin: EIIN_1, district: 'ঢাকা', upazila: 'ধানমন্ডি',
+        addressBn: 'রোড ৫', reason: 'বানান ভুল ছিল',
+      });
+      assert.equal(r.status, 200);
+      const t = (r.body as { tenant: Record<string, string> }).tenant;
+      assert.equal(t.nameBn, 'সঠিক বানান বিদ্যালয়');
+      assert.equal(t.eiin, EIIN_1);
+      assert.equal(t.district, 'ঢাকা');
+
+      // The audit names the FIELDS. "identity updated" tells a later reader
+      // nothing, and this console's premise is that a dangerous act leaves a
+      // record somebody can actually read.
+      const audit = await asOperator(`/api/v1/platform/audit?id=${idA}`);
+      const entries = (audit.body as { entries: Array<Record<string, string>> }).entries;
+      const row = entries.find((e) => (e.statement ?? '').includes('update_tenant_identity'));
+      assert.ok(row, 'the correction left no audit row');
+      assert.match(row!.statement, /name_bn/);
+      assert.match(row!.statement, /eiin/);
+      assert.equal(row!.reason, 'বানান ভুল ছিল');
+    });
+
+    test('the slug is NOT editable through this path', async () => {
+      // It is install-link infrastructure: people have already installed a
+      // PWA that resolves through it. Changing it is a migration of
+      // everyone's entry point, not a correction.
+      const before = await asOperator(`/api/v1/platform/tenant?id=${idA}`);
+      const slugBefore = (before.body as { tenant: { slug: string } }).tenant.slug;
+
+      const r = await asOperator('/api/v1/platform/identity', {
+        tenantId: idA, nameBn: 'সঠিক বানান বিদ্যালয়', nameEn: 'Correct School',
+        slug: 'a-brand-new-slug', reason: 'চেষ্টা',
+      });
+      assert.equal(r.status, 200);
+
+      const after = await asOperator(`/api/v1/platform/tenant?id=${idA}`);
+      assert.equal((after.body as { tenant: { slug: string } }).tenant.slug, slugBefore,
+        'the slug moved — installed apps would stop resolving');
+    });
+
+    test('a school cannot be left without a name', async () => {
+      // Both are NOT NULL in the schema and both are on every printed
+      // document. A blank is not an edit.
+      for (const bad of [{ nameBn: '', nameEn: 'X' }, { nameBn: 'ক', nameEn: '   ' }]) {
+        const r = await asOperator('/api/v1/platform/identity',
+          { tenantId: idA, ...bad });
+        assert.equal(r.status, 400, JSON.stringify(bad));
+        assert.equal((r.body as { error: string }).error, 'name_required');
+      }
+    });
+
+    test('an EIIN already in use is refused with a sentence, not a 500', async () => {
+      const r = await asOperator('/api/v1/platform/identity', {
+        tenantId: idB, nameBn: 'দ্বিতীয় বিদ্যালয়', nameEn: 'Second School',
+        eiin: EIIN_1, reason: 'সংঘর্ষ',
+      });
+      assert.equal(r.status, 409);
+      assert.equal((r.body as { error: string }).error, 'eiin_taken');
+    });
+
+    test('a non-numeric EIIN never reaches the database', async () => {
+      const r = await asOperator('/api/v1/platform/identity', {
+        tenantId: idB, nameBn: 'দ্বিতীয় বিদ্যালয়', nameEn: 'Second School',
+        eiin: 'ABC-123',
+      });
+      assert.equal(r.status, 400);
+      assert.equal((r.body as { error: string }).error, 'invalid_eiin');
+    });
+
+    test('saving with nothing changed writes no audit noise', async () => {
+      const before = await asOperator(`/api/v1/platform/audit?id=${idB}`);
+      const n = (before.body as { entries: unknown[] }).entries.length;
+      await asOperator('/api/v1/platform/identity', {
+        tenantId: idB, nameBn: 'দ্বিতীয় বিদ্যালয়', nameEn: 'Second School',
+      });
+      const after = await asOperator(`/api/v1/platform/audit?id=${idB}`);
+      assert.equal((after.body as { entries: unknown[] }).entries.length, n,
+        'pressing save twice is not an event');
+    });
+
+    test('a school cannot rename itself, and needs both credentials', async () => {
+      const asSchool = await call(platform, {
+        url: '/api/v1/platform/identity', method: 'POST',
+        body: { tenantId: idA, nameBn: 'দখল', nameEn: 'Seized' },
+        token: principalToken, headers: { 'x-platform-key': KEY },
+      } as Parameters<typeof call>[1]);
+      assert.equal(asSchool.status, 403);
+
+      const noKey = await call(platform, {
+        url: '/api/v1/platform/identity', method: 'POST',
+        body: { tenantId: idA, nameBn: 'দখল', nameEn: 'Seized' },
+        token: opToken,
+      } as Parameters<typeof call>[1]);
+      assert.equal(noKey.status, 403);
+    });
+
+    test('a partial save does not wipe what it did not mention', async () => {
+      // The bug this pins, found by another test tripping over it: a save
+      // that sent only the name cleared the EIIN, the district and the
+      // address, because absent and blank were the same thing to the writer.
+      // Silent data loss on a screen whose whole job is correcting data.
+      await asOperator('/api/v1/platform/identity', {
+        tenantId: idB, nameBn: 'দ্বিতীয় বিদ্যালয়', nameEn: 'Second School',
+        eiin: EIIN_2, district: 'চট্টগ্রাম', addressBn: 'বন্দর রোড',
+      });
+      // Now save ONLY the name, as a narrower screen would.
+      await asOperator('/api/v1/platform/identity', {
+        tenantId: idB, nameBn: 'দ্বিতীয় বিদ্যালয় (সংশোধিত)', nameEn: 'Second School',
+      });
+      const after = await asOperator(`/api/v1/platform/tenant?id=${idB}`);
+      const t = (after.body as { tenant: Record<string, string | null> }).tenant;
+      assert.equal(t.nameBn, 'দ্বিতীয় বিদ্যালয় (সংশোধিত)', 'the name did change');
+      assert.equal(t.eiin, EIIN_2, 'the EIIN survived a save that did not mention it');
+      assert.equal(t.district, 'চট্টগ্রাম');
+      assert.equal(t.addressBn, 'বন্দর রোড');
+
+      // …and an EXPLICIT empty string still clears, because an operator must
+      // be able to remove a wrong EIIN.
+      await asOperator('/api/v1/platform/identity', {
+        tenantId: idB, nameBn: 'দ্বিতীয় বিদ্যালয় (সংশোধিত)',
+        nameEn: 'Second School', eiin: '',
+      });
+      const cleared = await asOperator(`/api/v1/platform/tenant?id=${idB}`);
+      assert.equal(
+        (cleared.body as { tenant: { eiin: string | null } }).tenant.eiin, null,
+        'an explicit blank must still clear the field');
+    });
+
+    test('a malformed tenant id is refused before the database', async () => {
+      const r = await asOperator('/api/v1/platform/identity',
+        { tenantId: 'not-a-uuid', nameBn: 'ক', nameEn: 'K' });
+      assert.equal(r.status, 400);
+      assert.equal((r.body as { error: string }).error, 'invalid_id');
     });
   });
 });

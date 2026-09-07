@@ -878,4 +878,131 @@ describe('R-7 — platform console', { skip }, () => {
       assert.equal(asSchool.status, 403);
     });
   });
+
+  // ── P10-4 · health ─────────────────────────────────────────────────────
+  //
+  // `/platform/health` has existed since R-8 and had NO tests. The audit that
+  // set P10's scope said the ops console never called it; that was true then
+  // and R-8 wired it, so the gap left is coverage rather than a feature.
+  //
+  // The point of this endpoint is that an operator supporting a school can
+  // see whether its messages are going out and whether anybody has signed in
+  // — WITHOUT reading pupil records. So the tests are about the shape it
+  // promises, the states it must survive, and the line it must not cross.
+
+  describe('tenant health', () => {
+    let tenantId = '';
+    let freshId = '';
+
+    before(async () => {
+      // Two schools: one the suite has exercised, and one created and left
+      // alone. The second is the state EVERY school is in on its first day,
+      // and the one a health screen is most likely to render badly.
+      const a = await asOperator('/api/v1/platform/tenants', {
+        nameBn: 'হেলথ বিদ্যালয়', nameEn: 'Health School',
+        slug: `p10-health-${process.pid}`, stream: 'bangla_medium',
+        level: 'secondary', planCode: 'pilot', studentCap: 100,
+      });
+      tenantId = (a.body as { tenant: { id: string } }).tenant?.id ?? '';
+      const b = await asOperator('/api/v1/platform/tenants', {
+        nameBn: 'নতুন বিদ্যালয়', nameEn: 'Fresh School',
+        slug: `p10-fresh-${process.pid}`, stream: 'bangla_medium',
+        level: 'secondary', planCode: 'pilot', studentCap: 100,
+      });
+      freshId = (b.body as { tenant: { id: string } }).tenant?.id ?? '';
+    });
+
+    test('THE ONE THAT MATTERS — health carries no pupil-level data', async () => {
+      // A platform operator browsing a child's record is the thing tenant
+      // isolation exists to prevent. Health is counts and timestamps; if a
+      // name or a phone number ever appears in it, that is the breach.
+      const r = await asOperator(`/api/v1/platform/health?id=${tenantId}`);
+      assert.equal(r.status, 200);
+      const raw = JSON.stringify(r.body);
+      assert.doesNotMatch(raw, /\+8801\d{9}/, 'a phone number reached the operator');
+      // Every leaf is a number, a null, an ISO date, or a known error code —
+      // never free text a school typed about a person.
+      const walk = (v: unknown, path: string): void => {
+        if (v === null || typeof v === 'number' || typeof v === 'boolean') return;
+        if (typeof v === 'string') {
+          assert.ok(
+            /^\d{4}-\d{2}-\d{2}/.test(v) || /^[a-z0-9_.:-]+$/i.test(v),
+            `${path} carries free text: ${v}`);
+          return;
+        }
+        if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
+        for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+          walk(x, `${path}.${k}`);
+        }
+      };
+      walk(r.body, 'health');
+    });
+
+    test('the shape an operator reads is all present', async () => {
+      const r = await asOperator(`/api/v1/platform/health?id=${tenantId}`);
+      const b = r.body as Record<string, Record<string, unknown>>;
+      for (const k of ['sms', 'push', 'usage']) {
+        assert.ok(b[k], `health has no ${k}`);
+      }
+      for (const k of ['queuedNow', 'sent', 'delivered', 'failed',
+                       'oldestQueuedMinutes']) {
+        assert.ok(k in b.sms, `sms has no ${k}`);
+      }
+      for (const k of ['lastLoginAt', 'activeUsers7d', 'lastAttendanceOn']) {
+        assert.ok(k in b.usage, `usage has no ${k}`);
+      }
+      assert.ok(Array.isArray(b.errors), 'errors must be a list, even when empty');
+    });
+
+    test('a school that has done NOTHING reports zeroes and nulls, not an error', async () => {
+      // The state every newly provisioned school is in, and the one a
+      // dashboard is most likely to render badly: no SMS, no logins, no
+      // attendance. `null` is the honest answer to "when did they last sign
+      // in"; 0 is the honest answer to "how many". Neither is an error, and
+      // a screen that throws here is a screen an operator meets on day one.
+      const fresh = await asOperator(`/api/v1/platform/health?id=${freshId}`);
+      assert.equal(fresh.status, 200);
+      const b = fresh.body as Record<string, Record<string, unknown>>;
+      assert.equal(typeof b.sms.queuedNow, 'number');
+      assert.equal(b.sms.oldestQueuedMinutes, null,
+        'an empty queue has no oldest message — null, not 0');
+      assert.ok(b.usage.lastLoginAt === null || typeof b.usage.lastLoginAt === 'string');
+    });
+
+    test('a queue that is not draining is visible as an AGE, not just a count', async () => {
+      // "The failure that looks like nothing": ten thousand queued messages
+      // and a stopped sender look identical to a count. The age of the
+      // oldest queued message is what distinguishes them, which is why the
+      // endpoint computes it.
+      const r = await asOperator(`/api/v1/platform/health?id=${tenantId}`);
+      const sms = (r.body as { sms: Record<string, unknown> }).sms;
+      assert.ok('oldestQueuedMinutes' in sms);
+      if (Number(sms.queuedNow) > 0) {
+        assert.equal(typeof sms.oldestQueuedMinutes, 'number',
+          'a non-empty queue must report how old its oldest message is');
+      }
+    });
+
+    test('health needs both credentials, like everything else here', async () => {
+      const noKey = await call(platform, {
+        url: `/api/v1/platform/health?id=${tenantId}`, token: opToken });
+      assert.equal(noKey.status, 403);
+      const asSchool = await call(platform, {
+        url: `/api/v1/platform/health?id=${tenantId}`, token: principalToken,
+        headers: { 'x-platform-key': KEY },
+      } as Parameters<typeof call>[1]);
+      assert.equal(asSchool.status, 403);
+    });
+
+    test('a malformed or unknown id is refused before the database', async () => {
+      const bad = await asOperator('/api/v1/platform/health?id=not-a-uuid');
+      assert.equal(bad.status, 400);
+      // A well-formed id for a school that does not exist must not 500. It is
+      // the shape a stale bookmark has.
+      const gone = await asOperator(
+        '/api/v1/platform/health?id=00000000-0000-4000-8000-0000000000ee');
+      assert.ok(gone.status === 200 || gone.status === 404,
+        `a stale id answered ${gone.status}`);
+    });
+  });
 });

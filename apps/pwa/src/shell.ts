@@ -45,6 +45,20 @@ export interface ShellRoute {
   /** Called when navigating away, so a view can release listeners/timers. */
   unmount?: () => void;
   /**
+   * P9-5 §17. A last chance to stop a navigation that would lose work.
+   *
+   * Return `true` to BLOCK it and take responsibility for resuming: the shell
+   * puts the address bar back where the person still is, and calls nothing
+   * else until `resume()` runs. Return `false` — or omit this — and the
+   * navigation proceeds as it always did.
+   *
+   * Optional, and every existing route omits it. Two views had a
+   * `hasUnsavedChanges()` method before this existed and nothing ever called
+   * either: the assignment matrix since P9-1 and the routine editor since
+   * P9-5. A guard nobody asks is the same defect as a lock nobody can set.
+   */
+  guardLeave?: (resume: () => void) => boolean;
+  /**
    * Routable but not on the tab bar — reached from the আরও (More) menu, the
    * desktop sidebar or a deep link. Keeps the bar at 5 tabs while the app has
    * forty pages.
@@ -107,6 +121,8 @@ export class Shell {
   private profileMenu: HTMLElement | null = null;
   private profileBtns: HTMLButtonElement[] = [];
   private currentRoute: ShellRoute | null = null;
+  /** Set for exactly one navigation, by a guard that has been satisfied. */
+  private bypassGuard = false;
   private booted = false;
   private readonly onHashChange = () => { void this.renderRoute(); };
   private onConnectivity?: () => void;
@@ -778,6 +794,20 @@ export class Shell {
   private async renderRoute(): Promise<void> {
     const path = this.resolvePath();
     if (this.currentRoute?.path === path) return;
+
+    // §17. The hash has ALREADY changed by the time this runs, so blocking
+    // means putting it back — otherwise the address bar says the person is
+    // somewhere they are not, and the back button lands somewhere neither of
+    // us expects.
+    const leaving = this.currentRoute;
+    if (!this.bypassGuard && leaving?.guardLeave) {
+      const held = leaving.guardLeave(() => {
+        this.bypassGuard = true;
+        location.hash = `#/${path}`;
+      });
+      if (held) { location.hash = `#/${leaving.path}`; return; }
+    }
+    this.bypassGuard = false;
 
     this.closeProfile();
     this.currentRoute?.unmount?.();

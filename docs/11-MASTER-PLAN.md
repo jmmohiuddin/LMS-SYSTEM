@@ -1670,6 +1670,19 @@ findings card claimed "no problems found" from an empty list) and `B-103`
 70 kB on a 120-section college). `B-91` records the mechanism behind the
 RLS-scope family.
 
+**P9-5 — routine editor, lock and undo.** *Delivered 2026-09-07.* The audit
+found most of the editor already built — place, assign, move, remove, the
+three clash sentences, draft/published separation — so P9-5 is four things.
+The LOCK existed in the schema since migration 006, was enforced by `move`
+and `remove`, and had no writer (`B-105`). UNDO is new: migration 074's
+`routine_edit_log` records how to reverse each edit at the moment it is made,
+bounded to twelve steps with no redo, and nothing may delete an entry.
+CONCURRENCY: `row_version` had been incremented since A4 and checked by
+nothing, so the second of two coordinators won silently (`B-106`). And
+`hasUnsavedChanges()` existed on two views with nothing to call it (`B-107`),
+which `ShellRoute.guardLeave` now does. Publish, scoped re-solve, role
+outputs and print remain.
+
 **B-104 — cross-tenant client cache.** *Closed 2026-09-07, before P9-5.*
 Found by P9-4's own browser acceptance and fixed as its own piece of work,
 because tenant isolation is one of the six things that may interrupt the

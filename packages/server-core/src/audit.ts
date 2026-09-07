@@ -98,6 +98,16 @@ export type AuditAction =
   | 'rms.slot.place'
   | 'rms.slot.assign'
   | 'rms.slot.remove'
+  // Moving a lesson was the one editor mutation that wrote no audit entry at
+  // all — place, assign and remove all did. Found while adding the undo log,
+  // which needed the same before-state the audit trail should always have had.
+  | 'rms.slot.move'
+  // P9-5. Locking is an editorial decision with consequences for every later
+  // solver run, and undo reverses somebody's work — both belong in the record
+  // of who did what, alongside the placements they change.
+  | 'rms.slot.lock'
+  | 'rms.slot.unlock'
+  | 'rms.slot.undo'
   | 'rms.routine.publish'
   // P-writers/B-48. Money taken at the counter. The only receipt writer before
   // this was the MFS webhook, and POST /finance/pay is kill-switched.

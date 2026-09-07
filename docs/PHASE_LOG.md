@@ -12493,3 +12493,174 @@ for the address production actually uses today.
 **The outbox is untouched**, as it must be: tier 3 is never cleared by
 anything, and it did not need to be — `ownedBy()` has scoped it by tenant
 since it was written.
+
+---
+
+# P9-5 — the lock nobody could set (2026-09-07)
+
+## The audit came first, and most of the editor already existed
+
+| capability | state before P9-5 | where |
+|---|---|---|
+| create routine, place, assign, move, remove | **built** | `api/editor.ts`, A4 |
+| clash detection, named in Bangla | **built** | the three GiST constraints + `explainConflict` |
+| teacher / room / subject / section pickers | **built** | `loadGrid` + the lesson drawer |
+| draft vs published separation | **built** | `EDITABLE = draft \| review`; publish refuses to mutate active |
+| tap-to-move grid, keyboard-equal | **built** | `routine-editor-view.ts` |
+| **lock (`is_pinned`)** | **enforced, unwritable** | schema 006; `move`/`remove` refuse it; nothing could SET it |
+| **undo** | absent | — |
+| **optimistic concurrency** | `row_version` incremented by every mutation, **checked by none** | — |
+| **unsaved-changes guard** | absent on this screen | `teaching-assignments-view` had one |
+| **open from the generation result** | absent | the button went to whichever section the picker defaulted to |
+
+So P9-5 is four things, not a rebuild.
+
+## The lock was a rule the product had and no school could use
+
+`routine_slots.is_pinned` has carried the comment "solver may not move it"
+since migration 006. `move` and `remove` have refused to touch a pinned slot
+for as long. `loadGrid` returned it, the grid rendered `data-pinned`. And
+there was no writer — the same shape P9-1 found in `section_subject_teachers`
+and P9-2 found in the bell schedule: an enforced control nobody could reach.
+
+`lock` and `unlock` are that writer. No migration was needed; the column and
+its enforcement were already there.
+
+**The first version made a lock a one-way door.** `pick()` refused to select
+a pinned slot — sensible, since it cannot be moved — which meant its action
+bar never opened, so the only control that could UNLOCK it was unreachable. A
+pinned lesson is now selectable and not movable, and the bar says which.
+
+**And two buttons read as the same word.** The action row had "সরান" (remove
+the lesson) beside "পিন সরান" (remove the pin). A coordinator scanning that
+row deletes a class they meant to unlock. The unlock is "পিন খুলুন".
+
+## Undo: the inverse is computed when the edit is made
+
+Migration 074 adds `routine_edit_log`. Every mutation records how to reverse
+itself **while the old row is still in front of us** — deriving the inverse at
+undo time would mean reading a row later edits may have moved and reversing
+it into state it never came from, which is how an undo feature becomes the
+thing that loses the work.
+
+It is not `audit.activity_log`, and that was the first idea. Two reasons:
+that table's `before` payloads are written for a reader, not a replay
+(`remove` records `{subjectBn}` — enough to understand, nowhere near enough
+to restore); and an audit log another feature writes against, whose rows
+change meaning when something marks them consumed, stops being the evidence
+it exists to be.
+
+**A stack, not a history.** Undo claims the newest un-undone entry, applies
+its inverse, marks it consumed, and appends nothing — so there is no redo.
+Deliberate: a redo stack is a second mechanism to get wrong for a case ("I
+went one too far") a coordinator solves by making the edit again.
+
+**Bounded by DEPTH, and the bound is correctness.** `UNDO_DEPTH = 12`.
+Nothing is ever deleted; the limit is how far back the editor offers to go,
+because an inverse written forty edits ago describes a routine that no longer
+exists.
+
+**`FOR UPDATE SKIP LOCKED`** on the claim: two coordinators pressing undo
+together take two different entries rather than both reversing the same edit.
+
+**Nothing may delete an entry** — `edit_log_delete_scope USING (false)`, for
+everyone including the owner under `FORCE ROW LEVEL SECURITY`. Found by this
+phase's own test fixture, which used DELETE, removed nothing, and let every
+test inherit the previous one's stack. The policy was right; the fixture was
+wrong, and there is now a test asserting the policy holds.
+
+## Two operators, and the second one used to win silently
+
+`row_version` has been incremented by every editor mutation since A4 and
+checked by nothing. So two coordinators on one routine overwrote each other,
+last write wins, and the loser was never told.
+
+`requireVersion` refuses an edit made against a version the caller has not
+seen. Optional on purpose — a caller that sends none keeps the old behaviour,
+so this is not a breaking change to an endpoint other screens already use —
+and the editor always sends one.
+
+The message does not name who changed it, because `routine_slots` has no
+`updated_by` and `audit.activity_log` is where that lives. A sentence naming
+a person would be a claim the table cannot support.
+
+## A guard nobody asked
+
+`hasUnsavedChanges()` existed on TWO views and nothing ever called either —
+the assignment matrix since P9-1, the routine editor as of this phase's first
+draft. That is the same defect as the lock: a control that exists, is
+correct, and is unreachable.
+
+`ShellRoute` gained `guardLeave(resume) => boolean`. It is optional and every
+other route omits it, so nothing else changed. The fiddly part is that the
+hash has ALREADY changed by the time the shell hears about it, so blocking
+means putting the address bar back — otherwise it says the person is
+somewhere they are not and the back button lands somewhere neither of us
+expects. Both views are wired to it.
+
+Its tests found a second thing: every `Shell` listens on the GLOBAL
+`hashchange`, so a shell left alive by an earlier test answered later tests'
+navigations too. The existing shell tests never noticed because they only
+inspect the first render. The fixture now destroys the previous shell.
+
+## Found on the way
+
+**`move` wrote no audit entry at all.** place, assign and remove all did.
+Noticed while adding the undo log, which needed the same before-state the
+audit trail should always have had.
+
+**The grid rendered Latin clock times.** `13:00` in the one always-visible
+column of a Bangla timetable. `formatTime(…, 'bn')` is the project's
+convention and this screen was not using it.
+
+## Evidence
+
+- **1936 tests, all passing** across 13 workspaces — 18 new API
+  (`editor-lock-undo.test.ts`), 13 new view, 5 new shell-guard
+- 26/26 SQL suites run **three times**; the two editor suites three times
+- typecheck 0/0/0 · build clean · **74/74 migrations**, and 074 proved
+  down → detected as MISSING → up → fully migrated
+- **Security probe 29/29** against a running deployment (`local-docker-p9-5`)
+- Browser, real API, a generated 20-section school: editor opened on the
+  section it was given (ষষ্ঠ-ক, 29 filled cells) → select → lock → the cell
+  shows **🔒 পিন করা** and the bar explains the consequence → move refused
+  locally with "আগে পিন সরান" → remove disabled → undo names
+  **"ষষ্ঠ-ক · বাংলা · রবি ১ নম্বর পিরিয়ড"** and reverses it → a real move,
+  then undo, and the grid returns
+- **Concurrency, live:** two moves at the same rendered version → `200`, then
+  `409 stale_slot` with the Bangla sentence
+- **Tenant isolation, live:** school B holding A's slot and routine ids gets
+  404 on lock, unlock, undo and move; reading A's section as B returns an
+  empty grid and `routine: null`
+- **Nine widths 360–1600**: no horizontal overflow (the grid scrolls inside
+  its own `table-scroll`, as §11 intends), no tap target under 44px, no uuid,
+  no `undefined`
+- **Both themes**: a pinned cell is distinct from a plain one — light
+  `#FFFFFF` vs `#E9E3D4`, dark `#241E1A` vs `#302821` — and the WORD is
+  present in both, so the colour is a reinforcement
+- **§21 performance, measured:** the editor grid is flat as the school grows —
+  p50 **11 / 13 / 11 / 13 ms** at 20 / 40 / 80 / 120 sections (560 → 3,464
+  slots in the school). It is scoped to one section's week and the undo query
+  is `LIMIT 12`, so nothing in it grows with the institution
+- Landing page byte-identical at `496199bd`
+
+## Honest limits
+
+**Undo has no redo**, and the depth is 12. Both are deliberate and both are
+tested so they cannot become accidents.
+
+**Undo does not cross a publish.** The editor works on a draft; publishing
+ends the stack's usefulness because the slots it describes are no longer
+editable. Attempting it returns `routine_not_editable`.
+
+**A double period still cannot be moved**, by hand or by undo — `move` has
+refused to split one since §8.1 and that is unchanged. Moving the pair as a
+unit remains unimplemented, and is recorded rather than hidden.
+
+**The unsaved-changes guard covers the lesson DRAWER, not the grid**, and
+that is the whole of what can be lost: every grid edit is written to the
+server as it is made.
+
+**Locks are structurally ready for P9-6** and nothing more was built for it.
+`is_pinned` is what a scoped re-solve will read to decide what to leave
+alone; no temporary mechanism was introduced that P9-6 would have to replace.

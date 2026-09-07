@@ -83,3 +83,120 @@ describe('tab bar', () => {
     assert.equal(tabsFor([route('home'), route('more')]).length, 2);
   });
 });
+
+/**
+ * P9-5 §17 — the shell asks before it loses somebody's work.
+ *
+ * Two views carried a `hasUnsavedChanges()` method that nothing ever called:
+ * the assignment matrix since P9-1, the routine editor since P9-5. A guard
+ * nobody asks is the same defect as a lock nobody can set, so the route
+ * contract now has somewhere for the answer to go.
+ *
+ * The hash has already changed by the time the shell hears about it, which
+ * is the part that makes this fiddly: blocking a navigation means putting
+ * the address bar back, or it says the person is somewhere they are not.
+ */
+describe('leaving a view with unsaved work', () => {
+  const root = () => dom.window.document.getElementById('root') as HTMLElement;
+
+  /**
+   * One shell at a time.
+   *
+   * Every Shell listens on the GLOBAL `hashchange`, so a shell left alive by
+   * an earlier test answers this test's navigations too — and if its route
+   * carries a guard, it blocks and rewrites the hash underneath the shell
+   * being tested. The tests above never noticed because they only inspect
+   * the first render.
+   */
+  let live: Shell | null = null;
+  const shellWith = (routes: ShellRoute[]) => {
+    live?.destroy();
+    root().textContent = '';
+    dom.window.location.hash = `#/${routes[0].path}`;
+    live = new Shell({
+      root: root(), doc: dom.window.document, routes, defaultPath: routes[0].path,
+      displayName: 'পরীক্ষা', onLogout: () => {},
+    });
+    return live;
+  };
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+
+  test('THE ONE THAT MATTERS — a blocked navigation stays put, hash and all', async () => {
+    let asked = 0;
+    let resumeFn: (() => void) | null = null;
+    const routes: ShellRoute[] = [
+      { ...route('editor'), guardLeave: (resume) => { asked++; resumeFn = resume; return true; } },
+      route('elsewhere'),
+    ];
+    shellWith(routes);
+    await settle();
+
+    dom.window.location.hash = '#/elsewhere';
+    await settle();
+
+    assert.equal(asked, 1, 'the view was asked');
+    assert.match(root().textContent ?? '', /editor/, 'and is still on screen');
+    assert.equal(dom.window.location.hash, '#/editor',
+      'the address bar goes back too — otherwise the back button lands nowhere');
+  });
+
+  test('and confirming resumes the navigation that was blocked', async () => {
+    let resumeFn: (() => void) | null = null;
+    const routes: ShellRoute[] = [
+      { ...route('editor'), guardLeave: (resume) => { resumeFn = resume; return true; } },
+      route('elsewhere'),
+    ];
+    shellWith(routes);
+    await settle();
+    dom.window.location.hash = '#/elsewhere';
+    await settle();
+    assert.match(root().textContent ?? '', /editor/);
+
+    (resumeFn as unknown as () => void)();
+    await settle();
+    assert.match(root().textContent ?? '', /elsewhere/, 'the person gets where they were going');
+    assert.equal(dom.window.location.hash, '#/elsewhere');
+  });
+
+  test('a guard that returns false does not interrupt anybody', async () => {
+    // The ordinary case, and the one that must stay cheap: nothing unsaved.
+    let asked = 0;
+    const routes: ShellRoute[] = [
+      { ...route('editor'), guardLeave: () => { asked++; return false; } },
+      route('elsewhere'),
+    ];
+    shellWith(routes);
+    await settle();
+    dom.window.location.hash = '#/elsewhere';
+    await settle();
+    assert.equal(asked, 1);
+    assert.match(root().textContent ?? '', /elsewhere/);
+  });
+
+  test('a route with no guard behaves exactly as it always did', async () => {
+    const routes: ShellRoute[] = [route('editor'), route('elsewhere')];
+    shellWith(routes);
+    await settle();
+    dom.window.location.hash = '#/elsewhere';
+    await settle();
+    assert.match(root().textContent ?? '', /elsewhere/);
+  });
+
+  test('the guard is asked once per navigation, not once per render', async () => {
+    // A guard that fired twice would show two dialogs, and the second would
+    // outlive the answer to the first.
+    let asked = 0;
+    const routes: ShellRoute[] = [
+      { ...route('editor'), guardLeave: (resume) => { asked++; resume(); return true; } },
+      route('elsewhere'),
+    ];
+    shellWith(routes);
+    await settle();
+    dom.window.location.hash = '#/elsewhere';
+    await settle();
+    assert.equal(asked, 1);
+    assert.match(root().textContent ?? '', /elsewhere/);
+  });
+});

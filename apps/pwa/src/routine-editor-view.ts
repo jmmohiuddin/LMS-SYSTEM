@@ -40,7 +40,7 @@ import {
   pageHeader, field, statusBadge, listSkeleton, openDrawer, button, buttonRow,
   el, append, setBusy, announce, confirmOverlay, type OverlayHandle,
 } from './ui/index.ts';
-import { formatCount } from '../../../packages/ui-core/src/format.ts';
+import { formatCount, formatTime } from '../../../packages/ui-core/src/format.ts';
 
 /**
  * The teaching week comes from the SERVER, which reads `tenants.weekend_days`.
@@ -81,8 +81,11 @@ interface Setup {
   periodTemplateId: string | null; periodTemplateName: string | null;
   sectionLabel: string; effectiveFrom: string;
 }
+interface UndoEntry { id: string; action: string; labelBn: string; createdAt: string }
 interface Grid {
   sectionId: string;
+  /** P9-5. What pressing undo would reverse, newest first. Server-owned. */
+  undo?: UndoEntry[];
   routine: RoutineMeta | null;
   periods: Period[];
   slots: Slot[];
@@ -99,6 +102,16 @@ export interface RoutineEditorViewOptions {
   root: HTMLElement;
   doc: Document;
   auth: Auth;
+  /**
+   * P9-5 §16. Which section to open on.
+   *
+   * Without it the editor opens on the last section this device used, which
+   * is right when a coordinator navigates to it directly and wrong when they
+   * arrive from a generation result that was about a different one — they
+   * would be dropped into a week they had not been reading about and would
+   * have to find their way back.
+   */
+  sectionId?: string;
 }
 
 const SHIFT_BN: Record<string, string> = {
@@ -124,10 +137,15 @@ export class RoutineEditorView {
    */
   private failed = false;
   private busy = false;
+  /** §17. True while a lesson drawer holds typing nobody has saved yet. */
+  private drawerOpen = false;
 
   constructor(options: RoutineEditorViewOptions) {
     this.o = options;
-    this.sectionId = localStorage.getItem('shikhon_last_section');
+    // An explicit section wins over the remembered one: arriving from a
+    // generation result means the coordinator has a section in mind, and
+    // this device's last choice is not it.
+    this.sectionId = options.sectionId || localStorage.getItem('shikhon_last_section');
     void this.init();
   }
 
@@ -205,12 +223,11 @@ export class RoutineEditorView {
   }
 
   private pick(slot: Slot): void {
-    // Refuse locally what the server would refuse anyway, and say why now
-    // rather than after a round trip the coordinator has to wait for.
-    if (slot.isPinned) {
-      this.notice = { text: 'এই ক্লাসটি পিন করা — সরানো যাবে না।', tone: 'warn' };
-      this.render(); return;
-    }
+    // A pinned lesson IS selectable, and that is a P9-5 correction: refusing
+    // the selection meant its action bar never opened, so the only control
+    // that could unlock it was unreachable. It cannot be MOVED — `place()`
+    // still refuses, and the bar says so — but it can be selected, edited
+    // and unlocked, which is the whole point of being able to lock it.
     if (slot.isDouble || slot.doubleGroupId) {
       this.notice = {
         text: 'দ্বৈত পিরিয়ড আলাদা করে সরানো যায় না — দুটি অংশ একসাথেই থাকে।', tone: 'warn' };
@@ -224,13 +241,26 @@ export class RoutineEditorView {
   private async place(dow: number, periodNo: number): Promise<void> {
     const slotId = this.selected;
     if (!slotId || this.busy) return;
+    // Selectable, not movable. The server refuses this too; saying it here
+    // saves a round trip the coordinator would wait through.
+    const held = this.grid?.slots.find((x) => x.id === slotId);
+    if (held?.isPinned) {
+      this.notice = { text: 'এই ক্লাসটি পিন করা — সরাতে হলে আগে পিন সরান।', tone: 'warn' };
+      this.render(); return;
+    }
     this.busy = true;
     this.notice = null;
     this.render();
     try {
       const res = await this.o.auth.authedFetch('/api/v1/rms/editor', {
         method: 'POST',
-        body: JSON.stringify({ action: 'move', slotId, dayOfWeek: dow, periodNo }),
+        // §13. The version this grid was drawn from. If somebody else has
+        // moved this class since, the server refuses rather than quietly
+        // discarding their change.
+        body: JSON.stringify({
+          action: 'move', slotId, dayOfWeek: dow, periodNo,
+          rowVersion: this.grid?.slots.find((x) => x.id === slotId)?.rowVersion,
+        }),
       });
       const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string };
       if (res.ok && body.ok) {
@@ -376,14 +406,26 @@ export class RoutineEditorView {
         + (held?.teacherName ? ` · ${held.teacherName}` : '');
       const how = d.createElement('p');
       how.className = 'editor-holding-how';
-      how.textContent = 'যে ঘরে বসাতে চান সেই খালি ঘরে চাপ দিন।';
+      // §10. A locked lesson explains its own consequence here, in words,
+      // rather than leaving a padlock to carry the meaning.
+      how.textContent = held?.isPinned
+        ? 'এই ক্লাসটি পিন করা — সরানো বা মুছে ফেলা যাবে না, এবং আবার রুটিন '
+          + 'তৈরি করলেও এটি বদলাবে না। বদলাতে হলে আগে পিন সরান।'
+        : 'যে ঘরে বসাতে চান সেই খালি ঘরে চাপ দিন।';
       const acts = buttonRow(d,
         button(d, {
           label: 'সম্পাদনা', size: 'sm', variant: 'secondary', disabled: this.busy,
           onClick: () => { if (held) this.openLesson(held); },
         }),
         button(d, {
-          label: 'সরান', size: 'sm', variant: 'danger', disabled: this.busy,
+          label: held?.isPinned ? 'পিন খুলুন' : 'পিন করুন',
+          size: 'sm', variant: 'secondary', disabled: this.busy,
+          glyph: 'lock',
+          onClick: () => { if (held) void this.toggleLock(held); },
+        }),
+        button(d, {
+          label: 'সরান', size: 'sm', variant: 'danger',
+          disabled: this.busy || Boolean(held?.isPinned),
           onClick: () => { if (held) this.confirmRemove(held); },
         }),
         button(d, {
@@ -394,6 +436,8 @@ export class RoutineEditorView {
       root.append(bar);
     }
 
+    const undoBar = this.undoBar();
+    if (undoBar) root.append(undoBar);
     root.append(this.buildGrid());
     root.append(this.legend());
 
@@ -577,10 +621,12 @@ export class RoutineEditorView {
         this.render();
       },
     });
+    this.drawerOpen = true;
     handle = openDrawer(d, {
       title: existing ? 'ক্লাস সম্পাদনা' : 'ক্লাস বসান',
       body: form,
       actions: [cancel, save],
+      onClose: () => { this.drawerOpen = false; },
     });
   }
 
@@ -593,12 +639,149 @@ export class RoutineEditorView {
       confirmLabel: 'সরান',
       danger: true,
       onConfirm: async () => {
-        const msg = await this.send({ action: 'remove', slotId: slot.id });
+        const msg = await this.send({
+          action: 'remove', slotId: slot.id, rowVersion: slot.rowVersion,
+        });
         this.selected = null;
         await this.loadGrid(this.grid!.sectionId);
         this.notice = msg ? { text: msg, tone: 'warn' } : { text: 'সরানো হয়েছে।', tone: 'ok' };
         this.render();
       },
+    });
+  }
+
+  /* ------------------------------------------------------------- P9-5 */
+
+  /**
+   * Lock or unlock a lesson. (§9/§10)
+   *
+   * `is_pinned` has meant "the solver may not move it" since migration 006
+   * and `move` and `remove` have refused to touch a pinned slot for as long —
+   * but nothing could ever SET it, so the guarantee existed and no school
+   * could use it. This is the control.
+   *
+   * The row version goes with the request: two coordinators on one routine is
+   * the ordinary case in a school office, and a lock applied to a slot
+   * somebody else has since moved should be refused, not silently applied to
+   * whatever is there now.
+   */
+  private async toggleLock(slot: Slot): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.render();
+    const msg = await this.send({
+      action: slot.isPinned ? 'unlock' : 'lock',
+      slotId: slot.id,
+      rowVersion: slot.rowVersion,
+    });
+    this.busy = false;
+    if (msg) {
+      this.notice = { text: msg, tone: 'warn' };
+      announce(this.o.doc, msg, true);
+      this.render();
+      return;
+    }
+    await this.loadGrid(this.grid!.sectionId);
+    const done = slot.isPinned
+      ? `${slot.subjectBn ?? 'ক্লাসটির'} পিন খোলা হয়েছে।`
+      : `${slot.subjectBn ?? 'ক্লাসটি'} পিন করা হয়েছে — আবার রুটিন তৈরি করলে এটি বদলাবে না।`;
+    this.notice = { text: done, tone: 'ok' };
+    // §18: a lock is a state change with consequences, and a padlock glyph
+    // says nothing to a screen reader.
+    announce(this.o.doc, done);
+    this.render();
+  }
+
+  /**
+   * Reverse the most recent edit. (§11)
+   *
+   * The server owns the stack — it recorded how to reverse each edit while
+   * the old row was still in front of it — so this sends one action and
+   * re-reads. A browser-side undo would have to remember state the server has
+   * already moved on from, and would be wrong exactly when two people are
+   * editing, which is when undo matters most.
+   */
+  private async undo(): Promise<void> {
+    if (this.busy || !this.grid?.routine) return;
+    const top = this.grid.undo?.[0];
+    this.busy = true;
+    this.render();
+    const msg = await this.send({ action: 'undo', routineId: this.grid.routine.id });
+    this.busy = false;
+    if (msg) {
+      this.notice = { text: msg, tone: 'warn' };
+      announce(this.o.doc, msg, true);
+      this.render();
+      return;
+    }
+    await this.loadGrid(this.grid.sectionId);
+    const done = top ? `ফিরিয়ে নেওয়া হয়েছে — ${top.labelBn}` : 'ফিরিয়ে নেওয়া হয়েছে।';
+    this.notice = { text: done, tone: 'ok' };
+    announce(this.o.doc, done);
+    this.render();
+  }
+
+  /**
+   * The undo control, naming what it will reverse. (§11/§18)
+   *
+   * "ফিরিয়ে নিন" alone asks a coordinator to remember what they last did. The
+   * label the server stored says it for them, and it keeps saying it after
+   * the subject has been renamed — which is why the label is stored rather
+   * than derived at read time.
+   */
+  private undoBar(): HTMLElement | null {
+    const d = this.o.doc;
+    const stack = this.grid?.undo ?? [];
+    if (!this.grid?.routine?.editable) return null;
+
+    const wrap = el(d, 'div', { className: 'edit-undo' });
+    if (stack.length === 0) {
+      // Shown disabled rather than hidden: a control that appears only
+      // sometimes is one a person has to hunt for, and its absence reads as
+      // a bug rather than as "nothing to undo".
+      wrap.append(button(d, {
+        label: 'ফিরিয়ে নেওয়ার কিছু নেই', variant: 'ghost', size: 'sm', disabled: true,
+      }));
+      return wrap;
+    }
+    wrap.append(button(d, {
+      label: `ফিরিয়ে নিন — ${stack[0].labelBn}`,
+      variant: 'secondary',
+      size: 'sm',
+      glyph: 'repeat',
+      disabled: this.busy,
+      onClick: () => void this.undo(),
+    }));
+    if (stack.length > 1) {
+      wrap.append(el(d, 'span', {
+        className: 'ui-cell-meta',
+        text: `আরও ${formatCount(stack.length - 1, 'bn')}টি ধাপ ফিরিয়ে নেওয়া যাবে`,
+      }));
+    }
+    return wrap;
+  }
+
+  /**
+   * §17 — do not lose an edit to a stray tap on the back button.
+   *
+   * The editor writes each change to the server as it is made, so there is no
+   * unsaved GRID. What can be lost is a half-filled lesson drawer, and that
+   * is what this guards: P9-2 recorded the same gap in the setup wizard and
+   * this is the answer for both shapes.
+   */
+  hasUnsavedChanges(): boolean {
+    return this.drawerOpen;
+  }
+
+  /** Wired by the shell before it swaps this view out. */
+  confirmDiscard(onConfirm: () => void): void {
+    confirmOverlay(this.o.doc, {
+      title: 'এই ক্লাসটি এখনো সংরক্ষণ করা হয়নি',
+      body: 'খোলা ফর্মে যা লিখেছেন তা হারিয়ে যাবে। রুটিনে ইতিমধ্যে করা '
+        + 'পরিবর্তনগুলো সংরক্ষিত আছে — শুধু এই ফর্মটিই বাকি।',
+      confirmLabel: 'বাদ দিন',
+      danger: true,
+      onConfirm,
     });
   }
 
@@ -636,7 +819,10 @@ export class RoutineEditorView {
       no.textContent = formatCount(p.periodNo, 'bn');
       const time = d.createElement('span');
       time.className = 'routine-period-time';
-      time.textContent = p.startsAt;
+      // Bangla digits, like every other number on this screen. The grid was
+      // rendering the raw `HH:MM` from the API, so a Bangla timetable carried
+      // Latin clock times in its one always-visible column.
+      time.textContent = formatTime(p.startsAt, 'bn');
       rowHead.append(no, time);
       tr.append(rowHead);
 
@@ -697,9 +883,20 @@ export class RoutineEditorView {
       room.textContent = slot.roomName ?? '';
 
       btn.append(subject, teacher, room);
+      // §10. The padlock is a reinforcement; the WORD is the carrier. A
+      // coordinator who cannot see the glyph, and every screen reader, gets
+      // the same fact and the same consequence.
+      if (slot.isPinned) {
+        btn.append(el(d, 'span', {
+          className: 'routine-slot-lock', text: '🔒 পিন করা',
+        }));
+      }
       btn.setAttribute('aria-label',
         `${dayBn}, পিরিয়ড ${formatCount(p.periodNo, 'bn')}, ${slot.subjectBn ?? 'ক্লাস'}`
-        + (slot.teacherName ? `, ${slot.teacherName}` : ''));
+        + (slot.teacherName ? `, ${slot.teacherName}` : '')
+        + (slot.isPinned
+          ? ', পিন করা — আবার রুটিন তৈরি করলে এটি বদলাবে না'
+          : ''));
       btn.addEventListener('click', () => this.pick(slot));
     } else {
       btn.dataset.filled = 'false';

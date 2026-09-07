@@ -1405,3 +1405,47 @@ numeral before a Bangla counter.
 Grouping is server-side; the view keeps a 25-per-severity cap as a backstop
 against a category nobody has grouped yet, with the remainder named as a
 count rather than dropped.
+
+## P9-5 — routine editor: lock and undo (2026-09-07)
+
+No new screen. `routine-editor-view.ts` gained a lock control, an undo bar and
+a leave guard, on the canonical components (`button`, `buttonRow`,
+`confirmOverlay`, `openDrawer`, `announce`).
+
+**A locked lesson is selectable.** The first version refused the selection —
+reasonable, since a pinned lesson cannot be moved — which meant its action bar
+never opened and the only control that could unlock it was unreachable. A lock
+must not be a one-way door.
+
+**The lock is a WORD.** The cell carries "🔒 পিন করা", the accessible name
+carries "পিন করা — আবার রুটিন তৈরি করলে এটি বদলাবে না", and the action bar
+explains the consequence in full. The padlock and the background tint are
+reinforcements: a glyph says nothing to a screen reader, and the consequence —
+a later solver run leaves this alone — is the part that matters and cannot be
+drawn. Verified distinct in both themes (light `#FFFFFF` vs `#E9E3D4`, dark
+`#241E1A` vs `#302821`).
+
+**"পিন খুলুন", not "পিন সরান".** The action row already had a "সরান" that
+deletes the lesson. Two controls a scanning eye reads as the same word is how
+a coordinator deletes a class they meant to unlock.
+
+**Undo names what it will reverse** — "ফিরিয়ে নিন — ষষ্ঠ-ক · বাংলা · রবি ১
+নম্বর পিরিয়ড" — because "undo" alone asks a coordinator to remember the thing
+they are pressing it because they cannot. A deeper stack says how much further
+back it goes. An empty stack shows the control DISABLED rather than absent: a
+control that appears only sometimes is one people hunt for, and its absence
+reads as a bug.
+
+**Leaving with an open lesson form asks first.** `ShellRoute.guardLeave` is the
+hook; blocking puts the address bar back, because the hash changes before the
+shell hears about it.
+
+**Responsive**: verified at 360, 375, 390, 640, 768, 1024, 1280, 1440 and 1600
+with a lesson selected, so the action bar and lock control are on screen — no
+horizontal overflow at any width (the grid scrolls inside its own
+`table-scroll`, as §11 intends), no tap target under 44px.
+
+**Localisation**: the period column rendered raw `HH:MM` from the API, putting
+Latin clock times in the one always-visible column of a Bangla timetable. It
+uses `formatTime(…, 'bn')`, which is the project's convention and was simply
+not being called here.

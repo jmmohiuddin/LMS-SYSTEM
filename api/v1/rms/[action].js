@@ -3247,6 +3247,69 @@ async function writeAudit(client, actor, entry) {
   }
 }
 
+// services/rms-svc/src/edit-log.ts
+var UNDO_DEPTH = 12;
+async function logEdit(c, o) {
+  await c.query(
+    `INSERT INTO routine_edit_log
+       (tenant_id, routine_id, seq, action, slot_id, inverse, label_bn, actor_id)
+     SELECT $1, $2,
+            COALESCE((SELECT max(seq) FROM routine_edit_log WHERE routine_id = $2), 0) + 1,
+            $3, $4, $5::jsonb, $6, $7`,
+    [
+      o.tenantId,
+      o.routineId,
+      o.action,
+      o.slotId,
+      JSON.stringify(o.inverse),
+      o.labelBn,
+      o.actorId
+    ]
+  );
+}
+async function undoable(c, routineId) {
+  const { rows } = await c.query(
+    `SELECT id, seq::text, action, label_bn, inverse, created_at::text
+       FROM routine_edit_log
+      WHERE routine_id = $1 AND undone_at IS NULL
+      ORDER BY seq DESC
+      LIMIT $2`,
+    [routineId, UNDO_DEPTH]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    seq: r.seq,
+    action: r.action,
+    labelBn: r.label_bn,
+    inverse: r.inverse,
+    createdAt: r.created_at
+  }));
+}
+async function claimNewest(c, routineId, actorId) {
+  const { rows } = await c.query(
+    `UPDATE routine_edit_log
+        SET undone_at = now(), undone_by = $2
+      WHERE id = (
+        SELECT id FROM routine_edit_log
+         WHERE routine_id = $1 AND undone_at IS NULL
+         ORDER BY seq DESC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id, seq::text, action, label_bn, inverse, created_at::text`,
+    [routineId, actorId]
+  );
+  const r = rows[0];
+  return r ? {
+    id: r.id,
+    seq: r.seq,
+    action: r.action,
+    labelBn: r.label_bn,
+    inverse: r.inverse,
+    createdAt: r.created_at
+  } : null;
+}
+
 // services/rms-svc/api/editor.ts
 var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var EDITOR_ROLES = ["principal", "school_owner", "academic_coordinator"];
@@ -3299,7 +3362,15 @@ async function handler6(req, res) {
         return;
       }
       if (body.action === "move") {
-        json(res, 200, await write((c) => move(c, body)), cors);
+        json(res, 200, await write((c) => move(c, ctx, body)), cors);
+        return;
+      }
+      if (body.action === "lock" || body.action === "unlock") {
+        json(res, 200, await write((c) => setPin(c, ctx, body, body.action === "lock")), cors);
+        return;
+      }
+      if (body.action === "undo") {
+        json(res, 200, await write((c) => undo(c, ctx, body)), cors);
         return;
       }
       if (body.action === "publish") {
@@ -3308,7 +3379,7 @@ async function handler6(req, res) {
       }
       throw new HttpError(
         400,
-        "action must be 'create-routine', 'place', 'assign', 'move', 'remove' or 'publish'",
+        "action must be 'create-routine', 'place', 'assign', 'move', 'remove', 'lock', 'unlock', 'undo' or 'publish'",
         "invalid_action"
       );
     }
@@ -3477,6 +3548,15 @@ async function loadGrid(c, sectionId) {
       parallelPool: s.parallel_pool,
       isPinned: s.is_pinned,
       rowVersion: s.row_version
+    })),
+    // P9-5 §11. What pressing undo would reverse, named — so the button can
+    // say "রফিক স্যারের সোমবারের ক্লাস ফিরিয়ে নিন" instead of "undo", and a
+    // coordinator knows before they press it.
+    undo: (await undoable(c, routine.id)).map((e) => ({
+      id: e.id,
+      action: e.action,
+      labelBn: e.labelBn,
+      createdAt: e.createdAt
     }))
   };
 }
@@ -3736,6 +3816,17 @@ async function place(c, ctx, b) {
     }
     return new HttpError(409, e.message ?? "\u09B8\u09AE\u09BE\u09A8\u09CD\u09A4\u09B0\u09BE\u09B2 \u09AC\u09CD\u09B2\u0995\u09C7\u09B0 \u09A8\u09BF\u09AF\u09BC\u09AE \u09AD\u09C7\u0999\u09C7 \u09AF\u09BE\u099A\u09CD\u099B\u09C7\u0964", "parallel_block_conflict");
   });
+  await logEdit(c, {
+    tenantId: ctx.tenantId,
+    routineId,
+    actorId: ctx.userId,
+    action: "place",
+    slotId,
+    // Undoing a placement takes the lesson back out. Soft-removed, the same
+    // way `remove` does it, so the row survives to be restored again.
+    inverse: { op: "remove", slotId },
+    labelBn: await slotLabel(c, slotId)
+  });
   await writeAudit(c, ctx, {
     action: "rms.slot.place",
     entityType: "routine_slot",
@@ -3764,6 +3855,7 @@ async function assign(c, ctx, b) {
       "routine_not_editable"
     );
   }
+  await requireVersion(c, slotId, b.rowVersion);
   const subjectId = b.subjectId ?? slot.subject_id;
   const teacherId = b.teacherId ?? slot.teacher_id;
   const roomId = b.roomId === void 0 ? slot.room_id : b.roomId ? String(b.roomId) : null;
@@ -3819,6 +3911,21 @@ async function assign(c, ctx, b) {
     slot.starts_at,
     slot.ends_at
   ));
+  await logEdit(c, {
+    tenantId: ctx.tenantId,
+    routineId: slot.routine_id,
+    actorId: ctx.userId,
+    action: "assign",
+    slotId,
+    inverse: {
+      op: "assign",
+      slotId,
+      subjectId: slot.subject_id,
+      teacherId: slot.teacher_id,
+      roomId: slot.room_id
+    },
+    labelBn: await slotLabel(c, slotId)
+  });
   await writeAudit(c, ctx, {
     action: "rms.slot.assign",
     entityType: "routine_slot",
@@ -3833,7 +3940,7 @@ async function remove(c, ctx, b) {
   if (!UUID_RE5.test(slotId)) throw new HttpError(400, "slotId must be a valid uuid", "invalid_slot_id");
   const cur = await c.query(
     `SELECT rt.status::text AS status, s.is_pinned, sub.name_bn AS subject_bn,
-            s.double_group_id, s.is_double
+            s.double_group_id, s.is_double, s.routine_id
        FROM routine_slots s
        JOIN routines rt      ON rt.id = s.routine_id
        LEFT JOIN subjects sub ON sub.id = s.subject_id
@@ -3852,6 +3959,7 @@ async function remove(c, ctx, b) {
   if (slot.is_pinned) {
     throw new HttpError(409, "\u098F\u0987 \u0995\u09CD\u09B2\u09BE\u09B8\u099F\u09BF \u09AA\u09BF\u09A8 \u0995\u09B0\u09BE \u2014 \u0986\u0997\u09C7 \u09AA\u09BF\u09A8 \u09B8\u09B0\u09BE\u09A8\u0964", "slot_pinned");
   }
+  await requireVersion(c, slotId, b.rowVersion);
   if (slot.is_double || slot.double_group_id) {
     throw new HttpError(
       409,
@@ -3859,12 +3967,22 @@ async function remove(c, ctx, b) {
       "double_period_indivisible"
     );
   }
+  const removedLabel = await slotLabel(c, slotId);
   await c.query(
     `UPDATE routine_slots
         SET status = 'removed', row_version = row_version + 1, updated_at = now()
       WHERE id = $1`,
     [slotId]
   );
+  await logEdit(c, {
+    tenantId: ctx.tenantId,
+    routineId: slot.routine_id,
+    actorId: ctx.userId,
+    action: "remove",
+    slotId,
+    inverse: { op: "restore", slotId },
+    labelBn: removedLabel
+  });
   await writeAudit(c, ctx, {
     action: "rms.slot.remove",
     entityType: "routine_slot",
@@ -3873,7 +3991,7 @@ async function remove(c, ctx, b) {
   });
   return { ok: true, slotId };
 }
-async function move(c, body) {
+async function move(c, ctx, body) {
   const slotId = body.slotId ?? "";
   if (!UUID_RE5.test(slotId)) throw new HttpError(400, "slotId must be a valid uuid", "invalid_slot_id");
   const day2 = Number(body.dayOfWeek);
@@ -3884,7 +4002,8 @@ async function move(c, body) {
   if (!Number.isInteger(periodNo)) throw new HttpError(400, "periodNo is required", "invalid_period");
   const cur = await c.query(
     `SELECT s.routine_id, rt.status, s.is_double, s.double_group_id, s.is_pinned,
-            s.teacher_id, s.room_id, s.primary_section_id, rt.period_template_id
+            s.teacher_id, s.room_id, s.primary_section_id, rt.period_template_id,
+            s.day_of_week AS from_day, s.period_no AS from_period
        FROM routine_slots s
        JOIN routines rt ON rt.id = s.routine_id
       WHERE s.id = $1 AND s.status = 'active'`,
@@ -3902,6 +4021,7 @@ async function move(c, body) {
   if (slot.is_pinned) {
     throw new HttpError(409, "\u098F\u0987 \u0995\u09CD\u09B2\u09BE\u09B8\u099F\u09BF \u09AA\u09BF\u09A8 \u0995\u09B0\u09BE \u2014 \u0986\u0997\u09C7 \u09AA\u09BF\u09A8 \u09B8\u09B0\u09BE\u09A8\u0964", "slot_pinned");
   }
+  await requireVersion(c, slotId, body.rowVersion);
   if (slot.is_double || slot.double_group_id) {
     throw new HttpError(
       409,
@@ -3933,6 +4053,24 @@ async function move(c, body) {
       return explainConflict(c, e.constraint ?? "", slot, day2, target.starts_at, target.ends_at);
     }
     return new HttpError(409, e.message ?? "\u09B8\u09AE\u09BE\u09A8\u09CD\u09A4\u09B0\u09BE\u09B2 \u09AC\u09CD\u09B2\u0995\u09C7\u09B0 \u09A8\u09BF\u09AF\u09BC\u09AE \u09AD\u09C7\u0999\u09C7 \u09AF\u09BE\u099A\u09CD\u099B\u09C7\u0964", "parallel_block_conflict");
+  });
+  await logEdit(c, {
+    tenantId: ctx.tenantId,
+    routineId: slot.routine_id,
+    actorId: ctx.userId,
+    action: "move",
+    slotId,
+    // Where it came FROM, captured before the update — the whole reason the
+    // inverse is computed at write time rather than at undo time.
+    inverse: { op: "move", slotId, dayOfWeek: slot.from_day, periodNo: slot.from_period },
+    labelBn: await slotLabel(c, slotId)
+  });
+  await writeAudit(c, ctx, {
+    action: "rms.slot.move",
+    entityType: "routine_slot",
+    entityId: slotId,
+    before: { dayOfWeek: slot.from_day, periodNo: slot.from_period },
+    after: { dayOfWeek: day2, periodNo }
   });
   return { ok: true, slotId };
 }
@@ -4072,6 +4210,179 @@ async function publish(c, ctx, routineId) {
     after: { status: "active", unfilled: Number(rt.unfilled) }
   });
   return { ok: true, unfilled: Number(rt.unfilled) };
+}
+async function slotLabel(c, slotId) {
+  const { rows } = await c.query(
+    `SELECT cl.name_bn || '-' || sec.name AS section_label,
+            sub.name_bn AS subject_bn, s.day_of_week AS dow, s.period_no
+       FROM routine_slots s
+       LEFT JOIN sections sec ON sec.id = s.primary_section_id
+       LEFT JOIN classes cl   ON cl.id = sec.class_id
+       LEFT JOIN subjects sub ON sub.id = s.subject_id
+      WHERE s.id = $1`,
+    [slotId]
+  );
+  const r = rows[0];
+  if (!r) return "\u098F\u0995\u099F\u09BF \u0995\u09CD\u09B2\u09BE\u09B8";
+  return `${r.section_label ?? "\u09B6\u09BE\u0996\u09BE"} \xB7 ${r.subject_bn ?? "\u09AC\u09BF\u09B7\u09AF\u09BC"} \xB7 ${DAY_BN2[r.dow] ?? ""} ${bnNum2(r.period_no)} \u09A8\u09AE\u09CD\u09AC\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1`;
+}
+var BN_DIGITS4 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bnNum2 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS4[Number(d)]);
+async function requireVersion(c, slotId, expected) {
+  if (expected === void 0 || expected === null) return;
+  const { rows } = await c.query(
+    `SELECT row_version FROM routine_slots WHERE id = $1`,
+    [slotId]
+  );
+  const cur = rows[0];
+  if (!cur || cur.row_version === expected) return;
+  throw new HttpError(
+    409,
+    "\u098F\u0987 \u0995\u09CD\u09B2\u09BE\u09B8\u099F\u09BF \u0986\u09AA\u09A8\u09BE\u09B0 \u09AA\u09B0\u09CD\u09A6\u09BE\u09AF\u09BC \u09A6\u09C7\u0996\u09BE\u09A8\u09CB\u09B0 \u09AA\u09B0 \u0985\u09A8\u09CD\u09AF \u0995\u09C7\u0989 \u09AC\u09A6\u09B2\u09C7 \u09AB\u09C7\u09B2\u09C7\u099B\u09C7\u09A8\u0964 \u09A8\u09A4\u09C1\u09A8 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE \u09A6\u09C7\u0996\u09C7 \u0986\u09AC\u09BE\u09B0 \u099A\u09C7\u09B7\u09CD\u099F\u09BE \u0995\u09B0\u09C1\u09A8\u0964",
+    "stale_slot",
+    { slotId, expected, actual: cur.row_version }
+  );
+}
+async function setPin(c, ctx, b, pinned) {
+  const slotId = b.slotId ?? "";
+  if (!UUID_RE5.test(slotId)) throw new HttpError(400, "slotId must be a valid uuid", "invalid_slot_id");
+  const cur = await c.query(
+    `SELECT s.routine_id, rt.status::text AS status, s.is_pinned
+       FROM routine_slots s
+       JOIN routines rt ON rt.id = s.routine_id
+      WHERE s.id = $1 AND s.status = 'active'`,
+    [slotId]
+  );
+  const slot = cur.rows[0];
+  if (!slot) throw new HttpError(404, "slot not found", "slot_not_found");
+  if (!EDITABLE.has(slot.status)) {
+    throw new HttpError(
+      409,
+      "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "routine_not_editable"
+    );
+  }
+  await requireVersion(c, slotId, b.rowVersion);
+  if (slot.is_pinned === pinned) return { ok: true, slotId, isPinned: pinned, changed: false };
+  const label = await slotLabel(c, slotId);
+  await c.query(
+    `UPDATE routine_slots
+        SET is_pinned = $2, row_version = row_version + 1,
+                updated_at = now()
+      WHERE id = $1`,
+    [slotId, pinned]
+  );
+  await logEdit(c, {
+    tenantId: ctx.tenantId,
+    routineId: slot.routine_id,
+    actorId: ctx.userId,
+    action: pinned ? "lock" : "unlock",
+    slotId,
+    inverse: { op: "pin", slotId, isPinned: slot.is_pinned },
+    labelBn: label
+  });
+  await writeAudit(c, ctx, {
+    action: pinned ? "rms.slot.lock" : "rms.slot.unlock",
+    entityType: "routine_slot",
+    entityId: slotId,
+    before: { isPinned: slot.is_pinned },
+    after: { isPinned: pinned }
+  });
+  return { ok: true, slotId, isPinned: pinned, changed: true };
+}
+async function undo(c, ctx, b) {
+  const routineId = b.routineId ?? "";
+  if (!UUID_RE5.test(routineId)) {
+    throw new HttpError(400, "routineId must be a valid uuid", "invalid_routine_id");
+  }
+  const rt = await c.query(
+    `SELECT status::text AS status FROM routines WHERE id = $1`,
+    [routineId]
+  );
+  if (!rt.rows[0]) throw new HttpError(404, "routine not found", "routine_not_found");
+  if (!EDITABLE.has(rt.rows[0].status)) {
+    throw new HttpError(
+      409,
+      "\u09AA\u09CD\u09B0\u0995\u09BE\u09B6\u09BF\u09A4 \u09B0\u09C1\u099F\u09BF\u09A8 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09AC\u09A6\u09B2\u09BE\u09A8\u09CB \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u09A8\u09A4\u09C1\u09A8 \u0996\u09B8\u09A1\u09BC\u09BE \u09A4\u09C8\u09B0\u09BF \u0995\u09B0\u09C1\u09A8\u0964",
+      "routine_not_editable"
+    );
+  }
+  const entry = await claimNewest(c, routineId, ctx.userId);
+  if (!entry) {
+    throw new HttpError(409, "\u09AB\u09BF\u09B0\u09BF\u09AF\u09BC\u09C7 \u09A8\u09C7\u0993\u09AF\u09BC\u09BE\u09B0 \u09AE\u09A4\u09CB \u0995\u09CB\u09A8\u09CB \u09AA\u09B0\u09BF\u09AC\u09B0\u09CD\u09A4\u09A8 \u09A8\u09C7\u0987\u0964", "nothing_to_undo");
+  }
+  const inv = entry.inverse;
+  await tryWrite(c, async () => {
+    if (inv.op === "restore") {
+      await c.query(
+        `UPDATE routine_slots
+            SET status = 'active', row_version = row_version + 1,
+                updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId]
+      );
+    } else if (inv.op === "remove") {
+      await c.query(
+        `UPDATE routine_slots
+            SET status = 'removed', row_version = row_version + 1,
+                updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId]
+      );
+    } else if (inv.op === "move") {
+      const pd = await c.query(
+        `SELECT pd.id, pd.starts_at, pd.ends_at
+           FROM routine_slots s
+           JOIN routines rt ON rt.id = s.routine_id
+           JOIN period_definitions pd
+                ON pd.template_id = rt.period_template_id AND pd.period_no = $2
+          WHERE s.id = $1`,
+        [inv.slotId, inv.periodNo]
+      );
+      const p = pd.rows[0];
+      if (!p) throw new HttpError(409, "\u0986\u0997\u09C7\u09B0 \u09AA\u09BF\u09B0\u09BF\u09AF\u09BC\u09A1\u099F\u09BF \u0986\u09B0 \u09A8\u09C7\u0987\u0964", "undo_period_missing");
+      await c.query(
+        `UPDATE routine_slots
+            SET day_of_week = $2, period_no = $3, period_definition_id = $4,
+                starts_at = $5, ends_at = $6, row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId, inv.dayOfWeek, inv.periodNo, p.id, p.starts_at, p.ends_at]
+      );
+    } else if (inv.op === "assign") {
+      await c.query(
+        `UPDATE routine_slots
+            SET subject_id = $2, teacher_id = $3, room_id = $4,
+                row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId, inv.subjectId, inv.teacherId, inv.roomId]
+      );
+    } else {
+      await c.query(
+        `UPDATE routine_slots
+            SET is_pinned = $2, row_version = row_version + 1,
+                updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId, inv.isPinned]
+      );
+    }
+  }, async (e) => {
+    if (e.code === "23P01") {
+      return new HttpError(
+        409,
+        `"${entry.labelBn}" \u0986\u0997\u09C7\u09B0 \u099C\u09BE\u09AF\u09BC\u0997\u09BE\u09AF\u09BC \u09AB\u09C7\u09B0\u09BE\u09A8\u09CB \u09AF\u09BE\u099A\u09CD\u099B\u09C7 \u09A8\u09BE \u2014 \u09B8\u09C7\u0987 \u09B8\u09AE\u09AF\u09BC\u099F\u09BF \u098F\u0996\u09A8 \u0985\u09A8\u09CD\u09AF \u0995\u09CD\u09B2\u09BE\u09B8\u09C7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09C3\u09A4 \u09B9\u099A\u09CD\u099B\u09C7\u0964`,
+        "undo_blocked",
+        { labelBn: entry.labelBn }
+      );
+    }
+    return new HttpError(409, e.message ?? "\u09AB\u09BF\u09B0\u09BF\u09AF\u09BC\u09C7 \u09A8\u09C7\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964", "undo_failed");
+  });
+  await writeAudit(c, ctx, {
+    action: "rms.slot.undo",
+    entityType: "routine_slot",
+    entityId: inv.slotId,
+    before: { undidAction: entry.action, labelBn: entry.labelBn }
+  });
+  return { ok: true, undid: entry.action, labelBn: entry.labelBn, slotId: inv.slotId };
 }
 
 // services/rms-svc/api/rooms.ts
@@ -4566,8 +4877,8 @@ var UUID_RE8 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 var TIME_RE2 = /^([01]\d|2[0-3]):[0-5]\d$/;
 var SETUP_ROLES = ["principal", "school_owner", "academic_coordinator"];
 var AVAILABILITY_ROLES = [...SETUP_ROLES, "dept_head"];
-var BN_DIGITS4 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn3 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS4[Number(d)]);
+var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn3 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS5[Number(d)]);
 var PERIOD_KINDS = ["teaching", "assembly", "tiffin", "prayer", "games", "study", "break"];
 var AVAILABILITY_KINDS = ["unavailable", "preferred", "admin_duty"];
 var DAY_BN3 = ["\u09B0\u09AC\u09BF", "\u09B8\u09CB\u09AE", "\u09AE\u0999\u09CD\u0997\u09B2", "\u09AC\u09C1\u09A7", "\u09AC\u09C3\u09B9\u09B8\u09CD\u09AA\u09A4\u09BF", "\u09B6\u09C1\u0995\u09CD\u09B0", "\u09B6\u09A8\u09BF"];
@@ -5046,8 +5357,8 @@ async function handler9(req, res) {
 }
 
 // services/rms-svc/src/explain.ts
-var BN_DIGITS5 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn4 = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS5[Number(d)]);
+var BN_DIGITS6 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn4 = (n) => String(n).replace(/\d/g, (d) => BN_DIGITS6[Number(d)]);
 function dominant(t) {
   if (!t || t.candidates === 0) return null;
   const ranked = [
@@ -5385,8 +5696,8 @@ function severityCounts(items) {
 // services/rms-svc/api/generate.ts
 var UUID_RE9 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var GENERATE_ROLES = ["principal", "school_owner", "academic_coordinator"];
-var BN_DIGITS6 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
-var bn5 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS6[Number(d)]);
+var BN_DIGITS7 = "\u09E6\u09E7\u09E8\u09E9\u09EA\u09EB\u09EC\u09ED\u09EE\u09EF";
+var bn5 = (n) => String(n).replace(/[0-9]/g, (d) => BN_DIGITS7[Number(d)]);
 async function nameShortages(c, yearId, shortages) {
   if (shortages.length === 0) return [];
   const caps = shortages.map((s) => s.capability);

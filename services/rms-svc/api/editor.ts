@@ -45,6 +45,7 @@ import { sharedDb } from '../../../packages/server-core/src/db.ts';
 import { corsHeaders, readJson, json, HttpError } from '../../../packages/server-core/src/http.ts';
 import { authenticate, requireRole } from '../../../packages/server-core/src/auth.ts';
 import { writeAudit } from '../../../packages/server-core/src/audit.ts';
+import { logEdit, undoable, claimNewest, UNDO_DEPTH } from '../src/edit-log.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -68,6 +69,12 @@ interface SlotBody {
   teacherId?: string;
   roomId?: string | null;
   nameBn?: string;
+  /**
+   * P9-5 §13. The version the caller rendered. Optional so callers that
+   * predate it keep working; the editor always sends it, and a mismatch is
+   * refused rather than silently overwriting somebody else's newer change.
+   */
+  rowVersion?: number;
 }
 
 /**
@@ -136,7 +143,15 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         return;
       }
       if (body.action === 'move') {
-        json(res, 200, await write((c) => move(c, body)), cors);
+        json(res, 200, await write((c) => move(c, ctx, body)), cors);
+        return;
+      }
+      if (body.action === 'lock' || body.action === 'unlock') {
+        json(res, 200, await write((c) => setPin(c, ctx, body, body.action === 'lock')), cors);
+        return;
+      }
+      if (body.action === 'undo') {
+        json(res, 200, await write((c) => undo(c, ctx, body)), cors);
         return;
       }
       if (body.action === 'publish') {
@@ -144,7 +159,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         return;
       }
       throw new HttpError(400,
-        "action must be 'create-routine', 'place', 'assign', 'move', 'remove' or 'publish'",
+        "action must be 'create-routine', 'place', 'assign', 'move', 'remove', "
+        + "'lock', 'unlock', 'undo' or 'publish'",
         'invalid_action');
     }
 
@@ -323,6 +339,12 @@ async function loadGrid(c: Client, sectionId: string) {
       subjectBn: s.subject_bn, teacherName: s.teacher_name, roomName: s.room_name,
       isDouble: s.is_double, doubleGroupId: s.double_group_id,
       parallelPool: s.parallel_pool, isPinned: s.is_pinned, rowVersion: s.row_version,
+    })),
+    // P9-5 §11. What pressing undo would reverse, named — so the button can
+    // say "রফিক স্যারের সোমবারের ক্লাস ফিরিয়ে নিন" instead of "undo", and a
+    // coordinator knows before they press it.
+    undo: (await undoable(c, routine.id)).map((e) => ({
+      id: e.id, action: e.action, labelBn: e.labelBn, createdAt: e.createdAt,
     })),
   };
 }
@@ -646,6 +668,14 @@ async function place(c: Client, ctx: Ctx, b: SlotBody) {
     return new HttpError(409, e.message ?? 'সমান্তরাল ব্লকের নিয়ম ভেঙে যাচ্ছে।', 'parallel_block_conflict');
   });
 
+  await logEdit(c, {
+    tenantId: ctx.tenantId, routineId, actorId: ctx.userId,
+    action: 'place', slotId,
+    // Undoing a placement takes the lesson back out. Soft-removed, the same
+    // way `remove` does it, so the row survives to be restored again.
+    inverse: { op: 'remove', slotId },
+    labelBn: await slotLabel(c, slotId),
+  });
   await writeAudit(c as never, ctx, {
     action: 'rms.slot.place',
     entityType: 'routine_slot',
@@ -677,6 +707,8 @@ async function assign(c: Client, ctx: Ctx, b: SlotBody) {
     throw new HttpError(409,
       'প্রকাশিত রুটিন সরাসরি বদলানো যায় না — নতুন খসড়া তৈরি করুন।', 'routine_not_editable');
   }
+
+  await requireVersion(c, slotId, b.rowVersion);
 
   // Carry forward what was not named, exactly as A1's PATCH does: an omitted
   // field must not silently revert to a default.
@@ -721,6 +753,13 @@ async function assign(c: Client, ctx: Ctx, b: SlotBody) {
       primary_section_id: slot.primary_section_id },
     slot.day_of_week, slot.starts_at, slot.ends_at));
 
+  await logEdit(c, {
+    tenantId: ctx.tenantId, routineId: slot.routine_id, actorId: ctx.userId,
+    action: 'assign', slotId,
+    inverse: { op: 'assign', slotId, subjectId: slot.subject_id,
+               teacherId: slot.teacher_id, roomId: slot.room_id },
+    labelBn: await slotLabel(c, slotId),
+  });
   await writeAudit(c as never, ctx, {
     action: 'rms.slot.assign',
     entityType: 'routine_slot',
@@ -745,10 +784,10 @@ async function remove(c: Client, ctx: Ctx, b: SlotBody) {
 
   const cur = await c.query<{
     status: string; is_pinned: boolean; subject_bn: string | null;
-    double_group_id: string | null; is_double: boolean;
+    double_group_id: string | null; is_double: boolean; routine_id: string;
   }>(
     `SELECT rt.status::text AS status, s.is_pinned, sub.name_bn AS subject_bn,
-            s.double_group_id, s.is_double
+            s.double_group_id, s.is_double, s.routine_id
        FROM routine_slots s
        JOIN routines rt      ON rt.id = s.routine_id
        LEFT JOIN subjects sub ON sub.id = s.subject_id
@@ -763,18 +802,29 @@ async function remove(c: Client, ctx: Ctx, b: SlotBody) {
   if (slot.is_pinned) {
     throw new HttpError(409, 'এই ক্লাসটি পিন করা — আগে পিন সরান।', 'slot_pinned');
   }
+  await requireVersion(c, slotId, b.rowVersion);
   if (slot.is_double || slot.double_group_id) {
     // Same reasoning as `move`: half a double period is not a thing.
     throw new HttpError(409,
       'দ্বৈত পিরিয়ড আলাদা করে সরানো যায় না — দুটি অংশ একসাথেই থাকে।', 'double_period_indivisible');
   }
 
+  // The label is read BEFORE the row leaves the grid: after `status =
+  // 'removed'` the undo button would still find it, but reading it first is
+  // what keeps the two halves of this function honest about their order.
+  const removedLabel = await slotLabel(c, slotId);
   await c.query(
     `UPDATE routine_slots
         SET status = 'removed', row_version = row_version + 1, updated_at = now()
       WHERE id = $1`,
     [slotId]);
 
+  await logEdit(c, {
+    tenantId: ctx.tenantId, routineId: slot.routine_id, actorId: ctx.userId,
+    action: 'remove', slotId,
+    inverse: { op: 'restore', slotId },
+    labelBn: removedLabel,
+  });
   await writeAudit(c as never, ctx, {
     action: 'rms.slot.remove',
     entityType: 'routine_slot',
@@ -788,7 +838,8 @@ async function remove(c: Client, ctx: Ctx, b: SlotBody) {
 
 async function move(
   c: Client,
-  body: { slotId?: string; dayOfWeek?: number; periodNo?: number },
+  ctx: Ctx,
+  body: { slotId?: string; dayOfWeek?: number; periodNo?: number; rowVersion?: number },
 ): Promise<{ ok: true; slotId: string }> {
   const slotId = body.slotId ?? '';
   if (!UUID_RE.test(slotId)) throw new HttpError(400, 'slotId must be a valid uuid', 'invalid_slot_id');
@@ -803,9 +854,11 @@ async function move(
     routine_id: string; status: string; is_double: boolean; double_group_id: string | null;
     is_pinned: boolean; teacher_id: string | null; room_id: string | null;
     primary_section_id: string | null; period_template_id: string;
+    from_day: number; from_period: number;
   }>(
     `SELECT s.routine_id, rt.status, s.is_double, s.double_group_id, s.is_pinned,
-            s.teacher_id, s.room_id, s.primary_section_id, rt.period_template_id
+            s.teacher_id, s.room_id, s.primary_section_id, rt.period_template_id,
+            s.day_of_week AS from_day, s.period_no AS from_period
        FROM routine_slots s
        JOIN routines rt ON rt.id = s.routine_id
       WHERE s.id = $1 AND s.status = 'active'`,
@@ -820,6 +873,7 @@ async function move(
   if (slot.is_pinned) {
     throw new HttpError(409, 'এই ক্লাসটি পিন করা — আগে পিন সরান।', 'slot_pinned');
   }
+  await requireVersion(c, slotId, body.rowVersion);
   // §8.1: double periods "cannot be split by drag". Moving one half is exactly
   // that split, so it is refused here rather than half-applied. Moving the
   // pair as a unit is a separate operation this endpoint does not yet offer.
@@ -853,6 +907,22 @@ async function move(
     }
     // The parallel-block trigger raises a plain exception with its own text.
     return new HttpError(409, e.message ?? 'সমান্তরাল ব্লকের নিয়ম ভেঙে যাচ্ছে।', 'parallel_block_conflict');
+  });
+
+  await logEdit(c, {
+    tenantId: ctx.tenantId, routineId: slot.routine_id, actorId: ctx.userId,
+    action: 'move', slotId,
+    // Where it came FROM, captured before the update — the whole reason the
+    // inverse is computed at write time rather than at undo time.
+    inverse: { op: 'move', slotId, dayOfWeek: slot.from_day, periodNo: slot.from_period },
+    labelBn: await slotLabel(c, slotId),
+  });
+  await writeAudit(c as never, ctx, {
+    action: 'rms.slot.move',
+    entityType: 'routine_slot',
+    entityId: slotId,
+    before: { dayOfWeek: slot.from_day, periodNo: slot.from_period },
+    after: { dayOfWeek: day, periodNo },
   });
   return { ok: true, slotId };
 }
@@ -1040,4 +1110,216 @@ async function publish(c: Client, ctx: Ctx, routineId: string) {
   // school often publishes with a known hole while it hires. (§8.3's exam
   // routine is the one that genuinely blocks, and it does so elsewhere.)
   return { ok: true, unfilled: Number(rt.unfilled) };
+}
+
+/* ------------------------------------------------------------------ P9-5 */
+
+/**
+ * A slot's own words: "নবম-ক · গণিত · সোম ৩য় পিরিয়ড".
+ *
+ * Stored on the log entry rather than re-derived at undo time, so the undo
+ * button can still say what it will reverse after the subject has been
+ * renamed or the teacher has left. That is also why it is a sentence and not
+ * three ids.
+ */
+async function slotLabel(c: Client, slotId: string): Promise<string> {
+  const { rows } = await c.query<{
+    section_label: string | null; subject_bn: string | null;
+    dow: number; period_no: number;
+  }>(
+    `SELECT cl.name_bn || '-' || sec.name AS section_label,
+            sub.name_bn AS subject_bn, s.day_of_week AS dow, s.period_no
+       FROM routine_slots s
+       LEFT JOIN sections sec ON sec.id = s.primary_section_id
+       LEFT JOIN classes cl   ON cl.id = sec.class_id
+       LEFT JOIN subjects sub ON sub.id = s.subject_id
+      WHERE s.id = $1`,
+    [slotId]);
+  const r = rows[0];
+  if (!r) return 'একটি ক্লাস';
+  return `${r.section_label ?? 'শাখা'} · ${r.subject_bn ?? 'বিষয়'}`
+       + ` · ${DAY_BN[r.dow] ?? ''} ${bnNum(r.period_no)} নম্বর পিরিয়ড`;
+}
+
+const BN_DIGITS = '০১২৩৪৫৬৭৮৯';
+const bnNum = (n: number): string => String(n).replace(/[0-9]/g, (d) => BN_DIGITS[Number(d)]);
+
+/**
+ * Refuse an edit made against a slot the caller has not seen. (§13)
+ *
+ * `routine_slots.row_version` has been incremented by every mutation since
+ * A4 and checked by none of them, so two coordinators editing one routine
+ * silently overwrote each other — last write wins, and the loser is never
+ * told. The client sends the version it rendered; a mismatch means somebody
+ * else has moved this class since, and the honest answer is to say so rather
+ * than to quietly discard their work.
+ *
+ * Optional on purpose: a caller that sends no version keeps the old
+ * behaviour, so this is not a breaking change to an endpoint other screens
+ * already use. The editor always sends one.
+ */
+async function requireVersion(
+  c: Client, slotId: string, expected: number | undefined,
+): Promise<void> {
+  if (expected === undefined || expected === null) return;
+  // Deliberately not naming who changed it: `routine_slots` has no
+  // `updated_by`, and `audit.activity_log` is where that lives. A sentence
+  // that named a person would be a claim this table cannot support.
+  const { rows } = await c.query<{ row_version: number }>(
+    `SELECT row_version FROM routine_slots WHERE id = $1`, [slotId]);
+  const cur = rows[0];
+  if (!cur || cur.row_version === expected) return;
+  throw new HttpError(409,
+    'এই ক্লাসটি আপনার পর্দায় দেখানোর পর অন্য কেউ বদলে ফেলেছেন। '
+    + 'নতুন অবস্থা দেখে আবার চেষ্টা করুন।',
+    'stale_slot', { slotId, expected, actual: cur.row_version });
+}
+
+/**
+ * Pin a slot so a later solver run leaves it alone. (§9)
+ *
+ * `routine_slots.is_pinned` has existed since migration 006 — "solver may not
+ * move it" — and `move` and `remove` have refused to touch a pinned slot for
+ * just as long. Nothing could ever SET it. That is the same shape P9-1 found
+ * in `section_subject_teachers`: an enforced control with no writer, which
+ * means a rule the product has and no school can use.
+ */
+async function setPin(c: Client, ctx: Ctx, b: SlotBody, pinned: boolean) {
+  const slotId = b.slotId ?? '';
+  if (!UUID_RE.test(slotId)) throw new HttpError(400, 'slotId must be a valid uuid', 'invalid_slot_id');
+
+  const cur = await c.query<{ routine_id: string; status: string; is_pinned: boolean }>(
+    `SELECT s.routine_id, rt.status::text AS status, s.is_pinned
+       FROM routine_slots s
+       JOIN routines rt ON rt.id = s.routine_id
+      WHERE s.id = $1 AND s.status = 'active'`,
+    [slotId]);
+  const slot = cur.rows[0];
+  if (!slot) throw new HttpError(404, 'slot not found', 'slot_not_found');
+  if (!EDITABLE.has(slot.status)) {
+    throw new HttpError(409,
+      'প্রকাশিত রুটিন সরাসরি বদলানো যায় না — নতুন খসড়া তৈরি করুন।', 'routine_not_editable');
+  }
+  await requireVersion(c, slotId, b.rowVersion);
+
+  // Already in the asked-for state: not an error, and not a log entry either.
+  // Undoing a lock that did nothing would take the coordinator's real
+  // previous edit off the stack.
+  if (slot.is_pinned === pinned) return { ok: true, slotId, isPinned: pinned, changed: false };
+
+  const label = await slotLabel(c, slotId);
+  await c.query(
+    `UPDATE routine_slots
+        SET is_pinned = $2, row_version = row_version + 1,
+                updated_at = now()
+      WHERE id = $1`,
+    [slotId, pinned]);
+
+  await logEdit(c, {
+    tenantId: ctx.tenantId, routineId: slot.routine_id, actorId: ctx.userId,
+    action: pinned ? 'lock' : 'unlock', slotId,
+    inverse: { op: 'pin', slotId, isPinned: slot.is_pinned },
+    labelBn: label,
+  });
+  await writeAudit(c as never, ctx, {
+    action: pinned ? 'rms.slot.lock' : 'rms.slot.unlock',
+    entityType: 'routine_slot',
+    entityId: slotId,
+    before: { isPinned: slot.is_pinned },
+    after: { isPinned: pinned },
+  });
+  return { ok: true, slotId, isPinned: pinned, changed: true };
+}
+
+/**
+ * Reverse the most recent edit. (§11)
+ *
+ * Applies the inverse recorded when the edit was made, then marks the entry
+ * consumed. The claim and the application are one transaction, so an inverse
+ * that fails — the hour it wants to move a class back into has since been
+ * filled by somebody else — leaves the entry un-undone and the stack intact.
+ * A "successful" undo that had not actually restored anything would be worse
+ * than the button being absent.
+ */
+async function undo(c: Client, ctx: Ctx, b: SlotBody) {
+  const routineId = b.routineId ?? '';
+  if (!UUID_RE.test(routineId)) {
+    throw new HttpError(400, 'routineId must be a valid uuid', 'invalid_routine_id');
+  }
+  const rt = await c.query<{ status: string }>(
+    `SELECT status::text AS status FROM routines WHERE id = $1`, [routineId]);
+  if (!rt.rows[0]) throw new HttpError(404, 'routine not found', 'routine_not_found');
+  if (!EDITABLE.has(rt.rows[0].status)) {
+    throw new HttpError(409,
+      'প্রকাশিত রুটিন সরাসরি বদলানো যায় না — নতুন খসড়া তৈরি করুন।', 'routine_not_editable');
+  }
+
+  const entry = await claimNewest(c, routineId, ctx.userId);
+  if (!entry) {
+    throw new HttpError(409, 'ফিরিয়ে নেওয়ার মতো কোনো পরিবর্তন নেই।', 'nothing_to_undo');
+  }
+
+  const inv = entry.inverse;
+  await tryWrite(c, async () => {
+    if (inv.op === 'restore') {
+      await c.query(
+        `UPDATE routine_slots
+            SET status = 'active', row_version = row_version + 1,
+                updated_at = now()
+          WHERE id = $1`, [inv.slotId]);
+    } else if (inv.op === 'remove') {
+      await c.query(
+        `UPDATE routine_slots
+            SET status = 'removed', row_version = row_version + 1,
+                updated_at = now()
+          WHERE id = $1`, [inv.slotId]);
+    } else if (inv.op === 'move') {
+      const pd = await c.query<{ id: string; starts_at: string; ends_at: string }>(
+        `SELECT pd.id, pd.starts_at, pd.ends_at
+           FROM routine_slots s
+           JOIN routines rt ON rt.id = s.routine_id
+           JOIN period_definitions pd
+                ON pd.template_id = rt.period_template_id AND pd.period_no = $2
+          WHERE s.id = $1`, [inv.slotId, inv.periodNo]);
+      const p = pd.rows[0];
+      if (!p) throw new HttpError(409, 'আগের পিরিয়ডটি আর নেই।', 'undo_period_missing');
+      await c.query(
+        `UPDATE routine_slots
+            SET day_of_week = $2, period_no = $3, period_definition_id = $4,
+                starts_at = $5, ends_at = $6, row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId, inv.dayOfWeek, inv.periodNo, p.id, p.starts_at, p.ends_at]);
+    } else if (inv.op === 'assign') {
+      await c.query(
+        `UPDATE routine_slots
+            SET subject_id = $2, teacher_id = $3, room_id = $4,
+                row_version = row_version + 1, updated_at = now()
+          WHERE id = $1`,
+        [inv.slotId, inv.subjectId, inv.teacherId, inv.roomId]);
+    } else {
+      await c.query(
+        `UPDATE routine_slots
+            SET is_pinned = $2, row_version = row_version + 1,
+                updated_at = now()
+          WHERE id = $1`, [inv.slotId, inv.isPinned]);
+    }
+  }, async (e) => {
+    // The hour it wants to go back to has been taken since. Say which class
+    // is in it — the same sentence a failed move gets — rather than "undo
+    // failed", which tells a coordinator nothing about what to do next.
+    if (e.code === '23P01') {
+      return new HttpError(409,
+        `"${entry.labelBn}" আগের জায়গায় ফেরানো যাচ্ছে না — সেই সময়টি এখন অন্য ক্লাসে ব্যবহৃত হচ্ছে।`,
+        'undo_blocked', { labelBn: entry.labelBn });
+    }
+    return new HttpError(409, e.message ?? 'ফিরিয়ে নেওয়া যায়নি।', 'undo_failed');
+  });
+
+  await writeAudit(c as never, ctx, {
+    action: 'rms.slot.undo',
+    entityType: 'routine_slot',
+    entityId: inv.slotId,
+    before: { undidAction: entry.action, labelBn: entry.labelBn },
+  });
+  return { ok: true, undid: entry.action, labelBn: entry.labelBn, slotId: inv.slotId };
 }

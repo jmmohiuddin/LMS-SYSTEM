@@ -52,6 +52,9 @@ interface Step {
   detailBn: string; done: number; total: number;
 }
 interface Unplaced {
+  /** P9-5 §16. Where to open the editor, so the coordinator lands in the
+   *  week they were just reading about. */
+  sectionId?: string;
   sectionName: string; subjectBn: string; teacherBn: string | null;
   required: number; placed: number; missing: number;
   reason: string; reasonBn: string;
@@ -693,8 +696,14 @@ export class RoutineGenerateView {
         onClick: () => this.o.onNavigate?.(`generation?routineId=${shift.routineId}`),
       }),
       button(d, {
-        label: 'রুটিন দেখুন', variant: 'ghost',
-        onClick: () => this.o.onNavigate?.('routine'),
+        label: 'রুটিন সম্পাদনা', variant: 'ghost',
+        // P9-5 §16. The first unplaced demand names a section; opening the
+        // editor there puts the coordinator in the week they were just
+        // reading about rather than in whichever one the picker defaults to.
+        onClick: () => this.o.onNavigate?.(
+          shift.unplaced[0]?.sectionId
+            ? `routineeditor?sectionId=${shift.unplaced[0].sectionId}`
+            : 'routineeditor'),
       })));
     return card(d, { title: `${name} শিফট`, glyph: 'clock', headingLevel: 3 }, body);
   }

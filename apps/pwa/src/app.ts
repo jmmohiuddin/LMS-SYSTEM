@@ -65,6 +65,7 @@ import { todayLocalIso } from '../../../packages/ui-core/src/format.ts';
 import {
   purgeLocalData, sweepNow, isTenantSwitch, sessionTenantId,
 } from './local-data.ts';
+import { confirmOverlay } from './ui/index.ts';
 import { Tracker } from './track.ts';
 import { HomeView, type DashboardItem, type Suggestion } from './home-view.ts';
 import { TeacherHomeView } from './teacher-home-view.ts';
@@ -79,6 +80,15 @@ import { SubjectsView } from './subjects-view.ts';
 import { MyAttendanceView } from './my-attendance-view.ts';
 import { ResultsView } from './results-view.ts';
 import { AssignmentsView } from './assignments-view.ts';
+
+/**
+ * The two views the shell's leave guard asks before navigating away (§17).
+ *
+ * Held here rather than inside `mount` because the guard runs from the
+ * shell, after the hash has already changed and before `unmount`.
+ */
+let routineEditor: RoutineEditorView | null = null;
+let teachingAssignments: TeachingAssignmentsView | null = null;
 
 const params  = new URLSearchParams(location.search);
 const apiBase = location.origin;
@@ -736,7 +746,28 @@ async function main() {
         labelBn: 'রুটিন সম্পাদনা',
         glyph: 'clock',
         hidden: true,
-        mount: (container) => { new RoutineEditorView({ root: container, doc: document, auth }); },
+        // P9-5 §16. `?sectionId=` carries the coordinator's place: opened
+        // from the generation result they land on the section they were
+        // reading about, not on whichever one the picker defaults to.
+        mount: (container) => {
+          const sectionId = new URLSearchParams(
+            (location.hash.split('?')[1] ?? '')).get('sectionId') ?? '';
+          routineEditor = new RoutineEditorView({
+            root: container, doc: document, auth,
+            ...(sectionId ? { sectionId } : {}),
+          });
+        },
+        unmount: () => { routineEditor = null; },
+        // §17. Every grid edit is written to the server as it is made, so
+        // there is no unsaved GRID — what a stray tap on the back button can
+        // lose is a half-filled lesson form. `hasUnsavedChanges()` existed
+        // on this view and on the assignment matrix before anything asked
+        // either of them.
+        guardLeave: (resume) => {
+          if (!routineEditor?.hasUnsavedChanges()) return false;
+          routineEditor.confirmDiscard(resume);
+          return true;
+        },
       },
       {
         // §10.3. The input to the subject-based model: what this writes is
@@ -890,7 +921,24 @@ async function main() {
         glyph: 'users',
         hidden: true,
         mount: (container) => {
-          new TeachingAssignmentsView({ root: container, doc: document, auth });
+          teachingAssignments = new TeachingAssignmentsView({
+            root: container, doc: document, auth,
+          });
+        },
+        unmount: () => { teachingAssignments = null; },
+        // P9-1 gave this view `hasUnsavedChanges()` and nothing called it.
+        // The matrix holds pending cell changes until Save, so leaving with
+        // them is the one way to lose an afternoon here.
+        guardLeave: (resume) => {
+          if (!teachingAssignments?.hasUnsavedChanges()) return false;
+          confirmOverlay(document, {
+            title: 'সংরক্ষণ করা হয়নি',
+            body: 'কিছু পরিবর্তন এখনো সংরক্ষণ করা হয়নি। এখন চলে গেলে সেগুলো হারিয়ে যাবে।',
+            confirmLabel: 'বাদ দিন',
+            danger: true,
+            onConfirm: resume,
+          });
+          return true;
         },
       },
       {

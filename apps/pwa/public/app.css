@@ -3920,3 +3920,27 @@ textarea.ui-input { min-height: 96px; padding: var(--s-2) var(--s-3); resize: ve
   display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); }
 .gen-affected li { font-size: var(--text-xs); color: var(--c-ink-2);
   padding: 2px var(--s-2); background: var(--c-surface-2); }
+
+/* ── Routine editor: lock and undo (P9-5) ──────────────────────────────
+   The lock is a WORD before it is a padlock. A glyph alone says nothing to
+   a screen reader and nothing to a coordinator who has not been told what
+   it means, and the consequence — a later solver run will leave this alone
+   — is the part that actually matters. */
+.routine-slot-lock {
+  display: block; font-size: var(--text-3xs); color: var(--c-ink-3);
+  margin-top: 2px;
+}
+.routine-slot[data-pinned='true'] {
+  /* Background, not a left rail: the cell is already inside a grid whose
+     borders carry structure, and a second rail there would read as an
+     error state rather than as a deliberate choice the coordinator made. */
+  background: var(--c-surface-2);
+}
+
+/* Above the grid, where the edit just happened. Wraps rather than
+   truncating: the button names what it will reverse, and a name cut in half
+   is worse than a wrapped line. */
+.edit-undo {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--s-2); margin: var(--s-2) 0;
+}

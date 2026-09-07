@@ -180,6 +180,10 @@ const SENTINELS = [
   // that left the scopes would still allow a bell schedule whose periods
   // overlap, which makes a timetable unfillable for reasons nobody can see.
   ['073_routine_input_scope',          'constraint',    'pd_no_overlap_within_template'],
+  // The table, not one of its three policies: a half-applied 074 with no
+  // table at all is what the editor's undo would fail against, loudly, on
+  // the first edit — and the policies cannot exist without it anyway.
+  ['074_routine_edit_log',             'table',         'public.routine_edit_log'],
 ];
 
 /**

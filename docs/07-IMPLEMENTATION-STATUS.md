@@ -976,6 +976,33 @@ These are LOCAL container numbers — no network, no TLS, no browser render —
 so the product's "roughly one minute" promise is **not** proven end to end by
 them and is not claimed to be.
 
+**Routine editing, locking and undo (P9-5).** The editor is A4's, extended
+rather than rebuilt: `place`, `assign`, `move`, `remove` and the three clash
+sentences were already there, and the database's exclusion constraints remain
+the arbiter.
+
+`lock` / `unlock` write `routine_slots.is_pinned`, which has meant "the solver
+may not move it" since migration 006 and had no writer. A pinned lesson is
+selectable and not movable — refusing the selection, as the first version did,
+left the unlock control unreachable.
+
+`undo` reverses the newest edit from `routine_edit_log` (migration 074). The
+inverse is computed when the edit is made, while the old row is still visible;
+deriving it at undo time would reverse a row later edits had already moved.
+Twelve steps deep, no redo, and nothing may delete an entry —
+`edit_log_delete_scope USING (false)`, for everyone.
+
+`requireVersion` refuses an edit made against a `row_version` the caller has
+not seen. Optional, so callers predating it keep working; the editor always
+sends one.
+
+`ShellRoute.guardLeave` is how the shell asks a view whether it is safe to
+leave. Two views had `hasUnsavedChanges()` and nothing called either.
+
+**Measured:** the editor grid is flat as the school grows — p50 11 / 13 / 11 /
+13 ms at 20 / 40 / 80 / 120 sections. It reads one section's week and an undo
+stack capped at twelve, so nothing in it scales with the institution.
+
 **Client cache isolation (B-104).** The service worker's data cache is keyed
 by school. `sw-router.ts:route()` flags every cached `/api/` decision
 `tenantScoped`, at one place rather than on each branch, so a route added

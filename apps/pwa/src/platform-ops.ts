@@ -90,6 +90,24 @@ export interface AuditRow {
   id: string; reason: string | null; statement: string | null; at: string;
   /** Present on the cross-institution feed; null for a platform-wide act. */
   tenantId?: string | null;
+  /**
+   * WHO did it — P10-5, closing B-39.
+   *
+   * `null` where the credential is not in the operator directory, which the
+   * screen says out loud rather than pretending. The actor's ID never leaves
+   * the server: "never expose raw UUIDs" still holds, and a truncated one
+   * would look like an identity while being a fragment.
+   */
+  actor?: string | null;
+  actorRevoked?: boolean;
+}
+
+/** One named platform credential. Holds no secret. */
+export interface OperatorRow {
+  id: string; fullName: string; email: string | null;
+  status: 'active' | 'revoked'; note: string | null;
+  createdAt: string; lastSeenAt: string | null; revokedAt: string | null;
+  actions: number; lastAction: string | null;
 }
 export interface Operations {
   access: string; opsState: string; billingState: string;
@@ -325,7 +343,7 @@ export interface OpsViewOptions {
   onNewTenant(): void;
 }
 
-type Tab = 'dashboard' | 'institutions' | 'plans';
+type Tab = 'dashboard' | 'institutions' | 'plans' | 'operators';
 
 export class PlatformOpsView {
   private readonly o: OpsViewOptions;
@@ -361,6 +379,7 @@ export class PlatformOpsView {
    * be open. One query, ordered by severity, capped at what the card shows.
    */
   private queueRows: TenantOverview[] = [];
+  private operators: OperatorRow[] = [];
   private busy = false;
 
   constructor(options: OpsViewOptions) {
@@ -387,7 +406,7 @@ export class PlatformOpsView {
       if (this.filter !== 'all') p.set('attention',
         this.filter === 'attention' ? 'action' : this.filter);
 
-      const [list, sum, urgent, cat, feed] = await Promise.all([
+      const [list, sum, urgent, cat, feed, ops] = await Promise.all([
         this.o.call<{ tenants: TenantOverview[]; page: FleetPage }>(`/tenants?${p}`),
         this.o.call<FleetSummary>('/fleetsummary'),
         this.o.call<{ tenants: TenantOverview[] }>(
@@ -396,6 +415,10 @@ export class PlatformOpsView {
         // Its own failure: a console that cannot show its history is still a
         // console that must show its schools.
         this.o.call<{ entries: AuditRow[] }>('/audit').catch(() => ({ entries: [] })),
+        // Its own failure too: a console that cannot list its operators is
+        // still a console that must show its schools.
+        this.o.call<{ operators: OperatorRow[] }>('/operators')
+          .catch(() => ({ operators: [] })),
       ]);
       this.rows = list.tenants;
       this.page = list.page;
@@ -404,6 +427,7 @@ export class PlatformOpsView {
       this.plans = cat.plans;
       this.services = cat.services;
       this.feed = feed.entries;
+      this.operators = ops.operators;
     } catch (err) {
       this.error = (err as Error).message || 'তালিকা আনা যায়নি।';
     }
@@ -500,12 +524,14 @@ export class PlatformOpsView {
         { id: 'institutions', label: 'প্রতিষ্ঠান',
           count: this.summary?.total ?? this.page.total },
         { id: 'plans', label: 'প্ল্যান', count: this.plans.length },
+        { id: 'operators', label: 'অপারেটর', count: this.operators.length },
       ],
       onSelect: (id) => { this.tab = id as Tab; this.render(); },
     }));
 
     if (this.tab === 'dashboard') this.renderDashboard(root);
     else if (this.tab === 'plans') this.renderPlans(root);
+    else if (this.tab === 'operators') this.renderOperators(root);
     else this.renderList(root);
   }
 
@@ -515,7 +541,135 @@ export class PlatformOpsView {
   // school's drawer would read as though it only touched that school, and it
   // touches every school on it — so it lives here, and the number of schools
   // affected is on the button that does it.
-  private renderPlans(root: HTMLElement): void {
+/**
+   * Who can operate this platform.  (P10-5, closes B-39)
+   *
+   * A name per issued credential, and the ability to stop one. It holds no
+   * secret and issues nothing: the credential is minted out of band and this
+   * screen only says whose it is. That is the whole of what B-39 asked for —
+   * "even a small table with a name per issued credential" — and deliberately
+   * not a login system, which would make the console worth stealing.
+   */
+  private renderOperators(root: HTMLElement): void {
+    const d = this.o.doc;
+
+    root.append(sectionHeading(d, { title: 'অপারেটর' }));
+    root.append(card(d, {
+      title: 'কারা এই প্ল্যাটফর্ম চালান', glyph: 'users', headingLevel: 3,
+    }, el(d, 'p', {
+      className: 'ui-card-note',
+      text: 'প্রতিটি ইস্যু করা ক্রেডেনশিয়ালের একটি নাম। এখানে কোনো পাসওয়ার্ড '
+          + 'বা টোকেন রাখা হয় না — শুধু কার ক্রেডেনশিয়াল এবং এখনো চালু কি না। '
+          + 'প্রত্যাহার করলে পরের অনুরোধেই কনসোল বন্ধ হয়ে যাবে।',
+    })));
+
+    const active = this.operators.filter((x) => x.status === 'active').length;
+    root.append(statRow(d,
+      statCard(d, { label: 'চালু', value: bn(active), glyph: 'check-square',
+                    tone: 'success' }),
+      statCard(d, { label: 'প্রত্যাহৃত',
+                    value: bn(this.operators.length - active),
+                    glyph: 'lock', tone: 'warn' }),
+    ));
+
+    root.append(dataTable(d, {
+      caption: 'অপারেটরের তালিকা',
+      rows: this.operators,
+      rowKey: (r) => r.id,
+      empty: {
+        glyph: 'users',
+        message: 'কোনো অপারেটরের নাম রাখা হয়নি। নাম ছাড়া অডিটে "নাম নেই" দেখাবে।',
+      },
+      columns: [
+        { key: 'name', header: 'নাম', mobile: 'title', width: 'minmax(0, 1.5fr)',
+          cell: (r) => r.fullName },
+        { key: 'email', header: 'ইমেইল', mobile: 'subtitle', width: 'minmax(0, 1.5fr)',
+          cell: (r) => r.email ?? '—' },
+        { key: 'status', header: 'অবস্থা', mobile: 'meta', width: '120px',
+          // Never colour alone: the state is a WORD.
+          cell: (r) => r.status === 'active' ? 'চালু' : 'প্রত্যাহৃত' },
+        { key: 'actions', header: 'কাজ', mobile: 'meta', width: '100px',
+          cell: (r) => `${bn(r.actions)}টি` },
+        { key: 'seen', header: 'সর্বশেষ', mobile: 'meta', width: '160px',
+          // "কখনো নয়" is a real answer: a credential issued and never used is
+          // one worth asking about.
+          cell: (r) => r.lastSeenAt ? bnDateTime(r.lastSeenAt) : 'কখনো নয়' },
+      ],
+      onRowClick: (r) => this.operatorForm(r),
+    }));
+
+    root.append(button(d, {
+      label: '+ অপারেটরের নাম যোগ করুন', variant: 'secondary', glyph: 'star',
+      onClick: () => this.operatorForm(null),
+    }));
+  }
+
+  /**
+   * Name a credential, or stop one.
+   *
+   * The id is the JWT subject of a credential that ALREADY EXISTS — this
+   * screen does not mint anything, so the field asks for the subject rather
+   * than offering to generate one.
+   */
+  private operatorForm(existing: OperatorRow | null): void {
+    const d = this.o.doc;
+    const id = field(d, {
+      label: 'ক্রেডেনশিয়াল আইডি (JWT sub)', name: 'id',
+      value: existing?.id ?? '',
+      helper: 'ইস্যু করা টোকেনের sub — এখানে নতুন টোকেন তৈরি হয় না',
+    });
+    if (existing) id.input.setAttribute('readonly', 'true');
+    const name = field(d, {
+      label: 'পুরো নাম', name: 'fullName', value: existing?.fullName ?? '' });
+    const email = field(d, {
+      label: 'ইমেইল', name: 'email', value: existing?.email ?? '' });
+    const note = field(d, {
+      label: 'নোট', name: 'note', value: existing?.note ?? '' });
+
+    const body = el(d, 'div', { className: 'ui-stack' });
+    for (const f of [id, name, email, note]) append(body, f.root);
+
+    const save = async (status: 'active' | 'revoked'): Promise<void> => {
+      try {
+        await this.o.call('/operator', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: id.input.value.trim(), fullName: name.input.value.trim(),
+            email: email.input.value.trim(), note: note.input.value.trim(),
+            status,
+          }),
+        });
+        this.notice = status === 'revoked'
+          ? 'ক্রেডেনশিয়াল প্রত্যাহার করা হয়েছে।'
+          : 'অপারেটর সংরক্ষণ হয়েছে।';
+        this.closeDrawer();
+        await this.load();
+      } catch (err) {
+        this.error = (err as Error).message;
+        this.render();
+      }
+    };
+
+    const actions = [button(d, {
+      label: 'সংরক্ষণ', variant: 'primary',
+      onClick: () => { void save('active'); },
+    })];
+    // Revocation is offered only for a credential that exists and is live.
+    if (existing && existing.status === 'active') {
+      actions.push(button(d, {
+        label: 'প্রত্যাহার', variant: 'danger',
+        onClick: () => { void save('revoked'); },
+      }));
+    }
+
+    this.drawer = openDrawer(d, {
+      title: existing ? existing.fullName : 'নতুন অপারেটর',
+      body, actions,
+      onClose: () => { this.drawer = null; },
+    });
+  }
+
+    private renderPlans(root: HTMLElement): void {
     const d = this.o.doc;
     // From the summary: counting `this.rows` would count one page, and the
     // number beside a plan is what an operator checks before retiring it.
@@ -928,6 +1082,15 @@ export class PlatformOpsView {
           cell: (r) => r.tenantId
             ? (nameOf.get(r.tenantId) ?? 'অন্য একটি প্রতিষ্ঠান')
             : 'সব প্রতিষ্ঠান' },
+        // B-39, closed. This column could not exist before P10-5: the actor
+        // was a JWT subject with no row behind it, so the tab showed what,
+        // why and when and never who. "নাম নেই" is the honest answer for a
+        // credential nobody has named yet — better than a uuid, and better
+        // than an empty cell that reads as "nobody".
+        { key: 'actor', header: 'কে', mobile: 'meta', width: 'minmax(0, 1fr)',
+          cell: (r) => r.actor
+            ? (r.actorRevoked ? `${r.actor} (প্রত্যাহৃত)` : r.actor)
+            : 'নাম নেই' },
         { key: 'why', header: 'কারণ', mobile: 'meta', width: 'minmax(0, 2fr)',
           cell: (r) => r.reason ?? '—' },
         { key: 'what', header: 'কী হয়েছিল', mobile: 'meta', width: 'minmax(0, 2fr)',

@@ -38,6 +38,19 @@ INSERT INTO lint_global_exempt VALUES
   -- because a tenant_id nobody could set would be a lie that silences
   -- this lint without providing anything.
   ('rate_limit_buckets'),
+  -- The platform operator directory (P10-5, migration 080). It names ISSUED
+  -- PLATFORM CREDENTIALS, and an operator belongs to no school — that is
+  -- the whole reason it could not live in `users`, whose `tenant_id` is NOT
+  -- NULL and load-bearing for every RLS policy in the schema.
+  --
+  -- Protected the same way `rate_limit_buckets` is, and for the same reason
+  -- a token tenant_id would be a lie: the grant to `shikhon_app` is REVOKED
+  -- and row-level security is FORCED with a single policy for
+  -- `shikhon_platform`. Both, because migration 010 grants shikhon_app every
+  -- table in `public` and a future blanket grant would otherwise reopen it.
+  -- This lint failing is exactly how that would be caught, so the exemption
+  -- is written here with its reasoning rather than silently.
+  ('platform_operators'),
   -- P7's commercial model (migration 051). `plans` is the price list and
   -- `service_catalogue` is the thirteen sellable services: both are
   -- platform-global reference data, like `subject_catalogue` above. There is

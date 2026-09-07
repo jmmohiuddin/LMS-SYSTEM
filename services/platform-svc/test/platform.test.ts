@@ -97,6 +97,7 @@ async function cleanup(): Promise<void> {
       await c.query(`DELETE FROM tenants WHERE id = app.current_tenant()`);
     });
   }
+
 }
 
 
@@ -1186,6 +1187,136 @@ describe('R-7 — platform console', { skip }, () => {
         { tenantId: 'not-a-uuid', nameBn: 'ক', nameEn: 'K' });
       assert.equal(r.status, 400);
       assert.equal((r.body as { error: string }).error, 'invalid_id');
+    });
+  });
+
+  // ── P10-5 · the operator directory (B-39) ──────────────────────────────
+  //
+  // `audit.platform_access.admin_id` was a JWT subject with no row behind it,
+  // so the console could say WHAT, WHY and WHEN and never WHO. Checked before
+  // building a second identity table: `users.tenant_id` is NOT NULL and every
+  // RLS policy is written against it, so an operator — who belongs to no
+  // school — cannot live there without weakening every school's isolation.
+
+  describe('operator directory', () => {
+    /**
+     * A FIXED second credential, reused every run — not a per-run one.
+     *
+     * `platform_operators` has no DELETE grant, deliberately: revoked rows
+     * must stay so the audit entries they wrote keep resolving to a name.
+     * That means a per-run id would accumulate a row per run forever, which
+     * is the leak the tenant fixtures already taught this suite. A fixed id
+     * is written once and rewritten thereafter, and the upsert makes that
+     * idempotent.
+     *
+     * It is NOT the suite's own operator, so revoking it cannot lock the rest
+     * of these tests out of the console.
+     */
+    const OTHER = '7c9c0000-0000-4000-8000-00000000d1e5';
+
+    test('THE ONE THAT MATTERS — the audit trail can finally name the actor', async () => {
+      // Before: every entry resolved to nobody. Now the same rows carry a
+      // name, and the actor's ID still never leaves the server.
+      await asOperator('/api/v1/platform/operator', {
+        id: OPERATOR, fullName: 'পরীক্ষক অপারেটর', email: `op-${process.pid}@example.com`,
+      });
+      const audit = await asOperator('/api/v1/platform/audit');
+      const entries = (audit.body as { entries: Array<Record<string, unknown>> }).entries;
+      assert.ok(entries.length > 0, 'no audit entries to name');
+      const named = entries.filter((e) => e.actor === 'পরীক্ষক অপারেটর');
+      assert.ok(named.length > 0, 'the operator’s own actions are still unnamed');
+
+      // …and the raw id is still not shipped. "Never expose raw UUIDs" holds:
+      // what changed is that there is a row to resolve it against.
+      for (const e of entries) {
+        assert.ok(!('adminId' in e), 'the actor uuid reached the client');
+      }
+    });
+
+    test('an unnamed credential shows as unnamed, not as nothing', async () => {
+      // A LEFT join, deliberately: an audit row that vanished because the
+      // directory is incomplete would be worse than one that says so.
+      const audit = await asOperator('/api/v1/platform/audit');
+      const entries = (audit.body as { entries: Array<{ actor: string | null }> }).entries;
+      assert.ok(entries.every((e) => 'actor' in e),
+        'every entry must carry the actor field, even when null');
+    });
+
+    test('the directory lists names and what each has done', async () => {
+      const r = await asOperator('/api/v1/platform/operators');
+      assert.equal(r.status, 200);
+      const ops = (r.body as { operators: Array<Record<string, unknown>> }).operators;
+      const me = ops.find((x) => x.id === OPERATOR);
+      assert.ok(me, 'the operator who just acted is not in the directory');
+      assert.equal(me!.status, 'active');
+      assert.ok(Number(me!.actions) > 0,
+        'the action count comes from the audit trail and should not be zero');
+      // No secret, ever.
+      const raw = JSON.stringify(r.body);
+      assert.doesNotMatch(raw, /password|token|hash|secret/i);
+    });
+
+    test('a revoked credential is refused on the NEXT request', async () => {
+      // Revocation that only greys out a row in a list is not revocation.
+      const { signAccessToken } = await import('../../../packages/server-core/src/jwt.ts');
+      const otherToken = await signAccessToken({
+        sub: OTHER, tid: PLATFORM_TENANT, role: 'super_admin', roles: ['super_admin'],
+      });
+      const asOther = () => call(platform, {
+        url: '/api/v1/platform/tenants?size=1', token: otherToken,
+        headers: { 'x-platform-key': KEY },
+      } as Parameters<typeof call>[1]);
+
+      // Unknown to the directory — allowed, because this table NAMES
+      // credentials, it does not issue them.
+      assert.equal((await asOther()).status, 200);
+
+      await asOperator('/api/v1/platform/operator', {
+        id: OTHER, fullName: 'অস্থায়ী অপারেটর', status: 'active' });
+      assert.equal((await asOther()).status, 200, 'a named, active credential still works');
+
+      await asOperator('/api/v1/platform/operator', {
+        id: OTHER, fullName: 'অস্থায়ী অপারেটর', status: 'revoked' });
+      assert.equal((await asOther()).status, 403, 'a revoked credential still worked');
+
+      // …and restoring it works, because an operator revoked by mistake must
+      // be recoverable without minting a new credential.
+      await asOperator('/api/v1/platform/operator', {
+        id: OTHER, fullName: 'অস্থায়ী অপারেটর', status: 'active' });
+      assert.equal((await asOther()).status, 200, 'restoring did not restore access');
+    });
+
+    test('an operator cannot revoke their own credential', async () => {
+      // It would lock the console for the person holding it, mid-action.
+      // Another operator can, which also makes it a two-person act.
+      const r = await asOperator('/api/v1/platform/operator', {
+        id: OPERATOR, fullName: 'পরীক্ষক অপারেটর', status: 'revoked' });
+      assert.equal(r.status, 409);
+      assert.equal((r.body as { error: string }).error, 'self_revoke');
+      // And they still work.
+      assert.equal((await asOperator('/api/v1/platform/tenants?size=1')).status, 200);
+    });
+
+    test('a nameless or malformed entry is refused', async () => {
+      const noName = await asOperator('/api/v1/platform/operator',
+        { id: OTHER, fullName: '   ' });
+      assert.equal(noName.status, 400);
+      assert.equal((noName.body as { error: string }).error, 'name_required');
+
+      const badId = await asOperator('/api/v1/platform/operator',
+        { id: 'not-a-uuid', fullName: 'ক' });
+      assert.equal(badId.status, 400);
+    });
+
+    test('a school cannot read or write the directory', async () => {
+      for (const url of ['/api/v1/platform/operators']) {
+        const asSchool = await call(platform, {
+          url, token: principalToken, headers: { 'x-platform-key': KEY },
+        } as Parameters<typeof call>[1]);
+        assert.equal(asSchool.status, 403);
+        const noKey = await call(platform, { url, token: opToken });
+        assert.equal(noKey.status, 403);
+      }
     });
   });
 });

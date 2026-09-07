@@ -2720,6 +2720,16 @@ async function authorize(req) {
   if (claims.role !== "super_admin") {
     throw new HttpError(403, "platform credentials required", "forbidden");
   }
+  const db = await platformDb();
+  const { rows } = await db.pool.query(
+    `SELECT app.operator_is_revoked($1) AS revoked`,
+    [claims.sub]
+  );
+  if (rows[0]?.revoked) {
+    throw new HttpError(403, "platform credentials required", "forbidden");
+  }
+  void db.pool.query(`SELECT app.record_operator_seen($1)`, [claims.sub]).catch(() => {
+  });
   return { id: claims.sub, role: claims.role };
 }
 async function handler(req, res) {
@@ -2743,6 +2753,10 @@ async function handler(req, res) {
         return json(res, 200, await fleetSummary(db), cors);
       case "POST identity":
         return json(res, 200, await setIdentity(db, op, req), cors);
+      case "GET operators":
+        return json(res, 200, await listOperators(db), cors);
+      case "POST operator":
+        return json(res, 200, await upsertOperator(db, op, req), cors);
       case "POST tenants":
         return json(res, 200, await createTenant(db, op, req), cors);
       case "GET tenant":
@@ -2994,6 +3008,92 @@ async function setIdentity(db, op, req) {
         409,
         "\u098F\u0987 EIIN \u0986\u09B0\u09C7\u0995\u099F\u09BF \u09AA\u09CD\u09B0\u09A4\u09BF\u09B7\u09CD\u09A0\u09BE\u09A8\u09C7 \u09AC\u09CD\u09AF\u09AC\u09B9\u09C3\u09A4 \u09B9\u099A\u09CD\u099B\u09C7\u0964",
         "eiin_taken"
+      );
+    }
+    throw err;
+  }
+}
+async function listOperators(db) {
+  const { rows } = await db.pool.query(`SELECT * FROM app.platform_operators()`);
+  return {
+    operators: rows.map((r) => ({
+      id: r.id,
+      fullName: r.full_name,
+      email: r.email,
+      status: r.status,
+      note: r.note,
+      createdAt: r.created_at,
+      lastSeenAt: r.last_seen_at,
+      revokedAt: r.revoked_at,
+      // From the audit trail, not a counter column, so it cannot drift from
+      // the rows it describes.
+      actions: Number(r.actions ?? 0),
+      lastAction: r.last_action
+    }))
+  };
+}
+async function upsertOperator(db, op, req) {
+  const b = await readJson(req);
+  const id = (b.id ?? "").trim();
+  if (!UUID_RE.test(id)) {
+    throw new HttpError(400, "id must be the credential uuid", "invalid_id");
+  }
+  const fullName = (b.fullName ?? "").trim();
+  if (!fullName) {
+    throw new HttpError(400, "\u0985\u09AA\u09BE\u09B0\u09C7\u099F\u09B0\u09C7\u09B0 \u09A8\u09BE\u09AE \u09A6\u09BF\u09A4\u09C7 \u09B9\u09AC\u09C7\u0964", "name_required");
+  }
+  if (fullName.length > 120) {
+    throw new HttpError(400, "\u09A8\u09BE\u09AE \u0996\u09C1\u09AC \u09AC\u09A1\u09BC\u0964", "too_long");
+  }
+  const status = (b.status ?? "active").trim();
+  if (status !== "active" && status !== "revoked") {
+    throw new HttpError(400, "status must be active or revoked", "invalid_status");
+  }
+  if (status === "revoked" && id === op.id) {
+    throw new HttpError(
+      409,
+      "\u09A8\u09BF\u099C\u09C7\u09B0 \u0995\u09CD\u09B0\u09C7\u09A1\u09C7\u09A8\u09B6\u09BF\u09AF\u09BC\u09BE\u09B2 \u09A8\u09BF\u099C\u09C7 \u09AA\u09CD\u09B0\u09A4\u09CD\u09AF\u09BE\u09B9\u09BE\u09B0 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE \u2014 \u0986\u09B0\u09C7\u0995\u099C\u09A8 \u0985\u09AA\u09BE\u09B0\u09C7\u099F\u09B0 \u0995\u09B0\u09AC\u09C7\u09A8\u0964",
+      "self_revoke"
+    );
+  }
+  try {
+    const { rows } = await db.pool.query(
+      `SELECT * FROM app.upsert_platform_operator($1,$2,$3,$4,$5,$6)`,
+      [
+        op.id,
+        id,
+        fullName,
+        (b.email ?? "").trim(),
+        (b.note ?? "").trim(),
+        status
+      ]
+    );
+    const r = rows[0] ?? {};
+    return {
+      operator: {
+        id: r.id,
+        fullName: r.full_name,
+        email: r.email,
+        status: r.status,
+        note: r.note,
+        createdAt: r.created_at,
+        revokedAt: r.revoked_at
+      }
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (/uq_platform_operator_email/i.test(msg)) {
+      throw new HttpError(
+        409,
+        "\u098F\u0987 \u0987\u09AE\u09C7\u0987\u09B2 \u0986\u09B0\u09C7\u0995\u099C\u09A8 \u0985\u09AA\u09BE\u09B0\u09C7\u099F\u09B0\u09C7\u09B0\u0964",
+        "email_taken"
+      );
+    }
+    if (/cannot revoke their own/i.test(msg)) {
+      throw new HttpError(
+        409,
+        "\u09A8\u09BF\u099C\u09C7\u09B0 \u0995\u09CD\u09B0\u09C7\u09A1\u09C7\u09A8\u09B6\u09BF\u09AF\u09BC\u09BE\u09B2 \u09A8\u09BF\u099C\u09C7 \u09AA\u09CD\u09B0\u09A4\u09CD\u09AF\u09BE\u09B9\u09BE\u09B0 \u0995\u09B0\u09BE \u09AF\u09BE\u09AF\u09BC \u09A8\u09BE\u0964",
+        "self_revoke"
       );
     }
     throw err;
@@ -3610,21 +3710,33 @@ async function setStatus(db, op, req) {
 async function readAudit(db, req) {
   const tenantId = (query(req).get("tenantId") ?? "").trim();
   const { rows } = await db.pool.query(
-    `SELECT id, admin_id, tenant_id, reason, statement, created_at
-       FROM audit.platform_access
-      WHERE ($1::uuid IS NULL OR tenant_id = $1::uuid)
-      ORDER BY created_at DESC, id DESC
+    // P10-5 closes B-39: the actor now RESOLVES. The join is LEFT because a
+    // credential nobody has named yet must still show its action — an audit
+    // row that disappears because the directory is incomplete is worse than
+    // one that says "unnamed".
+    `SELECT a.id, a.tenant_id, a.reason, a.statement, a.created_at,
+            o.full_name AS actor_name, o.status AS actor_status
+       FROM audit.platform_access a
+       LEFT JOIN platform_operators o ON o.id = a.admin_id
+      WHERE ($1::uuid IS NULL OR a.tenant_id = $1::uuid)
+      ORDER BY a.created_at DESC, a.id DESC
       LIMIT 100`,
     [UUID_RE.test(tenantId) ? tenantId : null]
   );
   return {
     entries: rows.map((r) => ({
       id: String(r.id),
-      // NOT the actor id. It is a JWT subject with no `users` row and no
-      // directory behind it (B-39), so it resolves to nobody, cannot be
-      // displayed under "never expose raw UUIDs", and shipping it to the
-      // client only invites the next person to render it. The column stays
-      // in `audit.platform_access`, where it is evidence.
+      // The actor's NAME, never their id. `admin_id` is a JWT subject and
+      // still does not leave the server — "never expose raw UUIDs" holds,
+      // and a truncated one would look like an identity while being a
+      // fragment. What changed in P10-5 is that there is now a row to
+      // resolve it against, so the console can finally say WHO as well as
+      // what, why and when.
+      //
+      // `null` where the credential is not in the directory, which the
+      // screen renders as "নাম নেই" rather than pretending.
+      actor: r.actor_name ?? null,
+      actorRevoked: r.actor_status === "revoked",
       tenantId: r.tenant_id,
       reason: r.reason,
       statement: r.statement,

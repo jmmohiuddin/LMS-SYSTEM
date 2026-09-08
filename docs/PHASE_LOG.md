@@ -14332,3 +14332,277 @@ which is the right instrument for geometry and type size and cannot answer
 ink: whether the near-neutral tints separate on a mono laser, and whether the
 7mm page margin survives a printer's own unprintable edge. One office printer
 and one look. **NOT OBSERVED / EXTERNAL.**
+
+
+# P10 — operator ergonomics at scale (2026-09-08)
+
+The console worked. It worked the way a tool works when it was built against
+sixty schools and nobody has looked at it since there were two hundred and
+sixty: every number correct, every control live, and the whole thing quietly
+describing one page as if it were the country.
+
+Eight workstreams, seven commits, `52be75a` … `2a52a49`.
+
+## The shape of the phase
+
+| | | |
+|---|---|---|
+| P10-1 | fleet pagination and sort | `52be75a` |
+| P10-2/3 | overview performance · attention-queue tuning | `b38bbe2` |
+| P10-4 | the health endpoint's missing tests | `33586fe` |
+| P10-6 | institution identity and contact editing | `ec414ab` |
+| P10-5 | the operator directory — **B-39** | `b509a32` |
+| P10-7 | responsive and accessibility, and the console's first view tests | `dd86074` |
+| P10-8 | the two monitors that had stopped watching | `2a52a49` |
+
+## The defect the phase existed to fix, stated exactly
+
+`app.platform_overview()` returned every school on every request: **142 kB at
+258 tenants, 0.68 s warm and 1.62 s cold**, five correlated subqueries per
+tenant plus a `CROSS JOIN LATERAL` — migration 057's definition, unchanged
+since. The console then computed its dashboard from the result with
+`this.rows.filter(...).length`.
+
+Paginating the list is therefore not a UI change. `rows` stops being the
+fleet the moment a page exists, and every count computed from it silently
+becomes a count of twenty-five. The fix has to arrive in the same breath as
+the pagination or the console starts lying in a way that looks completely
+plausible:
+
+- `app.platform_fleet_ranked` — all matches, graded, unpaginated. The rule
+  that decides which schools need attention lives here, once.
+- `app.platform_fleet` — one page, plus `count(*) OVER ()` for the filtered
+  total, ORDER BY whitelisted through a CASE with zero-padded numeric keys
+  and an `k.id` tiebreak so paging is stable.
+- `app.platform_fleet_summary` — the fleet-wide numbers as ONE aggregate,
+  `WITH f AS MATERIALIZED` so Postgres stops evaluating the set-returning
+  function twice.
+
+The summary's first version called the PAGINATED function. It would have
+reported a 258-school fleet as 200 — capped at one page, correct-looking,
+and wrong in the direction nobody checks.
+
+## The attention queue was not noisy by design
+
+247 of 258 institutions flagged. Of 276 rows, **246 were `onboarding`** — a
+kind that is not a thing to do today. The genuinely actionable kinds were 30
+rows across about 11% of the fleet. One rule, not a rebuild.
+
+## B-39 — and a hole I opened closing it
+
+The row asked for "even a small table with a name per issued credential".
+That is exactly what shipped, and deliberately nothing more: no password, no
+hash, no token. The credential is still minted out of band, so the console
+does not become worth stealing.
+
+Checked before building it, because a second identity table is the kind of
+thing that is obvious and wrong: `users.tenant_id` is `NOT NULL` and every
+RLS policy in the schema is written against it. A platform operator belongs
+to no school, so putting one in `users` means weakening the column every
+tenant's isolation is built on.
+
+**The hole.** The new table inherited migration 010's blanket
+`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO
+shikhon_app` and had no RLS of its own. The schema's model is that the role
+may touch tables and RLS decides rows — so a new table with no RLS gets the
+grant and none of the protection. `shikhon_app` serves every tenant request,
+and it could read the list of everyone who can suspend any school in the
+country.
+
+Caught by this workstream's own SQL test, which existed because the test was
+written to ask the question rather than to confirm the answer. REVOKE plus
+`FORCE ROW LEVEL SECURITY`, and `schema_lint` gained a documented exemption
+rather than a silenced one.
+
+## Revocation that is actually revocation
+
+A directory that greys out a row and leaves the credential working is not
+revocation. The gate is in `authorize()`, before any handler runs, on the
+NEXT request.
+
+An **unknown** credential is allowed through, on purpose. This table names
+credentials; it does not issue them. Treating unknown as revoked would have
+locked out whoever held the only one on the day it shipped. Self-revocation
+is refused at both the handler and the function — it would lock the console
+for the person holding it, mid-action — and a revoked row is KEPT, because
+the audit rows it wrote must stay resolvable for as long as those rows do.
+
+## Absent is not blank
+
+`app.update_tenant_identity` takes three states per field, and the
+distinction is the whole feature: SQL `NULL` means leave it alone, `''` means
+clear it, a value means set it.
+
+```sql
+eiin = CASE WHEN p_eiin IS NULL THEN t.eiin ELSE nullif(btrim(p_eiin), '') END,
+```
+
+Collapsing the first two is silent data loss, and it is how the first version
+behaved. It was found because one test's re-save wiped an EIIN and the NEXT
+test's duplicate-EIIN refusal then failed to fire — a failure two steps away
+from its cause, which is the ordinary shape of this class of bug.
+
+`slug` is not a parameter. It is platform and install-link infrastructure,
+and changing it moves the entry point of an already-installed PWA.
+
+## What the browser found that the tests could not
+
+The recurring finding of this project, again, and a new sibling.
+
+- **I rewrote the wrong list first.** `platform.ts`'s provisioning list, not
+  `platform-ops.ts`'s ops console — which is the default view. Typecheck
+  passed, tests passed, the screen an operator actually opens was untouched.
+- **A stale dev server** served modules from before the edits, three times.
+- **`aria-sort: 0`.** The server had supported seven sort keys since P10-1
+  and nothing on screen could reach any of them.
+
+## The console had no view tests at all
+
+Every claim about the P10 UI rested on my own browser checks. P10-7 added
+twenty, and they are DOM tests because the defect WAS the DOM.
+
+Then the tests were checked the only way that means anything — by breaking
+the code and confirming they notice:
+
+| mutation | caught by |
+|---|---|
+| dashboard total ← `rows.length` | 2 tests |
+| pager total ← `rows.length` | 2 tests |
+| sort value ← `'name'` | 1 test |
+| unnamed actor ← `''` | 1 test |
+
+**The first mutation was not caught.** The test asserted `/২৫৮/` against the
+whole page — which still matched from another card — and guarded it with
+`doesNotMatch(/মোট\s*২\b/)`, where `\b` is ASCII-only and can never fire
+beside a Bangla digit. Two assertions, both green, over a screen reporting a
+page of two as a fleet of 258. A test written after the code is a test that
+has never seen the bug; the mutation pass is what turns it back into one.
+
+## Two monitors that had stopped watching (P10-8)
+
+Both reported green about a surface they no longer covered.
+
+**`migration-status.mjs` did not know 076–080 existed** and said "Fully
+migrated" without looking at any of them — against its own warning that an
+unchecked migration "reports as neither applied nor pending, which is the
+worst answer". 077 and 078 REPLACE functions 076 creates, so a name probe
+reports them applied on a 076-only database; both are probed by body text
+only they add. 080's sentinel is FORCE RLS rather than its table, because
+the half-applied state that matters is the one it was genuinely in.
+
+The 077 sentinel was wrong on the first attempt: `plan_usage` is a column in
+the RETURNS TABLE signature and the probe reads `prosrc`, the body. It
+reported MISSING on a database where 077 was applied. A permanently red
+check is one nobody reads.
+
+**The security probe watched 1 platform route out of 26.** Area 9 was written
+when the console had one. `authorize()` runs before the dispatch switch, so
+every route is gated by construction — true until someone adds a route above
+it, which is not something a reader notices in review. The sweep now asks all
+twenty-six as a tenant principal and as an anonymous caller, and separately
+asserts that a wrong key and no credentials give a byte-identical answer.
+
+Both were negative-tested. 080's sentinel returns 0 rows with FORCE RLS off
+inside a rolled-back transaction; the route sweep, given a route that does
+answer 200, failed and named it. 29 → 32 checks.
+
+## Scale, measured, with the layers kept apart
+
+Three numbers that are not the same number, because reporting one of them as
+the others is how a localhost benchmark becomes a production claim.
+
+**Database**, `EXPLAIN ANALYZE`, page size 25, synthetic fleets created
+inside a transaction that is rolled back:
+
+| fleet | `app.platform_fleet` | `app.platform_fleet_summary` |
+|---|---|---|
+| 260 | 45 ms | 44 ms |
+| 500 | 81 ms | 77 ms |
+| 1000 | 155 ms | 153 ms |
+| 2000 | 307 ms | 299 ms |
+
+Linear, about 0.155 ms per tenant. `OFFSET 250` costs the same as `OFFSET 0`:
+**paging is free, fleet size is not**, because the ranked base grades every
+tenant to decide which need attention.
+
+**And then the population turned out to be wrong.** That 260-tenant database
+is **241 leaked `p7-gate` test fixtures** and 21 real schools — see B-119.
+Empty tenants are cheap. Deleting the fixtures inside a rolled-back
+transaction and re-measuring: the **21 real** tenants cost **11.5 ms between
+them**, about **0.5 ms each**, roughly **3×** an empty row — the grade runs
+five correlated subqueries per tenant, and a school with enrolments, users,
+payments and sessions actually has rows to find.
+
+So the table above is a lower bound on empty rows, not a forecast. Against
+real institutions: ~0.5 ms per school per query, three queries per console
+load, so **~150 ms at 100 schools, ~375 ms at 250, ~750 ms at 500 and ~1.5 s
+at 1000**. **B-118**'s trigger moved down from ~1000 to **300–500 real
+institutions** on that evidence, and is still deliberately not pre-solved —
+the fix is a materialised grade, and a cache whose staleness semantics are
+undefined is worse than a slow query.
+
+The lesson is the ordinary one and it nearly shipped in a report: a benchmark
+is a measurement of whatever is in the database, and 92% of that database was
+something no school will ever look like.
+
+**Handler**, browser-observed total minus database time: **~5 ms**.
+
+**Browser**: synchronous render **3.7 ms**, **1225 DOM nodes**, 25 rows —
+constant, because the page size is. Payload **15.1 kB** per page against the
+old **142 kB** for the fleet, and `size=260` is clamped server-side to 100.
+
+All of it on localhost with a warm cache and a loopback network. It says what
+the code costs; it says nothing about what a school in Rajshahi will wait.
+
+## Verification
+
+- **2,174 tests** across 13 workspaces — 852 in `apps/pwa` (+20), 81 in
+  `platform-svc`, 28 SQL suites
+- typecheck 0/0/0 · build clean · **80/80 migrations**, all now sentinelled
+- **Security probe 32/32** over 12 areas, localhost
+- Width matrix 360 · 375 · 390 · 1024 · 1280 · 1600 — no horizontal scroll,
+  table becomes cards below 1024, pager visible at every width
+- a11y: `main:1 · nav:1 · h1:1`, 0 unnamed buttons, 0 unlabelled inputs,
+  table captioned, pager a labelled landmark with an `aria-live` count
+- Landing page byte-identical at `496199bd`
+
+## Typecheck baseline 79 → 80, and why that is not a shrug
+
+The new view-test file is not in any tsconfig, so a type error in it cannot
+fail a gate. The gate said so and was right. The honest fix is a tsconfig
+that includes `test/**`; measured rather than assumed, that produces **113
+errors** across the existing pwa tests, mostly a missing `@types/jsdom`. That
+is a repo-wide change and not P10's. Recorded as **B-117** rather than
+quietly attached to a phase it does not belong to.
+
+## One defect found on the way, in someone else's file
+
+The fleet count moved from 260 to 262 between two runs of the suite, which is
+how a leak announces itself if anything is watching. `tenant-gate.test.ts`
+creates two schools per run and its `after()` hook deletes them — except the
+DELETE runs on the **platform** connection, and `tenant_self` is
+`USING (id = app.current_tenant())`, so `shikhon_platform` cannot even SELECT
+those rows. The statement matches nothing and raises nothing.
+
+The same file documents this policy correctly eleven lines away, in the
+comment explaining why `setStatus` goes through a definer function. The
+teardown has been quietly doing nothing since P7: **241 of the 262 tenants in
+the development database are its fixtures**, at two per run.
+
+Not fixed here, and not because of scope discipline alone — it is not a one
+line change. There is no `app.delete_tenant`, deliberately, because the
+product never hard-deletes a school; neither role the suite holds can remove
+the rows. The fix is a definer teardown scoped to fixtures, or an owner
+connection the suite does not have. **B-119**.
+
+It is worth saying what this cost: it made the first version of this phase's
+scale numbers a measurement of empty rows, and I was one paragraph away from
+reporting them as a forecast.
+
+## Not done, and named
+
+**Bulk operations across institutions (B-40)** stay deferred. P10 is the
+phase that would have made them tempting — the fleet list now sorts and
+filters, so "select these eleven" is one control away. The natural first bulk
+action is suspension, and a mis-selected bulk suspend is the most destructive
+thing this product can do. The trigger stays where P7 put it.

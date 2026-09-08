@@ -250,7 +250,7 @@ becomes a sidebar sub-list; on mobile, a bottom sheet.
 | 19 | **Branding** | `branding-view.ts` (672), Gen-2 | ❌ none | **already 2-col at 900px** | stacked + preview | `ops/branding` | FileUpload | mobile design | M |
 | 20 | **User management** | `users-view.ts`, Gen-1 | ❌ none | DataTable + role editor | list + sheet | `ops/users` | DataTable | **both** | M |
 | 21 | **Onboarding** | `platform.ts` wizard (9 screens) | ❌ none | stepper + form | full-screen steps | `platform-svc` | Stepper | **both** | M |
-| 22 | **Platform console** | `platform.ts` + `platform.css` (4 KB) | ❌ none | own shell, **platform-branded** | responsive | `platform-svc` | — | **both** | M — **D11: stays shikhonBD** |
+| 22 | **Platform console** | `platform.ts` + `platform-ops.ts` + `platform.css` | ❌ none | own shell, **platform-branded** | responsive | `platform-svc` | — | **both** | **DONE P10-7 2026-09-08.** This row said **both** widths from the start and `platform.css` contained **zero** `@media` queries until P10 — the console was desktop-only for its whole life and the plan had recorded otherwise. Four breakpoints now; the fleet table becomes cards below 1024px. Verified 360 · 375 · 390 · 1024 · 1280 · 1600, no horizontal scroll at any of them. **D11: stays shikhonBD** |
 | 23 | Publish workflow | `publish-view.ts` (263) | partial in `s-results` | verify → publish | steps | `academics/publish` | ConfirmationDialog | desktop | M |
 | 24 | Invoice workflow | `invoice-view.ts` (237) | `s-finance-home` partial | generate + preview | steps | `finance/*` | — | both | M |
 | 25 | Rollover | `rollover-view.ts` (462) | ❌ none | preview + commit | steps | `ops/rollover` | ConfirmationDialog | **both** | **H** — touches every student |
@@ -517,6 +517,7 @@ Chosen to minimise regression:
 | **P6** | **New designs** (§6): notices, notifications, calendar, documents, student history | tag `ui-p6` |
 | **P7** | **Platform Operations Center** (`/platform`), platform-branded | **COMPLETE 2026-09-02.** Not a restyle — see the note below the rollback line |
 | **P8** | Cleanup: retire dead CSS, re-measure budget | **COMPLETE 2026-09-02.** 491 lines of dead CSS removed (3,926 → 3,850 lines; 53.0 → 51.2 KB gzipped). `--c-*` is **retained**: it is an alias layer over `--color-*`, not a second system — 721 live usages, zero of them at zero usage. See PHASE_LOG P8 |
+| **P10** | **Platform console at fleet scale**: responsive treatment, sorting, pagination, the operator directory | **COMPLETE 2026-09-08.** Row 22's `both` finally true. Also the console's FIRST view tests — 20 of them, mutation-checked, because every previous claim about these screens rested on a browser session. `aria-sort` was 0: the server had supported seven sort keys since P10-1 and nothing on screen could reach one. Sorting is a labelled select rather than clickable headers — below 1024px this table has no headers to click, and twelve sortable headers are twelve tab stops that never say they sort. See PHASE_LOG P10 |
 
 **Rollback:** every phase is its own commit range behind a tag; `git revert` of
 a phase restores the previous UI without touching data, API or schema —

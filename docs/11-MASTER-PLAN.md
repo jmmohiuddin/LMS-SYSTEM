@@ -1871,6 +1871,38 @@ row 22 of the UI-UX integration plan marks it as needing **both** widths. And `l
 takes a search term but has no `limit`, `offset` or sort — the pagination gap is in the
 service, not only the screen.
 
+### P10 — DONE, 2026-09-08 (`52be75a` … `2a52a49`)
+
+Everything in the line above shipped, and the two corrections held. Seven commits across
+eight workstreams; the detail is in [PHASE_LOG.md](PHASE_LOG.md) under **P10**.
+
+| what the line asked for | what shipped |
+|---|---|
+| pagination and sort on the fleet list | migration 076: `platform_fleet_ranked` / `platform_fleet` / `platform_fleet_summary`. One page, `count(*) OVER ()` for the filtered total, whitelisted ORDER BY, stable tiebreak. **142 kB → 15.1 kB** per request |
+| the overview's quadratic term | gone from the console's load path; `app.platform_overview()` is no longer called to draw the dashboard |
+| the attention queue | tuned at the rule, not rebuilt — 246 of 276 rows were `onboarding`, a kind that is not a thing to do today |
+| the operator directory (B-39) | migration 080 + `authorize()` revocation gate. **B-39 RESOLVED** |
+| rename / slug / contact editing | migration 079 `app.update_tenant_identity`, three-state optional fields. **`slug` deliberately excluded** — it is install-link infrastructure and changing it moves an installed PWA's entry point |
+| `/platform/health` has no test | closed in P10-4 |
+| `platform.css` has zero `@media` queries | four now; the table becomes cards below 1024px. Verified 360 → 1600 |
+
+**The trigger in the line above — "before ~50 real tenants" — was met and passed.** The
+console now reads the fleet instead of downloading it, and the cost that remains is linear
+rather than quadratic — and the honest figure is worse than the first one measured. The
+development database's 260 tenants are **241 leaked test fixtures** (B-119) with no students
+or payments, and empty rows are cheap: 45 ms at 260, 307 ms at 2000. The **21 real** schools
+in it cost about **0.5 ms each**, roughly 3× an empty row. Against real institutions that is
+~150 ms of database time per console load at 100 schools and ~1.5 s at 1000. **B-118**, with
+its trigger revised down to **300–500 real institutions**, and deliberately not pre-solved.
+`OFFSET 250` costs the same as `OFFSET 0`.
+
+Two gaps found in the *monitoring* rather than the product, both fixed: `migration-status.mjs`
+did not know migrations 076–080 existed, and the security probe checked 1 platform route out
+of 26. Both negative-tested; the probe is now 32 checks.
+
+Opened by this phase and recorded rather than absorbed: **B-117** (no `apps/pwa` test file is
+type-checked — measured at 113 errors to fix, which is not P10-sized) and **B-118**.
+
 **P11 — portability.** Data export, which does not exist in any form today and is the
 clearest customer-trust gap.
 

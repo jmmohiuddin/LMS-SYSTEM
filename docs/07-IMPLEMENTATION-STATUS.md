@@ -1623,6 +1623,66 @@ school's web address.
   Same division for `import_batches.started_by`.
 - **platform-svc is the 11th of 12 functions.** One spare.
 
+### P10 — the same console at 260 institutions (2026-09-08)
+
+R-7 built the console against a handful of schools and P7 gave it operations.
+Neither was wrong; both were built where `this.rows` WAS the fleet. At 258
+tenants that assumption produced a screen where every number was computed
+correctly from the wrong denominator.
+
+**What an operator gets now.** `GET /platform/tenants` takes `page`, `size`,
+`sort`, `dir`, `q`, `status`, `plan` and `attention`, and returns one page
+plus a `page` object carrying the FILTERED total. The list is 15.1 kB instead
+of 142 kB. Seven sort keys, whitelisted in the database through a CASE rather
+than interpolated, with zero-padded numeric keys and an id tiebreak so paging
+does not repeat or skip a school. A `size` above the cap is clamped
+server-side; a sort key the database does not know is ignored rather than
+honoured.
+
+**The dashboard stopped counting the page.** `GET /platform/fleetsummary` is
+one aggregate over the whole fleet — totals, access, billing, usage, quiet,
+never-active and plan usage. Every stat card reads it. This is the part that
+had to ship in the same commit as pagination: the moment `rows` is a page,
+`rows.filter(...).length` is a lie that looks right.
+
+**The attention queue is its own query.** It must show the most urgent schools
+in the FLEET, which is not the most urgent on whichever page happens to be
+open.
+
+**`GET /platform/operators` · `POST /platform/operator`** — the operator
+directory (**B-39**). A name per issued credential, no secret material, and
+revocation enforced in `authorize()` on the next request rather than shown as
+a greyed row. An unknown credential is allowed through deliberately: this
+table names credentials, it does not issue them. `readAudit` LEFT JOINs it, so
+the audit tab answers WHO for the first time — and still never ships the
+actor's uuid.
+
+**`POST /platform/identity`** — a school's own name, EIIN, MPO code, board
+code and address, correctable without SQL. Three-state fields: absent means
+leave alone, empty means clear, a value means set. **`slug` is not a
+parameter** — it is install-link infrastructure, and changing it moves the
+entry point of an already-installed PWA.
+
+**Where the cost actually is.** Database time dominates and is linear in fleet
+size, because the ranked base grades every tenant to decide which need
+attention. Page size 25, database time only: 45 ms at 260 tenants, 81 at 500,
+155 at 1000, 307 at 2000. **Those are mostly empty rows** — 241 of the 260
+are leaked test fixtures (B-119) — and a real school costs about **3×** an
+empty one: the 21 real tenants in that database cost 11.5 ms between them,
+~0.5 ms each. Against real institutions, and with three such queries per
+console load, that is **~150 ms at 100 schools and ~1.5 s at 1000**.
+`OFFSET 250` costs the same as `OFFSET 0`. Handler work is about 5 ms on top;
+the browser renders in 3.7 ms across a constant 1,225 DOM nodes. All of it
+localhost with a warm cache, and it says nothing about what a school on a real
+connection will wait. Recorded as **B-118**, trigger at **300–500 real
+institutions**.
+
+**Known and not fixed here:** no `apps/pwa` test file is type-checked
+(**B-117**; measured at 113 errors to close, mostly a missing `@types/jsdom`),
+and bulk cross-institution operations stay deferred (**B-40**) — P10 is the
+phase that makes them tempting, and the natural first bulk action is
+suspension.
+
 ## 9k. R-8 — go-live unlocks (code closed; contracts open)
 
 R-8 is the phase that turns things on. The surprise was how much of what it was

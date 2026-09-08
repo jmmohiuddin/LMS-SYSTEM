@@ -342,6 +342,63 @@ const platNothing = await call('/api/v1/platform/tenants');
 record(platNothing.status >= 400, 'and refuses an unauthenticated caller',
   `→ ${platNothing.status}`);
 
+// P10. The console's surface grew from one route to twenty-six, and the two
+// checks above probed exactly one of them.
+//
+// `authorize()` runs before the dispatch switch, so every route is gated by
+// construction — which is true until somebody adds a route above it, and
+// that is not a thing a reader notices in review. So sweep the whole surface
+// rather than trusting the shape of the file.
+//
+// `/operators` is the reason this matters most: it is the list of people who
+// can suspend any school in the country. It is also the newest, which is the
+// combination that ships wrong.
+const PLATFORM_ROUTES = [
+  ['GET', 'tenants'], ['GET', 'tenant'], ['GET', 'fleetsummary'],
+  ['GET', 'operators'], ['GET', 'overview'], ['GET', 'catalogue'],
+  ['GET', 'audit'], ['GET', 'health'], ['GET', 'operations'],
+  ['GET', 'readiness'],
+  ['POST', 'operator'], ['POST', 'identity'], ['POST', 'tenants'],
+  ['POST', 'admin'], ['POST', 'branding'], ['POST', 'cap'],
+  ['POST', 'grace'], ['POST', 'import'], ['POST', 'opsstate'],
+  ['POST', 'payment'], ['POST', 'plan'], ['POST', 'plans'],
+  ['POST', 'portal'], ['POST', 'provision'], ['POST', 'service'],
+  ['POST', 'status'],
+];
+
+const leakedToTenant = [];
+const leakedToAnon = [];
+for (const [method, route] of PLATFORM_ROUTES) {
+  const url = `/api/v1/platform/${route}`;
+  const body = method === 'POST'
+    ? { method, headers: { 'content-type': 'application/json' }, body: '{}' }
+    : {};
+  const asTenant = await call(url, {
+    ...body,
+    headers: { ...(body.headers ?? {}), authorization: `Bearer ${tokenA}` },
+  });
+  if (asTenant.status < 400) leakedToTenant.push(`${method} ${route} → ${asTenant.status}`);
+  const asAnon = await call(url, body);
+  if (asAnon.status < 400) leakedToAnon.push(`${method} ${route} → ${asAnon.status}`);
+}
+record(leakedToTenant.length === 0,
+  `no platform route answers a tenant user (${PLATFORM_ROUTES.length} routes)`,
+  leakedToTenant.length ? leakedToTenant.join('; ') : 'every route refused');
+record(leakedToAnon.length === 0,
+  `no platform route answers an unauthenticated caller (${PLATFORM_ROUTES.length} routes)`,
+  leakedToAnon.length ? leakedToAnon.join('; ') : 'every route refused');
+
+// The refusal must not say WHICH credential was wrong. A console that
+// answers "bad key" to one caller and "bad token" to another has told an
+// attacker holding a stolen JWT that the key is the only thing left.
+const wrongKey = await call('/api/v1/platform/operators', {
+  headers: { authorization: `Bearer ${tokenA}`, 'x-platform-key': 'not-the-key' },
+});
+const noCreds = await call('/api/v1/platform/operators');
+record(wrongKey.status === noCreds.status && wrongKey.text === noCreds.text,
+  'a wrong key and no credentials give the same answer',
+  `→ ${wrongKey.status} vs ${noCreds.status}`);
+
 /* ═══ 10. Secret exposure ════════════════════════════════════════════════ */
 setArea('10. Secret exposure');
 

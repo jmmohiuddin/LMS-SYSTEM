@@ -190,6 +190,41 @@ const SENTINELS = [
   // edit before the one they meant.
   ['075_edit_log_resolve',             'constraint_def',
    "routine_edit_log_action_check|'resolve'"],
+  // The RANKED base, not `app.platform_fleet`: the paginated wrapper is one
+  // page, and the rule that decides which schools need attention lives in
+  // the base. A half-applied 076 with the wrapper and no base cannot exist,
+  // so this is simply the honest thing to name.
+  ['076_platform_fleet',               'function',      'app.platform_fleet_ranked'],
+  // 077 and 078 REPLACE functions 076 already created, so a name probe for
+  // either reports applied on a database that has only 076 — precisely the
+  // failure 061 and 062 were written with. Both are probed by the thing only
+  // they add.
+  //
+  // Without 077 the summary is 076's version, which called the PAGINATED
+  // function: correct-looking totals capped at one page, so a 258-school
+  // fleet would report as 200 and nothing would look wrong.
+  //
+  // `jsonb_object_agg`, not `plan_usage`, and the difference cost a red
+  // check: this probe reads `prosrc`, which is the BODY, while `plan_usage`
+  // is a column in the RETURNS TABLE signature. The first version of this
+  // line reported 077 permanently MISSING on a database where it was
+  // applied — the same class of wrong answer 061 and 062 were fixed for.
+  ['077_fleet_summary_totals',         'function_body', 'app.platform_fleet_summary',
+                                       'jsonb_object_agg'],
+  // Without 078 the queue's filter vocabulary is 076's narrow one, and the
+  // console's `attention=blocked` silently matches nothing — an operator
+  // filtering for suspended schools is told there are none.
+  ['078_fleet_filters',                'function_body', 'app.platform_fleet_ranked',
+                                       'blocked'],
+  ['079_tenant_identity_writer',       'function',      'app.update_tenant_identity'],
+  // FORCE RLS, not the table: a half-applied 080 that created
+  // `platform_operators` and stopped would leave the directory of everyone
+  // who can suspend any school in the country readable by `shikhon_app`,
+  // the role that serves every tenant request. That is not a hypothetical —
+  // it is the state this migration was in when its own SQL test caught it.
+  ['080_platform_operators',           'rows',
+   "pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' " +
+   "AND c.relname='platform_operators' AND c.relforcerowsecurity"],
 ];
 
 /**
